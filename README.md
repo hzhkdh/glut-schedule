@@ -85,13 +85,6 @@ app/src/main/java/com/glut/schedule/
 6. 支持自定义背景图片。
 7. 配置正式签名并打包 release APK。
 
-## Git 提交建议
-
-第一阶段完成后建议执行：
-
-```powershell
-git status
-git add .
 git commit -m "feat: 完成课表首页 UI"
 ```
 
