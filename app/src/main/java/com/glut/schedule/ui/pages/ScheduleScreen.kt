@@ -1,18 +1,20 @@
 package com.glut.schedule.ui.pages
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerSnapDistance
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -20,26 +22,33 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.glut.schedule.data.model.CourseBlock
+import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
+import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
+import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.clampAcademicWeek
+import com.glut.schedule.data.model.isActiveInWeek
+import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.ScheduleHeader
 import com.glut.schedule.ui.components.StarryScheduleBackground
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
-import kotlin.math.roundToInt
 
 @Composable
 fun ScheduleScreen(
@@ -50,28 +59,33 @@ fun ScheduleScreen(
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    var dragAmount by remember { mutableFloatStateOf(0f) }
     var showSettings by remember { mutableStateOf(false) }
-    val elasticOffsetPx = (dragAmount * 0.18f).coerceIn(-42f, 42f)
+    val blocksByWeek = remember(uiState.courses) { courseBlocksByWeek(uiState.courses) }
+    val pagerState = rememberPagerState(
+        initialPage = pagerPageForWeekNumber(uiState.week.number),
+        pageCount = { MAX_ACADEMIC_WEEK }
+    )
+    val latestWeekNumber by rememberUpdatedState(uiState.week.number)
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragEnd = {
-                        when {
-                            dragAmount > 120f -> viewModel.previousWeek()
-                            dragAmount < -120f -> viewModel.nextWeek()
-                        }
-                        dragAmount = 0f
-                    },
-                    onHorizontalDrag = { _, dragDelta ->
-                        dragAmount = (dragAmount + dragDelta).coerceIn(-320f, 320f)
-                    }
-                )
+    LaunchedEffect(uiState.week.number) {
+        val targetPage = pagerPageForWeekNumber(uiState.week.number)
+        if (pagerState.currentPage != targetPage && pagerState.settledPage != targetPage) {
+            pagerState.animateScrollToPage(targetPage)
+        }
+    }
+
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { page ->
+                val targetWeekNumber = weekNumberForPagerPage(page)
+                if (targetWeekNumber != latestWeekNumber) {
+                    viewModel.setWeekNumber(targetWeekNumber)
+                }
             }
-    ) {
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
         StarryScheduleBackground()
         Column(
             modifier = Modifier
@@ -92,16 +106,29 @@ fun ScheduleScreen(
                     showSettings = !showSettings
                 }
             )
-            ScheduleGrid(
-                week = uiState.week,
-                today = uiState.today,
-                periods = uiState.classPeriods,
-                blocks = uiState.courseBlocks,
-                showWeekend = uiState.showWeekend,
+            HorizontalPager(
+                state = pagerState,
+                key = { page -> page },
+                flingBehavior = PagerDefaults.flingBehavior(
+                    state = pagerState,
+                    pagerSnapDistance = PagerSnapDistance.atMost(1)
+                ),
+                beyondViewportPageCount = 0,
                 modifier = Modifier
                     .weight(1f)
-                    .offset { IntOffset(elasticOffsetPx.roundToInt(), 0) }
-            )
+                    .fillMaxWidth()
+            ) { page ->
+                val pageWeekNumber = weekNumberForPagerPage(page)
+                val pageWeek = scheduleWeekForNumber(pageWeekNumber, uiState.semesterStartMonday)
+                ScheduleGrid(
+                    week = pageWeek,
+                    today = uiState.today,
+                    periods = uiState.classPeriods,
+                    blocks = blocksByWeek[pageWeekNumber].orEmpty(),
+                    showWeekend = uiState.showWeekend,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
         if (showSettings) {
             ScheduleSettingsPanel(
@@ -124,6 +151,24 @@ fun ScheduleScreen(
                 .padding(horizontal = 16.dp, vertical = 18.dp)
                 .navigationBarsPadding()
         )
+    }
+}
+
+fun weekNumberForPagerPage(page: Int): Int {
+    return clampAcademicWeek(page + 1)
+}
+
+fun pagerPageForWeekNumber(weekNumber: Int): Int {
+    return clampAcademicWeek(weekNumber) - MIN_ACADEMIC_WEEK
+}
+
+fun courseBlocksByWeek(courses: List<ScheduleCourse>): Map<Int, List<CourseBlock>> {
+    return (MIN_ACADEMIC_WEEK..MAX_ACADEMIC_WEEK).associateWith { weekNumber ->
+        courses.flatMap { course ->
+            course.occurrences
+                .filter { occurrence -> occurrence.isActiveInWeek(weekNumber) }
+                .map { occurrence -> CourseBlock(course, occurrence) }
+        }
     }
 }
 

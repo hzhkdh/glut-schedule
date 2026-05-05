@@ -51,7 +51,9 @@ fun ScheduleGrid(
         val leftWidth = 52.dp
         val dayCount = visibleDayCount(showWeekend)
         val dayWidth = (maxWidth - leftWidth) / dayCount
-        val visibleBlocks = blocks.filter { it.occurrence.dayOfWeek <= dayCount }
+        val visibleBlocks = remember(blocks, dayCount) {
+            blocks.filter { it.occurrence.dayOfWeek <= dayCount }
+        }
 
         Column {
             Row(modifier = Modifier.fillMaxWidth()) {

@@ -4,6 +4,7 @@ import com.glut.schedule.data.local.ScheduleDao
 import com.glut.schedule.data.local.toEntity
 import com.glut.schedule.data.local.toModel
 import com.glut.schedule.data.model.ClassPeriod
+import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.defaultClassPeriods
 import com.glut.schedule.data.model.sampleCourses
@@ -38,9 +39,10 @@ class ScheduleRepository(
 
     suspend fun replaceImportedCourses(courses: List<ScheduleCourse>) {
         dao.insertClassPeriods(defaultClassPeriods().map { it.toEntity() })
+        val coloredCourses = CourseColorMapper.assignColors(courses)
         dao.replaceCourses(
-            courses = courses.map { it.toEntity() },
-            occurrences = courses.flatMap { course -> course.occurrences.map { it.toEntity() } }
+            courses = coloredCourses.map { it.toEntity() },
+            occurrences = coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity() } }
         )
     }
 }

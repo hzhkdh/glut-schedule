@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseBlock
+import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.ScheduleWeek
 import com.glut.schedule.data.model.academicWeekForDate
@@ -27,6 +29,7 @@ data class ScheduleUiState(
     val currentWeekNumber: Int = academicWeekForDate(LocalDate.now(), DEFAULT_SEMESTER_START_MONDAY),
     val semesterStartMonday: LocalDate = DEFAULT_SEMESTER_START_MONDAY,
     val classPeriods: List<ClassPeriod> = emptyList(),
+    val courses: List<ScheduleCourse> = emptyList(),
     val courseBlocks: List<CourseBlock> = emptyList(),
     val showWeekend: Boolean = false
 )
@@ -51,13 +54,15 @@ class ScheduleViewModel(
         ) { weekNumber, showWeekend, semesterStartMonday, periods, courses ->
             val clampedWeekNumber = clampAcademicWeek(weekNumber)
             val today = LocalDate.now()
+            val coloredCourses = CourseColorMapper.assignColors(courses)
             ScheduleUiState(
                 week = scheduleWeekForNumber(clampedWeekNumber, semesterStartMonday),
                 today = today,
                 currentWeekNumber = academicWeekForDate(today, semesterStartMonday),
                 semesterStartMonday = normalizeSemesterStartMonday(semesterStartMonday),
                 classPeriods = periods,
-                courseBlocks = courses.flatMap { course ->
+                courses = coloredCourses,
+                courseBlocks = coloredCourses.flatMap { course ->
                     course.occurrences
                         .filter { occurrence -> occurrence.isActiveInWeek(clampedWeekNumber) }
                         .map { occurrence -> CourseBlock(course, occurrence) }
@@ -79,6 +84,10 @@ class ScheduleViewModel(
     fun nextWeek() {
         val nextWeek = uiState.value.week.next().number
         viewModelScope.launch { settingsStore.setCurrentWeekNumber(nextWeek) }
+    }
+
+    fun setWeekNumber(weekNumber: Int) {
+        viewModelScope.launch { settingsStore.setCurrentWeekNumber(clampAcademicWeek(weekNumber)) }
     }
 
     fun setShowWeekend(showWeekend: Boolean) {

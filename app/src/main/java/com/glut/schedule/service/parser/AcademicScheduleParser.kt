@@ -1,6 +1,7 @@
 package com.glut.schedule.service.parser
 
 import com.glut.schedule.data.model.CourseOccurrence
+import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
 import java.security.MessageDigest
 
@@ -15,16 +16,16 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
 
         val primary = (parseExplicitCells(html) + parseCourseArrangementRows(html))
             .distinctBy { it.id }
-        if (primary.isNotEmpty()) return primary
+        if (primary.isNotEmpty()) return CourseColorMapper.assignColors(primary)
 
         val timetableGrid = parseGlutStudentTimetableGrid(html)
-        if (timetableGrid.isNotEmpty()) return timetableGrid
+        if (timetableGrid.isNotEmpty()) return CourseColorMapper.assignColors(timetableGrid)
 
         val secondary = (parseGridTable(html) + parseSimpleTable(html))
             .distinctBy { it.id }
-        if (secondary.isNotEmpty()) return secondary
+        if (secondary.isNotEmpty()) return CourseColorMapper.assignColors(secondary)
 
-        return parseTextBased(html)
+        return CourseColorMapper.assignColors(parseTextBased(html))
     }
 
     private fun parseExplicitCells(html: String): List<ScheduleCourse> {
@@ -114,7 +115,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                     title = title,
                     room = occurrences.firstOrNull()?.note?.ifBlank { "待确认" } ?: "待确认",
                     teacher = teacher,
-                    colorHex = colorFor(baseId),
+                    colorHex = CourseColorMapper.colorForCourse(baseId, title),
                     occurrences = occurrences
                 )
             )
@@ -377,7 +378,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                         title = title,
                         room = occurrences.firstOrNull()?.note?.ifBlank { "待确认" } ?: "待确认",
                         teacher = teacher,
-                        colorHex = colorFor(id),
+                        colorHex = CourseColorMapper.colorForCourse(id, title),
                         occurrences = occurrences
                     )
                 )
@@ -429,7 +430,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             title = title,
             room = room.ifBlank { "待确认" },
             teacher = teacher.ifBlank { "待确认" },
-            colorHex = colorFor(id),
+            colorHex = CourseColorMapper.colorForCourse(id, title),
             occurrences = listOf(
                 CourseOccurrence(
                     id = "$id-occurrence",
@@ -530,16 +531,6 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
     private fun stableId(value: String): String {
         val digest = MessageDigest.getInstance("MD5").digest(value.toByteArray())
         return digest.joinToString("") { "%02x".format(it) }.take(12)
-    }
-
-    private fun colorFor(id: String): String {
-        val colors = listOf(
-            "#2F6EEA", "#C87505", "#2687C7", "#2CBF91", "#C77908",
-            "#21B989", "#7C6FE6", "#B9577F", "#E05A3E", "#5B8C5A",
-            "#8B6F47", "#4A7A9E", "#D4756B", "#3E8E7E", "#9B6B9E"
-        )
-        val index = id.fold(0) { acc, char -> acc + char.code }.mod(colors.size)
-        return colors[index]
     }
 
     private val dayNames = listOf("一", "二", "三", "四", "五", "六", "日")

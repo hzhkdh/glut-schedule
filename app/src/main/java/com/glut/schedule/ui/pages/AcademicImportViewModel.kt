@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.service.academic.AcademicImportConfig
 import com.glut.schedule.service.academic.AcademicImportService
@@ -398,9 +399,7 @@ class AcademicImportViewModel(
         val occurrences = parseApiOccurrences(item, id)
         if (occurrences.isEmpty()) return null
 
-        val colors = listOf("#2F6EEA", "#C87505", "#2687C7", "#2CBF91", "#C77908",
-            "#21B989", "#7C6FE6", "#B9577F", "#E05A3E", "#5B8C5A")
-        val colorHex = colors[id.fold(0) { acc, c -> acc + c.code }.mod(colors.size)]
+        val colorHex = CourseColorMapper.colorForCourse(id, title)
 
         return com.glut.schedule.data.model.ScheduleCourse(
             id = id,
@@ -613,10 +612,9 @@ class AcademicImportViewModel(
                     } else emptyList()
                 }
                 if (occurrences.isEmpty()) return null
-                val colors = listOf("#2F6EEA", "#C87505", "#2687C7", "#2CBF91", "#C77908")
                 return com.glut.schedule.data.model.ScheduleCourse(
                     id = id, title = title, room = room, teacher = teacher,
-                    colorHex = colors[id.fold(0) { a, c -> a + c.code }.mod(colors.size)],
+                    colorHex = CourseColorMapper.colorForCourse(id, title),
                     occurrences = occurrences
                 )
             }

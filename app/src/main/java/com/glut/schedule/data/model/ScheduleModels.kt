@@ -132,13 +132,13 @@ fun defaultClassPeriods(): List<ClassPeriod> = listOf(
     ClassPeriod(12, "21:00", "21:45")
 )
 
-fun sampleCourses(): List<ScheduleCourse> = listOf(
+fun sampleCourses(): List<ScheduleCourse> = CourseColorMapper.assignColors(listOf(
     ScheduleCourse(
         id = "digital-logic",
         title = "数字逻辑",
         room = "06408D",
         teacher = "卢佩",
-        colorHex = "#2F6EEA",
+        colorHex = CourseColorMapper.colorForCourse("digital-logic", "数字逻辑"),
         occurrences = listOf(
             CourseOccurrence("digital-logic-tue-1", "digital-logic", 2, 1, 2, "1-16周", ""),
             CourseOccurrence("digital-logic-mon-9", "digital-logic", 1, 9, 10, "1-16周", "")
@@ -149,7 +149,7 @@ fun sampleCourses(): List<ScheduleCourse> = listOf(
         title = "嵌入式系统",
         room = "06104D",
         teacher = "蒋志军",
-        colorHex = "#C87505",
+        colorHex = CourseColorMapper.colorForCourse("embedded", "嵌入式系统"),
         occurrences = listOf(
             CourseOccurrence("embedded-wed-1", "embedded", 3, 1, 2, "1-16周", ""),
             CourseOccurrence("embedded-thu-3", "embedded", 4, 3, 4, "1-16周", "")
@@ -160,7 +160,7 @@ fun sampleCourses(): List<ScheduleCourse> = listOf(
         title = "大学英语4",
         room = "04322Y",
         teacher = "莫梓",
-        colorHex = "#2687C7",
+        colorHex = CourseColorMapper.colorForCourse("english", "大学英语4"),
         occurrences = listOf(
             CourseOccurrence("english-mon-3", "english", 1, 3, 4, "单周", ""),
             CourseOccurrence("english-thu-1", "english", 4, 1, 2, "1-16周", "")
@@ -171,7 +171,7 @@ fun sampleCourses(): List<ScheduleCourse> = listOf(
         title = "机器学习",
         room = "014104J",
         teacher = "石凯",
-        colorHex = "#2CBF91",
+        colorHex = CourseColorMapper.colorForCourse("machine-learning", "机器学习"),
         occurrences = listOf(
             CourseOccurrence("ml-tue-3", "machine-learning", 2, 3, 4, "1-16周", ""),
             CourseOccurrence("ml-tue-5", "machine-learning", 2, 5, 6, "1-16周", "")
@@ -182,7 +182,7 @@ fun sampleCourses(): List<ScheduleCourse> = listOf(
         title = "习近平新时代中国特色社会主义思想概论",
         room = "07120D",
         teacher = "梁英",
-        colorHex = "#C77908",
+        colorHex = CourseColorMapper.colorForCourse("politics", "习近平新时代中国特色社会主义思想概论"),
         occurrences = listOf(
             CourseOccurrence("politics-wed-3", "politics", 3, 3, 4, "1-16周", ""),
             CourseOccurrence("politics-mon-5", "politics", 1, 5, 6, "1-16周", "")
@@ -193,7 +193,7 @@ fun sampleCourses(): List<ScheduleCourse> = listOf(
         title = "操作系统B",
         room = "02418J",
         teacher = "张攀峰",
-        colorHex = "#21B989",
+        colorHex = CourseColorMapper.colorForCourse("os", "操作系统B"),
         occurrences = listOf(
             CourseOccurrence("os-thu-5", "os", 4, 5, 6, "1-16周", ""),
             CourseOccurrence("os-thu-7", "os", 4, 7, 8, "1-16周", "")
@@ -204,7 +204,7 @@ fun sampleCourses(): List<ScheduleCourse> = listOf(
         title = "面向对象程序设计Java",
         room = "04525D",
         teacher = "邓韬",
-        colorHex = "#7C6FE6",
+        colorHex = CourseColorMapper.colorForCourse("java", "面向对象程序设计Java"),
         occurrences = listOf(
             CourseOccurrence("java-wed-7", "java", 3, 7, 8, "1-16周", ""),
             CourseOccurrence("java-tue-9", "java", 2, 9, 10, "1-16周", "")
@@ -215,10 +215,10 @@ fun sampleCourses(): List<ScheduleCourse> = listOf(
         title = "算法设计与分析",
         room = "05207D",
         teacher = "敬超",
-        colorHex = "#B9577F",
+        colorHex = CourseColorMapper.colorForCourse("algorithm", "算法设计与分析"),
         occurrences = listOf(
             CourseOccurrence("algorithm-tue-7", "algorithm", 2, 7, 8, "1-16周", ""),
             CourseOccurrence("algorithm-thu-9", "algorithm", 4, 9, 10, "1-16周", "")
         )
     )
-)
+))
