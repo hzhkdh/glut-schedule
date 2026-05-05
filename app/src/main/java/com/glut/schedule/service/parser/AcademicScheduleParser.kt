@@ -14,12 +14,15 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         require(html.isNotBlank()) { "课表 HTML 不能为空" }
         if (looksLikeNonTimetablePage(html)) return emptyList()
 
-        val primary = (parseExplicitCells(html) + parseCourseArrangementRows(html))
-            .distinctBy { it.id }
+        // 教务“个人课表”同一页可能同时包含属性单元格、完整大节课表、课程安排表和底部补课表。
+        // 旧逻辑在读到任意前置表格后提前返回，会丢掉后面的完整课表和补课时间地点。
+        val primary = mergeCompatibleCourses(
+            parseExplicitCells(html) +
+                parseGlutStudentTimetableGrid(html) +
+                parseCourseArrangementRows(html) +
+                parseSupplementalAdjustmentRows(html)
+        )
         if (primary.isNotEmpty()) return CourseColorMapper.assignColors(primary)
-
-        val timetableGrid = parseGlutStudentTimetableGrid(html)
-        if (timetableGrid.isNotEmpty()) return CourseColorMapper.assignColors(timetableGrid)
 
         val secondary = (parseGridTable(html) + parseSimpleTable(html))
             .distinctBy { it.id }
@@ -59,7 +62,6 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         val room = lines.firstOrNull { it.startsWith("@") || looksLikeRoom(it) }
             ?.removePrefix("@")
             .orEmpty()
-            .ifBlank { "待确认" }
 
         val teacher = lines.firstOrNull { line ->
             line != title &&
@@ -113,7 +115,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                 ScheduleCourse(
                     id = baseId,
                     title = title,
-                    room = occurrences.firstOrNull()?.note?.ifBlank { "待确认" } ?: "待确认",
+                    room = occurrences.firstOrNull()?.note.orEmpty(),
                     teacher = teacher,
                     colorHex = CourseColorMapper.colorForCourse(baseId, title),
                     occurrences = occurrences
@@ -208,13 +210,21 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                 .takeUnless { it.isBlank() }
                 ?: return@mapIndexedNotNull null
 
-            val detailLines = lines.subList(titleIndex + 1, nextTitleIndex)
+            val rawDetailLines = lines.subList(titleIndex + 1, nextTitleIndex)
                 .map { it.trim() }
-                .filter { it.isNotBlank() && !looksLikeClassHourType(it) }
-            val room = detailLines.firstOrNull { looksLikeRoom(it) }.orEmpty()
-            val weekText = detailLines.firstOrNull { looksLikeWeekText(it) || looksLikeCompactWeekText(it) }.orEmpty()
-            val teacher = detailLines.firstOrNull { line ->
-                line != room &&
+                .filter { it.isNotBlank() }
+            val detailLines = rawDetailLines.filter { !looksLikeClassHourType(it) }
+            val roomCandidate = detailLines.getOrNull(0).orEmpty()
+            val room = roomCandidate.takeIf { looksLikeRoom(it) }.orEmpty()
+            val teacherStartIndex = if (room.isBlank()) 0 else 1
+            // 实验课块里会出现“2-1”这类课序字段，它不是周次；优先使用带“周”的显式周次。
+            val weekText = detailLines.drop(teacherStartIndex + 1).firstOrNull { looksLikeExplicitWeekText(it) }
+                ?: detailLines.drop(teacherStartIndex + 1).firstOrNull { looksLikeCompactWeekText(it) }
+                ?: rawDetailLines.firstOrNull { looksLikeExplicitWeekText(it) }
+                ?: detailLines.firstOrNull { looksLikeCompactWeekText(it) }
+                ?: ""
+            val teacher = detailLines.drop(teacherStartIndex).firstOrNull { line ->
+                line != roomCandidate &&
                     line != weekText &&
                     !looksLikeRoom(line) &&
                     !looksLikeWeekText(line) &&
@@ -225,7 +235,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             buildCourse(
                 id = id,
                 title = title,
-                room = room.ifBlank { "待确认" },
+                room = room,
                 teacher = teacher.ifBlank { "待确认" },
                 day = day,
                 startSection = sectionNumber,
@@ -263,7 +273,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             buildCourse(
                 id = id,
                 title = title,
-                room = room.ifBlank { "待确认" },
+                room = room,
                 teacher = teacher.ifBlank { "待确认" },
                 day = day,
                 startSection = sectionNumber,
@@ -275,11 +285,97 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         return results
     }
 
+    private fun parseSupplementalAdjustmentRows(html: String): List<ScheduleCourse> {
+        return rowRegex.findAll(html).mapNotNull { rowMatch ->
+            val cells = tableCellRegex.findAll(rowMatch.value)
+                .map { htmlToLines(it.groupValues[1]).joinToString(" ").trim() }
+                .toList()
+            if (cells.size < 12) return@mapNotNull null
+            if (!cells.first().contains("调课") && !cells.first().contains("补课")) return@mapNotNull null
+
+            val title = cells.getOrNull(2)
+                ?.takeUnless { it.isBlank() || it.contains("课程名") }
+                ?: return@mapNotNull null
+            val teacher = cells.getOrNull(4).orEmpty().ifBlank { "待确认" }
+
+            val makeupBase = cells.size - 5
+            val week = cells.getOrNull(makeupBase + 1)
+                ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() }
+                ?: return@mapNotNull null
+            val day = cells.getOrNull(makeupBase + 2)
+                ?.let { parseWeekdayText(it) }
+                ?: return@mapNotNull null
+            val (start, end) = cells.getOrNull(makeupBase + 3)
+                ?.let { parseSectionRange(it) }
+                ?: return@mapNotNull null
+            val room = cells.getOrNull(makeupBase + 4).orEmpty()
+
+            val id = "import-${stableId("supplemental-$title-$teacher")}"
+            ScheduleCourse(
+                id = id,
+                title = title,
+                room = room,
+                teacher = teacher,
+                colorHex = CourseColorMapper.colorForCourse(id, title),
+                occurrences = listOf(
+                    CourseOccurrence(
+                        id = "$id-makeup-$week-$day-$start-$end",
+                        courseId = id,
+                        dayOfWeek = day,
+                        startSection = start.coerceIn(1, 12),
+                        endSection = end.coerceIn(start, 12),
+                        weekText = "第${week}周",
+                        note = room
+                    )
+                )
+            )
+        }.toList()
+    }
+
     private fun mergeCourseOccurrences(courses: List<ScheduleCourse>): List<ScheduleCourse> {
         return courses.groupBy { it.id }.map { (_, group) ->
             val first = group.first()
             first.copy(occurrences = mergeAdjacentOccurrences(group.flatMap { it.occurrences }))
         }
+    }
+
+    private fun mergeCompatibleCourses(courses: List<ScheduleCourse>): List<ScheduleCourse> {
+        return courses.flatMap { splitCourseByOccurrenceRoom(it) }
+            .groupBy { "${it.title.trim()}|${it.teacher.trim()}|${it.room.trim()}" }
+            .map { (_, group) ->
+                val first = group.first()
+                val room = first.room
+                val occurrences = mergeAdjacentOccurrences(group.flatMap { it.occurrences })
+                    .mapIndexed { index, occurrence ->
+                        occurrence.copy(
+                            id = "${first.id}-occurrence-$index",
+                            courseId = first.id
+                        )
+                    }
+                first.copy(
+                    room = room,
+                    occurrences = occurrences
+                )
+            }
+    }
+
+    private fun splitCourseByOccurrenceRoom(course: ScheduleCourse): List<ScheduleCourse> {
+        return course.occurrences
+            .groupBy { occurrence -> occurrence.note.trim().ifBlank { course.room.trim() } }
+            .map { (room, occurrences) ->
+                val id = "import-${stableId("room-bound-${course.title}-${course.teacher}-$room")}"
+                course.copy(
+                    id = id,
+                    room = room,
+                    occurrences = occurrences.mapIndexed { index, occurrence ->
+                        occurrence.copy(
+                            id = "$id-occurrence-$index",
+                            courseId = id,
+                            note = room
+                        )
+                    }
+                )
+            }
     }
 
     private fun mergeAdjacentOccurrences(occurrences: List<CourseOccurrence>): List<CourseOccurrence> {
@@ -346,7 +442,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                     buildCourse(
                         id = id,
                         title = title,
-                        room = room.ifBlank { "待确认" },
+                        room = room,
                         teacher = "待确认",
                         day = currentDay,
                         startSection = 0,
@@ -376,7 +472,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                     ScheduleCourse(
                         id = id,
                         title = title,
-                        room = occurrences.firstOrNull()?.note?.ifBlank { "待确认" } ?: "待确认",
+                        room = occurrences.firstOrNull()?.note.orEmpty(),
                         teacher = teacher,
                         colorHex = CourseColorMapper.colorForCourse(id, title),
                         occurrences = occurrences
@@ -398,7 +494,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                 val day = dayOfWeek(match.groupValues[2]) ?: return@mapIndexedNotNull null
                 val start = match.groupValues[3].toIntOrNull() ?: return@mapIndexedNotNull null
                 val end = match.groupValues[4].toIntOrNull() ?: start
-                val room = match.groupValues[5].trim().ifBlank { "待确认" }
+                val room = match.groupValues[5].trim()
 
                 CourseOccurrence(
                     id = "$courseId-occurrence-$index",
@@ -428,7 +524,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         return ScheduleCourse(
             id = id,
             title = title,
-            room = room.ifBlank { "待确认" },
+            room = room,
             teacher = teacher.ifBlank { "待确认" },
             colorHex = CourseColorMapper.colorForCourse(id, title),
             occurrences = listOf(
@@ -490,13 +586,31 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
     }
 
     private fun looksLikeWeekText(value: String): Boolean {
-        return value.contains("周") || value.contains("单周") || value.contains("双周") ||
-            Regex("""\d+.*\d*.*周""").containsMatchIn(value) ||
+        return looksLikeExplicitWeekText(value) ||
             looksLikeCompactWeekText(value)
     }
 
+    private fun looksLikeExplicitWeekText(value: String): Boolean {
+        val clean = value.trim()
+        if (clean == "单周" || clean == "双周") return true
+        return (clean.contains("周") || clean.contains("单周") || clean.contains("双周")) &&
+            weekSpanRegex.containsMatchIn(clean)
+    }
+
     private fun looksLikeCompactWeekText(value: String): Boolean {
-        return Regex("""^\d{1,2}(?:-\d{1,2})?(?:\s*[,，]\s*\d{1,2}(?:-\d{1,2})?)*$""").matches(value.trim())
+        val clean = value.trim()
+        if (!compactWeekTextRegex.matches(clean)) return false
+
+        return clean.split(',', '，').all { token ->
+            val parts = token.trim().split("-", "－", "—")
+            val start = parts.getOrNull(0)?.toIntOrNull()
+            val end = parts.getOrNull(1)?.toIntOrNull() ?: start
+            start != null &&
+                end != null &&
+                start in 1..22 &&
+                end in 1..22 &&
+                start <= end
+        }
     }
 
     private fun looksLikeClassHourType(value: String): Boolean {
@@ -517,6 +631,17 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             "日", "天" -> 7
             else -> null
         }
+    }
+
+    private fun parseWeekdayText(value: String): Int? {
+        return dayNames.firstOrNull { value.contains(it) }?.let { dayOfWeek(it) }
+    }
+
+    private fun parseSectionRange(value: String): Pair<Int, Int>? {
+        val match = sectionRangeRegex.find(value) ?: return null
+        val start = match.groupValues[1].toIntOrNull() ?: return null
+        val end = match.groupValues[2].toIntOrNull() ?: start
+        return start to end
     }
 
     private fun looksLikeNonTimetablePage(html: String): Boolean {
@@ -550,5 +675,9 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         val textBasedRegex = Regex(
             """([一-龥a-zA-Z()+]+(?:[A-DB]|[Ⅰ-Ⅻ]|[1-9]|[一二三四五六七八九十]))\s*[：:]?\s*([一-龥]{2,4}(?:老师)?)?[，,\s]*([^，,\n]*(?:星期[一二三四五六日天]\s*第\s*\d{1,2}[、,，至~\-－—]\s*\d{1,2}\s*节[^，,\n]*)+)"""
         )
+        val compactWeekTextRegex = Regex("""^\d{1,2}(?:[-－—]\d{1,2})?(?:\s*[,，]\s*\d{1,2}(?:[-－—]\d{1,2})?)*$""")
+        val sectionRangeRegex = Regex("""第\s*(\d{1,2})\s*(?:[、,，]|至|~|-|－|—)\s*(\d{1,2})\s*节""")
+        val weekNumberRegex = Regex("""(\d{1,2})""")
+        val weekSpanRegex = Regex("""\d{1,2}(?:[-－—]\d{1,2})?""")
     }
 }
