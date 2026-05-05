@@ -85,7 +85,4 @@ app/src/main/java/com/glut/schedule/
 6. 支持自定义背景图片。
 7. 配置正式签名并打包 release APK。
 
-git commit -m "feat: 完成课表首页 UI"
-```
 
-提交前确认没有账号密码、Cookie、Token、本地绝对路径或构建产物被纳入 Git。
