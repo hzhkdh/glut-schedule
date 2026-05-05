@@ -1,0 +1,41 @@
+# Gradle / Android
+.gradle/
+build/
+app/build/
+android/.gradle/
+android/app/build/
+
+# Android local machine config
+local.properties
+
+# Kotlin / generated
+.kotlin/
+.dart_tool/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Local agent/project notes
+CLAUDE.md
+开发文档.txt
+
+# Local design/reference screenshots
+images/
+
+# Secrets
+.env
+*.keystore
+*.jks
+
+# Local diagnostic captures may contain cookies, session ids, usernames, or passwords
+debug/
+
+# Flutter/iOS leftovers if experiments are created later
+ios/Pods/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
