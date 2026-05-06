@@ -31,7 +31,15 @@ data class ScheduleUiState(
     val classPeriods: List<ClassPeriod> = emptyList(),
     val courses: List<ScheduleCourse> = emptyList(),
     val courseBlocks: List<CourseBlock> = emptyList(),
-    val showWeekend: Boolean = false
+    val showWeekend: Boolean = false,
+    val customBackgroundUri: String = ""
+)
+
+private data class ScheduleSettingsUiState(
+    val weekNumber: Int,
+    val showWeekend: Boolean,
+    val semesterStartMonday: LocalDate,
+    val customBackgroundUri: String
 )
 
 class ScheduleViewModel(
@@ -45,21 +53,33 @@ class ScheduleViewModel(
             repository.seedIfEmpty()
         }
 
-        uiState = combine(
+        val settingsState = combine(
             settingsStore.currentWeekNumber,
             settingsStore.showWeekend,
             settingsStore.semesterStartMonday,
+            settingsStore.customBackgroundUri
+        ) { weekNumber, showWeekend, semesterStartMonday, customBackgroundUri ->
+            ScheduleSettingsUiState(
+                weekNumber = weekNumber,
+                showWeekend = showWeekend,
+                semesterStartMonday = semesterStartMonday,
+                customBackgroundUri = customBackgroundUri
+            )
+        }
+
+        uiState = combine(
+            settingsState,
             repository.classPeriods,
             repository.courses
-        ) { weekNumber, showWeekend, semesterStartMonday, periods, courses ->
-            val clampedWeekNumber = clampAcademicWeek(weekNumber)
+        ) { settings, periods, courses ->
+            val clampedWeekNumber = clampAcademicWeek(settings.weekNumber)
             val today = LocalDate.now()
             val coloredCourses = CourseColorMapper.assignColors(courses)
             ScheduleUiState(
-                week = scheduleWeekForNumber(clampedWeekNumber, semesterStartMonday),
+                week = scheduleWeekForNumber(clampedWeekNumber, settings.semesterStartMonday),
                 today = today,
-                currentWeekNumber = academicWeekForDate(today, semesterStartMonday),
-                semesterStartMonday = normalizeSemesterStartMonday(semesterStartMonday),
+                currentWeekNumber = academicWeekForDate(today, settings.semesterStartMonday),
+                semesterStartMonday = normalizeSemesterStartMonday(settings.semesterStartMonday),
                 classPeriods = periods,
                 courses = coloredCourses,
                 courseBlocks = coloredCourses.flatMap { course ->
@@ -67,7 +87,8 @@ class ScheduleViewModel(
                         .filter { occurrence -> occurrence.isActiveInWeek(clampedWeekNumber) }
                         .map { occurrence -> CourseBlock(course, occurrence) }
                 },
-                showWeekend = showWeekend
+                showWeekend = settings.showWeekend,
+                customBackgroundUri = settings.customBackgroundUri
             )
         }.stateIn(
             scope = viewModelScope,
@@ -120,6 +141,14 @@ class ScheduleViewModel(
             settingsStore.setSemesterStartMonday(normalizedStart)
             settingsStore.setCurrentWeekNumber(currentWeekNumber)
         }
+    }
+
+    fun setCustomBackgroundUri(uri: String) {
+        viewModelScope.launch { settingsStore.setCustomBackgroundUri(uri) }
+    }
+
+    fun clearCustomBackground() {
+        viewModelScope.launch { settingsStore.setCustomBackgroundUri("") }
     }
 }
 

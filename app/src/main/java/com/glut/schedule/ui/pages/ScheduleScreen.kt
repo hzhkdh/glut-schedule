@@ -1,5 +1,9 @@
 package com.glut.schedule.ui.pages
 
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -31,7 +35,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -50,7 +53,6 @@ import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.ScheduleHeader
 import com.glut.schedule.ui.components.StarryScheduleBackground
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatterBuilder
 import java.time.format.DateTimeFormatter
@@ -64,8 +66,22 @@ fun ScheduleScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
     var showSettings by remember { mutableStateOf(false) }
+    var showAddActions by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val backgroundPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+        viewModel.setCustomBackgroundUri(uri.toString())
+        showAddActions = false
+    }
     val blocksByWeek = remember(uiState.courses) { courseBlocksByWeek(uiState.courses) }
     val pagerState = rememberPagerState(
         initialPage = pagerPageForWeekNumber(uiState.week.number),
@@ -92,7 +108,7 @@ fun ScheduleScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        StarryScheduleBackground()
+        StarryScheduleBackground(customBackgroundUri = uiState.customBackgroundUri)
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -105,11 +121,13 @@ fun ScheduleScreen(
                 currentWeekNumber = uiState.currentWeekNumber,
                 onImportClick = onImportClick,
                 onAddClick = {
-                    scope.launch { snackbarHostState.showSnackbar("后续阶段接入") }
+                    showAddActions = !showAddActions
+                    showSettings = false
                 },
                 onTodayClick = viewModel::returnToCurrentWeek,
                 onMoreClick = {
                     showSettings = !showSettings
+                    showAddActions = false
                 }
             )
             HorizontalPager(
@@ -135,6 +153,28 @@ fun ScheduleScreen(
                     modifier = Modifier.fillMaxSize()
                 )
             }
+        }
+        if (showAddActions) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { showAddActions = false }
+            )
+            ScheduleAddActionsPanel(
+                hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
+                onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
+                onClearBackground = {
+                    viewModel.clearCustomBackground()
+                    showAddActions = false
+                },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(top = 52.dp, end = 52.dp)
+            )
         }
         if (showSettings) {
             Box(
@@ -166,6 +206,32 @@ fun ScheduleScreen(
                 .padding(horizontal = 16.dp, vertical = 18.dp)
                 .navigationBarsPadding()
         )
+    }
+}
+
+@Composable
+private fun ScheduleAddActionsPanel(
+    hasCustomBackground: Boolean,
+    onPickBackground: () -> Unit,
+    onClearBackground: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        color = Color.Black.copy(alpha = 0.76f),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            TextButton(onClick = onPickBackground) {
+                Text(text = "自定义背景", color = Color.White, fontSize = 13.sp)
+            }
+            TextButton(onClick = onClearBackground, enabled = hasCustomBackground) {
+                Text(text = "恢复默认背景", color = Color.White, fontSize = 13.sp)
+            }
+        }
     }
 }
 

@@ -21,6 +21,7 @@ class ScheduleSettingsStore(
     private val currentWeekKey = intPreferencesKey("current_week")
     private val showWeekendKey = booleanPreferencesKey("show_weekend")
     private val semesterStartMondayKey = stringPreferencesKey("semester_start_monday")
+    private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
 
     val currentWeekNumber: Flow<Int> = context.scheduleSettings.data.map { preferences ->
         clampAcademicWeek(preferences[currentWeekKey] ?: 9)
@@ -35,6 +36,10 @@ class ScheduleSettingsStore(
             ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
             ?.let(::normalizeSemesterStartMonday)
             ?: DEFAULT_SEMESTER_START_MONDAY
+    }
+
+    val customBackgroundUri: Flow<String> = context.scheduleSettings.data.map { preferences ->
+        preferences[customBackgroundUriKey].orEmpty()
     }
 
     suspend fun setCurrentWeekNumber(week: Int) {
@@ -52,6 +57,17 @@ class ScheduleSettingsStore(
     suspend fun setSemesterStartMonday(date: LocalDate) {
         context.scheduleSettings.edit { preferences ->
             preferences[semesterStartMondayKey] = normalizeSemesterStartMonday(date).toString()
+        }
+    }
+
+    suspend fun setCustomBackgroundUri(uri: String) {
+        context.scheduleSettings.edit { preferences ->
+            val trimmed = uri.trim()
+            if (trimmed.isBlank()) {
+                preferences.remove(customBackgroundUriKey)
+            } else {
+                preferences[customBackgroundUriKey] = trimmed
+            }
         }
     }
 }

@@ -1,15 +1,55 @@
 package com.glut.schedule.ui.components
 
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 
 @Composable
-fun StarryScheduleBackground(modifier: Modifier = Modifier) {
+fun StarryScheduleBackground(
+    modifier: Modifier = Modifier,
+    customBackgroundUri: String = ""
+) {
+    val context = LocalContext.current
+    var customBitmap by remember(customBackgroundUri) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(customBackgroundUri) {
+        customBitmap = if (shouldUseCustomBackground(customBackgroundUri)) {
+            runCatching {
+                context.contentResolver.openInputStream(Uri.parse(customBackgroundUri))?.use { input ->
+                    BitmapFactory.decodeStream(input)?.asImageBitmap()
+                }
+            }.getOrNull()
+        } else {
+            null
+        }
+    }
+    customBitmap?.let { bitmap ->
+        Image(
+            bitmap = bitmap,
+            contentDescription = null,
+            modifier = modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        Canvas(modifier = modifier.fillMaxSize()) {
+            drawRect(Color(0x99000000))
+        }
+        return
+    }
+
     Canvas(modifier = modifier.fillMaxSize()) {
         drawRect(
             brush = Brush.linearGradient(
@@ -40,4 +80,8 @@ fun StarryScheduleBackground(modifier: Modifier = Modifier) {
         }
         drawRect(Color(0x66000000))
     }
+}
+
+fun shouldUseCustomBackground(uri: String): Boolean {
+    return uri.isNotBlank()
 }
