@@ -56,6 +56,16 @@ fun isTimetablePage(url: String): Boolean {
     return AcademicImportConfig.timetableUrlPatterns.any { it.containsMatchIn(url) }
 }
 
+fun isPersonalTimetablePage(url: String): Boolean {
+    return url.contains("showTimetable.do", ignoreCase = true) &&
+        url.contains("timetableType=STUDENT", ignoreCase = true)
+}
+
+fun isClassTimetablePage(url: String): Boolean {
+    return url.contains("showTimetable.do", ignoreCase = true) &&
+        url.contains("timetableType=CLASS", ignoreCase = true)
+}
+
 fun isLoginPage(url: String): Boolean {
     return AcademicImportConfig.loginPagePatterns.any { it.containsMatchIn(url) }
 }

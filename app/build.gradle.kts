@@ -1,3 +1,5 @@
+import com.android.build.gradle.internal.api.BaseVariantOutputImpl
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,8 +15,8 @@ android {
         applicationId = "com.glut.schedule"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = 6
+        versionName = "0.1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -43,6 +45,14 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    applicationVariants.all {
+        if (buildType.name == "release") {
+            outputs.all {
+                (this as BaseVariantOutputImpl).outputFileName = "release_$versionName.apk"
+            }
+        }
     }
 }
 

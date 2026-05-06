@@ -4,6 +4,8 @@ import com.glut.schedule.service.academic.AcademicImportConfig
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.hasUsableAcademicCookie
 import com.glut.schedule.service.academic.isAcademicPage
+import com.glut.schedule.service.academic.isClassTimetablePage
+import com.glut.schedule.service.academic.isPersonalTimetablePage
 import com.glut.schedule.service.academic.sanitizeDebugUrl
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
@@ -36,6 +38,17 @@ class AcademicImportTest {
     }
 
     @Test
+    fun timetablePageTypeDetectionSeparatesPersonalAndClassSchedules() {
+        val personal = "http://jw.glut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=999999&yearid=46&termid=1&timetableType=STUDENT&sectionType=BASE"
+        val classPage = "http://jw.glut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=123&yearid=46&termid=1&timetableType=CLASS&sectionType=BASE"
+
+        assertTrue(isPersonalTimetablePage(personal))
+        assertFalse(isClassTimetablePage(personal))
+        assertTrue(isClassTimetablePage(classPage))
+        assertFalse(isPersonalTimetablePage(classPage))
+    }
+
+    @Test
     fun directTimetableUrlDoesNotHardcodeASpecificStudent() {
         val url = AcademicImportConfig.directTimetableUrl
 
@@ -51,6 +64,16 @@ class AcademicImportTest {
 
         assertTrue(urls.contains(captured))
         assertFalse(urls.any { it.contains("id=712170") })
+    }
+
+    @Test
+    fun apiProbeUrlsRejectClassTimetableUrls() {
+        val classUrl = "http://jw.glut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=123&yearid=46&termid=1&timetableType=CLASS&sectionType=BASE"
+        val studentUrl = "http://jw.glut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=999999&yearid=46&termid=1&timetableType=STUDENT&sectionType=BASE"
+
+        val urls = ApiProbeService.buildProbeUrls(listOf(classUrl, studentUrl))
+
+        assertEquals(listOf(studentUrl), urls)
     }
 
     @Test
@@ -201,6 +224,45 @@ class AcademicImportTest {
         )
 
         assertEquals(gridHtml, service.extractTimetableHtml(listOf(currcourse, grid)))
+    }
+
+    @Test
+    fun apiProbeNeverSelectsClassTimetableHtml() {
+        val service = ApiProbeService()
+        val classGridHtml = """
+            <html><body>
+              <table id="timetable">
+                <tr><th>&nbsp;</th><th>周一</th><th>周二</th></tr>
+                <tr><th>第1节</th><td></td><td>&lt;&lt;班级公共课&gt;&gt;<br>06408D<br>教师<br>1-16周</td></tr>
+              </table>
+            </body></html>
+        """.trimIndent()
+        val studentGridHtml = """
+            <html><body>
+              <table id="timetable">
+                <tr><th>&nbsp;</th><th>周一</th><th>周二</th></tr>
+                <tr><th>第1节</th><td></td><td>&lt;&lt;历史选修课&gt;&gt;<br>线上教学<br>教师<br>1-16周</td></tr>
+              </table>
+            </body></html>
+        """.trimIndent()
+        val classGrid = ApiProbeService.ProbeResult(
+            url = "http://jw.glut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=123&yearid=46&termid=1&timetableType=CLASS&sectionType=BASE",
+            method = "GET",
+            httpCode = 200,
+            contentType = "text/html;charset=UTF-8",
+            body = classGridHtml,
+            bodyLength = classGridHtml.length
+        )
+        val studentGrid = ApiProbeService.ProbeResult(
+            url = "http://jw.glut.edu.cn/academic/manager/coursearrange/showTimetable.do?id=999999&yearid=46&termid=1&timetableType=STUDENT&sectionType=BASE",
+            method = "GET",
+            httpCode = 200,
+            contentType = "text/html;charset=UTF-8",
+            body = studentGridHtml,
+            bodyLength = studentGridHtml.length
+        )
+
+        assertEquals(studentGridHtml, service.extractTimetableHtml(listOf(classGrid, studentGrid)))
     }
 
     @Test

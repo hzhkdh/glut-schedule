@@ -1,6 +1,7 @@
 package com.glut.schedule.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -24,7 +25,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -191,47 +191,42 @@ private fun CourseCard(
             .clip(RoundedCornerShape(11.dp))
             .clipToBounds()
             .background(color)
-            .padding(horizontal = 4.dp, vertical = 4.dp)
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         Text(
             text = block.course.title,
             color = Color.White,
             fontWeight = FontWeight.Bold,
             fontSize = titleSize,
-            lineHeight = titleLineHeight,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            lineHeight = titleLineHeight
         )
         Text(
             text = "@${block.course.room}",
             color = Color.White,
             fontSize = 9.sp,
             lineHeight = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            fontWeight = FontWeight.SemiBold
         )
         Text(
             text = block.course.teacher,
             color = Color.White.copy(alpha = 0.95f),
             fontSize = 9.sp,
-            lineHeight = 10.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            lineHeight = 10.sp
         )
     }
 }
 
 private fun compactTitleSize(title: String): TextUnit = when {
-    title.length > 18 -> 7.sp
-    title.length > 12 -> 8.sp
-    title.length > 8 -> 9.sp
+    title.length > 18 -> 6.sp
+    title.length > 12 -> 7.sp
+    title.length > 8 -> 8.sp
     else -> 11.sp
 }
 
 private fun compactLineHeight(fontSize: TextUnit): TextUnit = when (fontSize) {
+    6.sp -> 7.sp
     7.sp -> 8.sp
     8.sp -> 9.sp
-    9.sp -> 10.sp
     else -> 12.sp
 }

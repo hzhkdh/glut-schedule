@@ -318,6 +318,8 @@ class ApiProbeService {
         val body = result.body
         val trimmed = body.trimStart()
         if (trimmed.startsWith("{") || trimmed.startsWith("[")) return 0
+        if (isClassTimetableResult(result)) return 0
+        if (isShowTimetableResult(result) && !isStudentTimetableResult(result)) return 0
         if (!body.contains("<table", ignoreCase = true) && !body.contains("<td", ignoreCase = true)) return 0
         if (body.contains("学年传递错误") ||
             body.contains("学生只能查看本人课表") ||
@@ -339,6 +341,21 @@ class ApiProbeService {
         if (body.contains("星期") && body.contains("第") && body.contains("节")) score += 3
         if (body.contains("暂无数据") && score < 10) return 0
         return score.takeIf { it >= 8 } ?: 0
+    }
+
+    private fun isShowTimetableResult(result: ProbeResult): Boolean {
+        return result.url.contains("showTimetable.do", ignoreCase = true)
+    }
+
+    private fun isStudentTimetableResult(result: ProbeResult): Boolean {
+        return result.url.contains("timetableType=STUDENT", ignoreCase = true) ||
+            result.body.contains("timetableType=STUDENT", ignoreCase = true)
+    }
+
+    private fun isClassTimetableResult(result: ProbeResult): Boolean {
+        return result.url.contains("timetableType=CLASS", ignoreCase = true) ||
+            result.body.contains("timetableType=CLASS", ignoreCase = true) ||
+            result.body.contains("班级课表")
     }
 
     private fun looksLikeTimetableJson(body: String): Boolean {

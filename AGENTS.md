@@ -27,7 +27,7 @@ Key commands:
 .\gradlew.bat clean                  # remove Gradle build outputs
 ```
 
-APK outputs: `app/build/outputs/apk/debug/app-debug.apk` and `app/build/outputs/apk/release/app-release.apk`.
+APK outputs: `app/build/outputs/apk/debug/app-debug.apk` and `app/build/outputs/apk/release/release_<version>.apk`.
 
 ## Coding Style & Naming Conventions
 

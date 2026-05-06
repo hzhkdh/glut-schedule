@@ -16,6 +16,7 @@ import com.glut.schedule.service.academic.AcademicTodayPlanParser
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.DebugCaptureService
 import com.glut.schedule.service.academic.hasUsableAcademicCookie
+import com.glut.schedule.service.academic.isClassTimetablePage
 import com.glut.schedule.service.academic.isTimetablePage
 import com.glut.schedule.service.parser.AcademicScheduleParser
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -145,6 +146,22 @@ class AcademicImportViewModel(
             sessionStore.saveHtmlPreview(html)
 
             val diagnostics = StringBuilder()
+
+            if (isClassTimetablePage(operationState.value.currentUrl)) {
+                diagnostics.appendLine("当前页面是班级课表，跳过页面HTML导入，改用登录态个人课表接口")
+                if (tryImportFromSessionApi(diagnostics, "班级课表页面触发后的个人课表探测")) {
+                    return@launch
+                }
+                val fileMsg = captureService.saveHtmlToFile(html, "class_timetable_skipped")
+                operationState.update {
+                    it.copy(
+                        isFetching = false,
+                        debugInfo = "$diagnostics\n\n$fileMsg",
+                        message = "检测到班级课表，已阻止导入；未找到可用个人课表接口"
+                    )
+                }
+                return@launch
+            }
 
             diagnostics.appendLine("HTML 长度: ${html.length} 字符")
             diagnostics.appendLine("含 '课表': ${html.contains("课表")}")
@@ -623,10 +640,15 @@ class AcademicImportViewModel(
             true
         )
         operationState.update {
+            val importedFromTodayPlanOnly = courses.all { course -> course.id.startsWith("today-") }
             it.copy(
                 isFetching = false,
                 debugInfo = diagnostics.toString(),
-                message = "已成功导入 ${courses.size} 门课程，返回首页查看",
+                message = if (importedFromTodayPlanOnly) {
+                    "仅导入今日课程 ${courses.size} 门；未拿到完整个人课表"
+                } else {
+                    "已成功导入 ${courses.size} 门个人课表课程，返回首页查看"
+                },
                 importedCourseCount = courses.size
             )
         }
@@ -650,7 +672,7 @@ class AcademicImportViewModel(
                 emptyList()
             }
             if (shouldUseParsedCourses(courses, calendar, results, diagnostics, "HTML课表接口")) {
-                return courses
+                return mergeWithTodayPlanIfUseful(courses, results, calendar, diagnostics)
             }
             diagnostics.appendLine("HTML课表接口未得到可用课程")
         }
@@ -666,7 +688,7 @@ class AcademicImportViewModel(
                 emptyList()
             }
             if (shouldUseParsedCourses(courses, calendar, results, diagnostics, "JSON课表接口")) {
-                return courses
+                return mergeWithTodayPlanIfUseful(courses, results, calendar, diagnostics)
             }
             diagnostics.appendLine("JSON课表接口未得到可用课程")
         }
@@ -686,6 +708,33 @@ class AcademicImportViewModel(
         return emptyList()
     }
 
+    private fun mergeWithTodayPlanIfUseful(
+        courses: List<ScheduleCourse>,
+        results: List<ApiProbeService.ProbeResult>,
+        calendar: ApiProbeService.AcademicCalendar?,
+        diagnostics: StringBuilder
+    ): List<ScheduleCourse> {
+        val todayPlan = ApiProbeService.findTodayPlanJsonResult(results) ?: return courses
+        val currentWeek = calendar?.currentWeekNumber ?: return courses
+        val todayCourses = AcademicTodayPlanParser.parse(todayPlan.body, currentWeek)
+        if (todayCourses.isEmpty()) return courses
+
+        val existingSlots = courses.flatMap { course ->
+            course.occurrences.map { occurrence ->
+                "${course.title}|${occurrence.dayOfWeek}|${occurrence.startSection}|${occurrence.endSection}"
+            }
+        }.toSet()
+        val additions = todayCourses.filter { course ->
+            course.occurrences.any { occurrence ->
+                "${course.title}|${occurrence.dayOfWeek}|${occurrence.startSection}|${occurrence.endSection}" !in existingSlots
+            }
+        }
+        if (additions.isEmpty()) return courses
+
+        diagnostics.appendLine("今日计划补充 ${additions.size} 门当天课程；完整个人课表仍作为主数据源")
+        return courses + additions
+    }
+
     private fun shouldUseParsedCourses(
         courses: List<ScheduleCourse>,
         calendar: ApiProbeService.AcademicCalendar?,
@@ -699,11 +748,8 @@ class AcademicImportViewModel(
             course.occurrences.count { occurrence -> occurrence.isActiveInWeek(currentWeek) }
         }
         diagnostics.appendLine("$source 解析出 ${courses.size} 门课程，第${currentWeek}周可显示课程块: $activeBlockCount")
-        if (activeBlockCount > 0) return true
-
-        if (ApiProbeService.findTodayPlanJsonResult(results) != null) {
-            diagnostics.appendLine("$source 当前周没有可显示课程块，继续尝试今日课程计划兜底")
-            return false
+        if (activeBlockCount == 0 && ApiProbeService.findTodayPlanJsonResult(results) != null) {
+            diagnostics.appendLine("$source 当前周暂未匹配到课程块，但不会用当天计划覆盖完整课表")
         }
         return true
     }
