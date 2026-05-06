@@ -28,7 +28,15 @@ class ApiProbeService {
         val bodyLength: Int
     )
 
-    suspend fun probeAllEndpoints(cookie: String): List<ProbeResult> = withContext(Dispatchers.IO) {
+    data class AcademicCalendar(
+        val currentWeekNumber: Int,
+        val semesterStartMonday: LocalDate
+    )
+
+    suspend fun probeAllEndpoints(
+        cookie: String,
+        capturedTimetableUrls: List<String> = emptyList()
+    ): List<ProbeResult> = withContext(Dispatchers.IO) {
         val results = mutableListOf<ProbeResult>()
         val baseHeaders = mapOf(
             "Cookie" to cookie,
@@ -37,18 +45,6 @@ class ApiProbeService {
             "Accept-Language" to "zh-CN,zh;q=0.9",
             "Referer" to "http://jw.glut.edu.cn/academic/preGotoAffairFrame.do"
         )
-
-        val yearIds = listOf(
-            AcademicImportConfig.defaultYearId.toInt(),
-            47,
-            45,
-            44
-        ).distinct()
-        val termIds = listOf(
-            AcademicImportConfig.defaultTermId.toInt(),
-            2,
-            3
-        ).distinct()
 
         fun probeGet(url: String) {
             try {
@@ -84,41 +80,163 @@ class ApiProbeService {
             }
         }
 
-        for (yid in yearIds) {
-            for (tid in termIds) {
-                probeGet(
-                    AcademicImportConfig.buildStudentTimetableUrl(
-                        yearId = yid.toString(),
-                        termId = tid.toString()
-                    )
-                )
-            }
-        }
+        buildProbeUrls(capturedTimetableUrls).forEach(::probeGet)
 
+        probePost("http://jw.glut.edu.cn/academic/personal/framePage.do")
         probeGet("http://jw.glut.edu.cn/academic/manager/coursearrange/graphicalBasicInfo.do")
+        buildCurrentStudentTimetableUrls(results).forEach(::probeGet)
+
+        // 登录后的传统“本学期课程安排”页面，只作为 showTimetable 网格页失败时的兜底。
+        probeGet("http://jw.glut.edu.cn/academic/student/currcourse/currcourse.jsdo")
+
         val today = LocalDate.now()
         probePost("http://jw.glut.edu.cn/academic/personal/currentTodayPlan.do?currentDate=${today.year}-${today.monthValue}-${today.dayOfMonth}")
         probePost("http://jw.glut.edu.cn/academic/personal/moduleMenu.do")
-        probePost("http://jw.glut.edu.cn/academic/personal/framePage.do")
         probePost("http://jw.glut.edu.cn/academic/personal/myTodo.do")
-        probeGet(AcademicImportConfig.directTimetableUrl)
 
-        probeGet("http://jw.glut.edu.cn/academic/student/currcourse/currcourse.jsdo")
         probeGet("http://jw.glut.edu.cn/academic/student/timetable/timetable.do")
         probeGet("http://jw.glut.edu.cn/academic/student/coursetable/coursetable.do")
 
         results
     }
 
+    companion object {
+        fun buildProbeUrls(capturedTimetableUrls: List<String>): List<String> {
+            return capturedTimetableUrls
+                .asSequence()
+                .map { it.trim() }
+                .filter { it.contains("showTimetable.do", ignoreCase = true) }
+                .filter { it.contains("timetableType=STUDENT", ignoreCase = true) }
+                .filter { Regex("""[?&]id=\d+""").containsMatchIn(it) }
+                .distinct()
+                .toList()
+        }
+
+        fun buildCurrentStudentTimetableUrls(results: List<ProbeResult>): List<String> {
+            val frameBodies = results
+                .filter { result ->
+                    result.url.contains("/personal/framePage.do", ignoreCase = true) ||
+                        (result.body.contains("schoolCalendarAlias") && result.body.contains("\"user\""))
+                }
+                .map { it.body }
+
+            val studentId = frameBodies.firstNotNullOfOrNull { body ->
+                Regex(""""user"\s*:\s*\{[^}]*"id"\s*:\s*(\d+)""")
+                    .find(body)
+                    ?.groupValues
+                    ?.get(1)
+            }.orEmpty()
+            if (studentId.isBlank()) return emptyList()
+
+            val yearCandidates = buildList {
+                frameBodies.forEach { body ->
+                    Regex(""""schoolCalendarAlias"\s*:\s*"(\d{4})([春秋])"""")
+                        .find(body)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                        ?.toIntOrNull()
+                        ?.let { calendarYear ->
+                            val academicYearId = calendarYear - 1980
+                            add(academicYearId.toString())
+                            add((academicYearId - 1).toString())
+                            add((academicYearId + 1).toString())
+                        }
+                    Regex(""""year"\s*:\s*"(\d{4})"""")
+                        .find(body)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                        ?.toIntOrNull()
+                        ?.let { add((it - 1980).toString()) }
+                }
+                results.forEach { result ->
+                    Regex(""""arrangeCourseYear"\s*:\s*(\d+)""")
+                        .find(result.body)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                        ?.takeIf { it.toIntOrNull() != null }
+                        ?.let(::add)
+                }
+                add(AcademicImportConfig.defaultYearId)
+            }.distinct().filter { it.toIntOrNull() in 1..99 }.take(6)
+
+            val termCandidates = buildList {
+                frameBodies.forEach { body ->
+                    Regex(""""schoolCalendarAlias"\s*:\s*"\d{4}([春秋])"""")
+                        .find(body)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                        ?.let { add(if (it == "秋") "2" else "1") }
+                    Regex(""""term"\s*:\s*"([春秋])"""")
+                        .find(body)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                        ?.let { add(if (it == "秋") "2" else "1") }
+                }
+                results.forEach { result ->
+                    Regex(""""arrangeCourseTerm"\s*:\s*(\d+)""")
+                        .find(result.body)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                        ?.takeIf { it.toIntOrNull() != null }
+                        ?.let(::add)
+                }
+                add(AcademicImportConfig.defaultTermId)
+                add("2")
+            }.distinct().filter { it.toIntOrNull() in 1..3 }.take(3)
+
+            return yearCandidates.flatMap { yearId ->
+                termCandidates.map { termId ->
+                    AcademicImportConfig.buildStudentTimetableUrl(
+                        studentId = studentId,
+                        yearId = yearId,
+                        termId = termId
+                    )
+                }
+            }
+        }
+
+        fun extractAcademicCalendar(results: List<ProbeResult>): AcademicCalendar? {
+            val body = results.firstOrNull { result ->
+                result.url.contains("/personal/framePage.do", ignoreCase = true) ||
+                    result.body.contains("schoolCalendarStartDate")
+            }?.body ?: return null
+
+            val currentWeek = Regex(""""whichweek"\s*:\s*(\d{1,2})""")
+                .find(body)
+                ?.groupValues
+                ?.get(1)
+                ?.toIntOrNull()
+                ?: return null
+            val semesterStart = Regex(""""schoolCalendarStartDate"\s*:\s*"(\d{4}-\d{2}-\d{2})"""")
+                .find(body)
+                ?.groupValues
+                ?.get(1)
+                ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
+                ?: return null
+
+            return AcademicCalendar(
+                currentWeekNumber = currentWeek,
+                semesterStartMonday = semesterStart
+            )
+        }
+
+        fun findTodayPlanJsonResult(results: List<ProbeResult>): ProbeResult? {
+            return results.firstOrNull { result ->
+                result.httpCode == 200 &&
+                    result.url.contains("/personal/currentTodayPlan.do", ignoreCase = true) &&
+                    result.body.trimStart().startsWith("{") &&
+                    result.body.contains(""""data"""") &&
+                    result.body.contains(""""arrangeDate"""") &&
+                    result.body.contains(""""time"""") &&
+                    result.body.contains(""""name"""")
+            }
+        }
+    }
+
     fun analyzeResults(results: List<ProbeResult>): ApiProbeAnalysis {
         val successful = results.filter { it.httpCode == 200 && it.bodyLength > 500 }
         val timetableCandidates = successful.filter { r ->
-            val body = r.body
-            (body.contains("课表") || body.contains("课程") || body.contains("星期") ||
-                body.contains("周一") || body.contains("timetable", ignoreCase = true) ||
-                body.contains("course", ignoreCase = true)) &&
-                !body.contains("学年传递错误") && !body.contains("登录") &&
-                !body.contains("暂无数据")
+            timetableHtmlScore(r) > 0 || looksLikeTimetableJson(r.body)
         }
         val jsonResponses = successful.filter {
             it.contentType.contains("json") || it.body.trimStart().startsWith("{") ||
@@ -169,26 +287,80 @@ class ApiProbeService {
             }
     }
 
-    fun extractTimetableHtml(results: List<ProbeResult>): String? {
+    fun findTimetableHtmlResult(results: List<ProbeResult>): ProbeResult? {
         return results
-            .filter { it.httpCode == 200 && it.bodyLength > 500 }
+            .asSequence()
+            .filter { it.httpCode == 200 && it.body.length > 100 }
+            .map { it to timetableHtmlScore(it) }
+            .filter { (_, score) -> score > 0 }
+            .sortedByDescending { (_, score) -> score }
+            .firstOrNull()
+            ?.first
+    }
+
+    fun extractTimetableHtml(results: List<ProbeResult>): String? {
+        return findTimetableHtmlResult(results)?.body
+    }
+
+    fun findTimetableJsonResult(results: List<ProbeResult>): ProbeResult? {
+        return results
+            .filter { it.httpCode == 200 && it.body.length > 100 }
             .firstOrNull { r ->
-                val body = r.body
-                body.contains("周一") && body.contains("节") &&
-                    (body.contains("<table") || body.contains("<td")) &&
-                    !body.contains("学年传递错误") &&
-                    !body.contains("暂无数据")
-            }?.body
+                looksLikeTimetableJson(r.body)
+            }
     }
 
     fun extractTimetableJson(results: List<ProbeResult>): String? {
-        return results
-            .filter { it.httpCode == 200 && it.bodyLength > 100 }
-            .firstOrNull { r ->
-                val body = r.body.trimStart()
-                (body.startsWith("{") || body.startsWith("[")) &&
-                    (body.contains("course") || body.contains("课程") ||
-                        body.contains("课表") || body.contains("timetable"))
-            }?.body
+        return findTimetableJsonResult(results)?.body
+    }
+
+    private fun timetableHtmlScore(result: ProbeResult): Int {
+        val body = result.body
+        val trimmed = body.trimStart()
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) return 0
+        if (!body.contains("<table", ignoreCase = true) && !body.contains("<td", ignoreCase = true)) return 0
+        if (body.contains("学年传递错误") ||
+            body.contains("学生只能查看本人课表") ||
+            (body.contains("登录") && body.contains("密码") && !body.contains("课程名称"))
+        ) return 0
+
+        var score = 0
+        if (result.url.contains("showTimetable.do", ignoreCase = true)) score += 30
+        if (body.contains("""id="timetable"""", ignoreCase = true) ||
+            body.contains("""id='timetable'""", ignoreCase = true)
+        ) score += 15
+        if (body.contains("<<") && body.contains(">>")) score += 8
+        if (body.contains("周一") || body.contains("星期一")) score += 4
+        if (result.url.contains("currcourse", ignoreCase = true)) score += 10
+        if (body.contains("本学期课程安排")) score += 8
+        if (body.contains("课程名称")) score += 4
+        if (body.contains("任课教师") || body.contains("教师")) score += 3
+        if (body.contains("上课时间") && body.contains("地点")) score += 5
+        if (body.contains("星期") && body.contains("第") && body.contains("节")) score += 3
+        if (body.contains("暂无数据") && score < 10) return 0
+        return score.takeIf { it >= 8 } ?: 0
+    }
+
+    private fun looksLikeTimetableJson(body: String): Boolean {
+        val trimmed = body.trimStart()
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false
+
+        val hasTitle = body.contains("课程名称") ||
+            body.contains("courseName", ignoreCase = true) ||
+            body.contains("kcmc", ignoreCase = true)
+        val hasTeacher = body.contains("任课教师") ||
+            body.contains("teacher", ignoreCase = true) ||
+            body.contains("jsxm", ignoreCase = true)
+        val hasRoom = body.contains("教室") ||
+            body.contains("地点") ||
+            body.contains("room", ignoreCase = true) ||
+            body.contains("jsmc", ignoreCase = true)
+        val hasTime = body.contains("上课时间") ||
+            body.contains("sksj", ignoreCase = true) ||
+            body.contains("dayOfWeek", ignoreCase = true) ||
+            body.contains("startSection", ignoreCase = true) ||
+            body.contains("arrangeDate", ignoreCase = true)
+
+        return hasTitle && hasTeacher && hasRoom && hasTime
     }
 }

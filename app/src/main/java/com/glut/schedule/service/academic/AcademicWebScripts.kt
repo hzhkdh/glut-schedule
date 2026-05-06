@@ -225,14 +225,37 @@ object AcademicWebScripts {
     }
 
     fun navigateToDirectTimetableUrl(): String {
-        val directUrl = AcademicImportConfig.directTimetableUrl
         return """
             (function(){
-              var url = '$directUrl';
-
+              function normalize(url) {
+                try { return new URL(url, location.href).href; } catch(e) { return ''; }
+              }
+              var links = Array.prototype.slice.call(document.querySelectorAll('a[href], iframe[src], frame[src]'));
+              for (var i = 0; i < links.length; i++) {
+                var raw = links[i].getAttribute('href') || links[i].getAttribute('src') || '';
+                var url = normalize(raw);
+                if (url.indexOf('showTimetable.do') >= 0 &&
+                    url.indexOf('timetableType=STUDENT') >= 0 &&
+                    /[?&]id=\d+/.test(url)) {
+                  location.href = url;
+                  return 'navigating_captured:' + url;
+                }
+              }
               try {
-                window.location.href = url;
-                return 'navigating:' + url;
+                var keywords = ['个人课表', '本学期课表', '学生课表', '我的课表'];
+                var nodes = Array.prototype.slice.call(document.querySelectorAll('li, span, div, a, button'));
+                for (var j = 0; j < nodes.length; j++) {
+                  var text = (nodes[j].innerText || nodes[j].textContent || '').replace(/\s+/g, '');
+                  for (var k = 0; k < keywords.length; k++) {
+                    if (text === keywords[k] || text.indexOf(keywords[k]) >= 0) {
+                      var clickable = nodes[j].closest('li, a, button, [role="menuitem"], [role="treeitem"]') || nodes[j];
+                      clickable.scrollIntoView({block: 'center'});
+                      clickable.click();
+                      return 'clicked_menu:' + text.slice(0, 30);
+                    }
+                  }
+                }
+                return 'not_found:no_current_user_timetable_link';
               } catch(e) {
                 return 'error:' + e.message;
               }

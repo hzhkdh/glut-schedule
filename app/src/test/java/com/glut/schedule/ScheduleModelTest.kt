@@ -8,7 +8,6 @@ import com.glut.schedule.data.model.defaultClassPeriods
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
-import com.glut.schedule.data.model.sampleCourses
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -23,16 +22,6 @@ class ScheduleModelTest {
         assertEquals(LocalDate.of(2026, 4, 27), current.previous().monday)
         assertEquals(10, current.next().number)
         assertEquals(LocalDate.of(2026, 5, 11), current.next().monday)
-    }
-
-    @Test
-    fun sampleCoursesContainPersonalCourseDetails() {
-        val courses = sampleCourses()
-
-        assertTrue(courses.isNotEmpty())
-        assertTrue(courses.all { it.title.isNotBlank() })
-        assertTrue(courses.all { it.teacher.isNotBlank() })
-        assertTrue(courses.all { it.room.isNotBlank() })
     }
 
     @Test

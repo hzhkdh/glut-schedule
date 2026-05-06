@@ -21,6 +21,9 @@ interface ScheduleDao {
     @Query("SELECT COUNT(*) FROM courses")
     suspend fun courseCount(): Int
 
+    @Query("SELECT id FROM courses")
+    suspend fun courseIds(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCourses(courses: List<CourseEntity>)
 
@@ -35,6 +38,12 @@ interface ScheduleDao {
 
     @Query("DELETE FROM course_occurrences")
     suspend fun deleteOccurrences()
+
+    @Query("DELETE FROM courses WHERE id IN (:courseIds)")
+    suspend fun deleteCoursesByIds(courseIds: List<String>)
+
+    @Query("DELETE FROM course_occurrences WHERE courseId IN (:courseIds)")
+    suspend fun deleteOccurrencesForCourses(courseIds: List<String>)
 
     @Transaction
     suspend fun replaceCourses(

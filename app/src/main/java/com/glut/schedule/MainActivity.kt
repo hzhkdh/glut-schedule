@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
                         sessionStore = container.academicSessionStore,
                         importService = container.academicImportService,
                         scheduleRepository = container.scheduleRepository,
+                        settingsStore = container.settingsStore,
                         parser = container.academicScheduleParser,
                         captureService = container.captureService,
                         apiProbeService = container.apiProbeService

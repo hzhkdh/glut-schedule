@@ -7,7 +7,6 @@ import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.defaultClassPeriods
-import com.glut.schedule.data.model.sampleCourses
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -30,11 +29,18 @@ class ScheduleRepository(
     suspend fun seedIfEmpty() {
         dao.insertClassPeriods(defaultClassPeriods().map { it.toEntity() })
 
-        if (dao.courseCount() > 0) return
+        if (dao.courseCount() > 0) {
+            clearLegacyBundledSampleCoursesIfPresent()
+        }
+    }
 
-        val courses = sampleCourses()
-        dao.insertCourses(courses.map { it.toEntity() })
-        dao.insertOccurrences(courses.flatMap { course -> course.occurrences.map { it.toEntity() } })
+    private suspend fun clearLegacyBundledSampleCoursesIfPresent() {
+        val ids = dao.courseIds().toSet()
+        if (ids == legacyBundledSampleCourseIds) {
+            val legacyIds = legacyBundledSampleCourseIds.toList()
+            dao.deleteOccurrencesForCourses(legacyIds)
+            dao.deleteCoursesByIds(legacyIds)
+        }
     }
 
     suspend fun replaceImportedCourses(courses: List<ScheduleCourse>) {
@@ -43,6 +49,19 @@ class ScheduleRepository(
         dao.replaceCourses(
             courses = coloredCourses.map { it.toEntity() },
             occurrences = coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity() } }
+        )
+    }
+
+    private companion object {
+        val legacyBundledSampleCourseIds = setOf(
+            "digital-logic",
+            "embedded",
+            "english",
+            "machine-learning",
+            "politics",
+            "os",
+            "java",
+            "algorithm"
         )
     }
 }

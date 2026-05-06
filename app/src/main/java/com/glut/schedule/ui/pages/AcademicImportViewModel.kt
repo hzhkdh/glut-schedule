@@ -5,10 +5,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.repository.ScheduleRepository
+import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicImportConfig
 import com.glut.schedule.service.academic.AcademicImportService
 import com.glut.schedule.service.academic.AcademicSessionStore
+import com.glut.schedule.service.academic.AcademicTodayPlanParser
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.DebugCaptureService
 import com.glut.schedule.service.academic.hasUsableAcademicCookie
@@ -18,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -40,6 +45,7 @@ class AcademicImportViewModel(
     private val sessionStore: AcademicSessionStore,
     private val importService: AcademicImportService,
     private val scheduleRepository: ScheduleRepository,
+    private val settingsStore: ScheduleSettingsStore,
     private val parser: AcademicScheduleParser,
     private val captureService: DebugCaptureService,
     private val apiProbeService: ApiProbeService
@@ -99,7 +105,7 @@ class AcademicImportViewModel(
         viewModelScope.launch {
             sessionStore.saveCookie(value)
             operationState.update {
-                it.copy(message = "已登录，请进入本学期课表页面后点击右下角导入按钮")
+                it.copy(message = "已登录，可直接点击右下角导入按钮")
             }
         }
     }
@@ -201,6 +207,11 @@ class AcademicImportViewModel(
             val fileMsg = captureService.saveHtmlToFile(html, "timetable")
 
             if (courses.isEmpty()) {
+                diagnostics.appendLine("当前页面未识别到课程，改用登录态课程接口兜底")
+                if (tryImportFromSessionApi(diagnostics, "页面HTML解析为空后的接口兜底")) {
+                    return@launch
+                }
+
                 diagnostics.appendLine("未识别到课程，HTML已保存到下载目录")
 
                 captureService.saveDiagnostics(
@@ -215,6 +226,30 @@ class AcademicImportViewModel(
                         isFetching = false,
                         debugInfo = "$diagnostics\n\n$fileMsg",
                         message = "当前页面未识别到个人课表\nHTML已保存到下载目录/scheduleApp_debug/"
+                    )
+                }
+                return@launch
+            }
+
+            val (currentWeek, activeBlockCount) = currentWeekActiveBlockCount(courses)
+            diagnostics.appendLine("当前第${currentWeek}周可显示课程块: $activeBlockCount")
+            if (activeBlockCount == 0) {
+                diagnostics.appendLine("页面解析结果当前周不可见，改用登录态课程接口兜底")
+                if (tryImportFromSessionApi(diagnostics, "页面HTML当前周不可见后的接口兜底")) {
+                    return@launch
+                }
+
+                captureService.saveDiagnostics(
+                    diagnostics.toString(),
+                    html.take(3000),
+                    operationState.value.currentUrl,
+                    hasUsableAcademicCookie(uiState.value.cookie)
+                )
+                operationState.update {
+                    it.copy(
+                        isFetching = false,
+                        debugInfo = "$diagnostics\n\n$fileMsg",
+                        message = "解析到 ${courses.size} 门课程，但第${currentWeek}周没有可显示课程，未覆盖首页"
                     )
                 }
                 return@launch
@@ -301,6 +336,17 @@ class AcademicImportViewModel(
                             debugInfo = "$diagnostics\n\n$fileMsg",
                             message = "API响应未识别到课程数据\n数据已保存到下载目录") }
                     } else {
+                        val (currentWeek, activeBlockCount) = currentWeekActiveBlockCount(courses)
+                        diagnostics.appendLine("当前第${currentWeek}周可显示课程块: $activeBlockCount")
+                        if (activeBlockCount == 0) {
+                            captureService.saveDiagnostics(diagnostics.toString(), body.take(3000),
+                                operationState.value.currentUrl, hasUsableAcademicCookie(uiState.value.cookie))
+                            operationState.update { it.copy(isFetching = false,
+                                debugInfo = "$diagnostics\n\n$fileMsg",
+                                message = "API解析到 ${courses.size} 门课程，但第${currentWeek}周没有可显示课程，未覆盖首页") }
+                            return@launch
+                        }
+
                         scheduleRepository.replaceImportedCourses(courses)
                         diagnostics.appendLine("成功导入 ${courses.size} 门课程")
                         operationState.update { it.copy(isFetching = false,
@@ -326,6 +372,14 @@ class AcademicImportViewModel(
                     message = "API解析失败: ${e.message}") }
             }
         }
+    }
+
+    private suspend fun currentWeekActiveBlockCount(courses: List<ScheduleCourse>): Pair<Int, Int> {
+        val currentWeek = settingsStore.currentWeekNumber.first()
+        val activeBlockCount = courses.sumOf { course ->
+            course.occurrences.count { occurrence -> occurrence.isActiveInWeek(currentWeek) }
+        }
+        return currentWeek to activeBlockCount
     }
 
     private fun parseApiJson(jsonStr: String, diagnostics: StringBuilder): List<com.glut.schedule.data.model.ScheduleCourse> {
@@ -509,67 +563,156 @@ class AcademicImportViewModel(
         }
         operationState.update { it.copy(isFetching = true, message = "正在探测API端点...") }
         viewModelScope.launch {
-            val results = apiProbeService.probeAllEndpoints(cookie)
-            val analysis = apiProbeService.analyzeResults(results)
-            val diagnostics = StringBuilder(analysis.summary)
-
-            val allResultsText = results.joinToString("\n\n---\n\n") { r: ApiProbeService.ProbeResult ->
-                "URL: ${r.url}\nMethod: ${r.method}\nHTTP: ${r.httpCode}\nType: ${r.contentType}\nBody(${r.bodyLength}B):\n${r.body.take(2000)}"
-            }
-            val fileMsg = captureService.saveHtmlToFile(allResultsText, "api_probe_results")
-
-            val htmlResult: String? = apiProbeService.extractTimetableHtml(results)
-            val jsonResult: String? = apiProbeService.extractTimetableJson(results)
-
-            when {
-                htmlResult != null -> {
-                    diagnostics.appendLine("\n找到HTML课表! 正在解析...")
-                    sessionStore.saveHtmlPreview(htmlResult?.take(3000) ?: "")
-                    val courses = parser.parsePersonalSchedule(htmlResult ?: "")
-                    if (courses.isNotEmpty()) {
-                        scheduleRepository.replaceImportedCourses(courses)
-                        diagnostics.appendLine("成功导入 ${courses.size} 门课程!")
-                        operationState.update { it.copy(isFetching = false,
-                            debugInfo = "$diagnostics\n\n$fileMsg",
-                            message = "已成功导入 ${courses.size} 门课程！返回首页查看",
-                            importedCourseCount = courses.size) }
-                    } else {
-                        diagnostics.appendLine("HTML解析仍失败，需修复解析器")
-                        captureService.saveHtmlToFile(htmlResult ?: "", "found_timetable_html")
-                        operationState.update { it.copy(isFetching = false,
-                            debugInfo = "$diagnostics\n\n$fileMsg",
-                            message = "找到课表HTML但解析失败，HTML已保存到下载目录") }
-                    }
-                }
-                jsonResult != null -> {
-                    diagnostics.appendLine("\n找到JSON课表! 正在解析...")
-                    captureService.saveHtmlToFile(jsonResult ?: "", "found_timetable_json")
-                    val courses = try {
-                        parseApiJsonInternal(jsonResult ?: "", diagnostics)
-                    } catch (e: Exception) {
-                        diagnostics.appendLine("JSON解析异常: ${e.message}")
-                        emptyList()
-                    }
-                    if (courses.isNotEmpty()) {
-                        scheduleRepository.replaceImportedCourses(courses)
-                        diagnostics.appendLine("成功导入 ${courses.size} 门课程!")
-                        operationState.update { it.copy(isFetching = false,
-                            debugInfo = "$diagnostics\n\n$fileMsg",
-                            message = "已成功导入 ${courses.size} 门课程！返回首页查看",
-                            importedCourseCount = courses.size) }
-                    } else {
-                        operationState.update { it.copy(isFetching = false,
-                            debugInfo = "$diagnostics\n\n$fileMsg",
-                            message = "找到JSON但解析失败，数据已保存到下载目录") }
-                    }
-                }
-                else -> {
-                    operationState.update { it.copy(isFetching = false,
-                        debugInfo = "$diagnostics\n\n$fileMsg",
-                        message = "API探测完成，未找到课表数据\n详情见调试面板") }
+            val diagnostics = StringBuilder()
+            if (!tryImportFromSessionApi(diagnostics, "手动API探测")) {
+                operationState.update {
+                    it.copy(
+                        isFetching = false,
+                        debugInfo = diagnostics.toString(),
+                        message = "API探测完成，未找到可导入的完整课表\n详情见调试面板"
+                    )
                 }
             }
         }
+    }
+
+    private suspend fun tryImportFromSessionApi(
+        diagnostics: StringBuilder,
+        reason: String
+    ): Boolean {
+        val cookie = uiState.value.cookie
+        if (!hasUsableAcademicCookie(cookie)) {
+            diagnostics.appendLine("接口兜底跳过：没有可用教务登录态")
+            return false
+        }
+
+        diagnostics.appendLine(reason)
+        val results = runCatching {
+            apiProbeService.probeAllEndpoints(
+                cookie = cookie,
+                capturedTimetableUrls = operationState.value.apiUrls
+            )
+        }.getOrElse { e ->
+            diagnostics.appendLine("接口探测异常: ${e.message}")
+            return false
+        }
+
+        val analysis = apiProbeService.analyzeResults(results)
+        diagnostics.appendLine(analysis.summary)
+        val fileMsg = saveProbeResultsToFile(results)
+        diagnostics.appendLine(fileMsg)
+
+        val calendar = ApiProbeService.extractAcademicCalendar(results)
+        if (calendar != null) {
+            settingsStore.setSemesterStartMonday(calendar.semesterStartMonday)
+            settingsStore.setCurrentWeekNumber(calendar.currentWeekNumber)
+            diagnostics.appendLine(
+                "已同步教务日历: 第${calendar.currentWeekNumber}周, 学期起点 ${calendar.semesterStartMonday}"
+            )
+        }
+
+        val courses = parseBestProbeResult(results, diagnostics)
+        if (courses.isEmpty()) return false
+
+        scheduleRepository.replaceImportedCourses(courses)
+        diagnostics.appendLine("成功导入 ${courses.size} 门课程")
+        captureService.saveDiagnostics(
+            diagnostics.toString(),
+            uiState.value.htmlPreview.take(3000),
+            operationState.value.currentUrl,
+            true
+        )
+        operationState.update {
+            it.copy(
+                isFetching = false,
+                debugInfo = diagnostics.toString(),
+                message = "已成功导入 ${courses.size} 门课程，返回首页查看",
+                importedCourseCount = courses.size
+            )
+        }
+        return true
+    }
+
+    private suspend fun parseBestProbeResult(
+        results: List<ApiProbeService.ProbeResult>,
+        diagnostics: StringBuilder
+    ): List<ScheduleCourse> {
+        val htmlResult = apiProbeService.findTimetableHtmlResult(results)
+        val calendar = ApiProbeService.extractAcademicCalendar(results)
+        if (htmlResult != null) {
+            diagnostics.appendLine("使用HTML课表接口: ${htmlResult.url.takeLast(90)}")
+            sessionStore.saveHtmlPreview(htmlResult.body.take(3000))
+            diagnostics.appendLine(captureService.saveHtmlToFile(htmlResult.body, "found_timetable_html"))
+            val courses = runCatching {
+                parser.parsePersonalSchedule(htmlResult.body)
+            }.getOrElse { e ->
+                diagnostics.appendLine("HTML课表解析异常: ${e.message}")
+                emptyList()
+            }
+            if (shouldUseParsedCourses(courses, calendar, results, diagnostics, "HTML课表接口")) {
+                return courses
+            }
+            diagnostics.appendLine("HTML课表接口未得到可用课程")
+        }
+
+        val jsonResult = apiProbeService.findTimetableJsonResult(results)
+        if (jsonResult != null) {
+            diagnostics.appendLine("使用JSON课表接口: ${jsonResult.url.takeLast(90)}")
+            diagnostics.appendLine(captureService.saveHtmlToFile(jsonResult.body, "found_timetable_json"))
+            val courses = runCatching {
+                parseApiJsonInternal(jsonResult.body, diagnostics)
+            }.getOrElse { e ->
+                diagnostics.appendLine("JSON解析异常: ${e.message}")
+                emptyList()
+            }
+            if (shouldUseParsedCourses(courses, calendar, results, diagnostics, "JSON课表接口")) {
+                return courses
+            }
+            diagnostics.appendLine("JSON课表接口未得到可用课程")
+        }
+
+        val todayPlan = ApiProbeService.findTodayPlanJsonResult(results)
+        if (todayPlan != null && calendar != null) {
+            diagnostics.appendLine("使用今日课程计划兜底: ${todayPlan.url.takeLast(90)}")
+            diagnostics.appendLine(captureService.saveHtmlToFile(todayPlan.body, "today_plan_json"))
+            val courses = AcademicTodayPlanParser.parse(todayPlan.body, calendar.currentWeekNumber)
+            if (courses.isNotEmpty()) return courses
+            diagnostics.appendLine("今日课程计划解析结果为空")
+        } else if (todayPlan != null) {
+            diagnostics.appendLine("发现今日课程计划，但缺少教务周次，跳过今日计划兜底")
+        }
+
+        diagnostics.appendLine("没有找到可解析的完整课表响应")
+        return emptyList()
+    }
+
+    private fun shouldUseParsedCourses(
+        courses: List<ScheduleCourse>,
+        calendar: ApiProbeService.AcademicCalendar?,
+        results: List<ApiProbeService.ProbeResult>,
+        diagnostics: StringBuilder,
+        source: String
+    ): Boolean {
+        if (courses.isEmpty()) return false
+        val currentWeek = calendar?.currentWeekNumber ?: return true
+        val activeBlockCount = courses.sumOf { course ->
+            course.occurrences.count { occurrence -> occurrence.isActiveInWeek(currentWeek) }
+        }
+        diagnostics.appendLine("$source 解析出 ${courses.size} 门课程，第${currentWeek}周可显示课程块: $activeBlockCount")
+        if (activeBlockCount > 0) return true
+
+        if (ApiProbeService.findTodayPlanJsonResult(results) != null) {
+            diagnostics.appendLine("$source 当前周没有可显示课程块，继续尝试今日课程计划兜底")
+            return false
+        }
+        return true
+    }
+
+    private suspend fun saveProbeResultsToFile(results: List<ApiProbeService.ProbeResult>): String {
+        val allResultsText = results.joinToString("\n\n---\n\n") { r ->
+            "URL: ${r.url}\nMethod: ${r.method}\nHTTP: ${r.httpCode}\nType: ${r.contentType}\nBody(${r.bodyLength}B):\n${r.body.take(4000)}"
+        }
+        return captureService.saveHtmlToFile(allResultsText, "api_probe_results")
     }
 
     private fun parseApiJsonInternal(jsonStr: String, diagnostics: StringBuilder): List<com.glut.schedule.data.model.ScheduleCourse> {
@@ -701,6 +844,7 @@ class AcademicImportViewModelFactory(
     private val sessionStore: AcademicSessionStore,
     private val importService: AcademicImportService,
     private val scheduleRepository: ScheduleRepository,
+    private val settingsStore: ScheduleSettingsStore,
     private val parser: AcademicScheduleParser,
     private val captureService: DebugCaptureService,
     private val apiProbeService: ApiProbeService
@@ -708,7 +852,7 @@ class AcademicImportViewModelFactory(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return AcademicImportViewModel(
-            sessionStore, importService, scheduleRepository, parser, captureService, apiProbeService
+            sessionStore, importService, scheduleRepository, settingsStore, parser, captureService, apiProbeService
         ) as T
     }
 }

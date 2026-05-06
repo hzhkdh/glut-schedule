@@ -5,15 +5,10 @@ import java.net.URI
 object AcademicImportConfig {
     const val host = "jw.glut.edu.cn"
     private const val timetablePath = "http://jw.glut.edu.cn/academic/manager/coursearrange/showTimetable.do"
-    const val defaultStudentId = "712170"
     const val defaultYearId = "46"
     const val defaultTermId = "1"
     const val loginUrl = "http://jw.glut.edu.cn/academic/preGotoAffairFrame.do#/menu"
-    val directTimetableUrl = buildStudentTimetableUrl(
-        studentId = defaultStudentId,
-        yearId = defaultYearId,
-        termId = defaultTermId
-    )
+    val directTimetableUrl = loginUrl
 
     val timetableUrlPatterns = listOf(
         Regex("""showTimetable\.do""", RegexOption.IGNORE_CASE),
@@ -41,7 +36,7 @@ object AcademicImportConfig {
     }
 
     fun buildStudentTimetableUrl(
-        studentId: String = defaultStudentId,
+        studentId: String,
         yearId: String = defaultYearId,
         termId: String = defaultTermId
     ): String {

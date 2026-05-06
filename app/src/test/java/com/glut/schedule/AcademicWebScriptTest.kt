@@ -44,13 +44,13 @@ class AcademicWebScriptTest {
     }
 
     @Test
-    fun directTimetableNavigationUsesCompleteConfiguredUrl() {
+    fun directTimetableNavigationUsesCurrentUserLinksOrMenuOnly() {
         val script = AcademicWebScripts.navigateToDirectTimetableUrl()
 
-        assertTrue(script.contains("id=712170"))
-        assertTrue(script.contains("yearid=46"))
-        assertTrue(script.contains("termid=1"))
+        assertTrue(script.contains("showTimetable.do"))
         assertTrue(script.contains("timetableType=STUDENT"))
-        assertTrue(script.contains("sectionType=BASE"))
+        assertTrue(script.contains("个人课表"))
+        assertTrue(script.contains("本学期课表"))
+        assertTrue(!script.contains("id=712170"))
     }
 }
