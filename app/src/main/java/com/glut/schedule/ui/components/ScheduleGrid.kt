@@ -1,6 +1,7 @@
 package com.glut.schedule.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -14,11 +15,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,8 +32,8 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.ClassPeriod
@@ -162,61 +168,164 @@ private fun TimetableBody(
         modifier = Modifier
             .size(width = dayWidth * dayCount, height = totalHeight)
     ) {
-        blocks.forEach { block ->
-            CourseCard(
-                block = block,
-                modifier = Modifier
-                    .offset(
-                        x = dayWidth * (block.occurrence.dayOfWeek - 1) + 2.dp,
-                        y = rowHeight * (block.occurrence.startSection - 1) + 3.dp
-                    )
-                    .size(
-                        width = dayWidth - 4.dp,
-                        height = rowHeight * block.occurrence.sectionSpan - 6.dp
-                    )
-            )
+        val blockGroups = remember(blocks) { overlappingCourseBlockGroups(blocks) }
+        blockGroups.forEach { group ->
+            val groupKey = remember(group) { courseBlockGroupKey(group) }
+            key(groupKey) {
+                var activeIndex by remember { mutableStateOf(0) }
+                val activeBlock = group[activeIndex % group.size]
+                val nextBlock = if (group.size > 1) {
+                    { activeIndex = (activeIndex + 1) % group.size }
+                } else {
+                    null
+                }
+
+                CourseCard(
+                    block = activeBlock,
+                    conflictCount = group.size,
+                    onClick = nextBlock,
+                    modifier = Modifier
+                        .offset(
+                            x = dayWidth * (activeBlock.occurrence.dayOfWeek - 1) + 2.dp,
+                            y = rowHeight * (activeBlock.occurrence.startSection - 1) + 3.dp
+                        )
+                        .size(
+                            width = dayWidth - 4.dp,
+                            height = rowHeight * activeBlock.occurrence.sectionSpan - 6.dp
+                        )
+                )
+            }
         }
     }
+}
+
+fun overlappingCourseBlockGroups(blocks: List<CourseBlock>): List<List<CourseBlock>> {
+    return blocks
+        .groupBy { it.occurrence.dayOfWeek }
+        .toSortedMap()
+        .flatMap { (_, dayBlocks) ->
+            val sortedBlocks = dayBlocks.sortedWith(courseBlockPositionComparator())
+            val groups = mutableListOf<List<CourseBlock>>()
+            val currentGroup = mutableListOf<CourseBlock>()
+            var currentEndSection = 0
+
+            sortedBlocks.forEach { block ->
+                if (currentGroup.isEmpty() || block.occurrence.startSection <= currentEndSection) {
+                    currentGroup += block
+                    currentEndSection = maxOf(currentEndSection, block.occurrence.endSection)
+                } else {
+                    groups += currentGroup.sortedWith(courseBlockDisplayComparator())
+                    currentGroup.clear()
+                    currentGroup += block
+                    currentEndSection = block.occurrence.endSection
+                }
+            }
+
+            if (currentGroup.isNotEmpty()) {
+                groups += currentGroup.sortedWith(courseBlockDisplayComparator())
+            }
+
+            groups
+        }
+}
+
+private fun courseBlockGroupKey(group: List<CourseBlock>): String {
+    return group.joinToString(separator = "|") { block ->
+        listOf(
+            block.course.id,
+            block.occurrence.id,
+            block.occurrence.dayOfWeek,
+            block.occurrence.startSection,
+            block.occurrence.endSection
+        ).joinToString(separator = ":")
+    }
+}
+
+private fun courseBlockPositionComparator(): Comparator<CourseBlock> {
+    return compareBy<CourseBlock> { it.occurrence.startSection }
+        .thenBy { it.occurrence.endSection }
+        .thenBy { it.course.title }
+        .thenBy { it.occurrence.id }
+}
+
+private fun courseBlockDisplayComparator(): Comparator<CourseBlock> {
+    return compareBy<CourseBlock> { it.occurrence.sectionSpan }
+        .thenBy { it.occurrence.startSection }
+        .thenBy { it.occurrence.endSection }
+        .thenBy { it.course.title }
+        .thenBy { it.occurrence.id }
 }
 
 @Composable
 private fun CourseCard(
     block: CourseBlock,
+    conflictCount: Int,
+    onClick: (() -> Unit)?,
     modifier: Modifier = Modifier
 ) {
     val color = remember(block.course.colorHex) { Color(android.graphics.Color.parseColor(block.course.colorHex)) }
     val titleSize = courseCardTitleTextSize(block.course.title)
     val titleLineHeight = courseCardTitleLineHeight()
-    Column(
+    val clickableModifier = if (onClick != null) {
+        Modifier.clickable(onClick = onClick)
+    } else {
+        Modifier
+    }
+
+    Box(
         modifier = modifier
             .clip(RoundedCornerShape(11.dp))
             .clipToBounds()
             .background(color)
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(1.dp)
+            .then(clickableModifier)
+            .padding(horizontal = 4.dp, vertical = 4.dp)
     ) {
-        Text(
-            text = block.course.title,
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            fontSize = titleSize,
-            lineHeight = titleLineHeight,
-            maxLines = courseCardTitleMaxLines(block.occurrence.sectionSpan),
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = "@${block.course.room}",
-            color = Color.White,
-            fontSize = courseCardRoomTextSize(),
-            lineHeight = courseCardRoomLineHeight(),
-            fontWeight = FontWeight.SemiBold
-        )
-        Text(
-            text = block.course.teacher,
-            color = Color.White.copy(alpha = 0.95f),
-            fontSize = courseCardTeacherTextSize(),
-            lineHeight = courseCardTeacherLineHeight()
-        )
+        Column(
+            modifier = Modifier.padding(end = if (conflictCount > 1) 13.dp else 0.dp),
+            verticalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            Text(
+                text = block.course.title,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = titleSize,
+                lineHeight = titleLineHeight,
+                maxLines = courseCardTitleMaxLines(block.occurrence.sectionSpan),
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "@${block.course.room}",
+                color = Color.White,
+                fontSize = courseCardRoomTextSize(),
+                lineHeight = courseCardRoomLineHeight(),
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = block.course.teacher,
+                color = Color.White.copy(alpha = 0.95f),
+                fontSize = courseCardTeacherTextSize(),
+                lineHeight = courseCardTeacherLineHeight()
+            )
+        }
+
+        if (conflictCount > 1) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(15.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFE11D48)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = conflictCount.toString(),
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 9.sp,
+                    lineHeight = 9.sp
+                )
+            }
+        }
     }
 }
 

@@ -2,6 +2,7 @@ package com.glut.schedule
 
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
+import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.ui.pages.courseBlocksByWeek
@@ -9,6 +10,7 @@ import com.glut.schedule.ui.pages.pagerPageForWeekNumber
 import com.glut.schedule.ui.pages.weekNumberForPagerPage
 import com.glut.schedule.ui.components.courseCardRoomTextSize
 import com.glut.schedule.ui.components.courseCardTitleTextSize
+import com.glut.schedule.ui.components.overlappingCourseBlockGroups
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -67,6 +69,23 @@ class SchedulePagerTest {
         assertEquals(10f, courseCardRoomTextSize().value)
     }
 
+    @Test
+    fun overlappingCourseBlocksAreGroupedByDayAndSectionRange() {
+        val java = block(id = "java", title = "Java", day = 2, start = 9, end = 10)
+        val dataStructure = block(id = "data", title = "数据结构", day = 2, start = 9, end = 12)
+        val machineLearning = block(id = "ml", title = "机器学习", day = 2, start = 7, end = 8)
+        val english = block(id = "english", title = "大学英语", day = 3, start = 9, end = 10)
+
+        val groups = overlappingCourseBlockGroups(
+            listOf(dataStructure, english, java, machineLearning)
+        )
+
+        assertEquals(3, groups.size)
+        assertEquals(listOf("ml"), groups[0].map { it.course.id })
+        assertEquals(listOf("java", "data"), groups[1].map { it.course.id })
+        assertEquals(listOf("english"), groups[2].map { it.course.id })
+    }
+
     private fun course(
         id: String,
         title: String,
@@ -91,6 +110,29 @@ class SchedulePagerTest {
             endSection = 2,
             weekText = weekText,
             note = ""
+        )
+    }
+
+    private fun block(id: String, title: String, day: Int, start: Int, end: Int): CourseBlock {
+        val occurrence = CourseOccurrence(
+            id = "$id-occurrence",
+            courseId = id,
+            dayOfWeek = day,
+            startSection = start,
+            endSection = end,
+            weekText = "1-22周",
+            note = ""
+        )
+        return CourseBlock(
+            course = ScheduleCourse(
+                id = id,
+                title = title,
+                room = "06408D",
+                teacher = "待确认",
+                colorHex = "#3B82F6",
+                occurrences = listOf(occurrence)
+            ),
+            occurrence = occurrence
         )
     }
 }
