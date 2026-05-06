@@ -75,14 +75,6 @@ app/src/main/java/com/glut/schedule/
   ui/theme            Compose 主题
 ```
 
-## 后续开发计划
 
-1. 完成课程添加、编辑、删除。
-2. 完成单次调课、地点和备注修改。
-3. 接入 WebView 教务登录，保存 Cookie 到本地安全存储。
-4. 解析桂林理工大学个人课表 HTML。
-5. 实现重新导入课表与本地修改合并。
-6. 支持自定义背景图片。
-7. 配置正式签名并打包 release APK。
 
 
