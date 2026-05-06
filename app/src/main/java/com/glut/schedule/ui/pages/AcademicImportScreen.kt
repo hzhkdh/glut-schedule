@@ -2,7 +2,6 @@ package com.glut.schedule.ui.pages
 
 import android.graphics.Bitmap
 import android.webkit.CookieManager
-import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -30,11 +29,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.FileDownload
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -58,11 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.glut.schedule.service.academic.AcademicImportConfig
 import com.glut.schedule.service.academic.AcademicWebScripts
-import com.glut.schedule.service.academic.isAcademicDomainPage
-import com.glut.schedule.service.academic.isLoginPage
-import com.glut.schedule.service.academic.isTimetablePage
 import org.json.JSONArray
 
 @Composable
@@ -79,40 +72,6 @@ fun AcademicImportScreen(
     fun execJs(script: String, callback: (String) -> Unit = {}) {
         webViewRef.value?.evaluateJavascript(script) { result ->
             callback(decodeJavascriptString(result))
-        }
-    }
-
-    fun importCurrentWebPage() {
-        execJs(AcademicWebScripts.currentPageHtml()) { html ->
-            if (html.isBlank()) {
-                execJs(AcademicWebScripts.fallbackPageHtml()) { fb -> viewModel.importCurrentWebPage(fb) }
-            } else {
-                viewModel.importCurrentWebPage(html)
-            }
-        }
-    }
-
-    fun importWithApiResponses() {
-        execJs(AcademicWebScripts.getInterceptedResponses()) { jsonStr ->
-            viewModel.importApiResponses(jsonStr)
-        }
-    }
-
-    fun clickTimetableMenu() {
-        viewModel.startAutoOpenTimetable()
-        execJs(AcademicWebScripts.clickTimetableMenuItem()) { result ->
-            if (result.contains("not_found")) {
-                viewModel.reportAutoOpenFailed(result)
-            } else {
-                viewModel.reportAutoOpenSucceeded(result)
-            }
-        }
-    }
-
-    fun navigateToDirectTimetable() {
-        viewModel.startAutoOpenTimetable()
-        execJs(AcademicWebScripts.navigateToDirectTimetableUrl()) { result ->
-            viewModel.reportAutoOpenSucceeded("已尝试直接打开课表页面")
         }
     }
 
@@ -256,77 +215,15 @@ fun AcademicImportScreen(
                 }
             )
 
-            if (uiState.hasSession) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = ::clickTimetableMenu,
-                            enabled = !uiState.isFetching,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF1E40AF),
-                                contentColor = Color.White
-                            ),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Icon(Icons.Outlined.Search, null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("点击课表菜单", fontSize = 11.sp)
-                        }
-                        Button(
-                            onClick = ::navigateToDirectTimetable,
-                            enabled = !uiState.isFetching,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF7C3AED),
-                                contentColor = Color.White
-                            ),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("直接打开课表页", fontSize = 11.sp)
-                        }
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if (uiState.hasSession) {
-                    FloatingActionButton(
-                        onClick = { viewModel.probeApis() },
-                        modifier = Modifier.size(48.dp),
-                        containerColor = Color(0xFFEF4444),
-                        contentColor = Color.White,
-                        shape = CircleShape
-                    ) {
-                        Text("探测", fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    FloatingActionButton(
-                        onClick = ::importWithApiResponses,
-                        modifier = Modifier.size(48.dp),
-                        containerColor = Color(0xFFF59E0B),
-                        contentColor = Color(0xFF1C1917),
-                        shape = CircleShape
-                    ) {
-                        Text("API", fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
+            if (shouldShowAcademicDownloadButton(uiState)) {
                 FloatingActionButton(
-                    onClick = ::importCurrentWebPage,
-                    modifier = Modifier.size(56.dp),
-                    containerColor = if (uiState.isOnTimetablePage) Color(0xFF22C55E) else Color(0xFFDDE4FF),
+                    onClick = { viewModel.probeApis() },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp).size(56.dp),
+                    containerColor = Color(0xFFDDE4FF),
                     contentColor = Color(0xFF061A3A),
                     shape = CircleShape
                 ) {
-                    Icon(Icons.Outlined.FileDownload, "导入HTML", modifier = Modifier.size(26.dp))
+                    Icon(Icons.Outlined.FileDownload, "下载并导入课表", modifier = Modifier.size(26.dp))
                 }
             }
         }
@@ -336,28 +233,21 @@ fun AcademicImportScreen(
         AlertDialog(
             onDismissRequest = { showGuide = false },
             confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        showGuide = false
-                        clickTimetableMenu()
-                    }) { Text("自动点击课表") }
-                    Button(onClick = {
-                        showGuide = false
-                        navigateToDirectTimetable()
-                    }) { Text("直接打开课表") }
-                    Button(onClick = { showGuide = false }) { Text("我知道了") }
-                }
+                Button(onClick = { showGuide = false }) { Text("我知道了") }
             },
             title = { Text("导入说明") },
             text = {
                 Text(
-                    "登录成功后可直接点右下角下载按钮导入。\n\n" +
-                        "如果需要查看教务页面，再使用上方按钮打开课表入口。\n" +
-                        "红色[探测]会直接请求已登录状态下的课程接口。"
+                    "请先输入账号和密码登录教务系统。\n\n" +
+                        "登录成功后，点击右下角下载按钮即可导入课表。"
                 )
             }
         )
     }
+}
+
+internal fun shouldShowAcademicDownloadButton(uiState: AcademicImportUiState): Boolean {
+    return uiState.hasSession
 }
 
 private fun decodeJavascriptString(value: String?): String {

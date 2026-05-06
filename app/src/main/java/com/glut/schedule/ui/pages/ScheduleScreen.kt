@@ -1,5 +1,7 @@
 package com.glut.schedule.ui.pages
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +17,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -48,7 +51,10 @@ import com.glut.schedule.ui.components.ScheduleHeader
 import com.glut.schedule.ui.components.StarryScheduleBackground
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.format.DateTimeFormatterBuilder
 import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
 
 @Composable
 fun ScheduleScreen(
@@ -131,13 +137,22 @@ fun ScheduleScreen(
             }
         }
         if (showSettings) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { showSettings = false }
+            )
             ScheduleSettingsPanel(
                 showWeekend = uiState.showWeekend,
                 semesterStartMonday = uiState.semesterStartMonday,
                 onShowWeekendChange = viewModel::setShowWeekend,
-                onSemesterStartBack = { viewModel.moveSemesterStartByWeeks(-1) },
-                onSemesterStartForward = { viewModel.moveSemesterStartByWeeks(1) },
-                onSemesterStartThisWeek = viewModel::setSemesterStartToThisWeekMonday,
+                onSemesterStartSubmit = { date ->
+                    viewModel.setSemesterStartDate(date)
+                    showSettings = false
+                },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .windowInsetsPadding(WindowInsets.statusBars)
@@ -175,14 +190,14 @@ fun courseBlocksByWeek(courses: List<ScheduleCourse>): Map<Int, List<CourseBlock
 @Composable
 private fun ScheduleSettingsPanel(
     showWeekend: Boolean,
-    semesterStartMonday: java.time.LocalDate,
+    semesterStartMonday: LocalDate,
     onShowWeekendChange: (Boolean) -> Unit,
-    onSemesterStartBack: () -> Unit,
-    onSemesterStartForward: () -> Unit,
-    onSemesterStartThisWeek: () -> Unit,
+    onSemesterStartSubmit: (LocalDate) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val formatter = DateTimeFormatter.ofPattern("yyyy/M/d")
+    var dateInput by remember(semesterStartMonday) { mutableStateOf(semesterStartMonday.format(formatter)) }
+    val parsedDate = parseSemesterStartInput(dateInput)
     Surface(
         modifier = modifier,
         color = Color.Black.copy(alpha = 0.72f),
@@ -206,17 +221,36 @@ private fun ScheduleSettingsPanel(
                 color = Color.White,
                 fontSize = 13.sp
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = onSemesterStartBack) {
-                    Text(text = "前移1周", color = Color.White, fontSize = 12.sp)
-                }
-                TextButton(onClick = onSemesterStartThisWeek) {
-                    Text(text = "本周周一", color = Color.White, fontSize = 12.sp)
-                }
-                TextButton(onClick = onSemesterStartForward) {
-                    Text(text = "后移1周", color = Color.White, fontSize = 12.sp)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = dateInput,
+                    onValueChange = { dateInput = it },
+                    singleLine = true,
+                    label = { Text("开学日期") },
+                    placeholder = { Text("2026/3/9") },
+                    isError = dateInput.isNotBlank() && parsedDate == null,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = { parsedDate?.let(onSemesterStartSubmit) },
+                    enabled = parsedDate != null
+                ) {
+                    Text(text = "设置", color = Color.White, fontSize = 12.sp)
                 }
             }
         }
     }
+}
+
+internal fun parseSemesterStartInput(value: String): LocalDate? {
+    val normalized = value.trim().replace('-', '/')
+    if (normalized.isBlank()) return null
+    val formatter = DateTimeFormatterBuilder()
+        .appendPattern("uuuu/M/d")
+        .toFormatter()
+        .withResolverStyle(ResolverStyle.STRICT)
+    return runCatching { LocalDate.parse(normalized, formatter) }.getOrNull()
 }

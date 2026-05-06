@@ -112,6 +112,15 @@ class ScheduleViewModel(
             settingsStore.setCurrentWeekNumber(1)
         }
     }
+
+    fun setSemesterStartDate(date: LocalDate) {
+        val normalizedStart = normalizeSemesterStartMonday(date)
+        val currentWeekNumber = academicWeekForDate(LocalDate.now(), normalizedStart)
+        viewModelScope.launch {
+            settingsStore.setSemesterStartMonday(normalizedStart)
+            settingsStore.setCurrentWeekNumber(currentWeekNumber)
+        }
+    }
 }
 
 class ScheduleViewModelFactory(

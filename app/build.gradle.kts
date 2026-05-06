@@ -1,4 +1,5 @@
 import com.android.build.gradle.internal.api.BaseVariantOutputImpl
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -15,16 +16,38 @@ android {
         applicationId = "com.glut.schedule"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.1.7"
+        versionCode = 9
+        versionName = "0.1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    val keystoreProperties = Properties().apply {
+        if (keystorePropertiesFile.exists()) {
+            keystorePropertiesFile.inputStream().use(::load)
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file(
+                keystoreProperties.getProperty("storeFile")
+                    ?: error("Missing storeFile in keystore.properties")
+            )
+            storePassword = keystoreProperties.getProperty("storePassword")
+                ?: error("Missing storePassword in keystore.properties")
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+                ?: error("Missing keyAlias in keystore.properties")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+                ?: error("Missing keyPassword in keystore.properties")
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -50,7 +73,7 @@ android {
     applicationVariants.all {
         if (buildType.name == "release") {
             outputs.all {
-                (this as BaseVariantOutputImpl).outputFileName = "release_$versionName.apk"
+                (this as BaseVariantOutputImpl).outputFileName = "glutShedule_$versionName.apk"
             }
         }
     }

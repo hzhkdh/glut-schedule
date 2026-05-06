@@ -26,6 +26,7 @@ images/
 
 # Secrets
 .env
+keystore.properties
 *.keystore
 *.jks
 
