@@ -261,8 +261,10 @@ private fun ScheduleSettingsPanel(
     onSemesterStartSubmit: (LocalDate) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val formatter = DateTimeFormatter.ofPattern("yyyy/M/d")
-    var dateInput by remember(semesterStartMonday) { mutableStateOf(semesterStartMonday.format(formatter)) }
+    val formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd")
+    var dateInput by remember(semesterStartMonday) {
+        mutableStateOf(formatSemesterStartInput(semesterStartMonday.format(formatter)))
+    }
     val parsedDate = parseSemesterStartInput(dateInput)
     Surface(
         modifier = modifier,
@@ -293,10 +295,10 @@ private fun ScheduleSettingsPanel(
             ) {
                 OutlinedTextField(
                     value = dateInput,
-                    onValueChange = { dateInput = it },
+                    onValueChange = { dateInput = formatSemesterStartInput(it) },
                     singleLine = true,
                     label = { Text("开学日期") },
-                    placeholder = { Text("2026/3/9") },
+                    placeholder = { Text("2026/03/09") },
                     isError = dateInput.isNotBlank() && parsedDate == null,
                     modifier = Modifier.weight(1f)
                 )
@@ -307,6 +309,16 @@ private fun ScheduleSettingsPanel(
                     Text(text = "设置", color = Color.White, fontSize = 12.sp)
                 }
             }
+        }
+    }
+}
+
+internal fun formatSemesterStartInput(value: String): String {
+    val digits = value.filter { it.isDigit() }.take(8)
+    return buildString {
+        digits.forEachIndexed { index, char ->
+            if (index == 4 || index == 6) append('/')
+            append(char)
         }
     }
 }
