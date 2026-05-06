@@ -18,6 +18,7 @@ local.properties
 *.iml
 
 # Local agent/project notes
+AGENTS.md
 CLAUDE.md
 开发文档.txt
 
