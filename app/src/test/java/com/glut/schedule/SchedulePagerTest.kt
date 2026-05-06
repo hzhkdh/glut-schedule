@@ -7,6 +7,8 @@ import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.ui.pages.courseBlocksByWeek
 import com.glut.schedule.ui.pages.pagerPageForWeekNumber
 import com.glut.schedule.ui.pages.weekNumberForPagerPage
+import com.glut.schedule.ui.components.courseCardRoomTextSize
+import com.glut.schedule.ui.components.courseCardTitleTextSize
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -56,6 +58,13 @@ class SchedulePagerTest {
         assertEquals(1, blocksByWeek.getValue(4).size)
         assertEquals(0, blocksByWeek.getValue(5).size)
         assertEquals(MAX_ACADEMIC_WEEK, blocksByWeek.size)
+    }
+
+    @Test
+    fun courseCardUsesConsistentTitleSizeAndLargerRoomText() {
+        assertEquals(courseCardTitleTextSize("机器学习"), courseCardTitleTextSize("习近平新时代中国特色社会主义思想概论"))
+        assertEquals(11f, courseCardTitleTextSize("机器学习").value)
+        assertEquals(10f, courseCardRoomTextSize().value)
     }
 
     private fun course(

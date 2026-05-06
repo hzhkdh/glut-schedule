@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -184,8 +185,8 @@ private fun CourseCard(
     modifier: Modifier = Modifier
 ) {
     val color = remember(block.course.colorHex) { Color(android.graphics.Color.parseColor(block.course.colorHex)) }
-    val titleSize = compactTitleSize(block.course.title)
-    val titleLineHeight = compactLineHeight(titleSize)
+    val titleSize = courseCardTitleTextSize(block.course.title)
+    val titleLineHeight = courseCardTitleLineHeight()
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(11.dp))
@@ -199,34 +200,42 @@ private fun CourseCard(
             color = Color.White,
             fontWeight = FontWeight.Bold,
             fontSize = titleSize,
-            lineHeight = titleLineHeight
+            lineHeight = titleLineHeight,
+            maxLines = courseCardTitleMaxLines(block.occurrence.sectionSpan),
+            overflow = TextOverflow.Ellipsis
         )
         Text(
             text = "@${block.course.room}",
             color = Color.White,
-            fontSize = 9.sp,
-            lineHeight = 10.sp,
+            fontSize = courseCardRoomTextSize(),
+            lineHeight = courseCardRoomLineHeight(),
             fontWeight = FontWeight.SemiBold
         )
         Text(
             text = block.course.teacher,
             color = Color.White.copy(alpha = 0.95f),
-            fontSize = 9.sp,
-            lineHeight = 10.sp
+            fontSize = courseCardTeacherTextSize(),
+            lineHeight = courseCardTeacherLineHeight()
         )
     }
 }
 
-private fun compactTitleSize(title: String): TextUnit = when {
-    title.length > 18 -> 6.sp
-    title.length > 12 -> 7.sp
-    title.length > 8 -> 8.sp
-    else -> 11.sp
-}
+fun courseCardTitleTextSize(title: String): TextUnit = 11.sp
 
-private fun compactLineHeight(fontSize: TextUnit): TextUnit = when (fontSize) {
-    6.sp -> 7.sp
-    7.sp -> 8.sp
-    8.sp -> 9.sp
-    else -> 12.sp
+fun courseCardTitleLineHeight(): TextUnit = 12.sp
+
+fun courseCardRoomTextSize(): TextUnit = 10.sp
+
+fun courseCardRoomLineHeight(): TextUnit = 11.sp
+
+fun courseCardTeacherTextSize(): TextUnit = 10.sp
+
+fun courseCardTeacherLineHeight(): TextUnit = 11.sp
+
+fun courseCardTitleMaxLines(sectionSpan: Int): Int {
+    return when {
+        sectionSpan <= 1 -> 2
+        sectionSpan == 2 -> 5
+        else -> sectionSpan * 3
+    }
 }
