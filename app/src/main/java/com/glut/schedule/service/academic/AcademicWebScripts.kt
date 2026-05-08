@@ -57,6 +57,50 @@ object AcademicWebScripts {
         """.trimIndent()
     }
 
+    fun detectLoginForm(): String {
+        return """
+            (function(){
+              function textOf(doc) {
+                try { return ((doc.body && doc.body.innerText) || '').replace(/\s+/g, ''); }
+                catch (error) { return ''; }
+              }
+              function hasLoginForm(doc) {
+                var inputs = Array.prototype.slice.call(doc.querySelectorAll('input'));
+                var hasPassword = false;
+                var hasUserField = false;
+                for (var i = 0; i < inputs.length; i++) {
+                  var input = inputs[i];
+                  var type = (input.getAttribute('type') || '').toLowerCase();
+                  var attrs = [
+                    input.getAttribute('name') || '',
+                    input.getAttribute('id') || '',
+                    input.getAttribute('placeholder') || '',
+                    input.getAttribute('autocomplete') || ''
+                  ].join(' ').toLowerCase();
+                  if (type === 'password') hasPassword = true;
+                  if (/user|username|account|login|j_username|学号|账号|用户/.test(attrs)) {
+                    hasUserField = true;
+                  }
+                }
+                var pageText = textOf(doc);
+                var hasLoginText = /账号登录|欢迎登录|请输入用户名|请输入密码|统一身份认证|找回密码/.test(pageText);
+                return hasPassword && (hasUserField || hasLoginText);
+              }
+              if (hasLoginForm(document)) return true;
+              var frames = Array.prototype.slice.call(document.querySelectorAll('iframe,frame'));
+              for (var j = 0; j < frames.length; j++) {
+                try {
+                  if (frames[j].contentWindow && frames[j].contentWindow.document &&
+                      hasLoginForm(frames[j].contentWindow.document)) {
+                    return true;
+                  }
+                } catch (error) {}
+              }
+              return false;
+            })()
+        """.trimIndent()
+    }
+
     fun clickTimetableMenuItem(): String {
         return """
             (function(){

@@ -176,6 +176,7 @@ fun AcademicImportScreen(
                             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
                                 viewModel.onPageUrlChanged(url)
+                                viewModel.onLoginFormDetected(true)
                             }
 
                             override fun onPageFinished(view: WebView, url: String) {
@@ -185,6 +186,9 @@ fun AcademicImportScreen(
                                     val cookie = CookieManager.getInstance().getCookie(url)
                                     viewModel.saveCookie(cookie)
                                 } catch (_: Exception) {}
+                                execJs(AcademicWebScripts.detectLoginForm()) { result ->
+                                    viewModel.onLoginFormDetected(result == "true")
+                                }
                                 execJs(AcademicWebScripts.interceptApiResponses()) { }
                             }
 

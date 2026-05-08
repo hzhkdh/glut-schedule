@@ -12,7 +12,7 @@ class ScheduleSettingsPanelTest {
     fun semesterStartInputKeepsSlashSeparatorsFixed() {
         assertEquals("2026/03/09", formatSemesterStartInput("20260309"))
         assertEquals("2026/03/09", formatSemesterStartInput("202603/09"))
-        assertEquals("2026/03", formatSemesterStartInput("202603"))
+        assertEquals("2026/03/", formatSemesterStartInput("202603"))
     }
 
     @Test

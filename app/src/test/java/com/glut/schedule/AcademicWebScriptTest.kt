@@ -44,6 +44,16 @@ class AcademicWebScriptTest {
     }
 
     @Test
+    fun detectLoginFormScriptLooksForPasswordInputsAndLoginText() {
+        val script = AcademicWebScripts.detectLoginForm()
+
+        assertTrue(script.contains("input"))
+        assertTrue(script.contains("password"))
+        assertTrue(script.contains("账号登录"))
+        assertTrue(script.contains("iframe,frame"))
+    }
+
+    @Test
     fun directTimetableNavigationUsesCurrentUserLinksOrMenuOnly() {
         val script = AcademicWebScripts.navigateToDirectTimetableUrl()
 

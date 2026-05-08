@@ -22,6 +22,7 @@ import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -40,8 +41,14 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.KeyboardOptions
 import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
@@ -68,6 +75,7 @@ fun ScheduleScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showSettings by remember { mutableStateOf(false) }
     var showAddActions by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val backgroundPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -123,11 +131,13 @@ fun ScheduleScreen(
                 onAddClick = {
                     showAddActions = !showAddActions
                     showSettings = false
+                    showAbout = false
                 },
                 onTodayClick = viewModel::returnToCurrentWeek,
                 onMoreClick = {
                     showSettings = !showSettings
                     showAddActions = false
+                    showAbout = false
                 }
             )
             HorizontalPager(
@@ -193,6 +203,10 @@ fun ScheduleScreen(
                     viewModel.setSemesterStartDate(date)
                     showSettings = false
                 },
+                onAboutClick = {
+                    showSettings = false
+                    showAbout = true
+                },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .windowInsetsPadding(WindowInsets.statusBars)
@@ -206,6 +220,9 @@ fun ScheduleScreen(
                 .padding(horizontal = 16.dp, vertical = 18.dp)
                 .navigationBarsPadding()
         )
+    }
+    if (showAbout) {
+        AboutScheduleDialog(onDismiss = { showAbout = false })
     }
 }
 
@@ -259,11 +276,12 @@ private fun ScheduleSettingsPanel(
     semesterStartMonday: LocalDate,
     onShowWeekendChange: (Boolean) -> Unit,
     onSemesterStartSubmit: (LocalDate) -> Unit,
+    onAboutClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd")
     var dateInput by remember(semesterStartMonday) {
-        mutableStateOf(formatSemesterStartInput(semesterStartMonday.format(formatter)))
+        mutableStateOf(normalizeSemesterStartDigits(semesterStartMonday.format(formatter)))
     }
     val parsedDate = parseSemesterStartInput(dateInput)
     Surface(
@@ -295,11 +313,13 @@ private fun ScheduleSettingsPanel(
             ) {
                 OutlinedTextField(
                     value = dateInput,
-                    onValueChange = { dateInput = formatSemesterStartInput(it) },
+                    onValueChange = { dateInput = normalizeSemesterStartDigits(it) },
                     singleLine = true,
                     label = { Text("开学日期") },
                     placeholder = { Text("2026/03/09") },
                     isError = dateInput.isNotBlank() && parsedDate == null,
+                    visualTransformation = SemesterStartDateVisualTransformation,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f)
                 )
                 TextButton(
@@ -309,22 +329,91 @@ private fun ScheduleSettingsPanel(
                     Text(text = "设置", color = Color.White, fontSize = 12.sp)
                 }
             }
+            TextButton(onClick = onAboutClick) {
+                Text(text = "关于", color = Color.White, fontSize = 13.sp)
+            }
         }
     }
 }
 
+@Composable
+private fun AboutScheduleDialog(
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("确定")
+            }
+        },
+        title = { Text("关于") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                aboutScheduleLines().forEach { line ->
+                    Text(text = line)
+                }
+            }
+        }
+    )
+}
+
+internal fun aboutScheduleLines(): List<String> {
+    return listOf(
+        "桂工课表 v0.2.2",
+        "简洁 纯粹 高效",
+        "开发者：hezh",
+        "反馈邮箱：hezh0425@gmail.com",
+        "项目地址：https://github.com/hzhkdh/glut-schedule"
+    )
+}
+
+private object SemesterStartDateVisualTransformation : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        return TransformedText(
+            AnnotatedString(formatSemesterStartInput(text.text)),
+            SemesterStartDateOffsetMapping(text.text.length)
+        )
+    }
+}
+
+private class SemesterStartDateOffsetMapping(
+    private val originalLength: Int
+) : OffsetMapping {
+    override fun originalToTransformed(offset: Int): Int {
+        return offset + (if (offset >= 4) 1 else 0) + (if (offset >= 6) 1 else 0)
+    }
+
+    override fun transformedToOriginal(offset: Int): Int {
+        return when {
+            offset <= 4 -> offset
+            offset <= 7 -> offset - 1
+            else -> offset - 2
+        }.coerceIn(0, originalLength)
+    }
+}
+
+internal fun normalizeSemesterStartDigits(value: String): String {
+    return value.filter { it.isDigit() }.take(8)
+}
+
 internal fun formatSemesterStartInput(value: String): String {
-    val digits = value.filter { it.isDigit() }.take(8)
+    val digits = normalizeSemesterStartDigits(value)
     return buildString {
         digits.forEachIndexed { index, char ->
             if (index == 4 || index == 6) append('/')
             append(char)
         }
+        if (digits.length == 4 || digits.length == 6) append('/')
     }
 }
 
 internal fun parseSemesterStartInput(value: String): LocalDate? {
-    val normalized = value.trim().replace('-', '/')
+    val normalized = if (value.all { it.isDigit() } && value.length == 8) {
+        formatSemesterStartInput(value)
+    } else {
+        value.trim().replace('-', '/')
+    }
     if (normalized.isBlank()) return null
     val formatter = DateTimeFormatterBuilder()
         .appendPattern("uuuu/M/d")

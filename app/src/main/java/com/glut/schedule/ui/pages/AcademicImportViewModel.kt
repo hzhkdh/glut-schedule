@@ -16,7 +16,9 @@ import com.glut.schedule.service.academic.AcademicTodayPlanParser
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.DebugCaptureService
 import com.glut.schedule.service.academic.hasUsableAcademicCookie
+import com.glut.schedule.service.academic.isAcademicPage
 import com.glut.schedule.service.academic.isClassTimetablePage
+import com.glut.schedule.service.academic.isLoginPage
 import com.glut.schedule.service.academic.isTimetablePage
 import com.glut.schedule.service.parser.AcademicScheduleParser
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,7 +64,11 @@ class AcademicImportViewModel(
     ) { cookie, htmlPreview, operation ->
         AcademicImportUiState(
             cookie = cookie,
-            hasSession = hasUsableAcademicCookie(cookie),
+            hasSession = hasConfirmedAcademicLogin(
+                cookie = cookie,
+                currentUrl = operation.currentUrl,
+                isLoginFormVisible = operation.isLoginFormVisible
+            ),
             isFetching = operation.isFetching,
             message = operation.message,
             htmlPreview = htmlPreview,
@@ -81,8 +87,43 @@ class AcademicImportViewModel(
     fun onPageUrlChanged(url: String?) {
         val sanitized = url.orEmpty()
         val isTimetable = isTimetablePage(sanitized)
+        val current = operationState.value
+        val message = if (
+            hasConfirmedAcademicLogin(
+                cookie = uiState.value.cookie,
+                currentUrl = sanitized,
+                isLoginFormVisible = current.isLoginFormVisible
+            ) &&
+            current.message == "请先在教务系统页面完成登录"
+        ) {
+            "已登录，可直接点击右下角导入按钮"
+        } else {
+            current.message
+        }
         operationState.update {
-            it.copy(currentUrl = sanitized, isOnTimetablePage = isTimetable)
+            it.copy(currentUrl = sanitized, isOnTimetablePage = isTimetable, message = message)
+        }
+    }
+
+    fun onLoginFormDetected(isVisible: Boolean) {
+        val current = operationState.value
+        val message = if (
+            !isVisible &&
+            hasConfirmedAcademicLogin(
+                cookie = uiState.value.cookie,
+                currentUrl = current.currentUrl,
+                isLoginFormVisible = false
+            ) &&
+            current.message == "请先在教务系统页面完成登录"
+        ) {
+            "已登录，可直接点击右下角导入按钮"
+        } else if (isVisible && current.message == "已登录，可直接点击右下角导入按钮") {
+            "请先在教务系统页面完成登录"
+        } else {
+            current.message
+        }
+        operationState.update {
+            it.copy(isLoginFormVisible = isVisible, message = message)
         }
     }
 
@@ -105,8 +146,16 @@ class AcademicImportViewModel(
         if (!hasUsableAcademicCookie(value)) return
         viewModelScope.launch {
             sessionStore.saveCookie(value)
-            operationState.update {
-                it.copy(message = "已登录，可直接点击右下角导入按钮")
+            if (
+                hasConfirmedAcademicLogin(
+                    cookie = value,
+                    currentUrl = operationState.value.currentUrl,
+                    isLoginFormVisible = operationState.value.isLoginFormVisible
+                )
+            ) {
+                operationState.update {
+                    it.copy(message = "已登录，可直接点击右下角导入按钮")
+                }
             }
         }
     }
@@ -876,12 +925,24 @@ class AcademicImportViewModel(
     }
 }
 
+internal fun hasConfirmedAcademicLogin(
+    cookie: String,
+    currentUrl: String,
+    isLoginFormVisible: Boolean
+): Boolean {
+    return hasUsableAcademicCookie(cookie) &&
+        isAcademicPage(currentUrl) &&
+        !isLoginPage(currentUrl) &&
+        !isLoginFormVisible
+}
+
 private data class ImportOperationState(
     val isFetching: Boolean = false,
     val message: String,
     val debugInfo: String = "",
     val currentUrl: String = "",
     val isOnTimetablePage: Boolean = false,
+    val isLoginFormVisible: Boolean = true,
     val importedCourseCount: Int = 0,
     val apiUrls: List<String> = emptyList()
 )
