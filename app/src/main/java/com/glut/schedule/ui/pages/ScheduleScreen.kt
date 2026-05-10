@@ -46,9 +46,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalUriHandler
 import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
@@ -340,6 +342,7 @@ private fun ScheduleSettingsPanel(
 private fun AboutScheduleDialog(
     onDismiss: () -> Unit
 ) {
+    val uriHandler = LocalUriHandler.current
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
@@ -351,7 +354,16 @@ private fun AboutScheduleDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 aboutScheduleLines().forEach { line ->
-                    Text(text = line)
+                    if (line == ABOUT_PROJECT_URL) {
+                        Text(
+                            text = line,
+                            color = Color(0xFF2563EB),
+                            textDecoration = TextDecoration.Underline,
+                            modifier = Modifier.clickable { uriHandler.openUri(ABOUT_PROJECT_URL) }
+                        )
+                    } else {
+                        Text(text = line)
+                    }
                 }
             }
         }
@@ -360,13 +372,17 @@ private fun AboutScheduleDialog(
 
 internal fun aboutScheduleLines(): List<String> {
     return listOf(
-        "桂工课表 v0.2.2",
+        "桂工课表 v0.2.3",
         "简洁 纯粹 高效",
         "开发者：hezh",
         "反馈邮箱：hezh0425@gmail.com",
-        "项目地址：https://github.com/hzhkdh/glut-schedule"
+        ABOUT_PROJECT_LABEL,
+        ABOUT_PROJECT_URL
     )
 }
+
+internal const val ABOUT_PROJECT_URL = "https://github.com/hzhkdh/glut-schedule"
+private const val ABOUT_PROJECT_LABEL = "项目地址："
 
 private object SemesterStartDateVisualTransformation : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CloudDownload
@@ -39,7 +40,7 @@ fun ScheduleHeader(
     modifier: Modifier = Modifier
 ) {
     val formatter = DateTimeFormatter.ofPattern("yyyy/M/d")
-    val isCurrentWeek = week.number == currentWeekNumber
+    val dayLabel = today.dayLabel()
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -47,17 +48,23 @@ fun ScheduleHeader(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 8.dp)
+                .widthIn(min = 0.dp)
+        ) {
             Text(
-                text = "第${week.number}周 ${today.dayLabel()} ${today.format(formatter)}",
+                text = scheduleHeaderPrimaryText(week.number, currentWeekNumber, dayLabel),
                 color = Color.White,
-                fontSize = 20.sp,
+                fontSize = 21.sp,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = if (isCurrentWeek) "本周 · 左右滑动切换周" else "已偏离本周 · 可一键回到本周",
-                color = Color.White.copy(alpha = 0.76f),
-                fontSize = 11.sp
+                text = today.format(formatter),
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
             )
         }
 
@@ -91,6 +98,18 @@ fun ScheduleHeader(
                 Icon(Icons.Outlined.MoreHoriz, contentDescription = "更多", modifier = Modifier.size(22.dp))
             }
         }
+    }
+}
+
+internal fun scheduleHeaderPrimaryText(
+    weekNumber: Int,
+    currentWeekNumber: Int,
+    dayLabel: String
+): String {
+    return if (weekNumber == currentWeekNumber) {
+        "第${weekNumber}周 $dayLabel"
+    } else {
+        "第${weekNumber}周(非本周)"
     }
 }
 
