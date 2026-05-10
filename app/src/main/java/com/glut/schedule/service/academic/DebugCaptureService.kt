@@ -9,14 +9,20 @@ import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-class DebugCaptureService(private val context: Context) {
+class DebugCaptureService(
+    private val context: Context? = null,
+    private val captureDirProvider: () -> File = {
+        File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "scheduleApp_debug"
+        )
+    },
+    private val fileExportEnabled: Boolean = false
+) {
 
     private val captureDir: File
         get() {
-            val dir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                "scheduleApp_debug"
-            )
+            val dir = captureDirProvider()
             if (!dir.exists()) dir.mkdirs()
             return dir
         }
@@ -81,8 +87,16 @@ class DebugCaptureService(private val context: Context) {
         }
     }
 
-    suspend fun saveHtmlToFile(html: String, label: String = "timetable"): String =
+    suspend fun saveHtmlToFile(
+        html: String,
+        label: String = "timetable",
+        forceFileExport: Boolean = false
+    ): String =
         withContext(Dispatchers.IO) {
+            if (!fileExportEnabled && !forceFileExport) {
+                return@withContext "调试文件未保存：正式版默认关闭自动导出"
+            }
+
             val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
             val filename = "glut_${label}_$timestamp.html"
             val file = File(captureDir, filename)
@@ -115,8 +129,13 @@ class DebugCaptureService(private val context: Context) {
         diagnostics: String,
         htmlPreview: String,
         url: String,
-        cookiePresent: Boolean
+        cookiePresent: Boolean,
+        forceFileExport: Boolean = false
     ): String = withContext(Dispatchers.IO) {
+        if (!fileExportEnabled && !forceFileExport) {
+            return@withContext "诊断文件未保存：正式版默认关闭自动导出"
+        }
+
         val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
         val file = File(captureDir, "glut_diagnostics_$timestamp.txt")
         val content = buildString {

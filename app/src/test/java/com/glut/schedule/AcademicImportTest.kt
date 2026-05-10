@@ -12,9 +12,16 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import org.junit.Rule
 import java.time.LocalDate
+import com.glut.schedule.service.academic.DebugCaptureService
+import kotlinx.coroutines.test.runTest
 
 class AcademicImportTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
     @Test
     fun academicPageDetectionOnlyAcceptsGlutAcademicHost() {
         assertTrue(isAcademicPage("http://jw.glut.edu.cn/academic/preGotoAffairFrame.do#/menu"))
@@ -74,6 +81,27 @@ class AcademicImportTest {
         val urls = ApiProbeService.buildProbeUrls(listOf(classUrl, studentUrl))
 
         assertEquals(listOf(studentUrl), urls)
+    }
+
+    @Test
+    fun debugCaptureDoesNotWriteFilesUnlessExplicitlyEnabled() = runTest {
+        val exportDir = temporaryFolder.newFolder("scheduleApp_debug")
+        val captureService = DebugCaptureService(
+            captureDirProvider = { exportDir },
+            fileExportEnabled = false
+        )
+
+        val htmlMessage = captureService.saveHtmlToFile("<html>课表</html>", "timetable")
+        val diagnosticsMessage = captureService.saveDiagnostics(
+            diagnostics = "解析成功",
+            htmlPreview = "<html>课表</html>",
+            url = "http://jw.glut.edu.cn/academic/",
+            cookiePresent = true
+        )
+
+        assertTrue(htmlMessage.contains("未保存"))
+        assertTrue(diagnosticsMessage.contains("未保存"))
+        assertTrue(exportDir.listFiles().orEmpty().isEmpty())
     }
 
     @Test

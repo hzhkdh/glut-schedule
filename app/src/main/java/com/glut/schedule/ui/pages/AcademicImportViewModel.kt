@@ -251,7 +251,7 @@ class AcademicImportViewModel(
                     it.copy(
                         isFetching = false,
                         debugInfo = "$diagnostics\n\n$fileMsg",
-                        message = "解析失败: ${e.message}\nHTML已保存到下载目录"
+                        message = "解析失败: ${e.message}\n调试文件未自动保存"
                     )
                 }
                 return@launch
@@ -278,7 +278,7 @@ class AcademicImportViewModel(
                     return@launch
                 }
 
-                diagnostics.appendLine("未识别到课程，HTML已保存到下载目录")
+                diagnostics.appendLine("未识别到课程，调试文件未自动保存")
 
                 captureService.saveDiagnostics(
                     diagnostics.toString(),
@@ -291,7 +291,7 @@ class AcademicImportViewModel(
                     it.copy(
                         isFetching = false,
                         debugInfo = "$diagnostics\n\n$fileMsg",
-                        message = "当前页面未识别到个人课表\nHTML已保存到下载目录/scheduleApp_debug/"
+                        message = "当前页面未识别到个人课表\n调试文件未自动保存"
                     )
                 }
                 return@launch
@@ -400,7 +400,7 @@ class AcademicImportViewModel(
                             operationState.value.currentUrl, hasUsableAcademicCookie(uiState.value.cookie))
                         operationState.update { it.copy(isFetching = false,
                             debugInfo = "$diagnostics\n\n$fileMsg",
-                            message = "API响应未识别到课程数据\n数据已保存到下载目录") }
+                            message = "API响应未识别到课程数据\n调试文件未自动保存") }
                     } else {
                         val (currentWeek, activeBlockCount) = currentWeekActiveBlockCount(courses)
                         diagnostics.appendLine("当前第${currentWeek}周可显示课程块: $activeBlockCount")
@@ -428,9 +428,9 @@ class AcademicImportViewModel(
                         allBodies.appendLine("--- Response $i: ${resp.optString("url", "")} ---")
                         allBodies.appendLine(resp.optString("body", "").take(500))
                     }
-                    saveApiResponsesToFile(allBodies.toString())
+                    val fileMsg = saveApiResponsesToFile(allBodies.toString())
                     operationState.update { it.copy(isFetching = false,
-                        debugInfo = "$diagnostics\n\nAPI响应已保存到下载目录",
+                        debugInfo = "$diagnostics\n\n$fileMsg",
                         message = "未找到课程API，请先点击[点击课表菜单]后再试") }
                 }
             } catch (e: Exception) {
@@ -918,7 +918,8 @@ class AcademicImportViewModel(
         viewModelScope.launch {
             val msg = captureService.saveHtmlToFile(
                 uiState.value.htmlPreview.ifBlank { "<empty>" },
-                "manual_debug"
+                "manual_debug",
+                forceFileExport = true
             )
             operationState.update { it.copy(debugInfo = msg, message = msg) }
         }
