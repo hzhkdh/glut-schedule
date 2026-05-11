@@ -8,8 +8,14 @@ import java.time.temporal.TemporalAdjusters
 const val MIN_ACADEMIC_WEEK = 1
 const val MAX_ACADEMIC_WEEK = 22
 val DEFAULT_SEMESTER_START_MONDAY: LocalDate = LocalDate.of(2026, 3, 9)
+val DEFAULT_SEMESTER_END_DATE: LocalDate = DEFAULT_SEMESTER_START_MONDAY.plusWeeks((MAX_ACADEMIC_WEEK - 1).toLong()).plusDays(6)
 
 fun clampAcademicWeek(week: Int): Int = week.coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
+
+fun clampAcademicWeek(week: Int, maxWeek: Int): Int {
+    val boundedMaxWeek = maxWeek.coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
+    return week.coerceIn(MIN_ACADEMIC_WEEK, boundedMaxWeek)
+}
 
 fun visibleDayCount(showWeekend: Boolean): Int = if (showWeekend) 7 else 5
 
@@ -17,15 +23,27 @@ fun normalizeSemesterStartMonday(date: LocalDate): LocalDate {
     return date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
 }
 
-fun academicWeekForDate(date: LocalDate, semesterStartMonday: LocalDate): Int {
+fun academicWeekForDate(
+    date: LocalDate,
+    semesterStartMonday: LocalDate,
+    maxWeek: Int = MAX_ACADEMIC_WEEK
+): Int {
     val normalizedStart = normalizeSemesterStartMonday(semesterStartMonday)
     val daysFromStart = ChronoUnit.DAYS.between(normalizedStart, date)
     val rawWeek = Math.floorDiv(daysFromStart, 7L).toInt() + 1
-    return clampAcademicWeek(rawWeek)
+    return clampAcademicWeek(rawWeek, maxWeek)
 }
 
-fun scheduleWeekForNumber(weekNumber: Int, semesterStartMonday: LocalDate): ScheduleWeek {
-    val clampedWeekNumber = clampAcademicWeek(weekNumber)
+fun academicMaxWeekForCalendar(semesterStartMonday: LocalDate, semesterEndDate: LocalDate): Int {
+    return academicWeekForDate(semesterEndDate, semesterStartMonday)
+}
+
+fun scheduleWeekForNumber(
+    weekNumber: Int,
+    semesterStartMonday: LocalDate,
+    maxWeek: Int = MAX_ACADEMIC_WEEK
+): ScheduleWeek {
+    val clampedWeekNumber = clampAcademicWeek(weekNumber, maxWeek)
     val normalizedStart = normalizeSemesterStartMonday(semesterStartMonday)
     return ScheduleWeek(
         number = clampedWeekNumber,
@@ -37,13 +55,13 @@ data class ScheduleWeek(
     val number: Int,
     val monday: LocalDate
 ) {
-    fun previous(): ScheduleWeek {
-        val clampedNumber = clampAcademicWeek(number - 1)
+    fun previous(maxWeek: Int = MAX_ACADEMIC_WEEK): ScheduleWeek {
+        val clampedNumber = clampAcademicWeek(number - 1, maxWeek)
         return copy(number = clampedNumber, monday = monday.minusDays(((number - clampedNumber) * 7).toLong()))
     }
 
-    fun next(): ScheduleWeek {
-        val clampedNumber = clampAcademicWeek(number + 1)
+    fun next(maxWeek: Int = MAX_ACADEMIC_WEEK): ScheduleWeek {
+        val clampedNumber = clampAcademicWeek(number + 1, maxWeek)
         return copy(number = clampedNumber, monday = monday.plusDays(((clampedNumber - number) * 7).toLong()))
     }
 

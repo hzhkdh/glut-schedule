@@ -8,8 +8,10 @@ import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
+import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
 import com.glut.schedule.data.model.ScheduleWeek
 import com.glut.schedule.data.model.academicWeekForDate
+import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
@@ -28,6 +30,8 @@ data class ScheduleUiState(
     val today: LocalDate = LocalDate.now(),
     val currentWeekNumber: Int = academicWeekForDate(LocalDate.now(), DEFAULT_SEMESTER_START_MONDAY),
     val semesterStartMonday: LocalDate = DEFAULT_SEMESTER_START_MONDAY,
+    val semesterEndDate: LocalDate = DEFAULT_SEMESTER_END_DATE,
+    val maxAcademicWeek: Int = academicMaxWeekForCalendar(DEFAULT_SEMESTER_START_MONDAY, DEFAULT_SEMESTER_END_DATE),
     val classPeriods: List<ClassPeriod> = emptyList(),
     val courses: List<ScheduleCourse> = emptyList(),
     val courseBlocks: List<CourseBlock> = emptyList(),
@@ -39,6 +43,7 @@ private data class ScheduleSettingsUiState(
     val weekNumber: Int,
     val showWeekend: Boolean,
     val semesterStartMonday: LocalDate,
+    val semesterEndDate: LocalDate,
     val customBackgroundUri: String
 )
 
@@ -57,12 +62,14 @@ class ScheduleViewModel(
             settingsStore.currentWeekNumber,
             settingsStore.showWeekend,
             settingsStore.semesterStartMonday,
+            settingsStore.semesterEndDate,
             settingsStore.customBackgroundUri
-        ) { weekNumber, showWeekend, semesterStartMonday, customBackgroundUri ->
+        ) { weekNumber, showWeekend, semesterStartMonday, semesterEndDate, customBackgroundUri ->
             ScheduleSettingsUiState(
                 weekNumber = weekNumber,
                 showWeekend = showWeekend,
                 semesterStartMonday = semesterStartMonday,
+                semesterEndDate = semesterEndDate,
                 customBackgroundUri = customBackgroundUri
             )
         }
@@ -72,14 +79,18 @@ class ScheduleViewModel(
             repository.classPeriods,
             repository.courses
         ) { settings, periods, courses ->
-            val clampedWeekNumber = clampAcademicWeek(settings.weekNumber)
+            val normalizedStart = normalizeSemesterStartMonday(settings.semesterStartMonday)
+            val maxAcademicWeek = academicMaxWeekForCalendar(normalizedStart, settings.semesterEndDate)
+            val clampedWeekNumber = clampAcademicWeek(settings.weekNumber, maxAcademicWeek)
             val today = LocalDate.now()
             val coloredCourses = CourseColorMapper.assignColors(courses)
             ScheduleUiState(
-                week = scheduleWeekForNumber(clampedWeekNumber, settings.semesterStartMonday),
+                week = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek),
                 today = today,
-                currentWeekNumber = academicWeekForDate(today, settings.semesterStartMonday),
-                semesterStartMonday = normalizeSemesterStartMonday(settings.semesterStartMonday),
+                currentWeekNumber = academicWeekForDate(today, normalizedStart, maxAcademicWeek),
+                semesterStartMonday = normalizedStart,
+                semesterEndDate = settings.semesterEndDate,
+                maxAcademicWeek = maxAcademicWeek,
                 classPeriods = periods,
                 courses = coloredCourses,
                 courseBlocks = coloredCourses.flatMap { course ->
@@ -98,17 +109,17 @@ class ScheduleViewModel(
     }
 
     fun previousWeek() {
-        val nextWeek = uiState.value.week.previous().number
+        val nextWeek = uiState.value.week.previous(uiState.value.maxAcademicWeek).number
         viewModelScope.launch { settingsStore.setCurrentWeekNumber(nextWeek) }
     }
 
     fun nextWeek() {
-        val nextWeek = uiState.value.week.next().number
+        val nextWeek = uiState.value.week.next(uiState.value.maxAcademicWeek).number
         viewModelScope.launch { settingsStore.setCurrentWeekNumber(nextWeek) }
     }
 
     fun setWeekNumber(weekNumber: Int) {
-        viewModelScope.launch { settingsStore.setCurrentWeekNumber(clampAcademicWeek(weekNumber)) }
+        viewModelScope.launch { settingsStore.setCurrentWeekNumber(clampAcademicWeek(weekNumber, uiState.value.maxAcademicWeek)) }
     }
 
     fun setShowWeekend(showWeekend: Boolean) {
@@ -116,31 +127,12 @@ class ScheduleViewModel(
     }
 
     fun returnToCurrentWeek() {
-        val currentWeekNumber = academicWeekForDate(LocalDate.now(), uiState.value.semesterStartMonday)
+        val currentWeekNumber = academicWeekForDate(
+            LocalDate.now(),
+            uiState.value.semesterStartMonday,
+            uiState.value.maxAcademicWeek
+        )
         viewModelScope.launch { settingsStore.setCurrentWeekNumber(currentWeekNumber) }
-    }
-
-    fun moveSemesterStartByWeeks(deltaWeeks: Int) {
-        val nextStart = uiState.value.semesterStartMonday.plusWeeks(deltaWeeks.toLong())
-        viewModelScope.launch { settingsStore.setSemesterStartMonday(nextStart) }
-    }
-
-    fun setSemesterStartToThisWeekMonday() {
-        val today = LocalDate.now()
-        val currentWeekMonday = normalizeSemesterStartMonday(today)
-        viewModelScope.launch {
-            settingsStore.setSemesterStartMonday(currentWeekMonday)
-            settingsStore.setCurrentWeekNumber(1)
-        }
-    }
-
-    fun setSemesterStartDate(date: LocalDate) {
-        val normalizedStart = normalizeSemesterStartMonday(date)
-        val currentWeekNumber = academicWeekForDate(LocalDate.now(), normalizedStart)
-        viewModelScope.launch {
-            settingsStore.setSemesterStartMonday(normalizedStart)
-            settingsStore.setCurrentWeekNumber(currentWeekNumber)
-        }
     }
 
     fun setCustomBackgroundUri(uri: String) {

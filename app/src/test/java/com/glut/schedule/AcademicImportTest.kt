@@ -188,7 +188,7 @@ class AcademicImportTest {
             httpCode = 200,
             contentType = "text/html;charset=UTF-8",
             body = """
-                {"code":1,"data":{"whichweek":9,"schoolCalendarStartDate":"2026-03-09","schoolCalendarAlias":"2026春","user":{"id":888001}}}
+                {"code":1,"data":{"whichweek":9,"schoolCalendarStartDate":"2026-03-09","schoolCalendarEndDate":"2026-07-19","schoolCalendarAlias":"2026春","user":{"id":888001}}}
             """.trimIndent(),
             bodyLength = 140
         )
@@ -197,6 +197,7 @@ class AcademicImportTest {
 
         assertEquals(9, calendar?.currentWeekNumber)
         assertEquals(LocalDate.of(2026, 3, 9), calendar?.semesterStartMonday)
+        assertEquals(LocalDate.of(2026, 7, 19), calendar?.semesterEndDate)
     }
 
     @Test

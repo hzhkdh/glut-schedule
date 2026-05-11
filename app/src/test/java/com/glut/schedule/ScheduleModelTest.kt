@@ -3,6 +3,7 @@ package com.glut.schedule
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ScheduleWeek
 import com.glut.schedule.data.model.academicWeekForDate
+import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.visibleDayCount
 import com.glut.schedule.data.model.defaultClassPeriods
 import com.glut.schedule.data.model.scheduleWeekForNumber
@@ -67,6 +68,15 @@ class ScheduleModelTest {
         assertEquals(1, academicWeekForDate(LocalDate.of(2026, 3, 15), semesterStartMonday))
         assertEquals(2, academicWeekForDate(LocalDate.of(2026, 3, 16), semesterStartMonday))
         assertEquals(9, academicWeekForDate(LocalDate.of(2026, 5, 5), semesterStartMonday))
+    }
+
+    @Test
+    fun academicMaxWeekUsesCalendarEndDate() {
+        val semesterStartMonday = LocalDate.of(2026, 3, 9)
+        val semesterEndDate = LocalDate.of(2026, 7, 19)
+
+        assertEquals(19, academicMaxWeekForCalendar(semesterStartMonday, semesterEndDate))
+        assertEquals(19, academicWeekForDate(LocalDate.of(2026, 7, 27), semesterStartMonday, maxWeek = 19))
     }
 
     @Test

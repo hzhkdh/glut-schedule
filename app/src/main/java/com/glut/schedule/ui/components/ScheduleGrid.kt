@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -64,7 +63,7 @@ fun ScheduleGrid(
 
         Column {
             Row(modifier = Modifier.fillMaxWidth()) {
-                Spacer(modifier = Modifier.width(leftWidth))
+                MonthHeader(week = week, width = leftWidth)
                 WeekDayHeader(week = week, today = today, dayWidth = dayWidth, dayCount = dayCount)
             }
 
@@ -85,6 +84,38 @@ fun ScheduleGrid(
         }
     }
 }
+
+@Composable
+private fun MonthHeader(
+    week: ScheduleWeek,
+    width: Dp
+) {
+    Box(
+        modifier = Modifier
+            .width(width)
+            .padding(
+                start = scheduleGridMonthHeaderStartPaddingDp().dp,
+                top = scheduleGridMonthHeaderTopPaddingDp().dp
+            ),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(
+            text = scheduleGridMonthText(week.monday),
+            color = Color.White.copy(alpha = 0.9f),
+            fontSize = 12.sp,
+            lineHeight = 13.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+fun scheduleGridMonthText(date: LocalDate): String {
+    return "${date.monthValue}月"
+}
+
+fun scheduleGridMonthHeaderStartPaddingDp(): Int = 15
+
+fun scheduleGridMonthHeaderTopPaddingDp(): Int = 6
 
 @Composable
 private fun WeekDayHeader(

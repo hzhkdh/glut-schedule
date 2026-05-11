@@ -2,6 +2,7 @@ package com.glut.schedule.ui.pages
 
 import android.content.Intent
 import android.net.Uri
+import com.glut.schedule.BuildConfig
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -21,7 +22,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -41,15 +41,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalUriHandler
 import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
@@ -62,10 +56,6 @@ import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.ScheduleHeader
 import com.glut.schedule.ui.components.StarryScheduleBackground
 import kotlinx.coroutines.flow.distinctUntilChanged
-import java.time.LocalDate
-import java.time.format.DateTimeFormatterBuilder
-import java.time.format.DateTimeFormatter
-import java.time.format.ResolverStyle
 
 @Composable
 fun ScheduleScreen(
@@ -92,15 +82,18 @@ fun ScheduleScreen(
         viewModel.setCustomBackgroundUri(uri.toString())
         showAddActions = false
     }
-    val blocksByWeek = remember(uiState.courses) { courseBlocksByWeek(uiState.courses) }
+    val blocksByWeek = remember(uiState.courses, uiState.maxAcademicWeek) {
+        courseBlocksByWeek(uiState.courses, uiState.maxAcademicWeek)
+    }
     val pagerState = rememberPagerState(
-        initialPage = pagerPageForWeekNumber(uiState.week.number),
-        pageCount = { MAX_ACADEMIC_WEEK }
+        initialPage = pagerPageForWeekNumber(uiState.week.number, uiState.maxAcademicWeek),
+        pageCount = { uiState.maxAcademicWeek }
     )
     val latestWeekNumber by rememberUpdatedState(uiState.week.number)
+    val latestMaxAcademicWeek by rememberUpdatedState(uiState.maxAcademicWeek)
 
-    LaunchedEffect(uiState.week.number) {
-        val targetPage = pagerPageForWeekNumber(uiState.week.number)
+    LaunchedEffect(uiState.week.number, uiState.maxAcademicWeek) {
+        val targetPage = pagerPageForWeekNumber(uiState.week.number, uiState.maxAcademicWeek)
         if (pagerState.currentPage != targetPage && pagerState.settledPage != targetPage) {
             pagerState.animateScrollToPage(targetPage)
         }
@@ -110,7 +103,7 @@ fun ScheduleScreen(
         snapshotFlow { pagerState.settledPage }
             .distinctUntilChanged()
             .collect { page ->
-                val targetWeekNumber = weekNumberForPagerPage(page)
+                val targetWeekNumber = weekNumberForPagerPage(page, latestMaxAcademicWeek)
                 if (targetWeekNumber != latestWeekNumber) {
                     viewModel.setWeekNumber(targetWeekNumber)
                 }
@@ -154,8 +147,12 @@ fun ScheduleScreen(
                     .weight(1f)
                     .fillMaxWidth()
             ) { page ->
-                val pageWeekNumber = weekNumberForPagerPage(page)
-                val pageWeek = scheduleWeekForNumber(pageWeekNumber, uiState.semesterStartMonday)
+                val pageWeekNumber = weekNumberForPagerPage(page, uiState.maxAcademicWeek)
+                val pageWeek = scheduleWeekForNumber(
+                    pageWeekNumber,
+                    uiState.semesterStartMonday,
+                    uiState.maxAcademicWeek
+                )
                 ScheduleGrid(
                     week = pageWeek,
                     today = uiState.today,
@@ -199,12 +196,7 @@ fun ScheduleScreen(
             )
             ScheduleSettingsPanel(
                 showWeekend = uiState.showWeekend,
-                semesterStartMonday = uiState.semesterStartMonday,
                 onShowWeekendChange = viewModel::setShowWeekend,
-                onSemesterStartSubmit = { date ->
-                    viewModel.setSemesterStartDate(date)
-                    showSettings = false
-                },
                 onAboutClick = {
                     showSettings = false
                     showAbout = true
@@ -254,16 +246,20 @@ private fun ScheduleAddActionsPanel(
     }
 }
 
-fun weekNumberForPagerPage(page: Int): Int {
-    return clampAcademicWeek(page + 1)
+fun weekNumberForPagerPage(page: Int, maxWeek: Int = MAX_ACADEMIC_WEEK): Int {
+    return clampAcademicWeek(page + 1, maxWeek)
 }
 
-fun pagerPageForWeekNumber(weekNumber: Int): Int {
-    return clampAcademicWeek(weekNumber) - MIN_ACADEMIC_WEEK
+fun pagerPageForWeekNumber(weekNumber: Int, maxWeek: Int = MAX_ACADEMIC_WEEK): Int {
+    return clampAcademicWeek(weekNumber, maxWeek) - MIN_ACADEMIC_WEEK
 }
 
-fun courseBlocksByWeek(courses: List<ScheduleCourse>): Map<Int, List<CourseBlock>> {
-    return (MIN_ACADEMIC_WEEK..MAX_ACADEMIC_WEEK).associateWith { weekNumber ->
+fun courseBlocksByWeek(
+    courses: List<ScheduleCourse>,
+    maxWeek: Int = MAX_ACADEMIC_WEEK
+): Map<Int, List<CourseBlock>> {
+    val clampedMaxWeek = clampAcademicWeek(maxWeek)
+    return (MIN_ACADEMIC_WEEK..clampedMaxWeek).associateWith { weekNumber ->
         courses.flatMap { course ->
             course.occurrences
                 .filter { occurrence -> occurrence.isActiveInWeek(weekNumber) }
@@ -275,17 +271,10 @@ fun courseBlocksByWeek(courses: List<ScheduleCourse>): Map<Int, List<CourseBlock
 @Composable
 private fun ScheduleSettingsPanel(
     showWeekend: Boolean,
-    semesterStartMonday: LocalDate,
     onShowWeekendChange: (Boolean) -> Unit,
-    onSemesterStartSubmit: (LocalDate) -> Unit,
     onAboutClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd")
-    var dateInput by remember(semesterStartMonday) {
-        mutableStateOf(normalizeSemesterStartDigits(semesterStartMonday.format(formatter)))
-    }
-    val parsedDate = parseSemesterStartInput(dateInput)
     Surface(
         modifier = modifier,
         color = Color.Black.copy(alpha = 0.72f),
@@ -303,33 +292,6 @@ private fun ScheduleSettingsPanel(
             ) {
                 Text(text = "显示周末", color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 Switch(checked = showWeekend, onCheckedChange = onShowWeekendChange)
-            }
-            Text(
-                text = "学期起点 ${semesterStartMonday.format(formatter)}",
-                color = Color.White,
-                fontSize = 13.sp
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = dateInput,
-                    onValueChange = { dateInput = normalizeSemesterStartDigits(it) },
-                    singleLine = true,
-                    label = { Text("开学日期") },
-                    placeholder = { Text("2026/03/09") },
-                    isError = dateInput.isNotBlank() && parsedDate == null,
-                    visualTransformation = SemesterStartDateVisualTransformation,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(
-                    onClick = { parsedDate?.let(onSemesterStartSubmit) },
-                    enabled = parsedDate != null
-                ) {
-                    Text(text = "设置", color = Color.White, fontSize = 12.sp)
-                }
             }
             TextButton(onClick = onAboutClick) {
                 Text(text = "关于", color = Color.White, fontSize = 13.sp)
@@ -358,6 +320,9 @@ private fun AboutScheduleDialog(
                         Text(
                             text = line,
                             color = Color(0xFF2563EB),
+                            fontSize = aboutProjectUrlFontSizeSp().sp,
+                            maxLines = 1,
+                            softWrap = false,
                             textDecoration = TextDecoration.Underline,
                             modifier = Modifier.clickable { uriHandler.openUri(ABOUT_PROJECT_URL) }
                         )
@@ -372,7 +337,7 @@ private fun AboutScheduleDialog(
 
 internal fun aboutScheduleLines(): List<String> {
     return listOf(
-        "桂工课表 v0.2.3",
+        "桂工课表 v${BuildConfig.VERSION_NAME}",
         "简洁 纯粹 高效",
         "开发者：hezh",
         "反馈邮箱：hezh0425@gmail.com",
@@ -382,58 +347,5 @@ internal fun aboutScheduleLines(): List<String> {
 }
 
 internal const val ABOUT_PROJECT_URL = "https://github.com/hzhkdh/glut-schedule"
+fun aboutProjectUrlFontSizeSp(): Int = 11
 private const val ABOUT_PROJECT_LABEL = "项目地址："
-
-private object SemesterStartDateVisualTransformation : VisualTransformation {
-    override fun filter(text: AnnotatedString): TransformedText {
-        return TransformedText(
-            AnnotatedString(formatSemesterStartInput(text.text)),
-            SemesterStartDateOffsetMapping(text.text.length)
-        )
-    }
-}
-
-private class SemesterStartDateOffsetMapping(
-    private val originalLength: Int
-) : OffsetMapping {
-    override fun originalToTransformed(offset: Int): Int {
-        return offset + (if (offset >= 4) 1 else 0) + (if (offset >= 6) 1 else 0)
-    }
-
-    override fun transformedToOriginal(offset: Int): Int {
-        return when {
-            offset <= 4 -> offset
-            offset <= 7 -> offset - 1
-            else -> offset - 2
-        }.coerceIn(0, originalLength)
-    }
-}
-
-internal fun normalizeSemesterStartDigits(value: String): String {
-    return value.filter { it.isDigit() }.take(8)
-}
-
-internal fun formatSemesterStartInput(value: String): String {
-    val digits = normalizeSemesterStartDigits(value)
-    return buildString {
-        digits.forEachIndexed { index, char ->
-            if (index == 4 || index == 6) append('/')
-            append(char)
-        }
-        if (digits.length == 4 || digits.length == 6) append('/')
-    }
-}
-
-internal fun parseSemesterStartInput(value: String): LocalDate? {
-    val normalized = if (value.all { it.isDigit() } && value.length == 8) {
-        formatSemesterStartInput(value)
-    } else {
-        value.trim().replace('-', '/')
-    }
-    if (normalized.isBlank()) return null
-    val formatter = DateTimeFormatterBuilder()
-        .appendPattern("uuuu/M/d")
-        .toFormatter()
-        .withResolverStyle(ResolverStyle.STRICT)
-    return runCatching { LocalDate.parse(normalized, formatter) }.getOrNull()
-}

@@ -20,6 +20,7 @@ class SchedulePagerTest {
         assertEquals(MIN_ACADEMIC_WEEK, weekNumberForPagerPage(0))
         assertEquals(7, weekNumberForPagerPage(6))
         assertEquals(MAX_ACADEMIC_WEEK, weekNumberForPagerPage(MAX_ACADEMIC_WEEK - 1))
+        assertEquals(19, weekNumberForPagerPage(30, maxWeek = 19))
     }
 
     @Test
@@ -30,6 +31,7 @@ class SchedulePagerTest {
         assertEquals(0, pagerPageForWeekNumber(-3))
         assertEquals(6, pagerPageForWeekNumber(7))
         assertEquals(MAX_ACADEMIC_WEEK - 1, pagerPageForWeekNumber(MAX_ACADEMIC_WEEK + 10))
+        assertEquals(18, pagerPageForWeekNumber(22, maxWeek = 19))
     }
 
     @Test
@@ -52,14 +54,14 @@ class SchedulePagerTest {
             )
         )
 
-        val blocksByWeek = courseBlocksByWeek(courses)
+        val blocksByWeek = courseBlocksByWeek(courses, maxWeek = 19)
 
         assertEquals(1, blocksByWeek.getValue(1).size)
         assertEquals(2, blocksByWeek.getValue(2).size)
         assertEquals(1, blocksByWeek.getValue(3).size)
         assertEquals(1, blocksByWeek.getValue(4).size)
         assertEquals(0, blocksByWeek.getValue(5).size)
-        assertEquals(MAX_ACADEMIC_WEEK, blocksByWeek.size)
+        assertEquals(19, blocksByWeek.size)
     }
 
     @Test

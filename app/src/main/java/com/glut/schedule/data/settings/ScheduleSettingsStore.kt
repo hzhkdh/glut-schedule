@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
@@ -21,6 +22,7 @@ class ScheduleSettingsStore(
     private val currentWeekKey = intPreferencesKey("current_week")
     private val showWeekendKey = booleanPreferencesKey("show_weekend")
     private val semesterStartMondayKey = stringPreferencesKey("semester_start_monday")
+    private val semesterEndDateKey = stringPreferencesKey("semester_end_date")
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
 
     val currentWeekNumber: Flow<Int> = context.scheduleSettings.data.map { preferences ->
@@ -36,6 +38,12 @@ class ScheduleSettingsStore(
             ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
             ?.let(::normalizeSemesterStartMonday)
             ?: DEFAULT_SEMESTER_START_MONDAY
+    }
+
+    val semesterEndDate: Flow<LocalDate> = context.scheduleSettings.data.map { preferences ->
+        preferences[semesterEndDateKey]
+            ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
+            ?: DEFAULT_SEMESTER_END_DATE
     }
 
     val customBackgroundUri: Flow<String> = context.scheduleSettings.data.map { preferences ->
@@ -57,6 +65,12 @@ class ScheduleSettingsStore(
     suspend fun setSemesterStartMonday(date: LocalDate) {
         context.scheduleSettings.edit { preferences ->
             preferences[semesterStartMondayKey] = normalizeSemesterStartMonday(date).toString()
+        }
+    }
+
+    suspend fun setSemesterEndDate(date: LocalDate) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[semesterEndDateKey] = date.toString()
         }
     }
 

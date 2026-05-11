@@ -671,9 +671,13 @@ class AcademicImportViewModel(
         val calendar = ApiProbeService.extractAcademicCalendar(results)
         if (calendar != null) {
             settingsStore.setSemesterStartMonday(calendar.semesterStartMonday)
+            calendar.semesterEndDate?.let { settingsStore.setSemesterEndDate(it) }
             settingsStore.setCurrentWeekNumber(calendar.currentWeekNumber)
             diagnostics.appendLine(
-                "已同步教务日历: 第${calendar.currentWeekNumber}周, 学期起点 ${calendar.semesterStartMonday}"
+                buildString {
+                    append("已同步教务日历: 第${calendar.currentWeekNumber}周, 学期起点 ${calendar.semesterStartMonday}")
+                    calendar.semesterEndDate?.let { append(", 学期结束 $it") }
+                }
             )
         }
 

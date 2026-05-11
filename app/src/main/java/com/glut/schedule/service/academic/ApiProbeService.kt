@@ -30,7 +30,8 @@ class ApiProbeService {
 
     data class AcademicCalendar(
         val currentWeekNumber: Int,
-        val semesterStartMonday: LocalDate
+        val semesterStartMonday: LocalDate,
+        val semesterEndDate: LocalDate? = null
     )
 
     suspend fun probeAllEndpoints(
@@ -213,10 +214,16 @@ class ApiProbeService {
                 ?.get(1)
                 ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
                 ?: return null
+            val semesterEnd = Regex(""""schoolCalendarEndDate"\s*:\s*"(\d{4}-\d{2}-\d{2})"""")
+                .find(body)
+                ?.groupValues
+                ?.get(1)
+                ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
 
             return AcademicCalendar(
                 currentWeekNumber = currentWeek,
-                semesterStartMonday = semesterStart
+                semesterStartMonday = semesterStart,
+                semesterEndDate = semesterEnd
             )
         }
 
