@@ -15,6 +15,7 @@ import com.glut.schedule.service.academic.AcademicImportService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.AcademicTodayPlanParser
 import com.glut.schedule.service.academic.ApiProbeService
+import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.academic.DebugCaptureService
 import com.glut.schedule.service.academic.hasUsableAcademicCookie
 import com.glut.schedule.service.academic.isAcademicPage
@@ -56,7 +57,8 @@ class AcademicImportViewModel(
     private val settingsStore: ScheduleSettingsStore,
     private val parser: AcademicScheduleParser,
     private val captureService: DebugCaptureService,
-    private val apiProbeService: ApiProbeService
+    private val apiProbeService: ApiProbeService,
+    private val credentialStore: CredentialStore
 ) : ViewModel() {
     private val operationState = MutableStateFlow(
         ImportOperationState(message = "请先在教务系统页面完成登录")
@@ -93,6 +95,7 @@ class AcademicImportViewModel(
 
     fun onPageUrlChanged(url: String?) {
         val sanitized = url.orEmpty()
+        captureLoginCredentials(sanitized)
         val isTimetable = isTimetablePage(sanitized)
         val onExam = isExamPage(sanitized)
         val current = operationState.value
@@ -132,6 +135,17 @@ class AcademicImportViewModel(
         }
         operationState.update {
             it.copy(isLoginFormVisible = isVisible, message = message)
+        }
+    }
+
+    private fun captureLoginCredentials(url: String) {
+        if (!url.contains("j_acegi_security_check")) return
+        val username = Regex("""[?&]j_username=([^&]+)""").find(url)?.groupValues?.get(1)
+            ?.let { java.net.URLDecoder.decode(it, "UTF-8") }.orEmpty()
+        val password = Regex("""[?&]j_password=([^&]+)""").find(url)?.groupValues?.get(1)
+            ?.let { java.net.URLDecoder.decode(it, "UTF-8") }.orEmpty()
+        if (username.isNotBlank() && password.isNotBlank()) {
+            credentialStore.saveCredentials(username, password)
         }
     }
 
@@ -1188,12 +1202,13 @@ class AcademicImportViewModelFactory(
     private val settingsStore: ScheduleSettingsStore,
     private val parser: AcademicScheduleParser,
     private val captureService: DebugCaptureService,
-    private val apiProbeService: ApiProbeService
+    private val apiProbeService: ApiProbeService,
+    private val credentialStore: CredentialStore
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return AcademicImportViewModel(
-            sessionStore, importService, scheduleRepository, settingsStore, parser, captureService, apiProbeService
+            sessionStore, importService, scheduleRepository, settingsStore, parser, captureService, apiProbeService, credentialStore
         ) as T
     }
 }

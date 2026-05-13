@@ -41,14 +41,16 @@ class MainActivity : ComponentActivity() {
                         settingsStore = container.settingsStore,
                         parser = container.academicScheduleParser,
                         captureService = container.captureService,
-                        apiProbeService = container.apiProbeService
+                        apiProbeService = container.apiProbeService,
+                        credentialStore = container.credentialStore
                     )
                 )
                 val examViewModel: ExamViewModel = viewModel(
                     factory = ExamViewModelFactory(
                         repository = container.scheduleRepository,
                         sessionStore = container.academicSessionStore,
-                        examService = container.academicExamService
+                        examService = container.academicExamService,
+                        loginService = container.academicLoginService
                     )
                 )
 

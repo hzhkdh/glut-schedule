@@ -10,6 +10,8 @@ import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.DebugCaptureService
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.AcademicExamService
+import com.glut.schedule.service.academic.AcademicLoginService
+import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
 import com.glut.schedule.service.parser.GlutExamParser
 
@@ -40,4 +42,6 @@ class AppContainer(application: Application) {
     val apiProbeService = ApiProbeService()
     val examParser = GlutExamParser()
     val academicExamService = AcademicExamService(apiProbeService, examParser)
+    val credentialStore = CredentialStore(application)
+    val academicLoginService = AcademicLoginService(academicSessionStore, credentialStore)
 }
