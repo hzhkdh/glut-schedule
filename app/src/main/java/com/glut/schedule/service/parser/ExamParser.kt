@@ -207,12 +207,6 @@ class GlutExamParser : ExamParser {
         return result
     }
 
-    private fun extractTableContent(html: String): String? {
-        val tableMatch = Regex("""<table[^>]*>([\s\S]*?)</table>""", RegexOption.IGNORE_CASE)
-            .find(html) ?: return null
-        return tableMatch.value
-    }
-
     private fun isExamHeader(text: String): Boolean {
         val keywords = listOf("课程", "考试", "日期", "时间", "地点", "教室", "座位", "考核")
         return keywords.any { text.contains(it) }
@@ -222,7 +216,9 @@ class GlutExamParser : ExamParser {
         val mapping = mutableMapOf<String, Int>()
         headers.forEachIndexed { index, header ->
             when {
-                header.contains("课程") || header.contains("名称") || header.contains("科目") ->
+                header.contains("课程名称") || header.contains("科目") ->
+                    mapping["courseName"] = index
+                header.contains("课程") || header.contains("名称") ->
                     mapping["courseName"] = index
                 header.contains("日期") || header.contains("时间") -> {
                     if (header.contains("考试时间") || header.contains("考试日期")) {

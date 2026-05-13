@@ -41,7 +41,7 @@ class AppContainer(application: Application) {
     val captureService = DebugCaptureService(application)
     val apiProbeService = ApiProbeService()
     val examParser = GlutExamParser()
-    val academicExamService = AcademicExamService(apiProbeService, examParser)
+    val academicExamService = AcademicExamService(examParser)
     val credentialStore = CredentialStore(application)
     val academicLoginService = AcademicLoginService(academicSessionStore, credentialStore)
 }

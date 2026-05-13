@@ -30,7 +30,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -152,8 +151,8 @@ private fun ExamEmptyState(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = if (hasCookie) "请在课表导入页面点击考试安排菜单\n然后点击出现的粘贴按钮导入考试"
-                else "请先在课表导入页面登录教务系统\n然后点击考试安排菜单并导入",
+                text = if (hasCookie) "请点击刷新按钮获取最新考试安排\n或前往课表导入页面重新导入"
+                else "请先在课表导入页面登录教务系统\n登录后点击下载按钮自动导入考试",
                 color = Color(0xFF64748B),
                 fontSize = 13.sp,
                 textAlign = TextAlign.Center

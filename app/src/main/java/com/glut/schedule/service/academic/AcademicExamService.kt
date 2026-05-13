@@ -2,15 +2,12 @@ package com.glut.schedule.service.academic
 
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.service.parser.ExamParser
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 class AcademicExamService(
-    private val apiProbeService: ApiProbeService,
     private val examParser: ExamParser
 ) {
     private val client = OkHttpClient.Builder()
