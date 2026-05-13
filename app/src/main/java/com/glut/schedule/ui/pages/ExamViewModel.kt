@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.service.academic.AcademicExamService
+import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -18,11 +19,12 @@ import kotlinx.coroutines.launch
 class ExamViewModelFactory(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
-    private val examService: AcademicExamService
+    private val examService: AcademicExamService,
+    private val loginService: AcademicLoginService
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return ExamViewModel(repository, sessionStore, examService) as T
+        return ExamViewModel(repository, sessionStore, examService, loginService) as T
     }
 }
 
@@ -37,7 +39,8 @@ data class ExamUiState(
 class ExamViewModel(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
-    private val examService: AcademicExamService
+    private val examService: AcademicExamService,
+    private val loginService: com.glut.schedule.service.academic.AcademicLoginService
 ) : ViewModel() {
 
     private val _isRefreshing = MutableStateFlow(false)
@@ -65,25 +68,22 @@ class ExamViewModel(
     fun refreshExams() {
         viewModelScope.launch {
             _isRefreshing.value = true
-            _message.value = ""
+            _message.value = "正在刷新..."
             try {
-                val cookie = sessionStore.academicCookie.first()
-                if (cookie.isBlank()) {
-                    _message.value = "请先登录教务系统"
+                if (!loginService.silentLogin()) {
+                    _message.value = "请先在课表导入页面登录教务系统"
                     return@launch
                 }
-                _message.value = "正在获取考试安排..."
+                val cookie = sessionStore.academicCookie.first()
                 val examApiUrl = sessionStore.examApiUrl.first()
-                val result = examService.fetchExamData(cookie, examApiUrl)
-                result.fold(
-                    onSuccess = { exams ->
+                examService.fetchExamData(cookie, examApiUrl)
+                    .onSuccess { exams ->
                         repository.replaceExams(exams)
                         _message.value = "已更新 ${exams.size} 门考试"
-                    },
-                    onFailure = { error ->
+                    }
+                    .onFailure { error ->
                         _message.value = error.message ?: "获取失败"
                     }
-                )
             } catch (e: Exception) {
                 _message.value = "网络错误: ${e.message}"
             } finally {

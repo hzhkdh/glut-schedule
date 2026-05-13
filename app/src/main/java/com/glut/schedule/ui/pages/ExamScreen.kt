@@ -55,12 +55,6 @@ fun ExamScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    LaunchedEffect(uiState.message) {
-        if (uiState.message.isNotBlank()) {
-            viewModel.clearMessage()
-        }
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
