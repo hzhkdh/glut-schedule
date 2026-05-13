@@ -61,6 +61,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 fun ScheduleScreen(
     viewModel: ScheduleViewModel,
     onImportClick: () -> Unit,
+    onExamClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -197,6 +198,10 @@ fun ScheduleScreen(
             ScheduleSettingsPanel(
                 showWeekend = uiState.showWeekend,
                 onShowWeekendChange = viewModel::setShowWeekend,
+                onExamClick = {
+                    showSettings = false
+                    onExamClick()
+                },
                 onAboutClick = {
                     showSettings = false
                     showAbout = true
@@ -272,6 +277,7 @@ fun courseBlocksByWeek(
 private fun ScheduleSettingsPanel(
     showWeekend: Boolean,
     onShowWeekendChange: (Boolean) -> Unit,
+    onExamClick: () -> Unit,
     onAboutClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -292,6 +298,9 @@ private fun ScheduleSettingsPanel(
             ) {
                 Text(text = "显示周末", color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 Switch(checked = showWeekend, onCheckedChange = onShowWeekendChange)
+            }
+            TextButton(onClick = onExamClick) {
+                Text(text = "考试安排", color = Color.White, fontSize = 13.sp)
             }
             TextButton(onClick = onAboutClick) {
                 Text(text = "关于", color = Color.White, fontSize = 13.sp)

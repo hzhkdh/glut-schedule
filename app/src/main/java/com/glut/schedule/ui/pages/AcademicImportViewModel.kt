@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.repository.ScheduleRepository
@@ -18,9 +19,11 @@ import com.glut.schedule.service.academic.DebugCaptureService
 import com.glut.schedule.service.academic.hasUsableAcademicCookie
 import com.glut.schedule.service.academic.isAcademicPage
 import com.glut.schedule.service.academic.isClassTimetablePage
+import com.glut.schedule.service.academic.isExamPage
 import com.glut.schedule.service.academic.isLoginPage
 import com.glut.schedule.service.academic.isTimetablePage
 import com.glut.schedule.service.parser.AcademicScheduleParser
+import com.glut.schedule.service.parser.GlutExamParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -40,7 +43,9 @@ data class AcademicImportUiState(
     val debugInfo: String = "",
     val currentUrl: String = "",
     val isOnTimetablePage: Boolean = false,
+    val isOnExamPage: Boolean = false,
     val importedCourseCount: Int = 0,
+    val importedExamCount: Int = 0,
     val apiUrls: List<String> = emptyList()
 )
 
@@ -75,7 +80,9 @@ class AcademicImportViewModel(
             debugInfo = operation.debugInfo,
             currentUrl = operation.currentUrl,
             isOnTimetablePage = operation.isOnTimetablePage,
+            isOnExamPage = operation.isOnExamPage,
             importedCourseCount = operation.importedCourseCount,
+            importedExamCount = operation.importedExamCount,
             apiUrls = operation.apiUrls
         )
     }.stateIn(
@@ -87,6 +94,7 @@ class AcademicImportViewModel(
     fun onPageUrlChanged(url: String?) {
         val sanitized = url.orEmpty()
         val isTimetable = isTimetablePage(sanitized)
+        val onExam = isExamPage(sanitized)
         val current = operationState.value
         val message = if (
             hasConfirmedAcademicLogin(
@@ -101,7 +109,7 @@ class AcademicImportViewModel(
             current.message
         }
         operationState.update {
-            it.copy(currentUrl = sanitized, isOnTimetablePage = isTimetable, message = message)
+            it.copy(currentUrl = sanitized, isOnTimetablePage = isTimetable, isOnExamPage = onExam, message = message)
         }
     }
 
@@ -642,6 +650,117 @@ class AcademicImportViewModel(
         }
     }
 
+    fun importExamSchedule(interceptedResponsesJson: String) {
+        if (interceptedResponsesJson.isBlank() || interceptedResponsesJson == "[]") {
+            operationState.update { it.copy(message = "未捕获到考试数据，请先点击考试安排菜单加载数据") }
+            return
+        }
+        operationState.update { it.copy(isFetching = true, message = "正在解析考试安排...") }
+        viewModelScope.launch {
+            try {
+                val result = parseExamFromResponses(interceptedResponsesJson)
+                finishExamImport(result)
+            } catch (e: Exception) {
+                operationState.update {
+                    it.copy(isFetching = false, message = "解析考试数据失败: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun importExamHtml(pageHtml: String) {
+        if (pageHtml.isBlank()) {
+            operationState.update { it.copy(message = "未捕获到页面数据") }
+            return
+        }
+        operationState.update { it.copy(isFetching = true, message = "正在解析考试安排...") }
+        viewModelScope.launch {
+            try {
+                val examParser = GlutExamParser()
+                val exams = examParser.parseExamHtml(pageHtml)
+                if (exams.isEmpty()) {
+                    val jsonExams = examParser.parseExamJson(pageHtml)
+                    finishExamImport(jsonExams)
+                } else {
+                    finishExamImport(exams)
+                }
+            } catch (e: Exception) {
+                operationState.update {
+                    it.copy(isFetching = false, message = "解析考试数据失败: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private suspend fun parseExamFromResponses(jsonStr: String): List<ExamInfo> {
+        val examParser = GlutExamParser()
+        val responses = org.json.JSONArray(jsonStr)
+
+        suspend fun trySaveUrl(url: String) {
+            if (url.isNotBlank()) sessionStore.saveExamApiUrl(url)
+        }
+
+        for (i in 0 until responses.length()) {
+            val resp = responses.getJSONObject(i)
+            val body = resp.optString("body", "")
+            val url = resp.optString("url", "")
+            if (body.isBlank() || body.length < 50) continue
+
+            val trimmed = body.trimStart()
+            if ((trimmed.startsWith("{") || trimmed.startsWith("[")) &&
+                (body.contains("考试") || body.contains("exam") ||
+                    body.contains("座位") || body.contains("seat") ||
+                    url.contains("exam", ignoreCase = true))
+            ) {
+                val parsed = examParser.parseExamJson(body)
+                if (parsed.isNotEmpty()) { trySaveUrl(url); return parsed }
+            }
+            if (body.contains("<table", ignoreCase = true) &&
+                (body.contains("考试") || url.contains("exam", ignoreCase = true))
+            ) {
+                val parsed = examParser.parseExamHtml(body)
+                if (parsed.isNotEmpty()) { trySaveUrl(url); return parsed }
+            }
+        }
+        for (i in 0 until responses.length()) {
+            val resp = responses.getJSONObject(i)
+            val body = resp.optString("body", "")
+            val url = resp.optString("url", "")
+            if (body.isBlank() || body.length < 50) continue
+            val parsed = examParser.parseExamJson(body)
+            if (parsed.isNotEmpty()) { trySaveUrl(url); return parsed }
+        }
+        return emptyList()
+    }
+
+    private fun finishExamImport(examResult: List<ExamInfo>) {
+        viewModelScope.launch {
+            if (examResult.isNotEmpty()) {
+                val now = java.time.LocalDate.now()
+                val sixMonthsAgo = now.minusMonths(6)
+                val sixMonthsAhead = now.plusMonths(6)
+                val currentExams = examResult.filter { exam ->
+                    exam.examDate.isAfter(sixMonthsAgo) && exam.examDate.isBefore(sixMonthsAhead)
+                }
+                scheduleRepository.replaceExams(if (currentExams.isNotEmpty()) currentExams else examResult)
+                operationState.update {
+                    it.copy(
+                        isFetching = false,
+                        importedExamCount = examResult.size,
+                        message = "已导入 ${examResult.size} 门考试"
+                    )
+                }
+            } else {
+                operationState.update {
+                    it.copy(
+                        isFetching = false,
+                        message = "未找到考试安排数据，请确认已进入考试安排页面"
+                    )
+                }
+            }
+        }
+    }
+
     private suspend fun tryImportFromSessionApi(
         diagnostics: StringBuilder,
         reason: String
@@ -681,8 +800,25 @@ class AcademicImportViewModel(
             )
         }
 
+        val examCount = tryImportExamFromProbeResults(results, diagnostics)
+
         val courses = parseBestProbeResult(results, diagnostics)
-        if (courses.isEmpty()) return false
+        if (courses.isEmpty()) {
+            if (examCount > 0) {
+                captureService.saveDiagnostics(
+                    diagnostics.toString(), "", operationState.value.currentUrl, true
+                )
+                operationState.update {
+                    it.copy(
+                        isFetching = false, debugInfo = diagnostics.toString(),
+                        message = "已导入 $examCount 门考试安排；未找到课表数据",
+                        importedExamCount = examCount
+                    )
+                }
+                return true
+            }
+            return false
+        }
 
         scheduleRepository.replaceImportedCourses(courses)
         diagnostics.appendLine("成功导入 ${courses.size} 门课程")
@@ -692,20 +828,111 @@ class AcademicImportViewModel(
             operationState.value.currentUrl,
             true
         )
+        val finalExamCount = examCount
         operationState.update {
             val importedFromTodayPlanOnly = courses.all { course -> course.id.startsWith("today-") }
+            val examMsg = if (finalExamCount > 0) " + ${finalExamCount} 门考试安排" else ""
             it.copy(
                 isFetching = false,
                 debugInfo = diagnostics.toString(),
                 message = if (importedFromTodayPlanOnly) {
-                    "仅导入今日课程 ${courses.size} 门；未拿到完整个人课表"
+                    "仅导入今日课程 ${courses.size} 门$examMsg；未拿到完整个人课表"
                 } else {
-                    "已成功导入 ${courses.size} 门个人课表课程，返回首页查看"
+                    "已成功导入 ${courses.size} 门课程$examMsg，返回首页查看"
                 },
-                importedCourseCount = courses.size
+                importedCourseCount = courses.size,
+                importedExamCount = finalExamCount
             )
         }
         return true
+    }
+
+    private suspend fun tryImportExamFromProbeResults(
+        results: List<ApiProbeService.ProbeResult>,
+        diagnostics: StringBuilder
+    ): Int {
+        diagnostics.appendLine("--- 考试数据诊断 ---")
+        try {
+            // Dump all exam-related probe URLs and their status
+            val examUrlResults = results.filter { r ->
+                r.url.contains("exam", ignoreCase = true) ||
+                    r.url.contains("examination", ignoreCase = true)
+            }
+            diagnostics.appendLine("探测了 ${examUrlResults.size} 个考试相关URL:")
+            examUrlResults.forEach { r ->
+                val preview = r.body.take(200).replace("\n", " ").replace("\r", "")
+                diagnostics.appendLine("  [${r.httpCode}] ${r.url.takeLast(70)} len=${r.bodyLength}")
+                if (r.bodyLength > 20) {
+                    diagnostics.appendLine("    预览: $preview")
+                }
+            }
+
+            // Also check moduleMenu for exam URLs
+            val menuResult = results.find { it.url.contains("moduleMenu.do") && it.httpCode == 200 }
+            if (menuResult != null) {
+                val discoveredUrls = ApiProbeService.extractExamUrlsFromMenuResponse(menuResult.body)
+                diagnostics.appendLine("moduleMenu中发现的考试URL: $discoveredUrls")
+            }
+
+            val examParser = GlutExamParser()
+            val jsonResult = apiProbeService.findExamJsonResult(results)
+            diagnostics.appendLine("findExamJsonResult: ${jsonResult?.url?.takeLast(70) ?: "null"}")
+
+            if (jsonResult != null) {
+                val exams = examParser.parseExamJson(jsonResult.body)
+                diagnostics.appendLine("JSON解析得到 ${exams.size} 条考试")
+                if (exams.isNotEmpty()) {
+                    val now = java.time.LocalDate.now()
+                    val currentExams = exams.filter { exam ->
+                        exam.examDate.isAfter(now.minusMonths(6)) && exam.examDate.isBefore(now.plusMonths(6))
+                    }
+                    val toSave = if (currentExams.isNotEmpty()) currentExams else exams
+                    scheduleRepository.replaceExams(toSave)
+                    sessionStore.saveExamApiUrl("http://jw.glut.edu.cn/academic/accessModule.do?moduleId=2030")
+                    diagnostics.appendLine("考试导入成功: ${toSave.size} 门")
+                    return toSave.size
+                }
+            }
+
+            val htmlResult = apiProbeService.findExamHtmlResult(results)
+            diagnostics.appendLine("findExamHtmlResult: ${htmlResult?.url?.takeLast(70) ?: "null"}")
+
+            if (htmlResult != null) {
+                val exams = examParser.parseExamHtml(htmlResult.body)
+                diagnostics.appendLine("HTML解析得到 ${exams.size} 条考试")
+                if (exams.isNotEmpty()) {
+                    val now = java.time.LocalDate.now()
+                    val currentExams = exams.filter { exam ->
+                        exam.examDate.isAfter(now.minusMonths(6)) && exam.examDate.isBefore(now.plusMonths(6))
+                    }
+                    val toSave = if (currentExams.isNotEmpty()) currentExams else exams
+                    scheduleRepository.replaceExams(toSave)
+                    sessionStore.saveExamApiUrl("http://jw.glut.edu.cn/academic/accessModule.do?moduleId=2030")
+                    diagnostics.appendLine("考试导入(HTML)成功: ${toSave.size} 门")
+                    return toSave.size
+                }
+            }
+
+            // Show all non-exam-url JSON responses that might contain exam data
+            val otherJsonResponses = results.filter { r ->
+                r.httpCode == 200 && r.bodyLength > 100 &&
+                    (r.contentType.contains("json") || r.body.trimStart().startsWith("{") || r.body.trimStart().startsWith("[")) &&
+                    !r.url.contains("exam", ignoreCase = true) &&
+                    !r.url.contains("examination", ignoreCase = true)
+            }
+            if (otherJsonResponses.isNotEmpty()) {
+                diagnostics.appendLine("其他JSON响应(${otherJsonResponses.size}个):")
+                otherJsonResponses.forEach { r ->
+                    val preview = r.body.take(150).replace("\n", " ")
+                    diagnostics.appendLine("  ${r.url.takeLast(60)} len=${r.bodyLength}: $preview")
+                }
+            }
+
+            diagnostics.appendLine("未找到考试安排数据")
+        } catch (e: Exception) {
+            diagnostics.appendLine("考试导入异常: ${e.message}")
+        }
+        return 0
     }
 
     private suspend fun parseBestProbeResult(
@@ -947,8 +1174,10 @@ private data class ImportOperationState(
     val debugInfo: String = "",
     val currentUrl: String = "",
     val isOnTimetablePage: Boolean = false,
+    val isOnExamPage: Boolean = false,
     val isLoginFormVisible: Boolean = true,
     val importedCourseCount: Int = 0,
+    val importedExamCount: Int = 0,
     val apiUrls: List<String> = emptyList()
 )
 

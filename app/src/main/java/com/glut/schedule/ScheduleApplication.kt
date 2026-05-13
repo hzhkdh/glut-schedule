@@ -9,7 +9,9 @@ import com.glut.schedule.service.academic.AcademicImportService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.DebugCaptureService
 import com.glut.schedule.service.academic.ApiProbeService
+import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
+import com.glut.schedule.service.parser.GlutExamParser
 
 class ScheduleApplication : Application() {
     lateinit var appContainer: AppContainer
@@ -26,7 +28,8 @@ class AppContainer(application: Application) {
         application,
         ScheduleDatabase::class.java,
         "glut_schedule.db"
-    ).build()
+    ).fallbackToDestructiveMigration(false)
+     .build()
 
     val scheduleRepository = ScheduleRepository(database.scheduleDao())
     val settingsStore = ScheduleSettingsStore(application)
@@ -35,4 +38,6 @@ class AppContainer(application: Application) {
     val academicScheduleParser = GlutAcademicScheduleParser()
     val captureService = DebugCaptureService(application)
     val apiProbeService = ApiProbeService()
+    val examParser = GlutExamParser()
+    val academicExamService = AcademicExamService(apiProbeService, examParser)
 }

@@ -55,4 +55,22 @@ interface ScheduleDao {
         insertCourses(courses)
         insertOccurrences(occurrences)
     }
+
+    @Query("SELECT * FROM exams ORDER BY examDate, startTime")
+    fun observeExams(): Flow<List<ExamEntity>>
+
+    @Query("SELECT COUNT(*) FROM exams")
+    suspend fun examCount(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertExams(exams: List<ExamEntity>)
+
+    @Query("DELETE FROM exams")
+    suspend fun deleteAllExams()
+
+    @Transaction
+    suspend fun replaceExams(exams: List<ExamEntity>) {
+        deleteAllExams()
+        insertExams(exams)
+    }
 }

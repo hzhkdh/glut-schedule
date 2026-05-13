@@ -86,8 +86,9 @@ class ApiProbeService {
         probePost("http://jw.glut.edu.cn/academic/personal/framePage.do")
         probeGet("http://jw.glut.edu.cn/academic/manager/coursearrange/graphicalBasicInfo.do")
         buildCurrentStudentTimetableUrls(results).forEach(::probeGet)
+        buildExamUrls(results).forEach(::probeGet)
 
-        // 登录后的传统“本学期课程安排”页面，只作为 showTimetable 网格页失败时的兜底。
+        // 登录后的传统”本学期课程安排”页面，只作为 showTimetable 网格页失败时的兜底。
         probeGet("http://jw.glut.edu.cn/academic/student/currcourse/currcourse.jsdo")
 
         val today = LocalDate.now()
@@ -97,6 +98,21 @@ class ApiProbeService {
 
         probeGet("http://jw.glut.edu.cn/academic/student/timetable/timetable.do")
         probeGet("http://jw.glut.edu.cn/academic/student/coursetable/coursetable.do")
+
+        // 考试安排接口
+        probeGet("http://jw.glut.edu.cn/academic/student/examination/studentExamQuery.do")
+        probePost("http://jw.glut.edu.cn/academic/student/examination/queryExam.do")
+        probeGet("http://jw.glut.edu.cn/academic/student/examination/examArrange.do")
+        probePost("http://jw.glut.edu.cn/academic/manager/examarrange/examStudentQuery.do")
+        probeGet("http://jw.glut.edu.cn/academic/student/examination/examinationForStudent.do")
+
+        // 从 moduleMenu 响应中提取考试菜单的真实 URL 并探测
+        val menuResult = results.find { it.url.contains("moduleMenu.do") && it.httpCode == 200 }
+        if (menuResult != null) {
+            extractExamUrlsFromMenuResponse(menuResult.body).forEach { url ->
+                if (results.none { it.url == url }) probeGet(url)
+            }
+        }
 
         results
     }
@@ -196,6 +212,89 @@ class ApiProbeService {
             }
         }
 
+        fun buildExamUrls(results: List<ProbeResult>): List<String> {
+            // The exam module URL — server resolves stuid from session cookie via redirect chain
+            return listOf(
+                "http://jw.glut.edu.cn/academic/accessModule.do?moduleId=2030",
+            )
+        }
+
+        fun extractExamUrlsFromMenuResponse(body: String): List<String> {
+            val urls = mutableListOf<String>()
+            val examKeywords = listOf("考试安排", "我的考试", "学生考试", "考试查询", "考试信息", "考试", "exam")
+            val baseUrl = "http://jw.glut.edu.cn"
+
+            // Try JSON format (moduleMenu returns menu tree as JSON)
+            fun searchJson(obj: Any?) {
+                when (obj) {
+                    is org.json.JSONObject -> {
+                        val name = obj.optString("moduleName",
+                            obj.optString("moduleTypeName",
+                            obj.optString("name",
+                            obj.optString("title", ""))))
+                        val url = obj.optString("moduleLink",
+                            obj.optString("link",
+                            obj.optString("url",
+                            obj.optString("href", ""))))
+                        val isExam = examKeywords.any { kw -> name.contains(kw) }
+                        if (isExam && url.isNotBlank()) {
+                            val cleanUrl = url.removePrefix("./")
+                            val fullUrl = if (cleanUrl.startsWith("http")) cleanUrl
+                            else if (cleanUrl.startsWith("/")) "$baseUrl$cleanUrl"
+                            else "$baseUrl/$cleanUrl"
+                            urls.add(fullUrl)
+                        }
+                        // Recurse into children
+                        val children = obj.optJSONArray("children")
+                            ?: obj.optJSONArray("child")
+                            ?: obj.optJSONArray("subMenus")
+                            ?: obj.optJSONArray("items")
+                        if (children != null) {
+                            for (i in 0 until children.length()) {
+                                searchJson(children.get(i))
+                            }
+                        }
+                        // Also check all keys for nested objects/arrays
+                        val keys = obj.keys()
+                        while (keys.hasNext()) {
+                            val key = keys.next()
+                            if (key == "children" || key == "child" || key == "subMenus" || key == "items") continue
+                            val value = obj.get(key)
+                            if (value is org.json.JSONObject || value is org.json.JSONArray) {
+                                searchJson(value)
+                            }
+                        }
+                    }
+                    is org.json.JSONArray -> {
+                        for (i in 0 until obj.length()) {
+                            searchJson(obj.get(i))
+                        }
+                    }
+                }
+            }
+
+            try {
+                val trimmed = body.trim()
+                if (trimmed.startsWith("[")) {
+                    searchJson(org.json.JSONArray(trimmed))
+                } else if (trimmed.startsWith("{")) {
+                    searchJson(org.json.JSONObject(trimmed))
+                }
+            } catch (_: Exception) {
+                // Try regex extraction from HTML/text response
+                val hrefPattern = Regex("""href\s*=\s*["']([^"']*(?:exam|考试|examination)[^"']*)["']""", RegexOption.IGNORE_CASE)
+                hrefPattern.findAll(body).forEach { match ->
+                    val href = match.groupValues[1]
+                    val fullUrl = if (href.startsWith("http")) href
+                    else if (href.startsWith("/")) "$baseUrl$href"
+                    else "$baseUrl/$href"
+                    urls.add(fullUrl)
+                }
+            }
+
+            return urls.distinct()
+        }
+
         fun extractAcademicCalendar(results: List<ProbeResult>): AcademicCalendar? {
             val body = results.firstOrNull { result ->
                 result.url.contains("/personal/framePage.do", ignoreCase = true) ||
@@ -238,6 +337,62 @@ class ApiProbeService {
                     result.body.contains(""""name"""")
             }
         }
+    }
+
+    fun findExamJsonResult(results: List<ProbeResult>): ProbeResult? {
+        return results
+            .filter { it.httpCode == 200 && it.body.length > 100 }
+            .firstOrNull { r -> looksLikeExamJson(r.body) && hasExamUrl(r) }
+            ?: results
+                .filter { it.httpCode == 200 && it.body.length > 100 }
+                .firstOrNull { r -> looksLikeExamJson(r.body) }
+    }
+
+    fun findExamHtmlResult(results: List<ProbeResult>): ProbeResult? {
+        return results
+            .asSequence()
+            .filter { it.httpCode == 200 && it.body.length > 100 }
+            .map { it to examHtmlScore(it) }
+            .filter { (_, score) -> score > 0 }
+            .sortedByDescending { (_, score) -> score }
+            .firstOrNull()
+            ?.first
+    }
+
+    private fun looksLikeExamJson(body: String): Boolean {
+        val trimmed = body.trimStart()
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false
+        val hasCourse = body.contains("课程名称") || body.contains("courseName") || body.contains("kcmc") ||
+            body.contains("\"name\"") || body.contains("课程")
+        val hasDate = body.contains("考试时间") || body.contains("examDate") || body.contains("ksrq") ||
+            body.contains("examTime") || body.contains("kssj") || body.contains("考试日期")
+        val hasRoom = body.contains("考试地点") || body.contains("examRoom") || body.contains("ksdd") ||
+            body.contains("教室") || body.contains("jsmc") || body.contains("地点") || body.contains("考场")
+        val hasSeat = body.contains("座位号") || body.contains("seatNumber") || body.contains("zwh")
+        // Require at least 2 of the 3 main criteria, or course + seat
+        return (listOf(hasCourse, hasDate, hasRoom).count { it } >= 2) || (hasCourse && hasSeat)
+    }
+
+    private fun hasExamUrl(result: ProbeResult): Boolean {
+        return result.url.contains("exam", ignoreCase = true) ||
+            result.url.contains("examination", ignoreCase = true)
+    }
+
+    private fun examHtmlScore(result: ProbeResult): Int {
+        val body = result.body
+        val trimmed = body.trimStart()
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) return 0
+        if (!body.contains("<table", ignoreCase = true)) return 0
+        if (body.contains("登录") && body.contains("密码") && !body.contains("考试")) return 0
+
+        var score = 0
+        if (result.url.contains("exam", ignoreCase = true)) score += 30
+        if (body.contains("考试时间") || body.contains("考试日期")) score += 10
+        if (body.contains("考试地点") || body.contains("考场")) score += 8
+        if (body.contains("座位号")) score += 5
+        if (body.contains("课程名称") && body.contains("考试")) score += 8
+        if (body.contains("考核方式") || body.contains("考试类型")) score += 3
+        return score.takeIf { it >= 10 } ?: 0
     }
 
     fun analyzeResults(results: List<ProbeResult>): ApiProbeAnalysis {

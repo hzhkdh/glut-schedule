@@ -67,3 +67,40 @@ fun CourseEntity.toModel(occurrences: List<CourseOccurrence>): ScheduleCourse = 
     colorHex = colorHex,
     occurrences = occurrences
 )
+
+@Entity(tableName = "exams")
+data class ExamEntity(
+    @PrimaryKey val id: String,
+    val courseName: String,
+    val examDate: String,
+    val startTime: String,
+    val endTime: String,
+    val location: String,
+    val seatNumber: String,
+    val examType: String,
+    val note: String
+)
+
+fun com.glut.schedule.data.model.ExamInfo.toEntity(): ExamEntity = ExamEntity(
+    id = id,
+    courseName = courseName,
+    examDate = examDate.toString(),
+    startTime = startTime,
+    endTime = endTime,
+    location = location,
+    seatNumber = seatNumber,
+    examType = examType,
+    note = note
+)
+
+fun ExamEntity.toModel(): com.glut.schedule.data.model.ExamInfo = com.glut.schedule.data.model.ExamInfo(
+    id = id,
+    courseName = courseName,
+    examDate = java.time.LocalDate.parse(examDate),
+    startTime = startTime,
+    endTime = endTime,
+    location = location,
+    seatNumber = seatNumber,
+    examType = examType,
+    note = note
+)

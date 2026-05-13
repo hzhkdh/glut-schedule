@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -220,14 +221,38 @@ fun AcademicImportScreen(
             )
 
             if (shouldShowAcademicDownloadButton(uiState)) {
-                FloatingActionButton(
-                    onClick = { viewModel.probeApis() },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp).size(56.dp),
-                    containerColor = Color(0xFFDDE4FF),
-                    contentColor = Color(0xFF061A3A),
-                    shape = CircleShape
-                ) {
-                    Icon(Icons.Outlined.FileDownload, "下载并导入课表", modifier = Modifier.size(26.dp))
+                Row(modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp)) {
+                    if (uiState.isOnExamPage) {
+                        FloatingActionButton(
+                            onClick = {
+                                execJs(AcademicWebScripts.getInterceptedResponses()) { json ->
+                                    if (json.isNotBlank() && json != "[]") {
+                                        viewModel.importExamSchedule(json)
+                                    } else {
+                                        execJs(AcademicWebScripts.currentPageHtml()) { html ->
+                                            viewModel.importExamHtml(html)
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.size(56.dp),
+                            containerColor = Color(0xFFC4B5FD),
+                            contentColor = Color(0xFF1E1B4B),
+                            shape = CircleShape
+                        ) {
+                            Icon(Icons.Outlined.ContentPaste, "导入考试安排", modifier = Modifier.size(26.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    FloatingActionButton(
+                        onClick = { viewModel.probeApis() },
+                        modifier = Modifier.size(56.dp),
+                        containerColor = Color(0xFFDDE4FF),
+                        contentColor = Color(0xFF061A3A),
+                        shape = CircleShape
+                    ) {
+                        Icon(Icons.Outlined.FileDownload, "下载并导入课表", modifier = Modifier.size(26.dp))
+                    }
                 }
             }
         }

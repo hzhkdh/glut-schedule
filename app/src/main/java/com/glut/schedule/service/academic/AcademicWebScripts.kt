@@ -350,6 +350,84 @@ object AcademicWebScripts {
         """.trimIndent()
     }
 
+    fun clickExamMenuItem(): String {
+        return """
+            (function(){
+              var keywords = ['考试安排', '我的考试', '学生考试', '考试查询', '考试信息'];
+              var allItems = document.querySelectorAll('li[role="menuitem"], li.el-menu-item, li.el-submenu, .el-menu-item, [role="treeitem"]');
+              var found = null;
+              for (var i = 0; i < allItems.length; i++) {
+                var text = (allItems[i].innerText || allItems[i].textContent || '').replace(/\s+/g, '');
+                for (var k = 0; k < keywords.length; k++) {
+                  if (text === keywords[k] || text.indexOf(keywords[k]) >= 0) {
+                    found = allItems[i];
+                    break;
+                  }
+                }
+                if (found) break;
+              }
+              if (!found) {
+                var allSpans = document.querySelectorAll('span');
+                for (var j = 0; j < allSpans.length; j++) {
+                  var spanText = (allSpans[j].innerText || '').replace(/\s+/g, '');
+                  for (var m = 0; m < keywords.length; m++) {
+                    if (spanText === keywords[m] || spanText.indexOf(keywords[m]) >= 0) {
+                      found = allSpans[j].closest('li');
+                      if (found) {
+                        j = allSpans.length;
+                        break;
+                      }
+                      found = allSpans[j];
+                      j = allSpans.length;
+                      break;
+                    }
+                  }
+                }
+              }
+              if (!found) return 'not_found:no_exam_menu_item';
+              found.scrollIntoView({block: 'center'});
+              found.click();
+              if (typeof found.__vue__ !== 'undefined' && found.__vue__.${'$'}el) {
+                found.__vue__.${'$'}el.click();
+              }
+              ['mousedown', 'mouseup', 'click'].forEach(function(type){
+                found.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, view: window}));
+              });
+              return 'clicked:' + (found.innerText || '').replace(/\s+/g, '').slice(0, 30);
+            })()
+        """.trimIndent()
+    }
+
+    fun detectExamPage(): String {
+        return """
+            (function(){
+              var html = document.body.innerText || '';
+              var hasExam = /考试安排|考试时间|考试地点|座位号/.test(html);
+              var hasTable = document.querySelectorAll('table').length > 0;
+              var hasTd = document.querySelectorAll('td').length > 0;
+              var hasCourse = /课程名称|考试课程|科目/.test(html);
+              var hasSeat = /座位号|座位/.test(html);
+              var score = 0;
+              if (hasExam) score += 3;
+              if (hasCourse) score += 2;
+              if (hasSeat) score += 2;
+              if (hasTable && hasTd > 3) score += 2;
+              var hasDate = /考试日期|考试时间|\d{4}[-\/年]\d{1,2}[-\/月]\d{1,2}/.test(html);
+              if (hasDate) score += 1;
+              return JSON.stringify({
+                score: score,
+                isExam: score >= 4,
+                hasExam: hasExam,
+                hasTable: hasTable,
+                tdCount: hasTd,
+                hasCourse: hasCourse,
+                hasSeat: hasSeat,
+                hasDate: hasDate
+              });
+            })()
+        """.trimIndent()
+    }
+
     fun fallbackPageHtml(): String {
         return """
             (function(){

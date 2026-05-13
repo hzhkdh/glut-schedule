@@ -3,6 +3,7 @@ package com.glut.schedule
 import com.glut.schedule.data.local.ClassPeriodEntity
 import com.glut.schedule.data.local.CourseEntity
 import com.glut.schedule.data.local.CourseOccurrenceEntity
+import com.glut.schedule.data.local.ExamEntity
 import com.glut.schedule.data.local.ScheduleDao
 import com.glut.schedule.data.repository.ScheduleRepository
 import kotlinx.coroutines.flow.Flow
@@ -156,5 +157,13 @@ class ScheduleRepositoryTest {
         override suspend fun deleteOccurrencesForCourses(courseIds: List<String>) {
             deleteOccurrencesForCoursesCalls++
         }
+
+        override fun observeExams(): Flow<List<ExamEntity>> = flowOf(emptyList())
+
+        override suspend fun examCount(): Int = 0
+
+        override suspend fun insertExams(exams: List<ExamEntity>) {}
+
+        override suspend fun deleteAllExams() {}
     }
 }

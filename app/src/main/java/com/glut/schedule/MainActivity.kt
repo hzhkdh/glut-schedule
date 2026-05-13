@@ -11,6 +11,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glut.schedule.ui.pages.AcademicImportScreen
 import com.glut.schedule.ui.pages.AcademicImportViewModel
 import com.glut.schedule.ui.pages.AcademicImportViewModelFactory
+import com.glut.schedule.ui.pages.ExamScreen
+import com.glut.schedule.ui.pages.ExamViewModel
+import com.glut.schedule.ui.pages.ExamViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
@@ -23,7 +26,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             GlutScheduleTheme {
-                var showImport by remember { mutableStateOf(false) }
+                var currentScreen by remember { mutableStateOf<MainScreen>(MainScreen.Schedule) }
                 val scheduleViewModel: ScheduleViewModel = viewModel(
                     factory = ScheduleViewModelFactory(
                         repository = container.scheduleRepository,
@@ -41,19 +44,36 @@ class MainActivity : ComponentActivity() {
                         apiProbeService = container.apiProbeService
                     )
                 )
-
-                if (showImport) {
-                    AcademicImportScreen(
-                        viewModel = academicImportViewModel,
-                        onBack = { showImport = false }
+                val examViewModel: ExamViewModel = viewModel(
+                    factory = ExamViewModelFactory(
+                        repository = container.scheduleRepository,
+                        sessionStore = container.academicSessionStore,
+                        examService = container.academicExamService
                     )
-                } else {
-                    ScheduleScreen(
+                )
+
+                when (currentScreen) {
+                    MainScreen.Schedule -> ScheduleScreen(
                         viewModel = scheduleViewModel,
-                        onImportClick = { showImport = true }
+                        onImportClick = { currentScreen = MainScreen.AcademicImport },
+                        onExamClick = { currentScreen = MainScreen.ExamSchedule }
+                    )
+                    MainScreen.AcademicImport -> AcademicImportScreen(
+                        viewModel = academicImportViewModel,
+                        onBack = { currentScreen = MainScreen.Schedule }
+                    )
+                    MainScreen.ExamSchedule -> ExamScreen(
+                        viewModel = examViewModel,
+                        onBack = { currentScreen = MainScreen.Schedule }
                     )
                 }
             }
         }
     }
+}
+
+sealed class MainScreen {
+    data object Schedule : MainScreen()
+    data object AcademicImport : MainScreen()
+    data object ExamSchedule : MainScreen()
 }

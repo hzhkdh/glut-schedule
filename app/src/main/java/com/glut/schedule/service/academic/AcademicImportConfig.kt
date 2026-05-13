@@ -61,6 +61,17 @@ fun isPersonalTimetablePage(url: String): Boolean {
         url.contains("timetableType=STUDENT", ignoreCase = true)
 }
 
+val examUrlPatterns = listOf(
+    Regex("""examination""", RegexOption.IGNORE_CASE),
+    Regex("""exam[Aa]rrange""", RegexOption.IGNORE_CASE),
+    Regex("""exam[Ss]tudent""", RegexOption.IGNORE_CASE),
+    Regex("""queryExam""", RegexOption.IGNORE_CASE),
+)
+
+fun isExamPage(url: String): Boolean {
+    return examUrlPatterns.any { it.containsMatchIn(url) }
+}
+
 fun isClassTimetablePage(url: String): Boolean {
     return url.contains("showTimetable.do", ignoreCase = true) &&
         url.contains("timetableType=CLASS", ignoreCase = true)
