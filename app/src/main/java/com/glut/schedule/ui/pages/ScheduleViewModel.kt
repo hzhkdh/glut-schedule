@@ -18,11 +18,14 @@ import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.ScheduleSettingsStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
 
 data class ScheduleUiState(
@@ -52,8 +55,31 @@ class ScheduleViewModel(
     private val settingsStore: ScheduleSettingsStore
 ) : ViewModel() {
     val uiState: StateFlow<ScheduleUiState>
+    private var initialWeekSet = false
 
     init {
+        val coldBgUri = runBlocking(Dispatchers.IO) {
+            settingsStore.customBackgroundUri.first()
+        }
+        val coldShowWeekend = runBlocking(Dispatchers.IO) {
+            settingsStore.showWeekend.first()
+        }
+        val coldCourses = runBlocking(Dispatchers.IO) {
+            CourseColorMapper.assignColors(repository.courses.first())
+        }
+        val coldPeriods = runBlocking(Dispatchers.IO) {
+            repository.classPeriods.first()
+        }
+        val initialWeek = scheduleWeekForNumber(
+            academicWeekForDate(LocalDate.now(), DEFAULT_SEMESTER_START_MONDAY),
+            DEFAULT_SEMESTER_START_MONDAY
+        )
+        val coldBlocks = coldCourses.flatMap { course ->
+            course.occurrences
+                .filter { it.isActiveInWeek(initialWeek.number) }
+                .map { CourseBlock(course, it) }
+        }
+
         viewModelScope.launch {
             repository.seedIfEmpty()
         }
@@ -81,7 +107,12 @@ class ScheduleViewModel(
         ) { settings, periods, courses ->
             val normalizedStart = normalizeSemesterStartMonday(settings.semesterStartMonday)
             val maxAcademicWeek = academicMaxWeekForCalendar(normalizedStart, settings.semesterEndDate)
-            val clampedWeekNumber = clampAcademicWeek(settings.weekNumber, maxAcademicWeek)
+            val clampedWeekNumber = if (initialWeekSet) {
+                clampAcademicWeek(settings.weekNumber, maxAcademicWeek)
+            } else {
+                initialWeekSet = true
+                academicWeekForDate(LocalDate.now(), normalizedStart, maxAcademicWeek)
+            }
             val today = LocalDate.now()
             val coloredCourses = CourseColorMapper.assignColors(courses)
             ScheduleUiState(
@@ -103,8 +134,15 @@ class ScheduleViewModel(
             )
         }.stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = ScheduleUiState()
+            started = SharingStarted.Eagerly,
+            initialValue = ScheduleUiState(
+                week = initialWeek,
+                customBackgroundUri = coldBgUri,
+                showWeekend = coldShowWeekend,
+                courses = coldCourses,
+                classPeriods = coldPeriods,
+                courseBlocks = coldBlocks
+            )
         )
     }
 
