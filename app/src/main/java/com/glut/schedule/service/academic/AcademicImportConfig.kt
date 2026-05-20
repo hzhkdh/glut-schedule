@@ -93,3 +93,7 @@ fun hasUsableAcademicCookie(cookie: String): Boolean {
         cookie.contains("CASTGC=", ignoreCase = true) ||
         cookie.contains("TGC=", ignoreCase = true)
 }
+
+fun shouldUseExistingAcademicCookie(cookie: String): Boolean {
+    return hasUsableAcademicCookie(cookie)
+}

@@ -101,6 +101,87 @@ object AcademicWebScripts {
         """.trimIndent()
     }
 
+    fun captureLoginCredentials(): String {
+        return """
+            (function(){
+              if (window.__scheduleAppCredentialHooked) return 'already_hooked';
+              window.__scheduleAppCredentialHooked = true;
+
+              function allDocs() {
+                var docs = [document];
+                var frames = Array.prototype.slice.call(document.querySelectorAll('iframe,frame'));
+                frames.forEach(function(frame){
+                  try {
+                    if (frame.contentWindow && frame.contentWindow.document) {
+                      docs.push(frame.contentWindow.document);
+                    }
+                  } catch (error) {}
+                });
+                return docs;
+              }
+
+              function findFields(doc) {
+                var inputs = Array.prototype.slice.call(doc.querySelectorAll('input'));
+                var password = inputs.find(function(input){
+                  return (input.getAttribute('type') || '').toLowerCase() === 'password' ||
+                    /j_password|password|pwd|密码/.test([
+                      input.getAttribute('name') || '',
+                      input.getAttribute('id') || '',
+                      input.getAttribute('placeholder') || ''
+                    ].join(' ').toLowerCase());
+                });
+                if (!password) return null;
+                var username = inputs.find(function(input){
+                  var type = (input.getAttribute('type') || 'text').toLowerCase();
+                  var attrs = [
+                    input.getAttribute('name') || '',
+                    input.getAttribute('id') || '',
+                    input.getAttribute('placeholder') || '',
+                    input.getAttribute('autocomplete') || ''
+                  ].join(' ').toLowerCase();
+                  return input !== password && type !== 'password' &&
+                    (/j_username|user|username|account|login|学号|账号|用户/.test(attrs) ||
+                      (type === 'text' && (input.value || '').length >= 4));
+                });
+                return username && password ? { username: username, password: password } : null;
+              }
+
+              function saveCredentials() {
+                try {
+                  var docs = allDocs();
+                  for (var i = 0; i < docs.length; i++) {
+                    var fields = findFields(docs[i]);
+                    if (!fields) continue;
+                    var username = (fields.username.value || '').trim();
+                    var password = fields.password.value || '';
+                    if (username && password && window.AndroidCredentialCapture) {
+                      window.AndroidCredentialCapture.saveCredentials(username, password);
+                      return true;
+                    }
+                  }
+                } catch (error) {}
+                return false;
+              }
+
+              allDocs().forEach(function(doc){
+                Array.prototype.slice.call(doc.querySelectorAll('form')).forEach(function(form){
+                  form.addEventListener('submit', saveCredentials, true);
+                });
+                doc.addEventListener('click', function(event){
+                  var text = ((event.target && (event.target.innerText || event.target.value)) || '').replace(/\s+/g, '');
+                  var type = ((event.target && event.target.getAttribute && event.target.getAttribute('type')) || '').toLowerCase();
+                  if (type === 'submit' || /登录|登陆|SignIn/i.test(text)) saveCredentials();
+                }, true);
+                doc.addEventListener('keydown', function(event){
+                  if (event.key === 'Enter') saveCredentials();
+                }, true);
+              });
+
+              return 'hooked_ok';
+            })()
+        """.trimIndent()
+    }
+
     fun clickTimetableMenuItem(): String {
         return """
             (function(){

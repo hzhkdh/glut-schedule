@@ -4,7 +4,9 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
+import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.sanitized
 
 @Entity(tableName = "courses")
 data class CourseEntity(
@@ -81,19 +83,22 @@ data class ExamEntity(
     val note: String
 )
 
-fun com.glut.schedule.data.model.ExamInfo.toEntity(): ExamEntity = ExamEntity(
-    id = id,
-    courseName = courseName,
-    examDate = examDate.toString(),
-    startTime = startTime,
-    endTime = endTime,
-    location = location,
-    seatNumber = seatNumber,
-    examType = examType,
-    note = note
-)
+fun ExamInfo.toEntity(): ExamEntity {
+    val clean = sanitized()
+    return ExamEntity(
+        id = clean.id,
+        courseName = clean.courseName,
+        examDate = clean.examDate.toString(),
+        startTime = clean.startTime,
+        endTime = clean.endTime,
+        location = clean.location,
+        seatNumber = clean.seatNumber,
+        examType = clean.examType,
+        note = clean.note
+    )
+}
 
-fun ExamEntity.toModel(): com.glut.schedule.data.model.ExamInfo = com.glut.schedule.data.model.ExamInfo(
+fun ExamEntity.toModel(): ExamInfo = ExamInfo(
     id = id,
     courseName = courseName,
     examDate = java.time.LocalDate.parse(examDate),
@@ -103,4 +108,4 @@ fun ExamEntity.toModel(): com.glut.schedule.data.model.ExamInfo = com.glut.sched
     seatNumber = seatNumber,
     examType = examType,
     note = note
-)
+).sanitized()

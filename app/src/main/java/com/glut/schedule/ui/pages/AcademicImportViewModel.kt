@@ -149,6 +149,14 @@ class AcademicImportViewModel(
         }
     }
 
+    fun saveCredentialsFromWebForm(username: String?, password: String?) {
+        val sanitizedUsername = username.orEmpty().trim()
+        val rawPassword = password.orEmpty()
+        if (sanitizedUsername.isNotBlank() && rawPassword.isNotBlank()) {
+            credentialStore.saveCredentials(sanitizedUsername, rawPassword)
+        }
+    }
+
     fun recordNetworkRequest(url: String, method: String, headers: Map<String, String>?) {
         captureService.recordRequest(url, method, headers)
         val apiUrls = captureService.findApiUrls()

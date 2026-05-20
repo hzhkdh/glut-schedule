@@ -111,7 +111,11 @@ class ScheduleViewModel(
                 clampAcademicWeek(settings.weekNumber, maxAcademicWeek)
             } else {
                 initialWeekSet = true
-                academicWeekForDate(LocalDate.now(), normalizedStart, maxAcademicWeek)
+                val correctedWeek = academicWeekForDate(LocalDate.now(), normalizedStart, maxAcademicWeek)
+                if (correctedWeek != settings.weekNumber) {
+                    viewModelScope.launch { settingsStore.setCurrentWeekNumber(correctedWeek) }
+                }
+                correctedWeek
             }
             val today = LocalDate.now()
             val coloredCourses = CourseColorMapper.assignColors(courses)

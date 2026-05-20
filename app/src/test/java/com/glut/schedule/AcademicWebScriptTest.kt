@@ -54,6 +54,19 @@ class AcademicWebScriptTest {
     }
 
     @Test
+    fun captureLoginCredentialsScriptHooksSubmitAndPasswordClick() {
+        val script = AcademicWebScripts.captureLoginCredentials()
+
+        assertTrue(script.contains("AndroidCredentialCapture"))
+        assertTrue(script.contains("saveCredentials"))
+        assertTrue(script.contains("submit"))
+        assertTrue(script.contains("click"))
+        assertTrue(script.contains("password"))
+        assertTrue(script.contains("j_username"))
+        assertTrue(script.contains("j_password"))
+    }
+
+    @Test
     fun directTimetableNavigationUsesCurrentUserLinksOrMenuOnly() {
         val script = AcademicWebScripts.navigateToDirectTimetableUrl()
 

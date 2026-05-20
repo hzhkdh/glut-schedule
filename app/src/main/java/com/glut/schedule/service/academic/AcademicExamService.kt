@@ -2,14 +2,20 @@ package com.glut.schedule.service.academic
 
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.service.parser.ExamParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 class AcademicExamService(
-    private val examParser: ExamParser
+    private val examParser: ExamParser,
+    private val apiProbeService: ApiProbeService = ApiProbeService()
 ) {
+    var lastSuccessfulExamUrl: String = ""
+        private set
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
@@ -31,15 +37,44 @@ class AcademicExamService(
         for (url in urlsToTry) {
             val result = fetchFromUrl(url, cookie)
             if (result.isSuccess && result.getOrNull()?.isNotEmpty() == true) {
+                lastSuccessfulExamUrl = url
                 return result
             }
+        }
+
+        val probeResults = apiProbeService.probeAllEndpoints(cookie = cookie)
+        val selected = selectExamDataFromProbeResults(probeResults)
+        if (selected != null) {
+            lastSuccessfulExamUrl = selected.url
+            return Result.success(filterCurrentSemester(selected.exams))
         }
 
         return Result.failure(IllegalStateException("会话已过期，请在课表导入页面重新登录后刷新"))
     }
 
-    private suspend fun fetchFromUrl(url: String, cookie: String): Result<List<ExamInfo>> {
-        return try {
+    data class SelectedExamData(
+        val url: String,
+        val exams: List<ExamInfo>
+    )
+
+    fun selectExamDataFromProbeResults(results: List<ApiProbeService.ProbeResult>): SelectedExamData? {
+        val jsonResult = apiProbeService.findExamJsonResult(results)
+        if (jsonResult != null) {
+            val exams = examParser.parseExamJson(jsonResult.body)
+            if (exams.isNotEmpty()) return SelectedExamData(jsonResult.url, exams)
+        }
+
+        val htmlResult = apiProbeService.findExamHtmlResult(results)
+        if (htmlResult != null) {
+            val exams = examParser.parseExamHtml(htmlResult.body)
+            if (exams.isNotEmpty()) return SelectedExamData(htmlResult.url, exams)
+        }
+
+        return null
+    }
+
+    private suspend fun fetchFromUrl(url: String, cookie: String): Result<List<ExamInfo>> = withContext(Dispatchers.IO) {
+        try {
             val request = Request.Builder()
                 .url(url)
                 .header("Cookie", cookie)
@@ -50,18 +85,19 @@ class AcademicExamService(
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string() ?: ""
                 if (!response.isSuccessful || body.isBlank()) {
-                    return Result.failure(IllegalStateException("请求失败"))
-                }
-                val trimmed = body.trimStart()
-                val exams = if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-                    examParser.parseExamJson(body)
+                    Result.failure(IllegalStateException("请求失败"))
                 } else {
-                    examParser.parseExamHtml(body)
-                }
-                if (exams.isNotEmpty()) {
-                    Result.success(filterCurrentSemester(exams))
-                } else {
-                    Result.failure(IllegalStateException("解析结果为空"))
+                    val trimmed = body.trimStart()
+                    val exams = if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                        examParser.parseExamJson(body)
+                    } else {
+                        examParser.parseExamHtml(body)
+                    }
+                    if (exams.isNotEmpty()) {
+                        Result.success(filterCurrentSemester(exams))
+                    } else {
+                        Result.failure(IllegalStateException("解析结果为空"))
+                    }
                 }
             }
         } catch (e: Exception) {

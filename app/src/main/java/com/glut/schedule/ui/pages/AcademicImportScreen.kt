@@ -1,6 +1,7 @@
 package com.glut.schedule.ui.pages
 
 import android.graphics.Bitmap
+import android.webkit.JavascriptInterface
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -172,6 +173,15 @@ fun AcademicImportScreen(
                         }
 
                         webChromeClient = WebChromeClient()
+                        addJavascriptInterface(
+                            object {
+                                @JavascriptInterface
+                                fun saveCredentials(username: String?, password: String?) {
+                                    viewModel.saveCredentialsFromWebForm(username, password)
+                                }
+                            },
+                            "AndroidCredentialCapture"
+                        )
 
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
@@ -190,6 +200,7 @@ fun AcademicImportScreen(
                                 execJs(AcademicWebScripts.detectLoginForm()) { result ->
                                     viewModel.onLoginFormDetected(result == "true")
                                 }
+                                execJs(AcademicWebScripts.captureLoginCredentials()) { }
                                 execJs(AcademicWebScripts.interceptApiResponses()) { }
                             }
 

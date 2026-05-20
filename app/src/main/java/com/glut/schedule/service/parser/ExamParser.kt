@@ -1,6 +1,7 @@
 package com.glut.schedule.service.parser
 
 import com.glut.schedule.data.model.ExamInfo
+import com.glut.schedule.data.model.cleanExamText
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -69,14 +70,14 @@ class GlutExamParser : ExamParser {
 
         return ExamInfo(
             id = ExamInfo.stableId(courseName, examDate, startTime, endTime, location),
-            courseName = courseName.trim(),
+            courseName = decodeHtmlEntities(courseName.trim()),
             examDate = examDate,
             startTime = startTime,
             endTime = endTime,
-            location = location.trim(),
-            seatNumber = seatNumber?.trim().orEmpty(),
+            location = decodeHtmlEntities(location.trim()),
+            seatNumber = decodeHtmlEntities(seatNumber?.trim().orEmpty()),
             examType = examType?.trim().orEmpty(),
-            note = note?.trim().orEmpty()
+            note = decodeHtmlEntities(note?.trim().orEmpty())
         )
     }
 
@@ -92,14 +93,14 @@ class GlutExamParser : ExamParser {
 
         return ExamInfo(
             id = ExamInfo.stableId(courseName, examDate, startTime, endTime, location),
-            courseName = courseName,
+            courseName = decodeHtmlEntities(courseName),
             examDate = examDate,
             startTime = startTime,
             endTime = endTime,
-            location = location,
-            seatNumber = cell("seatNumber"),
+            location = decodeHtmlEntities(location),
+            seatNumber = decodeHtmlEntities(cell("seatNumber")),
             examType = cell("examType"),
-            note = cell("note")
+            note = decodeHtmlEntities(cell("note"))
         )
     }
 
@@ -243,6 +244,10 @@ class GlutExamParser : ExamParser {
             if (timeIdx >= 0) mapping["examTime"] = timeIdx
         }
         return mapping
+    }
+
+    private fun decodeHtmlEntities(text: String): String {
+        return cleanExamText(text)
     }
 
     private companion object {

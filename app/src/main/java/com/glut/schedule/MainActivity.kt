@@ -1,12 +1,17 @@
 package com.glut.schedule
 
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
+import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glut.schedule.ui.pages.AcademicImportScreen
 import com.glut.schedule.ui.pages.AcademicImportViewModel
@@ -53,6 +58,19 @@ class MainActivity : ComponentActivity() {
                         loginService = container.academicLoginService
                     )
                 )
+                val examUiState by examViewModel.uiState.collectAsState()
+
+                DisposableEffect(currentScreen) {
+                    applySystemBarStyle(currentScreen)
+                    onDispose { }
+                }
+
+                LaunchedEffect(examUiState.needsInteractiveLogin) {
+                    if (examUiState.needsInteractiveLogin && currentScreen == MainScreen.ExamSchedule) {
+                        examViewModel.consumeInteractiveLoginRequest()
+                        currentScreen = MainScreen.AcademicImport
+                    }
+                }
 
                 when (currentScreen) {
                     MainScreen.Schedule -> ScheduleScreen(
@@ -71,6 +89,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun applySystemBarStyle(screen: MainScreen) {
+        val lightStatusBarFlag = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        if (screen == MainScreen.ExamSchedule) {
+            window.statusBarColor = AndroidColor.rgb(246, 244, 239)
+            window.decorView.systemUiVisibility =
+                window.decorView.systemUiVisibility or lightStatusBarFlag
+        } else {
+            window.statusBarColor = AndroidColor.TRANSPARENT
+            window.decorView.systemUiVisibility =
+                window.decorView.systemUiVisibility and lightStatusBarFlag.inv()
+        }
+        window.navigationBarColor = AndroidColor.rgb(17, 24, 39)
     }
 }
 
