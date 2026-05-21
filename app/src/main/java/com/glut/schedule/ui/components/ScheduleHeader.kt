@@ -1,5 +1,6 @@
 package com.glut.schedule.ui.components
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,7 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.MoreHoriz
-import androidx.compose.material.icons.outlined.Today
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -35,8 +37,10 @@ fun ScheduleHeader(
     currentWeekNumber: Int,
     onImportClick: () -> Unit,
     onAddClick: () -> Unit,
-    onTodayClick: () -> Unit,
+    onWeekTitleClick: () -> Unit,
+    onRefreshClick: () -> Unit,
     onMoreClick: () -> Unit,
+    isRefreshing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val formatter = DateTimeFormatter.ofPattern("yyyy/M/d")
@@ -53,6 +57,7 @@ fun ScheduleHeader(
                 .weight(1f)
                 .padding(end = 8.dp)
                 .widthIn(min = 0.dp)
+                .clickable(onClick = onWeekTitleClick)
         ) {
             Text(
                 text = scheduleHeaderPrimaryText(week.number, currentWeekNumber, dayLabel),
@@ -70,11 +75,20 @@ fun ScheduleHeader(
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(
-                onClick = onTodayClick,
+                onClick = onRefreshClick,
+                enabled = !isRefreshing,
                 modifier = Modifier.size(36.dp),
                 colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
             ) {
-                Icon(Icons.Outlined.Today, contentDescription = "回到本周", modifier = Modifier.size(21.dp))
+                if (isRefreshing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(19.dp),
+                        strokeWidth = 2.dp,
+                        color = Color.White
+                    )
+                } else {
+                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新课表", modifier = Modifier.size(21.dp))
+                }
             }
             IconButton(
                 onClick = onAddClick,

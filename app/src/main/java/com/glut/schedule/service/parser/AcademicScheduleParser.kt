@@ -16,11 +16,14 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
 
         // 教务“个人课表”同一页可能同时包含属性单元格、完整大节课表、课程安排表和底部补课表。
         // 旧逻辑在读到任意前置表格后提前返回，会丢掉后面的完整课表和补课时间地点。
+        val adjustments = parseSupplementalAdjustmentRows(html)
         val primary = mergeCompatibleCourses(
-            parseExplicitCells(html) +
+            applyAdjustmentRemovals(
+                parseExplicitCells(html) +
                 parseGlutStudentTimetableGrid(html) +
-                parseCourseArrangementRows(html) +
-                parseSupplementalAdjustmentRows(html)
+                    parseCourseArrangementRows(html),
+                adjustments
+            ) + adjustments.map { it.toMakeupCourse() }
         )
         if (primary.isNotEmpty()) return CourseColorMapper.assignColors(primary)
 
@@ -285,7 +288,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         return results
     }
 
-    private fun parseSupplementalAdjustmentRows(html: String): List<ScheduleCourse> {
+    private fun parseSupplementalAdjustmentRows(html: String): List<ScheduleAdjustment> {
         return rowRegex.findAll(html).mapNotNull { rowMatch ->
             val cells = tableCellRegex.findAll(rowMatch.value)
                 .map { htmlToLines(it.groupValues[1]).joinToString(" ").trim() }
@@ -299,6 +302,16 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             val teacher = cells.getOrNull(4).orEmpty().ifBlank { "待确认" }
 
             val makeupBase = cells.size - 5
+            val originalWeek = cells.getOrNull(makeupBase - 4)
+                ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() }
+                ?: return@mapNotNull null
+            val originalDay = cells.getOrNull(makeupBase - 3)
+                ?.let { parseWeekdayText(it) }
+                ?: return@mapNotNull null
+            val (originalStart, originalEnd) = cells.getOrNull(makeupBase - 2)
+                ?.let { parseSectionRange(it) }
+                ?: return@mapNotNull null
+            val originalRoom = cells.getOrNull(makeupBase - 1).orEmpty()
             val week = cells.getOrNull(makeupBase + 1)
                 ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() }
                 ?: return@mapNotNull null
@@ -310,26 +323,61 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                 ?: return@mapNotNull null
             val room = cells.getOrNull(makeupBase + 4).orEmpty()
 
-            val id = "import-${stableId("supplemental-$title-$teacher")}"
-            ScheduleCourse(
-                id = id,
+            ScheduleAdjustment(
                 title = title,
-                room = room,
                 teacher = teacher,
-                colorHex = CourseColorMapper.colorForCourse(id, title),
-                occurrences = listOf(
-                    CourseOccurrence(
-                        id = "$id-makeup-$week-$day-$start-$end",
-                        courseId = id,
-                        dayOfWeek = day,
-                        startSection = start.coerceIn(1, 12),
-                        endSection = end.coerceIn(start, 12),
-                        weekText = "第${week}周",
-                        note = room
-                    )
-                )
+                originalWeek = originalWeek,
+                originalDay = originalDay,
+                originalStartSection = originalStart.coerceIn(1, 12),
+                originalEndSection = originalEnd.coerceIn(originalStart, 12),
+                originalRoom = originalRoom,
+                makeupWeek = week,
+                makeupDay = day,
+                makeupStartSection = start.coerceIn(1, 12),
+                makeupEndSection = end.coerceIn(start, 12),
+                makeupRoom = room
             )
         }.toList()
+    }
+
+    private fun applyAdjustmentRemovals(
+        courses: List<ScheduleCourse>,
+        adjustments: List<ScheduleAdjustment>
+    ): List<ScheduleCourse> {
+        if (adjustments.isEmpty()) return courses
+        return courses.mapNotNull { course ->
+            val updatedOccurrences = course.occurrences.flatMap { occurrence ->
+                val adjustment = adjustments.firstOrNull { it.matches(course, occurrence) }
+                if (adjustment == null) {
+                    listOf(occurrence)
+                } else {
+                    occurrence.withoutWeek(adjustment.originalWeek)
+                }
+            }
+            if (updatedOccurrences.isEmpty()) null else course.copy(occurrences = updatedOccurrences)
+        }
+    }
+
+    private fun ScheduleAdjustment.toMakeupCourse(): ScheduleCourse {
+        val id = "import-${stableId("supplemental-$title-$teacher-$makeupRoom")}"
+        return ScheduleCourse(
+            id = id,
+            title = title,
+            room = makeupRoom,
+            teacher = teacher,
+            colorHex = CourseColorMapper.colorForCourse(id, title),
+            occurrences = listOf(
+                CourseOccurrence(
+                    id = "$id-makeup-$makeupWeek-$makeupDay-$makeupStartSection-$makeupEndSection",
+                    courseId = id,
+                    dayOfWeek = makeupDay,
+                    startSection = makeupStartSection,
+                    endSection = makeupEndSection,
+                    weekText = "第${makeupWeek}周",
+                    note = makeupRoom
+                )
+            )
+        )
     }
 
     private fun mergeCourseOccurrences(courses: List<ScheduleCourse>): List<ScheduleCourse> {
@@ -590,6 +638,73 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             looksLikeCompactWeekText(value)
     }
 
+    private fun CourseOccurrence.withoutWeek(week: Int): List<CourseOccurrence> {
+        val remainingWeekTexts = weekTextWithoutWeek(weekText, week)
+        return remainingWeekTexts.mapIndexed { index, remainingWeekText ->
+            copy(
+                id = "$id-adjusted-$index",
+                weekText = remainingWeekText
+            )
+        }
+    }
+
+    private fun weekTextWithoutWeek(weekText: String, removedWeek: Int): List<String> {
+        val remainingWeeks = expandActiveWeeks(weekText)
+            .filter { it != removedWeek }
+        return compactWeekNumbers(remainingWeeks)
+    }
+
+    private fun expandActiveWeeks(weekText: String): List<Int> {
+        val normalized = weekText
+            .replace("第", "")
+            .replace(" ", "")
+            .replace("，", ",")
+            .trim()
+        val requiresOdd = normalized.contains("单周")
+        val requiresEven = normalized.contains("双周")
+        val spans = weekSpanRegex.findAll(normalized).mapNotNull { match ->
+            val parts = match.value.split("-", "－", "—")
+            val start = parts.getOrNull(0)?.toIntOrNull()
+            val end = parts.getOrNull(1)?.toIntOrNull() ?: start
+            if (start != null && end != null && start <= end) start..end else null
+        }.toList()
+        val baseWeeks = if (spans.isEmpty()) {
+            (1..22).toList()
+        } else {
+            spans.flatMap { it.toList() }
+        }
+        return baseWeeks
+            .map { it.coerceIn(1, 22) }
+            .distinct()
+            .sorted()
+            .filter { week -> !requiresOdd || week % 2 == 1 }
+            .filter { week -> !requiresEven || week % 2 == 0 }
+    }
+
+    private fun compactWeekNumbers(weeks: List<Int>): List<String> {
+        if (weeks.isEmpty()) return emptyList()
+        val ranges = mutableListOf<IntRange>()
+        var start = weeks.first()
+        var previous = start
+        weeks.drop(1).forEach { week ->
+            if (week == previous + 1) {
+                previous = week
+            } else {
+                ranges += start..previous
+                start = week
+                previous = week
+            }
+        }
+        ranges += start..previous
+        return ranges.map { range ->
+            if (range.first == range.last) {
+                "第${range.first}周"
+            } else {
+                "${range.first}-${range.last}周"
+            }
+        }
+    }
+
     private fun looksLikeExplicitWeekText(value: String): Boolean {
         val clean = value.trim()
         if (clean == "单周" || clean == "双周") return true
@@ -656,6 +771,32 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
     private fun stableId(value: String): String {
         val digest = MessageDigest.getInstance("MD5").digest(value.toByteArray())
         return digest.joinToString("") { "%02x".format(it) }.take(12)
+    }
+
+    private data class ScheduleAdjustment(
+        val title: String,
+        val teacher: String,
+        val originalWeek: Int,
+        val originalDay: Int,
+        val originalStartSection: Int,
+        val originalEndSection: Int,
+        val originalRoom: String,
+        val makeupWeek: Int,
+        val makeupDay: Int,
+        val makeupStartSection: Int,
+        val makeupEndSection: Int,
+        val makeupRoom: String
+    ) {
+        fun matches(course: ScheduleCourse, occurrence: CourseOccurrence): Boolean {
+            return course.title.trim() == title.trim() &&
+                course.teacher.trim() == teacher.trim() &&
+                occurrence.dayOfWeek == originalDay &&
+                occurrence.startSection == originalStartSection &&
+                occurrence.endSection == originalEndSection &&
+                occurrence.note.trim().ifBlank { course.room.trim() } == originalRoom.trim() &&
+                com.glut.schedule.data.model.isWeekTextActive(occurrence.weekText, originalWeek)
+        }
+
     }
 
     private val dayNames = listOf("一", "二", "三", "四", "五", "六", "日")

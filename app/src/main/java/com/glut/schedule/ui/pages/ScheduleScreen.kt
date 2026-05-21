@@ -129,12 +129,19 @@ fun ScheduleScreen(
                     showSettings = false
                     showAbout = false
                 },
-                onTodayClick = viewModel::returnToCurrentWeek,
+                onWeekTitleClick = viewModel::returnToCurrentWeek,
+                onRefreshClick = {
+                    showAddActions = false
+                    showSettings = false
+                    showAbout = false
+                    viewModel.refreshSchedule()
+                },
                 onMoreClick = {
                     showSettings = !showSettings
                     showAddActions = false
                     showAbout = false
-                }
+                },
+                isRefreshing = uiState.isRefreshing
             )
             HorizontalPager(
                 state = pagerState,
@@ -219,6 +226,13 @@ fun ScheduleScreen(
                 .padding(horizontal = 16.dp, vertical = 18.dp)
                 .navigationBarsPadding()
         )
+    }
+    LaunchedEffect(uiState.message) {
+        val message = uiState.message
+        if (message.isNotBlank()) {
+            snackbarHostState.showSnackbar(message)
+            viewModel.clearMessage()
+        }
     }
     if (showAbout) {
         AboutScheduleDialog(onDismiss = { showAbout = false })

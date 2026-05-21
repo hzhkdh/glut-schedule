@@ -1,8 +1,6 @@
 package com.glut.schedule.service.academic
 
-import android.content.Context
 import android.os.Environment
-import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -10,7 +8,6 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 class DebugCaptureService(
-    private val context: Context? = null,
     private val captureDirProvider: () -> File = {
         File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
@@ -30,15 +27,7 @@ class DebugCaptureService(
     data class NetworkRequest(
         val url: String,
         val method: String,
-        val headers: Map<String, String>?,
-        val timestamp: Long = System.currentTimeMillis()
-    )
-
-    data class CaptureResult(
-        val html: String,
-        val filePath: String,
-        val networkRequests: List<NetworkRequest>,
-        val diagnostics: String
+        val headers: Map<String, String>?
     )
 
     val capturedRequests = mutableListOf<NetworkRequest>()

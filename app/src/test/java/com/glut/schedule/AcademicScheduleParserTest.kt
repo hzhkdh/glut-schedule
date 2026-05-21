@@ -1,7 +1,9 @@
 package com.glut.schedule
 
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
+import com.glut.schedule.data.model.isActiveInWeek
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -258,7 +260,6 @@ class AcademicScheduleParserTest {
         """.trimIndent()
 
         val courses = parser.parsePersonalSchedule(html)
-        printCourseDebug(courses)
 
         val machineLearningLab = courses.single {
             it.title == "机器学习" &&
@@ -286,7 +287,7 @@ class AcademicScheduleParserTest {
     }
 
     @Test
-    fun parsesMakeupTimeAndPlaceRowsAsAdditionalOccurrences() {
+    fun appliesAdjustmentRowsByRemovingOriginalOccurrenceAndAddingMakeupOccurrence() {
         val html = """
             <html><body>
               <table id="timetable" class="infolist_hr">
@@ -323,11 +324,11 @@ class AcademicScheduleParserTest {
 
         assertTrue(embeddedOriginal.occurrences.all { it.courseId == embeddedOriginal.id })
         assertTrue(embeddedMakeup.occurrences.all { it.courseId == embeddedMakeup.id })
-        assertTrue(embeddedOriginal.occurrences.any {
+        assertFalse(embeddedOriginal.occurrences.any {
             it.dayOfWeek == 4 &&
                 it.startSection == 3 &&
                 it.endSection == 4 &&
-                it.weekText == "3-6周" &&
+                it.isActiveInWeek(3) &&
                 it.note == "06104D"
         })
         assertTrue(embeddedMakeup.occurrences.any {
@@ -339,15 +340,44 @@ class AcademicScheduleParserTest {
         })
     }
 
-    private fun printCourseDebug(courses: List<com.glut.schedule.data.model.ScheduleCourse>) {
-        courses.forEach { course ->
-            course.occurrences.forEach { occurrence ->
-                println(
-                    "${course.title} / 星期${occurrence.dayOfWeek} / " +
-                        "第${occurrence.startSection}-${occurrence.endSection}节 / " +
-                        "${occurrence.weekText} / ${course.room} / ${course.teacher}"
-                )
-            }
-        }
+    @Test
+    fun adjustmentRowsSplitMultiWeekOriginalOccurrenceAroundRemovedWeek() {
+        val html = """
+            <html><body>
+              <table id="timetable" class="infolist_hr">
+                <tr><th>&nbsp;</th><th>周一</th><th>周二</th><th>周三</th><th>周四</th><th>周五</th><th>周六</th><th>周日</th></tr>
+                <tr class="infolist_hr_common">
+                  <th>第3节<br>10:20<br>┆<br>11:05</th>
+                  <td id="1-3">&nbsp;</td><td id="2-3">&nbsp;</td><td id="3-3">&nbsp;</td>
+                  <td id="4-3">&lt;&lt;嵌入式系统&gt;&gt;;1<br>06104D<br>蒋志军<br>3-6周<br>讲课学时</td>
+                </tr>
+                <tr class="infolist_hr_common">
+                  <th>第4节<br>11:15<br>┆<br>12:00</th>
+                  <td id="1-4">&nbsp;</td><td id="2-4">&nbsp;</td><td id="3-4">&nbsp;</td>
+                  <td id="4-4">&lt;&lt;嵌入式系统&gt;&gt;;1<br>06104D<br>蒋志军<br>3-6周<br>讲课学时</td>
+                </tr>
+              </table>
+              <table>
+                <tr>
+                  <th>类型</th><th>课程号</th><th>课程名</th><th>课序号</th><th>教师姓名</th><th>代理人</th><th>学时</th>
+                  <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                  <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                </tr>
+                <tr>
+                  <td>调课</td><td>325180</td><td>嵌入式系统</td><td>1</td><td>蒋志军</td><td></td><td>2.0</td>
+                  <td>03-26</td><td>3</td><td>周四</td><td>第3、4节</td><td>06104D</td>
+                  <td>06-25</td><td>16</td><td>周四</td><td>第1、2节</td><td>06102D</td>
+                </tr>
+              </table>
+            </body></html>
+        """.trimIndent()
+
+        val courses = parser.parsePersonalSchedule(html)
+        val embeddedOriginal = courses.single { it.title == "嵌入式系统" && it.room == "06104D" }
+
+        assertTrue(embeddedOriginal.occurrences.any { it.isActiveInWeek(4) })
+        assertTrue(embeddedOriginal.occurrences.any { it.isActiveInWeek(5) })
+        assertTrue(embeddedOriginal.occurrences.any { it.isActiveInWeek(6) })
+        assertFalse(embeddedOriginal.occurrences.any { it.isActiveInWeek(3) })
     }
 }

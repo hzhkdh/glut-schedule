@@ -35,13 +35,16 @@ class MainActivity : ComponentActivity() {
                 val scheduleViewModel: ScheduleViewModel = viewModel(
                     factory = ScheduleViewModelFactory(
                         repository = container.scheduleRepository,
-                        settingsStore = container.settingsStore
+                        settingsStore = container.settingsStore,
+                        sessionStore = container.academicSessionStore,
+                        loginService = container.academicLoginService,
+                        apiProbeService = container.apiProbeService,
+                        parser = container.academicScheduleParser
                     )
                 )
                 val academicImportViewModel: AcademicImportViewModel = viewModel(
                     factory = AcademicImportViewModelFactory(
                         sessionStore = container.academicSessionStore,
-                        importService = container.academicImportService,
                         scheduleRepository = container.scheduleRepository,
                         settingsStore = container.settingsStore,
                         parser = container.academicScheduleParser,
@@ -59,6 +62,7 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 val examUiState by examViewModel.uiState.collectAsState()
+                val scheduleUiState by scheduleViewModel.uiState.collectAsState()
 
                 DisposableEffect(currentScreen) {
                     applySystemBarStyle(currentScreen)
@@ -68,6 +72,13 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(examUiState.needsInteractiveLogin) {
                     if (examUiState.needsInteractiveLogin && currentScreen == MainScreen.ExamSchedule) {
                         examViewModel.consumeInteractiveLoginRequest()
+                        currentScreen = MainScreen.AcademicImport
+                    }
+                }
+
+                LaunchedEffect(scheduleUiState.needsInteractiveLogin) {
+                    if (scheduleUiState.needsInteractiveLogin && currentScreen == MainScreen.Schedule) {
+                        scheduleViewModel.consumeInteractiveLoginRequest()
                         currentScreen = MainScreen.AcademicImport
                     }
                 }

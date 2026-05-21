@@ -5,7 +5,6 @@ import androidx.room.Room
 import com.glut.schedule.data.local.ScheduleDatabase
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.ScheduleSettingsStore
-import com.glut.schedule.service.academic.AcademicImportService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.DebugCaptureService
 import com.glut.schedule.service.academic.ApiProbeService
@@ -36,9 +35,8 @@ class AppContainer(application: Application) {
     val scheduleRepository = ScheduleRepository(database.scheduleDao())
     val settingsStore = ScheduleSettingsStore(application)
     val academicSessionStore = AcademicSessionStore(application)
-    val academicImportService = AcademicImportService()
     val academicScheduleParser = GlutAcademicScheduleParser()
-    val captureService = DebugCaptureService(application)
+    val captureService = DebugCaptureService()
     val apiProbeService = ApiProbeService()
     val examParser = GlutExamParser()
     val academicExamService = AcademicExamService(examParser)

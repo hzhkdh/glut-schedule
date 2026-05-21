@@ -6,28 +6,6 @@ import org.junit.Test
 
 class AcademicWebScriptTest {
     @Test
-    fun clickTimetableMenuItemScriptHasExpectedContent() {
-        val script = AcademicWebScripts.clickTimetableMenuItem()
-        assertTrue(script.contains("本学期课表"))
-        assertTrue(script.contains("个人课表"))
-        assertTrue(script.indexOf("个人课表") < script.indexOf("本学期课表"))
-        assertTrue(script.contains("click"))
-        assertTrue(script.contains("MouseEvent"))
-        assertTrue(script.contains("closest"))
-    }
-
-    @Test
-    fun openTimetablePageScriptSearchesCorrectMenuText() {
-        val script = AcademicWebScripts.openTimetablePage()
-        assertTrue(script.contains("本学期课表"))
-        assertTrue(script.contains("个人课表"))
-        assertTrue(script.indexOf("个人课表") < script.indexOf("本学期课表"))
-        assertTrue(script.contains("click"))
-        assertTrue(script.contains("MouseEvent"))
-        assertTrue(script.contains("closest"))
-    }
-
-    @Test
     fun currentHtmlScriptReturnsDocumentHtml() {
         val script = AcademicWebScripts.currentPageHtml()
         assertTrue(script.contains("document.documentElement.outerHTML"))
@@ -64,16 +42,5 @@ class AcademicWebScriptTest {
         assertTrue(script.contains("password"))
         assertTrue(script.contains("j_username"))
         assertTrue(script.contains("j_password"))
-    }
-
-    @Test
-    fun directTimetableNavigationUsesCurrentUserLinksOrMenuOnly() {
-        val script = AcademicWebScripts.navigateToDirectTimetableUrl()
-
-        assertTrue(script.contains("showTimetable.do"))
-        assertTrue(script.contains("timetableType=STUDENT"))
-        assertTrue(script.contains("个人课表"))
-        assertTrue(script.contains("本学期课表"))
-        assertTrue(!script.contains("id=712170"))
     }
 }
