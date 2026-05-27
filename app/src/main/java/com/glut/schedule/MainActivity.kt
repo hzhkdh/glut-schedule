@@ -2,6 +2,7 @@ package com.glut.schedule
 
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -23,11 +24,34 @@ import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.theme.GlutScheduleTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as ScheduleApplication).appContainer
+        val (backgroundTargetWidth, backgroundTargetHeight) = backgroundTargetSize()
+        val initialCustomBackgroundUri = runBlocking(Dispatchers.IO) {
+            container.settingsStore.customBackgroundUri.first()
+        }
+        if (initialCustomBackgroundUri.isNotBlank()) {
+            Log.d("Recompose", "MainActivity background preload start")
+            val loaded = container.backgroundStore.preloadBlocking(
+                uri = initialCustomBackgroundUri,
+                targetWidth = backgroundTargetWidth,
+                targetHeight = backgroundTargetHeight
+            )
+            if (loaded) {
+                Log.d("Recompose", "MainActivity background preload success")
+            } else {
+                Log.d("Recompose", "MainActivity background preload failure")
+                runBlocking(Dispatchers.IO) {
+                    container.settingsStore.setCustomBackgroundUri("")
+                }
+            }
+        }
 
         setContent {
             GlutScheduleTheme {
@@ -63,6 +87,11 @@ class MainActivity : ComponentActivity() {
                 )
                 val examUiState by examViewModel.uiState.collectAsState()
                 val scheduleUiState by scheduleViewModel.uiState.collectAsState()
+                val scheduleBackgroundBitmap = if (scheduleUiState.customBackgroundUri.isNotBlank()) {
+                    container.backgroundStore.get(scheduleUiState.customBackgroundUri)
+                } else {
+                    null
+                }
 
                 DisposableEffect(currentScreen) {
                     applySystemBarStyle(currentScreen)
@@ -84,11 +113,22 @@ class MainActivity : ComponentActivity() {
                 }
 
                 when (currentScreen) {
-                    MainScreen.Schedule -> ScheduleScreen(
-                        viewModel = scheduleViewModel,
-                        onImportClick = { currentScreen = MainScreen.AcademicImport },
-                        onExamClick = { currentScreen = MainScreen.ExamSchedule }
-                    )
+                    MainScreen.Schedule -> {
+                        if (
+                            scheduleUiState.customBackgroundUri.isNotBlank() &&
+                            scheduleBackgroundBitmap == null
+                        ) {
+                            Log.d("Recompose", "ScheduleScreen blocked until background ready")
+                        } else {
+                            ScheduleScreen(
+                                viewModel = scheduleViewModel,
+                                backgroundStore = container.backgroundStore,
+                                customBackgroundBitmap = scheduleBackgroundBitmap,
+                                onImportClick = { currentScreen = MainScreen.AcademicImport },
+                                onExamClick = { currentScreen = MainScreen.ExamSchedule }
+                            )
+                        }
+                    }
                     MainScreen.AcademicImport -> AcademicImportScreen(
                         viewModel = academicImportViewModel,
                         onBack = { currentScreen = MainScreen.Schedule }
@@ -115,6 +155,11 @@ class MainActivity : ComponentActivity() {
                 window.decorView.systemUiVisibility and lightStatusBarFlag.inv()
         }
         window.navigationBarColor = AndroidColor.rgb(17, 24, 39)
+    }
+
+    private fun backgroundTargetSize(): Pair<Int, Int> {
+        val metrics = resources.displayMetrics
+        return metrics.widthPixels to metrics.heightPixels
     }
 }
 

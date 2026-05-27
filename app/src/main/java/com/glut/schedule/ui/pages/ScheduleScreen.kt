@@ -2,6 +2,7 @@ package com.glut.schedule.ui.pages
 
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import com.glut.schedule.BuildConfig
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,11 +37,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,34 +57,63 @@ import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.ScheduleHeader
+import com.glut.schedule.ui.components.BackgroundSwitchResult
+import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.components.StarryScheduleBackground
+import com.glut.schedule.ui.components.shouldCommitCustomBackgroundUri
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 @Composable
 fun ScheduleScreen(
     viewModel: ScheduleViewModel,
+    backgroundStore: ScheduleBackgroundStore,
+    customBackgroundBitmap: ImageBitmap?,
     onImportClick: () -> Unit,
     onExamClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    Log.d("Recompose", "ScheduleScreen compose")
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var showSettings by remember { mutableStateOf(false) }
     var showAddActions by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val backgroundPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
+        val uriText = uri.toString()
         runCatching {
             context.contentResolver.takePersistableUriPermission(
                 uri,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
         }
-        viewModel.setCustomBackgroundUri(uri.toString())
-        showAddActions = false
+        coroutineScope.launch {
+            val metrics = context.resources.displayMetrics
+            val loaded = backgroundStore.preload(
+                uri = uriText,
+                targetWidth = metrics.widthPixels,
+                targetHeight = metrics.heightPixels
+            )
+            when (shouldCommitCustomBackgroundUri(uriText, preloadSucceeded = loaded)) {
+                BackgroundSwitchResult.Commit -> {
+                    viewModel.setCustomBackgroundUri(uriText)
+                    showAddActions = false
+                }
+                BackgroundSwitchResult.KeepCurrent -> {
+                    snackbarHostState.showSnackbar("背景加载失败，已保留当前背景")
+                    showAddActions = false
+                }
+                BackgroundSwitchResult.Clear -> {
+                    viewModel.clearCustomBackground()
+                    showAddActions = false
+                }
+            }
+        }
     }
     val blocksByWeek = remember(uiState.courses, uiState.maxAcademicWeek) {
         courseBlocksByWeek(uiState.courses, uiState.maxAcademicWeek)
@@ -112,7 +144,10 @@ fun ScheduleScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        StarryScheduleBackground(customBackgroundUri = uiState.customBackgroundUri)
+        StarryScheduleBackground(
+            customBackgroundUri = uiState.customBackgroundUri,
+            customBackgroundBitmap = customBackgroundBitmap
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()

@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -91,7 +92,7 @@ fun ExamScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val now = LocalDateTime.now()
-    val upcomingExams = uiState.exams.filter { exam -> isExamUpcoming(exam, now) }
+    val displayExams = examsForDisplay(uiState.exams, now)
 
     Column(
         modifier = modifier
@@ -120,7 +121,7 @@ fun ExamScreen(
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
             )
         }
-        if (upcomingExams.isEmpty()) {
+        if (uiState.exams.isEmpty()) {
             ExamEmptyState(
                 hasCookie = uiState.hasCookie,
                 onRefresh = viewModel::refreshExams,
@@ -128,7 +129,7 @@ fun ExamScreen(
             )
         } else {
             ExamList(
-                exams = upcomingExams,
+                exams = displayExams,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -205,10 +206,10 @@ private fun ExamEmptyState(
 
 @Composable
 private fun ExamList(
-    exams: List<ExamInfo>,
+    exams: List<ExamDisplayItem>,
     modifier: Modifier = Modifier
 ) {
-    val groupedByDate = exams.groupBy { it.examDate }
+    val groupedByDate = exams.groupBy { it.exam.examDate }
     val today = LocalDate.now()
 
     LazyColumn(
@@ -231,7 +232,7 @@ private fun ExamList(
 @Composable
 private fun ExamTimelineGroup(
     date: LocalDate,
-    dayExams: List<ExamInfo>,
+    dayExams: List<ExamDisplayItem>,
     isToday: Boolean,
     isLast: Boolean
 ) {
@@ -270,8 +271,8 @@ private fun ExamTimelineGroup(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             ExamDateHeader(date = date, isToday = isToday)
-            dayExams.forEach { exam ->
-                ExamCard(exam = exam)
+            dayExams.forEach { item ->
+                ExamCard(exam = item.exam, displayState = item.state)
             }
         }
     }
@@ -315,7 +316,11 @@ private fun ExamDateHeader(
 }
 
 @Composable
-private fun ExamCard(exam: ExamInfo) {
+private fun ExamCard(
+    exam: ExamInfo,
+    displayState: ExamDisplayState
+) {
+    val completed = displayState == ExamDisplayState.Completed
     val accent = examCardAccent(exam.courseName)
     val typeColors = examTypeColors(exam.examType)
     val timeText = buildString {
@@ -324,11 +329,13 @@ private fun ExamCard(exam: ExamInfo) {
     }
 
     Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = ExamPaperCard,
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer(alpha = if (completed) 0.66f else 1f),
+        color = if (completed) Color(0xFFF3F4F6) else ExamPaperCard,
         shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, ExamCardBorder),
-        shadowElevation = 6.dp
+        border = BorderStroke(1.dp, if (completed) Color(0xFFE2E5EA) else ExamCardBorder),
+        shadowElevation = if (completed) 1.dp else 6.dp
     ) {
         Row(
             modifier = Modifier
@@ -355,7 +362,7 @@ private fun ExamCard(exam: ExamInfo) {
                 ) {
                     Text(
                         text = exam.courseName,
-                        color = ExamTextPrimary,
+                        color = if (completed) ExamTextSecondary else ExamTextPrimary,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,
@@ -371,6 +378,18 @@ private fun ExamCard(exam: ExamInfo) {
                             modifier = Modifier
                                 .clip(RoundedCornerShape(7.dp))
                                 .background(typeColors.container)
+                                .padding(horizontal = 9.dp, vertical = 6.dp)
+                        )
+                    }
+                    if (completed) {
+                        Text(
+                            text = "已结束",
+                            color = ExamTextTertiary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(Color(0xFFE7E9EE))
                                 .padding(horizontal = 9.dp, vertical = 6.dp)
                         )
                     }
@@ -539,6 +558,37 @@ internal fun isExamUpcoming(exam: ExamInfo, now: LocalDateTime): Boolean {
             !now.toLocalTime().isAfter(endTime)
         }
     }
+}
+
+internal enum class ExamDisplayState {
+    Upcoming,
+    Completed
+}
+
+internal data class ExamDisplayItem(
+    val exam: ExamInfo,
+    val state: ExamDisplayState
+)
+
+internal fun examDisplayState(exam: ExamInfo, now: LocalDateTime): ExamDisplayState {
+    return if (isExamUpcoming(exam, now)) {
+        ExamDisplayState.Upcoming
+    } else {
+        ExamDisplayState.Completed
+    }
+}
+
+internal fun examsForDisplay(exams: List<ExamInfo>, now: LocalDateTime): List<ExamDisplayItem> {
+    return exams
+        .map { exam -> ExamDisplayItem(exam = exam, state = examDisplayState(exam, now)) }
+        .sortedWith(
+            compareBy<ExamDisplayItem> { item ->
+                if (item.state == ExamDisplayState.Upcoming) 0 else 1
+            }
+                .thenBy { item -> item.exam.examDate }
+                .thenBy { item -> parseExamTime(item.exam.startTime) ?: LocalTime.MIN }
+                .thenBy { item -> item.exam.courseName }
+        )
 }
 
 internal fun examDateStatus(date: LocalDate, today: LocalDate): String {
