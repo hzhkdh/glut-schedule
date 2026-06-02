@@ -9,10 +9,10 @@
 - 左侧节次列显示节次与上下课时间，顶部显示周一至周日
 - 彩色课程卡片展示课程名、教室、教师、周次
 - 同一时段多门冲突课程自动分组，点击轮换显示
-- 暗色星空渐变背景，支持自定义背景图片
+- 暗色星空渐变背景，支持自定义背景图片（带采样解码和 LRU 缓存）
 - 设置面板：切换显示周末、考试安排入口、关于信息
 - 通过 WebView 从 GLUT 教务系统导入个人课表
-- 考试安排：从教务系统获取考试数据，按日期分组展示，支持下拉刷新
+- 考试安排：从教务系统获取考试数据，时间线 UI 按日期分组展示（含状态标签），支持下拉刷新
 - 静默登录：加密存储教务凭据，后台自动登录刷新考试数据
 - Room 本地数据库持久化课程与考试数据
 
@@ -23,7 +23,7 @@
 - Room 2.8.4（KSP 编译）
 - DataStore Preferences 1.2.1
 - OkHttp 5.3.2
-- Security-Crypto 1.1.0（EncryptedSharedPreferences 凭据加密）
+- Security-Crypto 1.1.0-alpha06（EncryptedSharedPreferences 凭据加密）
 - kotlinx-coroutines 1.10.2
 - Gradle 8.13 + AGP 8.13.0
 
@@ -82,16 +82,15 @@ app/src/main/java/com/glut/schedule/
 
   service/
     academic/
-      AcademicImportService.kt      OkHttp 获取课表 HTML
+      AcademicSessionStore.kt       DataStore 存储 Cookie/考试 URL
       AcademicExamService.kt        考试数据获取
       AcademicLoginService.kt       静默登录工作流
-      AcademicLoginHttpClient.kt    模拟浏览器登录
-      AcademicSessionStore.kt       DataStore 存储 Cookie/考试 URL
-      ApiProbeService.kt            多端点探测引擎
-      CredentialStore.kt            加密凭据存储
-      AcademicImportConfig.kt       教务系统 URL 与页面识别
       AcademicWebScripts.kt         注入 WebView 的 JS 代码
       AcademicTodayPlanParser.kt    今日课程 JSON 解析
+      AcademicImportConfig.kt       教务系统 URL 与页面识别
+      ApiProbeService.kt            多端点探测引擎
+      CredentialStore.kt            加密凭据存储
+      DebugCaptureService.kt        调试数据导出（默认关闭）
     parser/
       AcademicScheduleParser.kt     课表 HTML 解析器（7 种策略）
       ExamParser.kt                 考试 JSON/HTML 解析器
@@ -121,10 +120,11 @@ app/src/main/java/com/glut/schedule/
 ## 导入流程
 
 1. AcademicImportScreen 加载 `jw.glut.edu.cn` WebView
-2. 用户在 WebView 中登录教务系统，导航到课表页面
-3. 点击 FAB → JS 注入提取页面 HTML 或 API 数据
-4. 解析器处理 HTML/JSON → 通过 `ScheduleRepository.replaceImportedCourses()` / `replaceExams()` 保存
-5. 静默登录：EncryptedSharedPreferences 保存凭据，后台自动登录刷新数据
+2. 用户在 WebView 中登录教务系统（凭据自动捕获），导航到课表或考试页面
+3. 页面加载时 JS 注入拦截 API 响应，自动检测登录表单并保存 Cookie
+4. 点击 FAB 下载按钮 → 优先使用拦截的 API 数据，回退到 HTML 解析
+5. 解析器处理数据 → 通过 `ScheduleRepository.replaceImportedCourses()` / `replaceExams()` 保存
+6. 静默登录：EncryptedSharedPreferences 保存凭据，后台自动登录刷新数据
 
 ## 测试
 
