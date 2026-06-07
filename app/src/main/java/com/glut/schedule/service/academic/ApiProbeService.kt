@@ -34,6 +34,31 @@ class ApiProbeService {
         val semesterEndDate: LocalDate? = null
     )
 
+    /** Fetch a single URL with the given cookie, returning a ProbeResult or null. */
+    suspend fun probeUrl(cookie: String, url: String, method: String = "GET"): ProbeResult? = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .header("Cookie", cookie)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .header("Accept", "text/html,application/json;q=0.9,*/*;q=0.8")
+                .apply {
+                    if (method.equals("POST", ignoreCase = true)) {
+                        post(okhttp3.RequestBody.create(null, ByteArray(0)))
+                    } else get()
+                }
+                .build()
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                ProbeResult(
+                    url = url, method = method, httpCode = response.code,
+                    contentType = response.header("Content-Type").orEmpty(),
+                    body = body, bodyLength = body.length
+                )
+            }
+        }.getOrNull()
+    }
+
     suspend fun probeAllEndpoints(
         cookie: String,
         capturedTimetableUrls: List<String> = emptyList(),

@@ -392,7 +392,20 @@ class DirectLoginViewModel(
                 settingsStore.setCurrentWeekNumber(calendar.currentWeekNumber)
             }
 
-            val htmlResult = apiProbeService.findTimetableHtmlResult(results)
+            var htmlResult = apiProbeService.findTimetableHtmlResult(results)
+
+            // Nanning fallback: if standard probe didn't find timetable, try showTimetable.do
+            // with the student number directly (buildCurrentStudentTimetableUrls may fail
+            // to extract the internal user ID from Nanning's framePage.do response).
+            if (htmlResult == null && campusBaseUrl == AcademicLoginResult.NANNING_URL) {
+                val username = _uiState.value.username
+                if (username.isNotBlank()) {
+                    val fallbackUrl = "$campusBaseUrl/academic/manager/coursearrange/showTimetable.do" +
+                        "?id=$username&timetableType=STUDENT&sectionType=BASE"
+                    htmlResult = apiProbeService.probeUrl(cookie, fallbackUrl)
+                }
+            }
+
             if (htmlResult != null) {
                 sessionStore.saveHtmlPreview(htmlResult.body.take(3000))
                 val courses = runCatching {
