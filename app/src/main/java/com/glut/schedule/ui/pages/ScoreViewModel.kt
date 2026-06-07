@@ -15,10 +15,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -39,6 +39,7 @@ class ScoreViewModel(
 
     private val _isRefreshing = MutableStateFlow(false)
     private val _message = MutableStateFlow("")
+    private val _selectedYear = MutableStateFlow<String?>(null)
 
     val uiState: StateFlow<ScoreUiState> = combine(
         repository.scores,
@@ -57,6 +58,16 @@ class ScoreViewModel(
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = ScoreUiState()
     )
+
+    val availableYears: StateFlow<List<String>> = repository.scores
+        .map { scores -> scores.map { it.year }.distinct().sortedDescending() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val selectedYear: StateFlow<String?> = _selectedYear
+
+    fun selectYear(year: String?) {
+        _selectedYear.value = year
+    }
 
     fun refreshScores() {
         viewModelScope.launch {
@@ -90,33 +101,29 @@ class ScoreViewModel(
     }
 
     private suspend fun fetchAllScores(cookie: String): List<ScoreInfo> {
+        val campusBaseUrl = sessionStore.campusBaseUrl.first()
+            .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
+
         val scoreClient = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
             .build()
-        val allScores = mutableListOf<ScoreInfo>()
-        val years = listOf("2025-2026", "2024-2025", "2023-2024", "2022-2023")
-        for (year in years) {
-            for (term in 1..2) {
-                try {
-                    val formBody = FormBody.Builder()
-                        .add("year", year).add("term", term.toString()).add("para", "0")
-                        .build()
-                    val request = Request.Builder()
-                        .url("http://jw.glut.edu.cn/academic/manager/score/studentOwnScore.do")
-                        .header("Cookie", cookie)
-                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
-                        .post(formBody).build()
-                    withContext(Dispatchers.IO) {
-                        scoreClient.newCall(request).execute().use { response ->
-                            val body = response.body?.string().orEmpty()
-                            allScores.addAll(scoreParser.parseScoreHtml(body, year, term))
-                        }
-                    }
-                } catch (_: Exception) { }
+
+        val request = Request.Builder()
+            .url("$campusBaseUrl/academic/manager/score/studentOwnScore.do?year=&term=&para=0")
+            .header("Cookie", cookie)
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+            .get()
+            .build()
+
+        val body = withContext(Dispatchers.IO) {
+            scoreClient.newCall(request).execute().use { response ->
+                response.body?.string().orEmpty()
             }
         }
-        return allScores
+
+        val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
+        return scoreParser.parseScoreHtml(body, isNanning = isNanning)
     }
 
     fun clearMessage() { _message.value = "" }
