@@ -135,7 +135,9 @@ data class CourseBlock(
     val occurrence: CourseOccurrence
 )
 
-fun defaultClassPeriods(): List<ClassPeriod> = listOf(
+fun defaultClassPeriods(): List<ClassPeriod> = guilinClassPeriods()
+
+fun guilinClassPeriods(): List<ClassPeriod> = listOf(
     ClassPeriod(1, "08:30", "09:15"),
     ClassPeriod(2, "09:20", "10:05"),
     ClassPeriod(3, "10:25", "11:10"),
@@ -148,4 +150,18 @@ fun defaultClassPeriods(): List<ClassPeriod> = listOf(
     ClassPeriod(10, "19:20", "20:05"),
     ClassPeriod(11, "20:10", "20:55"),
     ClassPeriod(12, "21:00", "21:45")
+)
+
+fun nanningClassPeriods(): List<ClassPeriod> = listOf(
+    ClassPeriod(1, "08:40", "09:20"),
+    ClassPeriod(2, "09:25", "10:05"),
+    ClassPeriod(3, "10:25", "11:05"),
+    ClassPeriod(4, "11:10", "11:50"),
+    ClassPeriod(5, "14:30", "15:10"),
+    ClassPeriod(6, "15:15", "15:55"),
+    ClassPeriod(7, "16:05", "16:45"),
+    ClassPeriod(8, "16:50", "17:30"),
+    ClassPeriod(9, "19:30", "20:10"),
+    ClassPeriod(10, "20:15", "20:55"),
+    ClassPeriod(11, "21:00", "21:40")
 )
