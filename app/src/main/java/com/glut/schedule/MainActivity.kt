@@ -198,9 +198,6 @@ class MainActivity : ComponentActivity() {
                         val info = container.updateChecker.check(BuildConfig.VERSION_NAME)
                         if (info != null && info.isNewer) {
                             container.settingsStore.setUpdateAvailable(info.latestVersion)
-                            if (updateSeenVersion != info.latestVersion) {
-                                showUpdateDialog = info
-                            }
                         }
                     }
                     onDispose { }
