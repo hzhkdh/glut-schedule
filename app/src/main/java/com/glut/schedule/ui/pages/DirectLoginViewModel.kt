@@ -373,6 +373,12 @@ class DirectLoginViewModel(
         }
         viewModelScope.launch {
             sessionStore.saveCookie(cookie)
+            val campusType = if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
+                com.glut.schedule.data.settings.CampusType.NANNING
+            } else {
+                com.glut.schedule.data.settings.CampusType.GUILIN
+            }
+            settingsStore.setCampusType(campusType)
             _uiState.value = _uiState.value.copy(message = "登录成功，正在导入数据...")
             performImport(cookie, campusBaseUrl)
         }
@@ -394,15 +400,42 @@ class DirectLoginViewModel(
 
             var htmlResult = apiProbeService.findTimetableHtmlResult(results)
 
-            // Nanning fallback: if standard probe didn't find timetable, try showTimetable.do
-            // with the student number directly (buildCurrentStudentTimetableUrls may fail
-            // to extract the internal user ID from Nanning's framePage.do response).
-            if (htmlResult == null && campusBaseUrl == AcademicLoginResult.NANNING_URL) {
-                val username = _uiState.value.username
-                if (username.isNotBlank()) {
-                    val fallbackUrl = "$campusBaseUrl/academic/manager/coursearrange/showTimetable.do" +
-                        "?id=$username&timetableType=STUDENT&sectionType=BASE"
-                    htmlResult = apiProbeService.probeUrl(cookie, fallbackUrl)
+            // Nanning: currcourse.jsdo is the primary schedule endpoint.
+            // showTimetable.do requires yearid/termid extracted from currcourse.jsdo.
+            if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
+                // Priority 1: currcourse.jsdo (primary Nanning endpoint)
+                val currcourse = results.find {
+                    it.url.contains("currcourse.jsdo") && it.httpCode == 200
+                }
+                if (currcourse != null && currcourse.body.length > 1000) {
+                    htmlResult = currcourse
+                }
+
+                // Priority 2: showTimetable.do with params from currcourse.jsdo
+                if (htmlResult == null) {
+                    val currcourseBody = results
+                        .find { it.url.contains("currcourse.jsdo") }?.body ?: ""
+                    val extractedId = ApiProbeService.extractInternalIdFromCurrcourse(currcourseBody)
+                    val extractedYearId = ApiProbeService.extractYearIdFromCurrcourse(currcourseBody)
+                    val extractedTermId = ApiProbeService.extractTermIdFromCurrcourse(currcourseBody)
+                    if (extractedId != null) {
+                        val showUrl = "$campusBaseUrl/academic/manager/coursearrange/showTimetable.do" +
+                            "?id=$extractedId" +
+                            "&yearid=${extractedYearId ?: "46"}" +
+                            "&termid=${extractedTermId ?: "1"}" +
+                            "&timetableType=STUDENT&sectionType=BASE"
+                        htmlResult = apiProbeService.probeUrl(cookie, showUrl)
+                    }
+                }
+
+                // Priority 3: Last resort with student ID + default yearid/termid
+                if (htmlResult == null) {
+                    val username = _uiState.value.username
+                    if (username.isNotBlank()) {
+                        val fallbackUrl = "$campusBaseUrl/academic/manager/coursearrange/showTimetable.do" +
+                            "?id=$username&yearid=46&termid=1&timetableType=STUDENT&sectionType=BASE"
+                        htmlResult = apiProbeService.probeUrl(cookie, fallbackUrl)
+                    }
                 }
             }
 
