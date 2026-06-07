@@ -26,7 +26,7 @@ class ScoreParser {
         val rows = rowRegex.findAll(tableHtml).toList()
 
         val headerIndex = rows.indexOfFirst { it.value.contains("<th") }
-        val dataRows = if (headerIndex >= 0) rows.drop(headerIndex + 1) else rows.drop(1)
+        val dataRows = if (headerIndex >= 0) rows.drop(headerIndex + 1) else rows
 
         // Nanning campus has a narrower table: cells[2]=course, cells[4]=score, cells[5]=credit
         val courseIdx = if (isNanning) 2 else 4
@@ -112,8 +112,7 @@ class ScoreParser {
             "优秀" to 4.0, "优" to 4.0, "A" to 4.0,
             "良好" to 3.0, "良" to 3.0, "B" to 3.0,
             "中等" to 2.0, "中" to 2.0, "C" to 2.0,
-            "及格" to 1.0, "D" to 1.0,
-            "不及格" to 0.0, "F" to 0.0
+            "不及格" to 0.0, "F" to 0.0, "及格" to 1.0, "D" to 1.0
         )
         val gradeMatch = gradeMap.entries.firstOrNull { (key, _) ->
             scoreText.contains(key, ignoreCase = true)
