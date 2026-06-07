@@ -12,17 +12,24 @@ import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 sealed class AcademicLoginResult {
-    data class Success(val cookie: String) : AcademicLoginResult()
+    data class Success(val cookie: String, val campusBaseUrl: String = DEFAULT_GUILIN_URL) : AcademicLoginResult()
     data object MissingCredentials : AcademicLoginResult()
     data object InvalidCredentials : AcademicLoginResult()
     data object CaptchaOrInteractiveLoginRequired : AcademicLoginResult()
     data class NetworkError(val message: String) : AcademicLoginResult()
+
+    companion object {
+        const val DEFAULT_GUILIN_URL = "http://jw.glut.edu.cn"
+        const val NANNING_URL = "http://jw.glutnn.cn"
+    }
 }
 
 class AcademicLoginHttpClient(
     private val cookieJar: CapturingCookieJar = CapturingCookieJar(),
     client: OkHttpClient? = null,
-    private val baseUrl: String = "http://jw.glut.edu.cn"
+    private val baseUrl: String = "http://jw.glut.edu.cn",
+    private val loginPagePath: String = "/academic/affairLogin.do",
+    private val usePostLogin: Boolean = false
 ) {
     private val client: OkHttpClient = client ?: OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -40,20 +47,30 @@ class AcademicLoginHttpClient(
         runCatching {
             val loginPage = fetchLoginPage()
             val loginPath = buildLoginPath(loginPage.sessionId)
-            val loginUrl = "$baseUrl$loginPath" +
-                "?j_username=${encode(username)}&j_password=${encode(password)}&j_captcha="
+            val loginUrl = "$baseUrl$loginPath"
 
             val request = Request.Builder()
                 .url(loginUrl)
                 .header("User-Agent", USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/json,*/*")
-                .header("Referer", "$baseUrl/academic/affairLogin.do")
+                .header("Referer", "$baseUrl$loginPagePath")
                 .apply {
                     if (loginPage.cookie.isNotBlank()) {
                         header("Cookie", loginPage.cookie)
                     }
+                    if (usePostLogin) {
+                        header("Content-Type", "application/x-www-form-urlencoded")
+                        val formBody = FormBody.Builder()
+                            .add("j_username", username)
+                            .add("j_password", password)
+                            .add("j_captcha", "")
+                            .build()
+                        post(formBody)
+                    } else {
+                        url(loginUrl + "?j_username=${encode(username)}&j_password=${encode(password)}&j_captcha=")
+                        get()
+                    }
                 }
-                .get()
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -84,7 +101,7 @@ class AcademicLoginHttpClient(
 
     private fun fetchLoginPage(): LoginPage {
         val request = Request.Builder()
-            .url("$baseUrl/academic/affairLogin.do")
+            .url("$baseUrl$loginPagePath")
             .header("User-Agent", USER_AGENT)
             .header("Accept", "text/html,application/xhtml+xml,*/*")
             .get()
@@ -133,7 +150,7 @@ class AcademicLoginHttpClient(
             when {
                 response.code == 401 || response.code == 403 -> AcademicLoginResult.InvalidCredentials
                 looksLikeLoginPage(body) -> AcademicLoginResult.CaptchaOrInteractiveLoginRequired
-                response.isSuccessful -> AcademicLoginResult.Success(cookie)
+                response.isSuccessful -> AcademicLoginResult.Success(cookie, baseUrl)
                 else -> AcademicLoginResult.NetworkError("教务系统返回 HTTP ${response.code}")
             }
         }
@@ -187,6 +204,137 @@ class CapturingCookieJar : CookieJar {
                     cookie.name.equals("TGC", ignoreCase = true)
             }
             .joinToString("; ") { cookie -> "${cookie.name}=${cookie.value}" }
+    }
+}
+
+/**
+ * OA unified authentication login client (ca.glut.edu.cn).
+ * Used as fallback when direct JW login requires captcha.
+ * Flow based on GlutAssistant's _loginOA() implementation:
+ *   1. GET /zfca/login → extract LT token
+ *   2. POST /zfca/login with credentials → get CASTGC cookie
+ *   3. GET /zfca/tojw → follow redirect chain to JW → get JSESSIONID
+ */
+class AcademicOALoginClient(
+    private val baseUrl: String = "http://ca.glut.edu.cn:8888"
+) {
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
+    suspend fun login(username: String, password: String): AcademicLoginResult = withContext(Dispatchers.IO) {
+        if (username.isBlank() || password.isBlank()) {
+            return@withContext AcademicLoginResult.MissingCredentials
+        }
+
+        runCatching {
+            val (lt, step1Cookie) = fetchLtToken()
+            if (lt.isBlank()) return@runCatching AcademicLoginResult.CaptchaOrInteractiveLoginRequired
+
+            val step2Cookie = postOALogin(username, password, lt, step1Cookie)
+            if (step2Cookie.isBlank()) return@runCatching AcademicLoginResult.InvalidCredentials
+
+            val jwCookie = transferOAToJW(step2Cookie)
+            if (jwCookie.isNotBlank()) {
+                AcademicLoginResult.Success(jwCookie, AcademicLoginResult.DEFAULT_GUILIN_URL)
+            } else {
+                AcademicLoginResult.CaptchaOrInteractiveLoginRequired
+            }
+        }.getOrElse { error ->
+            AcademicLoginResult.NetworkError("OA登录失败: ${error.message}")
+        }
+    }
+
+    private fun fetchLtToken(): Pair<String, String> {
+        val request = Request.Builder()
+            .url("$baseUrl/zfca/login")
+            .header("User-Agent", USER_AGENT)
+            .get()
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            val cookie = response.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
+            val lt = Regex("""name="lt"\s+value="([^"]+)"""").find(body)?.groupValues?.get(1).orEmpty()
+                .ifBlank { Regex("""name="lt"\s+value='([^']+)'"""").find(body)?.groupValues?.get(1).orEmpty() }
+            return lt to cookie
+        }
+    }
+
+    private fun postOALogin(username: String, password: String, lt: String, cookie: String): String {
+        val formBody = FormBody.Builder()
+            .add("_eventId", "submit")
+            .add("j_captcha_response", "")
+            .add("lt", lt)
+            .add("password", password)
+            .add("useValidateCode", "1")
+            .add("username", username)
+            .build()
+
+        val request = Request.Builder()
+            .url("$baseUrl/zfca/login")
+            .header("Cookie", cookie)
+            .header("User-Agent", USER_AGENT)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .post(formBody)
+            .build()
+
+        return client.newCall(request).execute().use { response ->
+            val location = response.header("Location") ?: ""
+            val newCookies = response.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
+            val merged = if (newCookies.isNotBlank()) "$cookie; $newCookies" else cookie
+            if (location.contains("login")) "" else merged
+        }
+    }
+
+    private fun transferOAToJW(oaCookie: String): String {
+        var currentCookie = oaCookie
+        var currentUrl = "$baseUrl/zfca/tojw"
+
+        for (hop in 1..5) {
+            val request = Request.Builder()
+                .url(currentUrl)
+                .header("Cookie", currentCookie)
+                .header("User-Agent", USER_AGENT)
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val location = response.header("Location") ?: ""
+                val newCookies = response.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
+                if (newCookies.isNotBlank()) currentCookie = mergeCookies(currentCookie, newCookies)
+                when {
+                    location.isBlank() -> return currentCookie.takeIf { it.contains("JSESSIONID", ignoreCase = true) } ?: ""
+                    location.startsWith("http") -> currentUrl = location
+                    location.startsWith("/") -> {
+                        val domain = Regex("""https?://[^/]+""").find(currentUrl)?.value ?: baseUrl
+                        currentUrl = "$domain$location"
+                    }
+                    else -> currentUrl = currentUrl.substringBeforeLast("/") + "/$location"
+                }
+            }
+        }
+        return currentCookie.takeIf { it.contains("JSESSIONID", ignoreCase = true) } ?: ""
+    }
+
+    private fun mergeCookies(existing: String, incoming: String): String {
+        val map = linkedMapOf<String, String>()
+        existing.split(";").map { it.trim() }.filter { it.contains("=") }.forEach {
+            val parts = it.split("=", limit = 2)
+            map[parts[0].trim()] = parts.getOrElse(1) { "" }.trim()
+        }
+        incoming.split(";").map { it.trim() }.filter { it.contains("=") }.forEach {
+            val parts = it.split("=", limit = 2)
+            map[parts[0].trim()] = parts.getOrElse(1) { "" }.trim()
+        }
+        return map.entries.joinToString("; ") { "${it.key}=${it.value}" }
+    }
+
+    private companion object {
+        const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
     }
 }
 

@@ -38,9 +38,10 @@ object AcademicImportConfig {
     fun buildStudentTimetableUrl(
         studentId: String,
         yearId: String = defaultYearId,
-        termId: String = defaultTermId
+        termId: String = defaultTermId,
+        baseUrl: String = timetablePath.substringBefore("/academic")
     ): String {
-        return "$timetablePath?id=$studentId&yearid=$yearId&termid=$termId&timetableType=STUDENT&sectionType=BASE"
+        return "$baseUrl/academic/manager/coursearrange/showTimetable.do?id=$studentId&yearid=$yearId&termid=$termId&timetableType=STUDENT&sectionType=BASE"
     }
 }
 
@@ -84,7 +85,8 @@ fun isLoginPage(url: String): Boolean {
 fun isAcademicDomainPage(url: String): Boolean {
     return runCatching {
         val uri = URI(url)
-        uri.host.contains("glut.edu.cn", ignoreCase = true)
+        uri.host.contains("glut.edu.cn", ignoreCase = true) ||
+            uri.host.contains("glutnn.cn", ignoreCase = true)
     }.getOrDefault(false)
 }
 

@@ -34,9 +34,35 @@ class ApiProbeService {
         val semesterEndDate: LocalDate? = null
     )
 
+    /** Fetch a single URL with the given cookie, returning a ProbeResult or null. */
+    suspend fun probeUrl(cookie: String, url: String, method: String = "GET"): ProbeResult? = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .header("Cookie", cookie)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .header("Accept", "text/html,application/json;q=0.9,*/*;q=0.8")
+                .apply {
+                    if (method.equals("POST", ignoreCase = true)) {
+                        post(okhttp3.RequestBody.create(null, ByteArray(0)))
+                    } else get()
+                }
+                .build()
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                ProbeResult(
+                    url = url, method = method, httpCode = response.code,
+                    contentType = response.header("Content-Type").orEmpty(),
+                    body = body, bodyLength = body.length
+                )
+            }
+        }.getOrNull()
+    }
+
     suspend fun probeAllEndpoints(
         cookie: String,
-        capturedTimetableUrls: List<String> = emptyList()
+        capturedTimetableUrls: List<String> = emptyList(),
+        baseUrl: String = "http://jw.glut.edu.cn"
     ): List<ProbeResult> = withContext(Dispatchers.IO) {
         val results = mutableListOf<ProbeResult>()
         val baseHeaders = mapOf(
@@ -44,7 +70,7 @@ class ApiProbeService {
             "User-Agent" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36",
             "Accept" to "text/html,application/json,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language" to "zh-CN,zh;q=0.9",
-            "Referer" to "http://jw.glut.edu.cn/academic/preGotoAffairFrame.do"
+            "Referer" to "${baseUrl}/academic/preGotoAffairFrame.do"
         )
 
         fun probeGet(url: String) {
@@ -83,33 +109,34 @@ class ApiProbeService {
 
         buildProbeUrls(capturedTimetableUrls).forEach(::probeGet)
 
-        probePost("http://jw.glut.edu.cn/academic/personal/framePage.do")
-        probeGet("http://jw.glut.edu.cn/academic/manager/coursearrange/graphicalBasicInfo.do")
-        buildCurrentStudentTimetableUrls(results).forEach(::probeGet)
-        buildExamUrls(results).forEach(::probeGet)
+        probePost("$baseUrl/academic/personal/framePage.do")
+        probeGet("$baseUrl/academic/manager/coursearrange/graphicalBasicInfo.do")
+        buildCurrentStudentTimetableUrls(results, baseUrl).forEach(::probeGet)
+        buildExamUrls(baseUrl).forEach(::probeGet)
 
-        // 登录后的传统”本学期课程安排”页面，只作为 showTimetable 网格页失败时的兜底。
-        probeGet("http://jw.glut.edu.cn/academic/student/currcourse/currcourse.jsdo")
+        // 登录后的传统"本学期课程安排"页面，只作为 showTimetable 网格页失败时的兜底。
+        probeGet("$baseUrl/academic/student/currcourse/currcourse.jsdo")
 
         val today = LocalDate.now()
-        probePost("http://jw.glut.edu.cn/academic/personal/currentTodayPlan.do?currentDate=${today.year}-${today.monthValue}-${today.dayOfMonth}")
-        probePost("http://jw.glut.edu.cn/academic/personal/moduleMenu.do")
-        probePost("http://jw.glut.edu.cn/academic/personal/myTodo.do")
+        probePost("$baseUrl/academic/personal/currentTodayPlan.do?currentDate=${today.year}-${today.monthValue}-${today.dayOfMonth}")
+        probePost("$baseUrl/academic/personal/moduleMenu.do")
+        probePost("$baseUrl/academic/personal/myTodo.do")
 
-        probeGet("http://jw.glut.edu.cn/academic/student/timetable/timetable.do")
-        probeGet("http://jw.glut.edu.cn/academic/student/coursetable/coursetable.do")
+        probeGet("$baseUrl/academic/student/timetable/timetable.do")
+        probeGet("$baseUrl/academic/student/coursetable/coursetable.do")
 
-        // 考试安排接口
-        probeGet("http://jw.glut.edu.cn/academic/student/examination/studentExamQuery.do")
-        probePost("http://jw.glut.edu.cn/academic/student/examination/queryExam.do")
-        probeGet("http://jw.glut.edu.cn/academic/student/examination/examArrange.do")
-        probePost("http://jw.glut.edu.cn/academic/manager/examarrange/examStudentQuery.do")
-        probeGet("http://jw.glut.edu.cn/academic/student/examination/examinationForStudent.do")
+        // 考试安排接口 — 优先使用 glut 项目的可靠单一端点
+        probeGet("$baseUrl/academic/manager/examstu/studentQueryAllExam.do?pagingNumberPerVLID=1000")
+        probeGet("$baseUrl/academic/student/examination/studentExamQuery.do")
+        probePost("$baseUrl/academic/student/examination/queryExam.do")
+        probeGet("$baseUrl/academic/student/examination/examArrange.do")
+        probePost("$baseUrl/academic/manager/examarrange/examStudentQuery.do")
+        probeGet("$baseUrl/academic/student/examination/examinationForStudent.do")
 
         // 从 moduleMenu 响应中提取考试菜单的真实 URL 并探测
         val menuResult = results.find { it.url.contains("moduleMenu.do") && it.httpCode == 200 }
         if (menuResult != null) {
-            extractExamUrlsFromMenuResponse(menuResult.body).forEach { url ->
+            extractExamUrlsFromMenuResponse(menuResult.body, baseUrl).forEach { url ->
                 if (results.none { it.url == url }) probeGet(url)
             }
         }
@@ -129,7 +156,7 @@ class ApiProbeService {
                 .toList()
         }
 
-        fun buildCurrentStudentTimetableUrls(results: List<ProbeResult>): List<String> {
+        fun buildCurrentStudentTimetableUrls(results: List<ProbeResult>, baseUrl: String): List<String> {
             val frameBodies = results
                 .filter { result ->
                     result.url.contains("/personal/framePage.do", ignoreCase = true) ||
@@ -206,23 +233,23 @@ class ApiProbeService {
                     AcademicImportConfig.buildStudentTimetableUrl(
                         studentId = studentId,
                         yearId = yearId,
-                        termId = termId
+                        termId = termId,
+                        baseUrl = baseUrl
                     )
                 }
             }
         }
 
-        fun buildExamUrls(results: List<ProbeResult>): List<String> {
+        fun buildExamUrls(baseUrl: String): List<String> {
             // The exam module URL — server resolves stuid from session cookie via redirect chain
             return listOf(
-                "http://jw.glut.edu.cn/academic/accessModule.do?moduleId=2030",
+                "${baseUrl}/academic/accessModule.do?moduleId=2030",
             )
         }
 
-        fun extractExamUrlsFromMenuResponse(body: String): List<String> {
+        fun extractExamUrlsFromMenuResponse(body: String, baseUrl: String = "http://jw.glut.edu.cn"): List<String> {
             val urls = mutableListOf<String>()
             val examKeywords = listOf("考试安排", "我的考试", "学生考试", "考试查询", "考试信息", "考试", "exam")
-            val baseUrl = "http://jw.glut.edu.cn"
 
             // Try JSON format (moduleMenu returns menu tree as JSON)
             fun searchJson(obj: Any?) {
@@ -336,6 +363,21 @@ class ApiProbeService {
                     result.body.contains(""""time"""") &&
                     result.body.contains(""""name"""")
             }
+        }
+
+        fun extractInternalIdFromCurrcourse(body: String): String? {
+            return Regex("""showTimetable\.do\?id=(\d+)""")
+                .find(body)?.groupValues?.get(1)
+        }
+
+        fun extractYearIdFromCurrcourse(body: String): String? {
+            return Regex("""showTimetable\.do\?id=\d+&yearid=(\d+)""")
+                .find(body)?.groupValues?.get(1)
+        }
+
+        fun extractTermIdFromCurrcourse(body: String): String? {
+            return Regex("""showTimetable\.do\?id=\d+&yearid=\d+&termid=(\d+)""")
+                .find(body)?.groupValues?.get(1)
         }
     }
 

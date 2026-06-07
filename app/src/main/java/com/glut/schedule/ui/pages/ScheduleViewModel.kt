@@ -225,8 +225,9 @@ class ScheduleViewModel(
             message.value = "正在刷新课表..."
             needsInteractiveLogin.value = false
             try {
+                val oldCourseCount = repository.courses.first().size
                 val existingCookie = sessionStore.academicCookie.first()
-                if (shouldUseExistingAcademicCookie(existingCookie) && fetchAndSaveSchedule(existingCookie)) {
+                if (shouldUseExistingAcademicCookie(existingCookie) && fetchAndSaveSchedule(existingCookie, oldCourseCount)) {
                     return@launch
                 }
 
@@ -255,7 +256,7 @@ class ScheduleViewModel(
                 }
 
                 val cookie = sessionStore.academicCookie.first()
-                if (cookie.isBlank() || !fetchAndSaveSchedule(cookie)) {
+                if (cookie.isBlank() || !fetchAndSaveSchedule(cookie, oldCourseCount)) {
                     message.value = "未获取到课表数据，请重新登录教务系统"
                     needsInteractiveLogin.value = true
                 }
@@ -267,7 +268,7 @@ class ScheduleViewModel(
         }
     }
 
-    private suspend fun fetchAndSaveSchedule(cookie: String): Boolean {
+    private suspend fun fetchAndSaveSchedule(cookie: String, oldCourseCount: Int): Boolean {
         val results = apiProbeService.probeAllEndpoints(cookie = cookie)
         val calendar = ApiProbeService.extractAcademicCalendar(results)
         if (calendar != null) {
@@ -280,7 +281,11 @@ class ScheduleViewModel(
         if (courses.isEmpty()) return false
 
         repository.replaceImportedCourses(courses)
-        message.value = "已刷新 ${courses.size} 门课程"
+        val newCount = courses.size
+        message.value = if (newCount != oldCourseCount)
+            "课表已更新: $oldCourseCount → $newCount 门课程"
+        else
+            "课表未发生变化 ($newCount 门课程)"
         return true
     }
 

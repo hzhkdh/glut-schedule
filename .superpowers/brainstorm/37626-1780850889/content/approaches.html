@@ -1,0 +1,198 @@
+<h2>考试成绩查询 — 三种交互方案对比</h2>
+<p class="subtitle">目标：查询大学期间全部成绩，操作越简单越好</p>
+
+<div class="section">
+  <h3>背景发现</h3>
+  <p>你的 scheduleApp <strong>已有完整的成绩功能代码</strong>（ScoreScreen、ScoreViewModel、ScoreParser、Room 实体），但当前 <code>ScoreViewModel</code> 用 8 次 POST 请求逐学期拉取，效率低且容易失败。而 <code>DirectLoginViewModel</code> 中的导入流程已经证明：<strong>一次 GET 请求（year=&amp;term=&amp;para=0）就能拿到全部成绩</strong>。</p>
+</div>
+
+<h3>三种方案</h3>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>年份 + 学期下拉框 + 查询按钮</h3>
+      <p>参考 GlutAssistant 方案</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4>
+          <ul>
+            <li>用户可按需查询单个学期</li>
+            <li>每次请求数据量小，加载快</li>
+            <li>传统的教务系统风格，用户熟悉</li>
+          </ul>
+        </div>
+        <div class="cons"><h4>缺点</h4>
+          <ul>
+            <li>看全部成绩需要多次切换 + 多次查询</li>
+            <li>年份列表需要硬编码或推算</li>
+            <li>每次查询都要等待网络请求</li>
+            <li>用户不知道哪学期有成绩，可能空查询</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>年份 + 学期下拉框（含"全部"）+ 本地过滤</h3>
+      <p>参考 glut (Android) 方案</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4>
+          <ul>
+            <li>一次请求拉取全部成绩，后续过滤无延迟</li>
+            <li>"全部"选项让用户一键看所有成绩</li>
+            <li>切换年份/学期即时响应（纯本地过滤）</li>
+            <li>离线也可查看已缓存的成绩</li>
+          </ul>
+        </div>
+        <div class="cons"><h4>缺点</h4>
+          <ul>
+            <li>首次加载全部数据可能稍慢</li>
+            <li>下拉框仍占屏幕空间</li>
+            <li>UI 略显"传统"，不够现代</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>一键获取全部 + 按学期自动分组 + 可选筛选</h3>
+      <p>推荐方案 — 更现代的移动端体验</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4>
+          <ul>
+            <li>零操作门槛：点击刷新即获取全部成绩</li>
+            <li>按学期自动分组展示，一目了然</li>
+            <li>顶部可选轻量筛选（年份/学期 chip 或底部 sheet）</li>
+            <li>每个学期区块显示平均绩点和总学分</li>
+            <li>与你现有的 ScoreScreen 设计方向一致</li>
+          </ul>
+        </div>
+        <div class="cons"><h4>缺点</h4>
+          <ul>
+            <li>数据量大时列表较长（但按学期折叠可缓解）</li>
+            <li>需要设计筛选 UI（但可以后续迭代）</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>布局预览 — 方案 C</h3>
+  <div class="mockup">
+    <div class="mockup-header">ScoreScreen 布局（方案 C）</div>
+    <div class="mockup-body" style="background:#F6F4EF;min-height:400px;font-family:sans-serif;font-size:13px;color:#141821;">
+
+      <!-- App Bar -->
+      <div style="background:#E8E4D6;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #d0cbc0;">
+        <span style="font-weight:600;font-size:16px;">&#9776; 考试成绩</span>
+        <span style="background:#141821;color:#fff;border:none;padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;">&#x1F504; 刷新</span>
+      </div>
+
+      <!-- Filter Chips (optional, collapsible) -->
+      <div style="padding:10px 14px;display:flex;gap:8px;overflow-x:auto;background:#fff;border-bottom:1px solid #eee;">
+        <span style="background:#141821;color:#fff;border-radius:16px;padding:4px 14px;font-size:11px;">全部学期</span>
+        <span style="background:#E8E4D6;border-radius:16px;padding:4px 14px;font-size:11px;">2025-2026</span>
+        <span style="background:#E8E4D6;border-radius:16px;padding:4px 14px;font-size:11px;">2024-2025</span>
+        <span style="background:#E8E4D6;border-radius:16px;padding:4px 14px;font-size:11px;">2023-2024</span>
+        <span style="background:#E8E4D6;border-radius:16px;padding:4px 14px;font-size:11px;">2022-2023</span>
+      </div>
+
+      <!-- Semester Block 1 -->
+      <div style="margin:10px 14px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+        <div style="background:#141821;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-weight:600;">&#x1F4C5; 2025-2026 第二学期（春）</span>
+          <span style="font-size:11px;opacity:0.8;">GPA 3.56 &#xB7; 学分 22.5</span>
+        </div>
+        <div style="padding:8px 14px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-weight:500;">高等数学（二）</span>
+          <span><span style="color:#2E7D32;font-weight:600;">91</span> <span style="color:#666;font-size:11px;">GPA 3.9</span> <span style="color:#999;font-size:11px;">学分 4.0</span></span>
+        </div>
+        <div style="padding:8px 14px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-weight:500;">大学英语（四）</span>
+          <span><span style="color:#1565C0;font-weight:600;">85</span> <span style="color:#666;font-size:11px;">GPA 3.3</span> <span style="color:#999;font-size:11px;">学分 3.0</span></span>
+        </div>
+        <div style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-weight:500;">程序设计基础</span>
+          <span><span style="color:#E65100;font-weight:600;">72</span> <span style="color:#666;font-size:11px;">GPA 2.3</span> <span style="color:#999;font-size:11px;">学分 3.5</span></span>
+        </div>
+      </div>
+
+      <!-- Semester Block 2 -->
+      <div style="margin:0 14px 10px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+        <div style="background:#141821;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-weight:600;">&#x1F4C5; 2025-2026 第一学期（秋）</span>
+          <span style="font-size:11px;opacity:0.8;">GPA 3.28 &#xB7; 学分 24.0</span>
+        </div>
+        <div style="padding:8px 14px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-weight:500;">线性代数</span>
+          <span><span style="color:#2E7D32;font-weight:600;">88</span> <span style="color:#666;font-size:11px;">GPA 3.5</span> <span style="color:#999;font-size:11px;">学分 3.0</span></span>
+        </div>
+        <div style="padding:8px 14px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-weight:500;">大学物理（一）</span>
+          <span><span style="color:#C62828;font-weight:600;">58</span> <span style="color:#666;font-size:11px;">GPA 1.0</span> <span style="color:#999;font-size:11px;">学分 4.0</span></span>
+        </div>
+        <div style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-weight:500;">马克思主义基本原理</span>
+          <span><span style="color:#1565C0;font-weight:600;">83</span> <span style="color:#666;font-size:11px;">GPA 3.0</span> <span style="color:#999;font-size:11px;">学分 2.0</span></span>
+        </div>
+      </div>
+
+      <!-- Bottom summary -->
+      <div style="margin:0 14px 20px;padding:14px;background:#141821;border-radius:10px;color:#fff;text-align:center;">
+        <span style="font-size:14px;font-weight:600;">&#x1F4CA; 全部课程平均绩点：3.42 &#xB7; 总学分：46.5</span>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>与参考项目对比</h3>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;">
+    <tr style="border-bottom:1px solid #ddd;">
+      <th style="text-align:left;padding:8px;">特性</th>
+      <th style="text-align:center;padding:8px;">GlutAssistant</th>
+      <th style="text-align:center;padding:8px;">glut (Android)</th>
+      <th style="text-align:center;padding:8px;">方案 C（推荐）</th>
+    </tr>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:8px;">请求方式</td>
+      <td style="text-align:center;padding:8px;">POST x N 次</td>
+      <td style="text-align:center;padding:8px;">GET x 1 次</td>
+      <td style="text-align:center;padding:8px;background:#E8F5E9;">GET x 1 次 &#x2705;</td>
+    </tr>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:8px;">下拉框</td>
+      <td style="text-align:center;padding:8px;">年 + 学期（必选）</td>
+      <td style="text-align:center;padding:8px;">年 + 学期（有"全部"）</td>
+      <td style="text-align:center;padding:8px;background:#E8F5E9;">无（可选 chip 筛选）</td>
+    </tr>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:8px;">过滤方式</td>
+      <td style="text-align:center;padding:8px;">服务端</td>
+      <td style="text-align:center;padding:8px;">客户端 Jsoup</td>
+      <td style="text-align:center;padding:8px;background:#E8F5E9;">客户端 Room 查询</td>
+    </tr>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:8px;">学期分组</td>
+      <td style="text-align:center;padding:8px;">&#x274C; 单次只显示一学期</td>
+      <td style="text-align:center;padding:8px;">&#x274C; 平铺列表</td>
+      <td style="text-align:center;padding:8px;background:#E8F5E9;">&#x2705; 自动分组 + 统计</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;">GPA 统计</td>
+      <td style="text-align:center;padding:8px;">&#x274C;</td>
+      <td style="text-align:center;padding:8px;">&#x274C;</td>
+      <td style="text-align:center;padding:8px;background:#E8F5E9;">&#x2705; 每学期 + 全局</td>
+    </tr>
+  </table>
+</div>

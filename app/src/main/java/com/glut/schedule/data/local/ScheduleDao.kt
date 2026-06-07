@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import com.glut.schedule.data.local.ScoreEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -72,5 +73,23 @@ interface ScheduleDao {
     suspend fun replaceExams(exams: List<ExamEntity>) {
         deleteAllExams()
         insertExams(exams)
+    }
+
+    @Query("SELECT * FROM scores ORDER BY year DESC, term DESC, courseName")
+    fun observeScores(): Flow<List<ScoreEntity>>
+
+    @Query("SELECT COUNT(*) FROM scores")
+    suspend fun scoreCount(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertScores(scores: List<ScoreEntity>)
+
+    @Query("DELETE FROM scores")
+    suspend fun deleteAllScores()
+
+    @Transaction
+    suspend fun replaceScores(scores: List<ScoreEntity>) {
+        deleteAllScores()
+        insertScores(scores)
     }
 }

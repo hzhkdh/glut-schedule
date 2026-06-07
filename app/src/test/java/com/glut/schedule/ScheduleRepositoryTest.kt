@@ -5,7 +5,9 @@ import com.glut.schedule.data.local.CourseEntity
 import com.glut.schedule.data.local.CourseOccurrenceEntity
 import com.glut.schedule.data.local.ExamEntity
 import com.glut.schedule.data.local.ScheduleDao
+import com.glut.schedule.data.local.ScoreEntity
 import com.glut.schedule.data.repository.ScheduleRepository
+import com.glut.schedule.data.settings.CampusType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -16,7 +18,7 @@ class ScheduleRepositoryTest {
     @Test
     fun seedIfEmptyOnlySeedsClassPeriodsNotPersonalSampleCourses() = runTest {
         val dao = FakeScheduleDao(courseCount = 0)
-        val repository = ScheduleRepository(dao)
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
 
         repository.seedIfEmpty()
 
@@ -40,7 +42,7 @@ class ScheduleRepositoryTest {
                 "algorithm"
             )
         )
-        val repository = ScheduleRepository(dao)
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
 
         repository.seedIfEmpty()
 
@@ -66,7 +68,7 @@ class ScheduleRepositoryTest {
             courseCount = 2,
             courseIds = listOf("import-abc", "import-def")
         )
-        val repository = ScheduleRepository(dao)
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
 
         repository.seedIfEmpty()
 
@@ -89,7 +91,7 @@ class ScheduleRepositoryTest {
             ),
             courseIdsAfterRead = listOf("import-current")
         )
-        val repository = ScheduleRepository(dao)
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
 
         repository.seedIfEmpty()
 
@@ -165,5 +167,13 @@ class ScheduleRepositoryTest {
         override suspend fun insertExams(exams: List<ExamEntity>) {}
 
         override suspend fun deleteAllExams() {}
+
+        override fun observeScores(): Flow<List<ScoreEntity>> = flowOf(emptyList())
+
+        override suspend fun scoreCount(): Int = 0
+
+        override suspend fun insertScores(scores: List<ScoreEntity>) {}
+
+        override suspend fun deleteAllScores() {}
     }
 }

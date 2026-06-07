@@ -6,14 +6,20 @@ import com.glut.schedule.data.local.toModel
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ExamInfo
+import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.defaultClassPeriods
+import com.glut.schedule.data.model.guilinClassPeriods
+import com.glut.schedule.data.model.nanningClassPeriods
+import com.glut.schedule.data.settings.CampusType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 class ScheduleRepository(
-    private val dao: ScheduleDao
+    private val dao: ScheduleDao,
+    private val campusType: Flow<CampusType>
 ) {
     val courses: Flow<List<ScheduleCourse>> = combine(
         dao.observeCourses(),
@@ -23,8 +29,16 @@ class ScheduleRepository(
         courses.map { course -> course.toModel(occurrencesByCourse[course.id].orEmpty()) }
     }
 
-    val classPeriods: Flow<List<ClassPeriod>> = dao.observeClassPeriods().map { periods ->
-        periods.map { it.toModel() }.ifEmpty { defaultClassPeriods() }
+    val classPeriods: Flow<List<ClassPeriod>> = combine(
+        dao.observeClassPeriods(),
+        campusType
+    ) { periods, campusType ->
+        periods.map { it.toModel() }.ifEmpty {
+            when (campusType) {
+                CampusType.GUILIN -> guilinClassPeriods()
+                CampusType.NANNING -> nanningClassPeriods()
+            }
+        }
     }
 
     suspend fun seedIfEmpty() {
@@ -52,8 +66,22 @@ class ScheduleRepository(
         dao.replaceExams(exams.map { it.toEntity() })
     }
 
+    val scores: Flow<List<ScoreInfo>> = dao.observeScores().map { entities ->
+        entities.map { it.toModel() }
+    }
+
+    suspend fun replaceScores(scores: List<ScoreInfo>) {
+        dao.replaceScores(scores.map { it.toEntity() })
+    }
+
     suspend fun replaceImportedCourses(courses: List<ScheduleCourse>) {
-        dao.insertClassPeriods(defaultClassPeriods().map { it.toEntity() })
+        // Write campus-specific periods so the schedule grid shows correct time slots.
+        val campus = campusType.first()
+        val periods = when (campus) {
+            CampusType.GUILIN -> guilinClassPeriods()
+            CampusType.NANNING -> nanningClassPeriods()
+        }
+        dao.insertClassPeriods(periods.map { it.toEntity() })
         val coloredCourses = CourseColorMapper.assignColors(courses)
         dao.replaceCourses(
             courses = coloredCourses.map { it.toEntity() },

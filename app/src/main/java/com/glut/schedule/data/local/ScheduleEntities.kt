@@ -6,6 +6,7 @@ import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.sanitized
 
 @Entity(tableName = "courses")
@@ -109,3 +110,28 @@ fun ExamEntity.toModel(): ExamInfo = ExamInfo(
     examType = examType,
     note = note
 ).sanitized()
+
+@Entity(tableName = "scores")
+data class ScoreEntity(
+    @PrimaryKey val id: String,
+    val courseName: String,
+    val score: String,
+    val gpa: Double,
+    val credit: Double,
+    val year: String,
+    val term: Int,
+    val category: String,
+    val examType: String
+)
+
+fun ScoreInfo.toEntity(): ScoreEntity = ScoreEntity(
+    id = id, courseName = courseName, score = score,
+    gpa = gpa, credit = credit, year = year,
+    term = term, category = category, examType = examType
+)
+
+fun ScoreEntity.toModel(): ScoreInfo = ScoreInfo(
+    id = id, courseName = courseName, score = score,
+    gpa = gpa, credit = credit, year = year,
+    term = term, category = category, examType = examType
+)
