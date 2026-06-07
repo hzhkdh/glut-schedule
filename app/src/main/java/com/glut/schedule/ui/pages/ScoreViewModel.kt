@@ -110,7 +110,7 @@ class ScoreViewModel(
             .build()
 
         val request = Request.Builder()
-            .url("$campusBaseUrl/academic/manager/score/studentOwnScore.do?year=&term=&para=0")
+            .url("$campusBaseUrl/academic/manager/score/studentOwnScore.do?year=&term=&para=0&sortColumn=&Submit=%E6%9F%A5%E8%AF%A2")
             .header("Cookie", cookie)
             .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
             .get()

@@ -1,0 +1,162 @@
+<h2>Chip 布局方案 — 手机屏幕适配</h2>
+<p class="subtitle">模拟 375dp 宽度的手机屏幕，对比三种 chip 排列方式</p>
+
+<div class="section">
+  <h3>方案 C1：横向可滚动 chip 行</h3>
+  <p>类似 Google Play 的分类标签，chip 排成一行，可左右滑动。最常用。</p>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">方案 C1 — 横向滚动 Chip 行（推荐）</div>
+  <div class="mockup-body" style="background:#F6F4EF;min-height:200px;font-family:sans-serif;font-size:13px;color:#141821;">
+
+    <!-- App Bar -->
+    <div style="background:#E8E4D6;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;">
+      <span style="font-weight:600;">&#9776; 考试成绩</span>
+      <span style="background:#141821;color:#fff;padding:5px 12px;border-radius:6px;font-size:12px;">&#x1F504; 刷新</span>
+    </div>
+
+    <!-- Scrollable Chips -->
+    <div style="padding:8px 0;background:#fff;border-bottom:1px solid #eee;overflow-x:auto;white-space:nowrap;display:flex;gap:8px;">
+      <span style="display:inline-flex;flex-shrink:0;margin-left:14px;"></span>
+      <span style="display:inline-block;background:#141821;color:#fff;padding:6px 14px;border-radius:16px;font-size:13px;">全部学期</span>
+      <span style="display:inline-block;background:#E8E4D6;padding:6px 14px;border-radius:16px;font-size:13px;border:1px solid #ccc;">2025-2026</span>
+      <span style="display:inline-block;background:#E8E4D6;padding:6px 14px;border-radius:16px;font-size:13px;border:1px solid #ccc;">2024-2025</span>
+      <span style="display:inline-block;background:#E8E4D6;padding:6px 14px;border-radius:16px;font-size:13px;border:1px solid #ccc;">2023-2024</span>
+      <span style="display:inline-block;background:#E8E4D6;padding:6px 14px;border-radius:16px;font-size:13px;border:1px solid #ccc;">2022-2023</span>
+      <span style="display:inline-block;background:#E8E4D6;padding:6px 14px;border-radius:16px;font-size:13px;border:1px solid #ccc;">2021-2022</span>
+    </div>
+
+    <!-- Semester blocks remain unchanged -->
+    <div style="margin:10px 14px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+      <div style="background:#141821;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;font-size:12px;">
+        <span>&#x1F4C5; 2025-2026 春</span>
+        <span>GPA 3.56 &#xB7; 22.5学分</span>
+      </div>
+      <div style="padding:6px 14px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;font-size:12px;">
+        <span>高等数学（二）</span>
+        <span><span style="color:#2E7D32;font-weight:600;">91</span> <span style="color:#999;">3.9</span></span>
+      </div>
+      <div style="padding:6px 14px;display:flex;justify-content:space-between;font-size:12px;">
+        <span>大学英语（四）</span>
+        <span><span style="color:#1565C0;font-weight:600;">85</span> <span style="color:#999;">3.3</span></span>
+      </div>
+    </div>
+    <div style="font-size:10px;color:#999;text-align:center;padding:8px;">&#x2190; 手指左右滑动查看更多年份 &#x2192;</div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px;">
+  <h3>方案 C2：Exposed Dropdown（下拉菜单）</h3>
+  <p>点击展开下拉列表选择年份，最省空间。</p>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">方案 C2 — 下拉菜单</div>
+  <div class="mockup-body" style="background:#F6F4EF;min-height:200px;font-family:sans-serif;font-size:13px;color:#141821;">
+
+    <div style="background:#E8E4D6;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;">
+      <span style="font-weight:600;">&#9776; 考试成绩</span>
+      <span style="background:#141821;color:#fff;padding:5px 12px;border-radius:6px;font-size:12px;">&#x1F504; 刷新</span>
+    </div>
+
+    <!-- Dropdown -->
+    <div style="padding:10px 14px;background:#fff;border-bottom:1px solid #eee;display:flex;align-items:center;gap:10px;">
+      <span style="font-size:12px;color:#666;">筛选：</span>
+      <div style="position:relative;border:1px solid #ccc;border-radius:8px;padding:6px 10px;background:#fff;font-size:13px;display:flex;align-items:center;gap:18px;cursor:pointer;">
+        <span>全部学年</span>
+        <span style="font-size:10px;">&#x25BC;</span>
+      </div>
+    </div>
+
+    <!-- Expanded dropdown mock -->
+    <div style="margin:4px 14px;background:#fff;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);overflow:hidden;">
+      <div style="padding:8px 14px;font-size:13px;border-bottom:1px solid #f0f0f0;background:#F6F4EF;">全部学年</div>
+      <div style="padding:8px 14px;font-size:13px;border-bottom:1px solid #f0f0f0;">2025-2026</div>
+      <div style="padding:8px 14px;font-size:13px;border-bottom:1px solid #f0f0f0;">2024-2025</div>
+      <div style="padding:8px 14px;font-size:13px;border-bottom:1px solid #f0f0f0;">2023-2024</div>
+      <div style="padding:8px 14px;font-size:13px;">2022-2023</div>
+    </div>
+
+    <div style="margin:10px 14px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+      <div style="background:#141821;color:#fff;padding:8px 14px;font-size:12px;">
+        &#x1F4C5; 全部学期 — 共 8 个学期 · 平均 GPA 3.42
+      </div>
+      <div style="padding:6px 14px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;font-size:12px;">
+        <span>高等数学（二）</span>
+        <span><span style="color:#2E7D32;font-weight:600;">91</span> <span style="color:#999;">3.9</span></span>
+      </div>
+      <div style="padding:6px 14px;display:flex;justify-content:space-between;font-size:12px;">
+        <span>大学英语（四）</span>
+        <span><span style="color:#1565C0;font-weight:600;">85</span> <span style="color:#999;">3.3</span></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px;">
+  <h3>方案 C3：完全没有筛选控件</h3>
+  <p>最简洁：拿到的全部成绩直接按学期分组展示，用户往下滑即可。</p>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">方案 C3 — 无筛选，纯分组滚动</div>
+  <div class="mockup-body" style="background:#F6F4EF;min-height:150px;font-family:sans-serif;font-size:13px;color:#141821;">
+
+    <div style="background:#E8E4D6;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;">
+      <span style="font-weight:600;">&#9776; 考试成绩</span>
+      <span style="background:#141821;color:#fff;padding:5px 12px;border-radius:6px;font-size:12px;">&#x1F504; 刷新</span>
+    </div>
+
+    <!-- No filter bar, straight to content -->
+    <div style="margin:10px 14px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+      <div style="background:#141821;color:#fff;padding:8px 14px;display:flex;justify-content:space-between;font-size:12px;">
+        <span>&#x1F4C5; 2025-2026 春</span>
+        <span>GPA 3.56 &#xB7; 22.5学分</span>
+      </div>
+      <div style="padding:6px 14px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;font-size:12px;">
+        <span>高等数学（二）</span>
+        <span><span style="color:#2E7D32;font-weight:600;">91</span> <span style="color:#999;">3.9</span></span>
+      </div>
+      <div style="padding:6px 14px;display:flex;justify-content:space-between;font-size:12px;">
+        <span>大学英语（四）</span>
+        <span><span style="color:#1565C0;font-weight:600;">85</span> <span style="color:#999;">3.3</span></span>
+      </div>
+    </div>
+    <div style="margin:0 14px 10px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+      <div style="background:#141821;color:#fff;padding:8px 14px;font-size:12px;">
+        <span>&#x1F4C5; 2025-2026 秋</span>
+        <span style="float:right;">GPA 3.28 &#xB7; 24.0学分</span>
+      </div>
+      <div style="padding:6px 14px;display:flex;justify-content:space-between;font-size:12px;">
+        <span>线性代数</span>
+        <span><span style="color:#2E7D32;font-weight:600;">88</span> <span style="color:#999;">3.5</span></span>
+      </div>
+    </div>
+    <div style="font-size:10px;color:#999;text-align:center;padding:8px;">&#x1F4CA; 全部 GPA 3.42 · 总学分 46.5 | 下拉继续查看...</div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:20px;">
+  <div class="option" data-choice="c1" onclick="toggleSelect(this)">
+    <div class="letter">C1</div>
+    <div class="content">
+      <h3>横向滚动 Chip</h3>
+      <p>操作直观，一目了然。4-5 个年份 chip 刚好占满一行，超出部分可滑动。Material 3 原生支持 <code>LazyRow</code>。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c2" onclick="toggleSelect(this)">
+    <div class="letter">C2</div>
+    <div class="content">
+      <h3>下拉菜单</h3>
+      <p>最省空间，只占一行。适合年份选项多的情况。但需要点击两次才能切换。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c3" onclick="toggleSelect(this)">
+    <div class="letter">C3</div>
+    <div class="content">
+      <h3>无筛选控件</h3>
+      <p>最简洁，全部成绩按学期分组直接展示。大学4年共8个学期，约80条记录，滚动即可。</p>
+    </div>
+  </div>
+</div>

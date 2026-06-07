@@ -491,7 +491,7 @@ class DirectLoginViewModel(
             .build()
         try {
             val request = Request.Builder()
-                .url("$campusBaseUrl/academic/manager/score/studentOwnScore.do?year=&term=&para=0")
+                .url("$campusBaseUrl/academic/manager/score/studentOwnScore.do?year=&term=&para=0&sortColumn=&Submit=%E6%9F%A5%E8%AF%A2")
                 .header("Cookie", cookie)
                 .header("User-Agent", UA)
                 .get()
