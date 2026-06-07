@@ -13,6 +13,7 @@ import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicOALoginClient
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.ApiProbeService
+import com.glut.schedule.service.academic.CapturingCookieJar
 import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.academic.NanningPasswordHash
 import com.glut.schedule.service.parser.AcademicScheduleParser
@@ -69,14 +70,17 @@ class DirectLoginViewModel(
     private val oaLoginClient = AcademicOALoginClient()
 
     // Nanning login session state (lives outside uiState to avoid data class issues)
-    private var nanningSessionCookie: String = ""
     private var nanningCaptchaBytes: ByteArray? = null
+    // Each Nanning login attempt gets a fresh CookieJar → fresh session
+    private var nanningCookieJar: CapturingCookieJar? = null
 
-    private val httpClient = OkHttpClient.Builder()
+    // CookieJar-based client: cookies auto-persist across requests like a browser
+    private fun nanningHttpClient(cookieJar: CapturingCookieJar): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
+        .cookieJar(cookieJar)
         .build()
 
     init {
@@ -150,16 +154,36 @@ class DirectLoginViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoggingIn = true, message = "正在获取验证码...")
             try {
-                // Step 1: Fetch login page to get JSESSIONID
-                val sessionCookie = fetchNanningLoginPage()
-                if (sessionCookie.isBlank()) {
+                // Create fresh CookieJar for this login session (like a new browser tab)
+                val cj = CapturingCookieJar()
+                nanningCookieJar = cj
+                val client = nanningHttpClient(cj)
+
+                // Step 1: Fetch login page → CookieJar auto-saves JSESSIONID
+                val pageOk = withContext(Dispatchers.IO) {
+                    runCatching {
+                        client.newCall(Request.Builder()
+                            .url("${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
+                            .header("User-Agent", UA).get().build()
+                        ).execute().use { it.isSuccessful }
+                    }.getOrDefault(false)
+                }
+                if (!pageOk) {
                     _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "无法连接南宁分校教务系统")
                     return@launch
                 }
-                nanningSessionCookie = sessionCookie
 
-                // Step 2: Download captcha image
-                val captchaBytes = downloadNanningCaptcha(sessionCookie)
+                // Step 2: Download captcha → CookieJar auto-sends JSESSIONID
+                val captchaBytes = withContext(Dispatchers.IO) {
+                    runCatching {
+                        client.newCall(Request.Builder()
+                            .url("${AcademicLoginResult.NANNING_URL}/academic/getCaptcha.do?captchaCheckCode=0&random=${System.nanoTime()}")
+                            .header("User-Agent", UA)
+                            .header("Referer", "${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
+                            .get().build()
+                        ).execute().use { it.body?.bytes() }
+                    }.getOrNull()
+                }
                 if (captchaBytes == null) {
                     _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "无法获取验证码图片")
                     return@launch
@@ -188,20 +212,18 @@ class DirectLoginViewModel(
             _uiState.value = state.copy(message = "请输入验证码")
             return
         }
+        val cj = nanningCookieJar ?: run {
+            _uiState.value = state.copy(message = "会话已过期，请重新开始")
+            return
+        }
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoggingIn = true, showCaptchaDialog = false, message = "正在登录...")
             try {
-                val loginCookie = performNanningLogin(
-                    username = state.username,
-                    password = state.password,
-                    captcha = captchaCode,
-                    sessionCookie = nanningSessionCookie
-                )
+                val loginCookie = performNanningLogin(cj, state.username, state.password, captchaCode)
                 if (loginCookie != null) {
                     onLoginSuccess(loginCookie, AcademicLoginResult.NANNING_URL, state.rememberPassword)
                 } else {
-                    // Captcha wrong or credentials wrong — refresh captcha
                     refreshNanningCaptcha()
                     _uiState.value = _uiState.value.copy(
                         isLoggingIn = false,
@@ -219,14 +241,25 @@ class DirectLoginViewModel(
     fun cancelNanningCaptcha() {
         _uiState.value = _uiState.value.copy(showCaptchaDialog = false, captchaInput = "", isLoggingIn = false)
         nanningCaptchaBytes = null
-        nanningSessionCookie = ""
+        nanningCookieJar = null
     }
 
     /** Refresh captcha image (user clicked refresh button). */
     fun refreshNanningCaptcha() {
+        val cj = nanningCookieJar ?: return
         viewModelScope.launch {
             try {
-                val bytes = downloadNanningCaptcha(nanningSessionCookie)
+                val client = nanningHttpClient(cj)
+                val bytes = withContext(Dispatchers.IO) {
+                    runCatching {
+                        client.newCall(Request.Builder()
+                            .url("${AcademicLoginResult.NANNING_URL}/academic/getCaptcha.do?captchaCheckCode=0&random=${System.nanoTime()}")
+                            .header("User-Agent", UA)
+                            .header("Referer", "${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
+                            .get().build()
+                        ).execute().use { it.body?.bytes() }
+                    }.getOrNull()
+                }
                 if (bytes != null) {
                     nanningCaptchaBytes = bytes
                     val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -236,160 +269,99 @@ class DirectLoginViewModel(
         }
     }
 
-    // ---- Nanning HTTP helpers ----
+    // ---- Nanning HTTP helpers (CookieJar-based, no manual cookie passing) ----
 
-    private suspend fun fetchNanningLoginPage(): String = withContext(Dispatchers.IO) {
-        runCatching {
-            val request = Request.Builder()
-                .url("${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
-                .header("User-Agent", UA)
-                .get()
-                .build()
-            httpClient.newCall(request).execute().use { response ->
-                extractCookie(response.headers("Set-Cookie"))
-            }
-        }.getOrDefault("")
-    }
-
-    private suspend fun downloadNanningCaptcha(sessionCookie: String): ByteArray? = withContext(Dispatchers.IO) {
-        runCatching {
-            val request = Request.Builder()
-                .url("${AcademicLoginResult.NANNING_URL}/academic/getCaptcha.do?captchaCheckCode=0&random=${System.nanoTime()}")
-                .header("Cookie", sessionCookie)
-                .header("User-Agent", UA)
-                .get()
-                .build()
-            httpClient.newCall(request).execute().use { response ->
-                response.body?.bytes()
-            }
-        }.getOrNull()
-    }
-
-    /**
-     * Execute Nanning login following the EXACT same flow as the page's JavaScript:
-     * 1. POST /academic/checkCaptcha.do?captchaCode=xxx → validates captcha server-side
-     * 2. Double-MD5 hash password (submit_hex_md5)
-     * 3. GET j_acegi_security_check with hashed password + captcha (as location.href)
-     * 4. Follow redirect to verify login
-     * Returns the final JSESSIONID cookie on success, null on failure.
-     */
     private suspend fun performNanningLogin(
+        cj: CapturingCookieJar,
         username: String,
         password: String,
-        captcha: String,
-        sessionCookie: String
+        captcha: String
     ): String? = withContext(Dispatchers.IO) {
         runCatching {
-            var currentCookie = sessionCookie
+            val client = nanningHttpClient(cj)
+            val base = AcademicLoginResult.NANNING_URL
+            val referer = "$base/academic/common/security/affairLogin.jsp"
 
-            // Step 1: Validate captcha (matches validCaptcha() → $.ajax POST /academic/checkCaptcha.do)
-            val captchaValid = validateNanningCaptcha(captcha, currentCookie)
-            if (!captchaValid) {
-                return@runCatching null // captcha wrong → refresh and retry
-            }
+            // Step 1: Validate captcha (matches validCaptcha() → AJAX)
+            val captchaOk = validateNanningCaptcha(client, captcha, base, referer)
+            if (!captchaOk) return@runCatching null
 
-            // Step 2: Hash password + build login URL (matches trans() + check())
+            // Step 2: Hash password + build login URL
             val hashedPassword = NanningPasswordHash.hash(password)
-            val encodedUser = URLEncoder.encode(username, "UTF-8")
-            val encodedPass = URLEncoder.encode(hashedPassword, "UTF-8")
-            val encodedCaptcha = URLEncoder.encode(captcha, "UTF-8")
+            val loginUrl = "$base/academic/j_acegi_security_check" +
+                "?j_username=${URLEncoder.encode(username, "UTF-8")}" +
+                "&j_password=${URLEncoder.encode(hashedPassword, "UTF-8")}" +
+                "&j_captcha=${URLEncoder.encode(captcha, "UTF-8")}"
 
-            val loginUrl = "${AcademicLoginResult.NANNING_URL}/academic/j_acegi_security_check" +
-                "?j_username=$encodedUser&j_password=$encodedPass&j_captcha=$encodedCaptcha"
-
-            // Step 3: Execute login (matches location.href = link)
-            val request = Request.Builder()
+            // Step 3: Execute login → CookieJar auto-captures new JSESSIONID from Set-Cookie
+            client.newCall(Request.Builder()
                 .url(loginUrl)
-                .header("Cookie", currentCookie)
                 .header("User-Agent", UA)
-                .header("Referer", "${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
-                .get()
-                .build()
-
-            httpClient.newCall(request).execute().use { response ->
-                val newCookies = extractCookie(response.headers("Set-Cookie"))
-                if (newCookies.isNotBlank()) currentCookie = mergeCookies(currentCookie, newCookies)
-
+                .header("Referer", referer)
+                .get().build()
+            ).execute().use { response ->
+                // CookieJar automatically saves any Set-Cookie from this response!
                 val location = response.header("Location") ?: ""
-
                 when {
-                    // Redirect to login page = bad credentials
                     location.contains("affairLogin", ignoreCase = true) ||
                         location.contains("error", ignoreCase = true) -> return@runCatching null
-
-                    // Follow redirect chain on success
-                    location.isNotBlank() -> {
-                        currentCookie = followRedirects(location, currentCookie)
-                    }
+                    location.isNotBlank() -> followNanningRedirects(client, location, base)
                 }
             }
 
             // Step 4: Verify by fetching a protected page
-            currentCookie.takeIf { verifyNanningLogin(currentCookie) }
+            verifyNanningLogin(client, base)?.let {
+                cj.cookieHeader()
+            }
         }.getOrNull()
     }
 
-    /** POST /academic/checkCaptcha.do — validates captcha code, exactly matching browser XHR. */
-    private fun validateNanningCaptcha(captcha: String, cookie: String): Boolean {
-        val encodedCaptcha = URLEncoder.encode(captcha, "UTF-8")
-        val request = Request.Builder()
-            .url("${AcademicLoginResult.NANNING_URL}/academic/checkCaptcha.do?captchaCode=$encodedCaptcha")
-            .header("Cookie", cookie)
+    private fun validateNanningCaptcha(
+        client: OkHttpClient, captcha: String, base: String, referer: String
+    ): Boolean {
+        val encoded = URLEncoder.encode(captcha, "UTF-8")
+        return client.newCall(Request.Builder()
+            .url("$base/academic/checkCaptcha.do?captchaCode=$encoded")
             .header("User-Agent", UA)
+            .header("Referer", referer)
             .header("X-Requested-With", "XMLHttpRequest")
-            .header("Origin", AcademicLoginResult.NANNING_URL)
-            .header("Referer", "${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
+            .header("Origin", base)
             .header("Accept", "text/plain, */*; q=0.01")
-            // Empty POST body WITHOUT Content-Type header (browser XHR doesn't set one)
             .method("POST", okhttp3.RequestBody.create(null, ByteArray(0)))
             .build()
-
-        return httpClient.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            body.trim() == "true"
+        ).execute().use { response ->
+            response.body?.string().orEmpty().trim() == "true"
         }
     }
 
-    /** Follow the post-login redirect chain to get the final session cookie. */
-    private fun followRedirects(startUrl: String, cookie: String): String {
-        var currentUrl = startUrl
-        var currentCookie = cookie
+    /** Follow redirect chain; CookieJar auto-collects cookies from each hop. */
+    private fun followNanningRedirects(client: OkHttpClient, startUrl: String, base: String) {
+        var url = startUrl
         for (hop in 1..5) {
-            val resolvedUrl = if (currentUrl.startsWith("http")) currentUrl
-            else "${AcademicLoginResult.NANNING_URL}$currentUrl"
-
-            val request = Request.Builder()
-                .url(resolvedUrl)
-                .header("Cookie", currentCookie)
+            val resolved = if (url.startsWith("http")) url else "$base$url"
+            client.newCall(Request.Builder()
+                .url(resolved)
                 .header("User-Agent", UA)
-                .get()
-                .build()
-
-            httpClient.newCall(request).execute().use { response ->
-                val newCookies = extractCookie(response.headers("Set-Cookie"))
-                if (newCookies.isNotBlank()) currentCookie = mergeCookies(currentCookie, newCookies)
-
+                .get().build()
+            ).execute().use { response ->
                 val location = response.header("Location") ?: ""
-                if (location.isBlank()) return currentCookie
-                currentUrl = location
+                if (location.isBlank()) return
+                url = location
             }
         }
-        return currentCookie
     }
 
-    /** Verify login by fetching a page that requires authentication. */
-    private fun verifyNanningLogin(cookie: String): Boolean {
-        val successPatterns = listOf("framePage", "index_new", "showTimetable", "personal", "manager")
-        val request = Request.Builder()
-            .url("${AcademicLoginResult.NANNING_URL}/academic/personal/framePage.do")
-            .header("Cookie", cookie)
+    private fun verifyNanningLogin(client: OkHttpClient, base: String): Boolean {
+        return client.newCall(Request.Builder()
+            .url("$base/academic/personal/framePage.do")
             .header("User-Agent", UA)
-            .post(FormBody.Builder().build())
+            .post(okhttp3.FormBody.Builder().build())
             .build()
-
-        return httpClient.newCall(request).execute().use { response ->
+        ).execute().use { response ->
             val location = response.header("Location") ?: ""
-            successPatterns.any { location.contains(it, ignoreCase = true) } || response.isSuccessful
+            listOf("framePage", "index_new", "showTimetable", "personal", "manager").any {
+                location.contains(it, ignoreCase = true)
+            } || response.isSuccessful
         }
     }
 
