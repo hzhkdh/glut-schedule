@@ -1,45 +1,46 @@
-# Gradle / Android
+# ===== Gradle / Android =====
 .gradle/
 build/
 app/build/
-android/.gradle/
-android/app/build/
-
-# Android local machine config
 local.properties
 
-# Kotlin / generated
-.kotlin/
-.dart_tool/
-
-# IDE
+# ===== IDE =====
 .idea/
 .vscode/
 *.iml
 
-# Local agent/project notes
-AGENTS.md
-CLAUDE.md
-开发文档.txt
-
-# Local design/reference screenshots
-images/
-
-# Secrets
+# ===== Secrets & Key material =====
 .env
 keystore.properties
 *.keystore
 *.jks
 
-# Local diagnostic captures may contain cookies, session ids, usernames, or passwords
-debug/
-
-# Flutter/iOS leftovers if experiments are created later
-ios/Pods/
-
-# OS files
+# ===== OS files =====
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ===== Debug artifacts (may contain cookies, tokens, PII) =====
+debug/
+*.pkl
+nanning_captcha*.png
+nanning_login_page.png
+nanning_session.pkl
 cookies.txt
 login.html
+captcha*.png
+
+# ===== Local agent / tooling temp files =====
+.codegraph/
+.superpowers/
+CLAUDE.md
+AGENTS.md
+
+# ===== Python (debug scripts only, project is Android) =====
+*.py
+__pycache__/
+*.pyc
+
+# ===== Kotlin / generated =====
+.kotlin/
+.dart_tool/
