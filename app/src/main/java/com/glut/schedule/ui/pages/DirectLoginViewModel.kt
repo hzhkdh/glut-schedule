@@ -30,7 +30,9 @@ data class DirectLoginUiState(
     val username: String = "",
     val password: String = "",
     val rememberPassword: Boolean = true,
+    val isNanning: Boolean = false,
     val isLoggingIn: Boolean = false,
+    val showNanningWebView: Boolean = false,
     val message: String = "",
     val importResult: ImportResult? = null
 )
@@ -57,6 +59,11 @@ class DirectLoginViewModel(
     val uiState: StateFlow<DirectLoginUiState> = _uiState
 
     private val loginHttpClient = AcademicLoginHttpClient()
+    private val nanningLoginClient = AcademicLoginHttpClient(
+        baseUrl = AcademicLoginResult.NANNING_URL,
+        loginPagePath = "/academic/common/security/affairLogin.jsp",
+        usePostLogin = true  // Nanning requires POST (not GET) to skip MD5 client-side hashing
+    )
     private val oaLoginClient = AcademicOALoginClient()
 
     init {
@@ -71,14 +78,26 @@ class DirectLoginViewModel(
         }
     }
 
-    fun updateUsername(username: String) { _uiState.value = _uiState.value.copy(username = username) }
+    fun updateUsername(username: String) {
+        // Auto-detect campus: Nanning IDs are 10 digits, Guilin IDs are 13
+        val digits = username.filter { it.isDigit() }
+        val autoNanning = digits.length == 10
+        _uiState.value = _uiState.value.copy(username = username, isNanning = autoNanning)
+    }
     fun updatePassword(password: String) { _uiState.value = _uiState.value.copy(password = password) }
     fun updateRememberPassword(remember: Boolean) { _uiState.value = _uiState.value.copy(rememberPassword = remember) }
+    fun toggleNanning() { _uiState.value = _uiState.value.copy(isNanning = !_uiState.value.isNanning) }
 
     fun loginAndImport() {
         val state = _uiState.value
         if (state.username.isBlank() || state.password.isBlank()) {
             _uiState.value = state.copy(message = "请输入学号和密码")
+            return
+        }
+
+        // Nanning requires captcha → use WebView-based login instead of direct HTTP
+        if (state.isNanning) {
+            _uiState.value = _uiState.value.copy(showNanningWebView = true, message = "")
             return
         }
 
@@ -94,7 +113,7 @@ class DirectLoginViewModel(
                         }
                         sessionStore.saveCookie(result.cookie)
                         _uiState.value = _uiState.value.copy(message = "登录成功，正在导入数据...")
-                        performImport(result.cookie)
+                        performImport(result.cookie, result.campusBaseUrl)
                     }
                     AcademicLoginResult.MissingCredentials ->
                         _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "请输入学号和密码")
@@ -102,7 +121,6 @@ class DirectLoginViewModel(
                         _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "学号或密码错误，请重试")
                     }
                     AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
-                        // JW direct login requires captcha — try OA unified auth as fallback
                         _uiState.value = _uiState.value.copy(message = "正在尝试统一身份认证登录...")
                         val oaResult = oaLoginClient.login(state.username, state.password)
                         when (oaResult) {
@@ -112,7 +130,7 @@ class DirectLoginViewModel(
                                 }
                                 sessionStore.saveCookie(oaResult.cookie)
                                 _uiState.value = _uiState.value.copy(message = "OA登录成功，正在导入数据...")
-                                performImport(oaResult.cookie)
+                                performImport(oaResult.cookie, oaResult.campusBaseUrl)
                             }
                             AcademicLoginResult.InvalidCredentials ->
                                 _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "学号或密码错误，请重试")
@@ -129,13 +147,32 @@ class DirectLoginViewModel(
         }
     }
 
-    private suspend fun performImport(cookie: String) {
+    /** Called when Nanning WebView login succeeds (user entered captcha manually). */
+    fun onNanningWebViewLoginSuccess(cookie: String) {
+        val state = _uiState.value
+        _uiState.value = _uiState.value.copy(showNanningWebView = false)
+        if (state.rememberPassword) {
+            credentialStore.saveCredentials(state.username, state.password)
+        }
+        viewModelScope.launch {
+            sessionStore.saveCookie(cookie)
+            _uiState.value = _uiState.value.copy(isLoggingIn = true, message = "登录成功，正在导入数据...")
+            performImport(cookie, AcademicLoginResult.NANNING_URL)
+        }
+    }
+
+    /** Called when user goes back from Nanning WebView without importing. */
+    fun onNanningWebViewBack() {
+        _uiState.value = _uiState.value.copy(showNanningWebView = false)
+    }
+
+    private suspend fun performImport(cookie: String, campusBaseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL) {
         var courseCount = 0
         var examCount = 0
         var scoreCount = 0
 
         try {
-            val results = apiProbeService.probeAllEndpoints(cookie = cookie)
+            val results = apiProbeService.probeAllEndpoints(cookie = cookie, baseUrl = campusBaseUrl)
             val calendar = ApiProbeService.extractAcademicCalendar(results)
             if (calendar != null) {
                 settingsStore.setSemesterStartMonday(calendar.semesterStartMonday)
@@ -172,7 +209,7 @@ class DirectLoginViewModel(
                 }
             }
 
-            scoreCount = fetchAndSaveScores(cookie)
+            scoreCount = fetchAndSaveScores(cookie, campusBaseUrl)
 
             _uiState.value = _uiState.value.copy(
                 isLoggingIn = false,
@@ -188,7 +225,7 @@ class DirectLoginViewModel(
         }
     }
 
-    private suspend fun fetchAndSaveScores(cookie: String): Int {
+    private suspend fun fetchAndSaveScores(cookie: String, campusBaseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL): Int {
         val scoreClient = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
@@ -197,7 +234,7 @@ class DirectLoginViewModel(
             // Single GET with empty params returns ALL scores across all semesters
             // (optimized from 8 POST requests down to 1)
             val request = Request.Builder()
-                .url("http://jw.glut.edu.cn/academic/manager/score/studentOwnScore.do?year=&term=&para=0")
+                .url("$campusBaseUrl/academic/manager/score/studentOwnScore.do?year=&term=&para=0")
                 .header("Cookie", cookie)
                 .header("User-Agent", MOBILE_USER_AGENT)
                 .get()
@@ -208,7 +245,7 @@ class DirectLoginViewModel(
                 }
             }
             // year/term extracted from HTML cells automatically by ScoreParser
-            val scores = scoreParser.parseScoreHtml(body)
+            val scores = scoreParser.parseScoreHtml(body, isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL)
             if (scores.isNotEmpty()) scheduleRepository.replaceScores(scores)
             return scores.size
         } catch (_: Exception) {

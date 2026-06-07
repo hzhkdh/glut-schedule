@@ -29,6 +29,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -61,6 +63,15 @@ fun DirectLoginScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var passwordVisible by remember { mutableStateOf(false) }
+
+    // Nanning campus requires captcha → show WebView-based login
+    if (uiState.showNanningWebView) {
+        NanningLoginWebView(
+            onLoginSuccess = viewModel::onNanningWebViewLoginSuccess,
+            onBack = viewModel::onNanningWebViewBack
+        )
+        return
+    }
 
     Scaffold(
         modifier = modifier,
@@ -121,6 +132,27 @@ fun DirectLoginScreen(
                     colors = CheckboxDefaults.colors(checkedColor = LoginAccent, uncheckedColor = Color(0xFF9CA3AF))
                 )
                 Text("记住密码", color = LoginSecondary, fontSize = 13.sp)
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Campus selector
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("南宁分校", color = LoginPrimary, fontSize = 14.sp)
+                Switch(
+                    checked = uiState.isNanning,
+                    onCheckedChange = { viewModel.toggleNanning() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = LoginAccent,
+                        checkedTrackColor = LoginAccent.copy(alpha = 0.3f),
+                        uncheckedThumbColor = LoginSecondary,
+                        uncheckedTrackColor = Color(0xFFD1D5DB)
+                    )
+                )
             }
 
             Spacer(modifier = Modifier.height(20.dp))
