@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
@@ -84,6 +85,8 @@ class ScoreViewModel(
                         cookie = sessionStore.academicCookie.first()
                     } else {
                         _message.value = "请先在导入课表页面登录教务系统"
+                        delay(4000)
+                        _message.value = ""
                         return@launch
                     }
                 }
@@ -100,6 +103,8 @@ class ScoreViewModel(
                 Log.e(TAG, "Score fetch failed", e)
             } finally {
                 _isRefreshing.value = false
+                delay(4000)
+                _message.value = ""
             }
         }
     }

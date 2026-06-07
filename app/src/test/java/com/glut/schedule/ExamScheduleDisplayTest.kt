@@ -85,6 +85,40 @@ class ExamScheduleDisplayTest {
         )
     }
 
+    @Test
+    fun completedExamsSortedDescendingByDate() {
+        // 先结束的考试应该排在后面（降序：最近结束的在前，最早结束的在后）
+        val olderCompleted = exam(date = today.minusDays(5), startTime = "10:00", endTime = "12:00", courseName = "最早考完")
+        val newerCompleted = exam(date = today.minusDays(2), startTime = "14:00", endTime = "16:00", courseName = "最近考完")
+
+        val display = examsForDisplay(
+            listOf(olderCompleted, newerCompleted),
+            LocalDateTime.of(today, java.time.LocalTime.of(18, 0))
+        )
+
+        assertEquals(
+            listOf("最近考完", "最早考完"),
+            display.map { it.exam.courseName }
+        )
+    }
+
+    @Test
+    fun completedExamsSameDaySortedDescendingByStartTime() {
+        // 同一天的已结束考试，先开始的排在后面
+        val earlierOnSameDay = exam(date = today.minusDays(3), startTime = "08:00", endTime = "10:00", courseName = "早开始")
+        val laterOnSameDay = exam(date = today.minusDays(3), startTime = "14:00", endTime = "16:00", courseName = "晚开始")
+
+        val display = examsForDisplay(
+            listOf(earlierOnSameDay, laterOnSameDay),
+            LocalDateTime.of(today, java.time.LocalTime.of(18, 0))
+        )
+
+        assertEquals(
+            listOf("晚开始", "早开始"),
+            display.map { it.exam.courseName }
+        )
+    }
+
     private fun exam(date: LocalDate, endTime: String): ExamInfo {
         return exam(date = date, startTime = "12:30", endTime = endTime)
     }

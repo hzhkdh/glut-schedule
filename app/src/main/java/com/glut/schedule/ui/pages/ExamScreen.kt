@@ -230,7 +230,7 @@ private fun ExamDateHeader(
     isToday: Boolean
 ) {
     val dayLabel = dayLabel(date.dayOfWeek)
-    val dateStr = date.format(DateTimeFormatter.ofPattern("M月d日"))
+    val dateStr = date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
     val status = examDateStatus(date, LocalDate.now())
 
     Row(
@@ -274,106 +274,111 @@ private fun ExamCard(
         if (exam.endTime.isNotBlank()) append(" - ${exam.endTime}")
     }
 
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer(alpha = if (completed) 0.66f else 1f),
-        color = if (completed) Color(0xFFF3F4F6) else ExamPaperCard,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, if (completed) Color(0xFFE2E5EA) else ExamCardBorder),
-        shadowElevation = if (completed) 1.dp else 6.dp
+    Box(
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.Top
+                .graphicsLayer(alpha = if (completed) 0.66f else 1f),
+            color = if (completed) Color(0xFFF3F4F6) else ExamPaperCard,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, if (completed) Color(0xFFE2E5EA) else ExamCardBorder),
+            shadowElevation = if (completed) 1.dp else 6.dp
         ) {
-            CourseIcon(
-                icon = examCourseIcon(exam.courseName),
-                color = accent,
+            Row(
                 modifier = Modifier
-                    .padding(top = 2.dp)
-                    .size(44.dp)
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.Top
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.Top
+                CourseIcon(
+                    icon = examCourseIcon(exam.courseName),
+                    color = accent,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .size(44.dp)
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        text = exam.courseName,
-                        color = if (completed) ExamTextSecondary else ExamTextPrimary,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (exam.examType.isNotBlank()) {
-                        Text(
-                            text = exam.examType,
-                            color = typeColors.content,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(7.dp))
-                                .background(typeColors.container)
-                                .padding(horizontal = 9.dp, vertical = 6.dp)
-                        )
-                    }
-                    if (completed) {
-                        Text(
-                            text = "已结束",
-                            color = ExamTextTertiary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(7.dp))
-                                .background(Color(0xFFE7E9EE))
-                                .padding(horizontal = 9.dp, vertical = 6.dp)
-                        )
-                    }
-                }
-                ExamMetaLine(
-                    icon = Icons.Outlined.AccessTime,
-                    text = timeText
-                )
-                ExamMetaLine(
-                    icon = Icons.Outlined.LocationOn,
-                    text = cleanExamText(exam.location),
-                    maxLines = 2
-                )
-                if (exam.seatNumber.isNotBlank() || exam.note.isNotBlank()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.Top
                     ) {
-                        if (exam.seatNumber.isNotBlank()) {
+                        Text(
+                            text = exam.courseName,
+                            color = if (completed) ExamTextSecondary else ExamTextPrimary,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (exam.examType.isNotBlank()) {
                             Text(
-                                text = "座位: ${exam.seatNumber}",
-                                color = ExamTextTertiary,
-                                fontSize = 12.sp
+                                text = exam.examType,
+                                color = typeColors.content,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(7.dp))
+                                    .background(typeColors.container)
+                                    .padding(horizontal = 9.dp, vertical = 6.dp)
                             )
                         }
-                        if (exam.note.isNotBlank()) {
-                            Text(
-                                text = exam.note,
-                                color = ExamTextTertiary,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
+                    }
+                    ExamMetaLine(
+                        icon = Icons.Outlined.AccessTime,
+                        text = timeText
+                    )
+                    ExamMetaLine(
+                        icon = Icons.Outlined.LocationOn,
+                        text = cleanExamText(exam.location),
+                        maxLines = 2
+                    )
+                    if (exam.seatNumber.isNotBlank() || exam.note.isNotBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            if (exam.seatNumber.isNotBlank()) {
+                                Text(
+                                    text = "座位: ${exam.seatNumber}",
+                                    color = ExamTextTertiary,
+                                    fontSize = 12.sp
+                                )
+                            }
+                            if (exam.note.isNotBlank()) {
+                                Text(
+                                    text = exam.note,
+                                    color = ExamTextTertiary,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
                     }
                 }
             }
+        }
+        if (completed) {
+            Text(
+                text = "已结束",
+                color = Color(0xFF6B7280),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .clip(RoundedCornerShape(bottomStart = 14.dp, topEnd = 12.dp))
+                    .background(Color(0xFFD1D5DB))
+                    .padding(horizontal = 10.dp, vertical = 3.dp)
+            )
         }
     }
 }
@@ -531,8 +536,16 @@ internal fun examsForDisplay(exams: List<ExamInfo>, now: LocalDateTime): List<Ex
             compareBy<ExamDisplayItem> { item ->
                 if (item.state == ExamDisplayState.Upcoming) 0 else 1
             }
-                .thenBy { item -> item.exam.examDate }
-                .thenBy { item -> parseExamTime(item.exam.startTime) ?: LocalTime.MIN }
+                .thenBy { item ->
+                    if (item.state == ExamDisplayState.Upcoming)
+                        item.exam.examDate.toEpochDay()
+                    else
+                        -item.exam.examDate.toEpochDay()
+                }
+                .thenBy { item ->
+                    val seconds = (parseExamTime(item.exam.startTime) ?: LocalTime.MIN).toSecondOfDay()
+                    if (item.state == ExamDisplayState.Upcoming) seconds else -seconds
+                }
                 .thenBy { item -> item.exam.courseName }
         )
 }
