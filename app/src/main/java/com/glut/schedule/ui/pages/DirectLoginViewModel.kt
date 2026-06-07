@@ -373,6 +373,7 @@ class DirectLoginViewModel(
         }
         viewModelScope.launch {
             sessionStore.saveCookie(cookie)
+            sessionStore.saveCampusBaseUrl(campusBaseUrl)
             val campusType = if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
                 com.glut.schedule.data.settings.CampusType.NANNING
             } else {
