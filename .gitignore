@@ -20,6 +20,9 @@ keystore.properties
 Thumbs.db
 desktop.ini
 
+# ===== Screenshots / images =====
+images/
+
 # ===== Debug artifacts (may contain cookies, tokens, PII) =====
 debug/
 *.pkl
