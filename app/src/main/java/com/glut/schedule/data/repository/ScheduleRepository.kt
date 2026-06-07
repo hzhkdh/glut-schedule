@@ -6,6 +6,7 @@ import com.glut.schedule.data.local.toModel
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ExamInfo
+import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.defaultClassPeriods
 import kotlinx.coroutines.flow.Flow
@@ -50,6 +51,14 @@ class ScheduleRepository(
 
     suspend fun replaceExams(exams: List<ExamInfo>) {
         dao.replaceExams(exams.map { it.toEntity() })
+    }
+
+    val scores: Flow<List<ScoreInfo>> = dao.observeScores().map { entities ->
+        entities.map { it.toModel() }
+    }
+
+    suspend fun replaceScores(scores: List<ScoreInfo>) {
+        dao.replaceScores(scores.map { it.toEntity() })
     }
 
     suspend fun replaceImportedCourses(courses: List<ScheduleCourse>) {
