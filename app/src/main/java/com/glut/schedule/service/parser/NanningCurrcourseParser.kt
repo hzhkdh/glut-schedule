@@ -143,8 +143,11 @@ class NanningCurrcourseParser : AcademicScheduleParser {
             """(?is)<tr\b[^>]*class\s*=\s*["']infolist_common["'][^>]*>.*?</tr>"""
         )
         val nestedPlaceholderRegex = Regex("""<!--NESTED_(\d+)-->""")
+        // Exclude teacher links (href contains "teacherinfo") from course name matching.
+        // Both course names and teacher names use class="infolist" <a> tags.
+        // The negative lookahead uses [^>]* to stay within the tag boundaries.
         val courseNameRegex = Regex(
-            """(?is)<a\b[^>]*class\s*=\s*["']infolist["'][^>]*>\s*([^<]+?)\s*</a>"""
+            """(?is)<a\b(?!\s*[^>]*teacherinfo)[^>]*class\s*=\s*["']infolist["'][^>]*>\s*([^<]+?)\s*</a>"""
         )
         val teacherRegex = Regex(
             """(?is)<a\b[^>]*teacherinfo[^>]*>\s*([^<]+?)\s*</a>"""

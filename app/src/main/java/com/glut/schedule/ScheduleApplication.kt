@@ -40,8 +40,10 @@ class AppContainer(application: Application) {
     val scheduleRepository = ScheduleRepository(database.scheduleDao(), settingsStore.campusType)
     val backgroundStore = ScheduleBackgroundStore(application)
     val academicSessionStore = AcademicSessionStore(application)
+    // Nanning parser first: it checks for infolist_common and returns empty
+    // for non-Nanning HTML. Guilin parser handles everything else.
     val academicScheduleParser = CompositeScheduleParser(
-        listOf(GlutAcademicScheduleParser(), NanningCurrcourseParser())
+        listOf(NanningCurrcourseParser(), GlutAcademicScheduleParser())
     )
     val apiProbeService = ApiProbeService()
     val examParser = GlutExamParser()

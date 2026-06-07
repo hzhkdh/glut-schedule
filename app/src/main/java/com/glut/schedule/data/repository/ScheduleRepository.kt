@@ -14,6 +14,7 @@ import com.glut.schedule.data.model.nanningClassPeriods
 import com.glut.schedule.data.settings.CampusType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 class ScheduleRepository(
@@ -74,7 +75,13 @@ class ScheduleRepository(
     }
 
     suspend fun replaceImportedCourses(courses: List<ScheduleCourse>) {
-        dao.insertClassPeriods(defaultClassPeriods().map { it.toEntity() })
+        // Write campus-specific periods so the schedule grid shows correct time slots.
+        val campus = campusType.first()
+        val periods = when (campus) {
+            CampusType.GUILIN -> guilinClassPeriods()
+            CampusType.NANNING -> nanningClassPeriods()
+        }
+        dao.insertClassPeriods(periods.map { it.toEntity() })
         val coloredCourses = CourseColorMapper.assignColors(courses)
         dao.replaceCourses(
             courses = coloredCourses.map { it.toEntity() },
