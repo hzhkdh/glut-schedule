@@ -1,0 +1,7 @@
+{
+  "version": "v0.7.16",
+  "versionCode": 1,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.7.16",
+  "releaseNotes": "## Fixes\n\n### Score Query (4 critical bugs fixed)\n- Year extraction: now handles \"2025-2026\", \"2019\", and encoded \"45\" -> 2025\n- Nanning column indices: corrected per GlutAssistantN reference\n- POST instead of GET: matches HTML form and all 3 reference projects\n- GBK encoding: detect and handle GBK/GB2312 charset\n\n### Update Notification\n- Dual-channel check: GitHub API + GitHub Pages fallback\n- Red dot badge on drawer \"About\" menu item\n- GitHub Actions auto-deploys version.j,
+  "publishedAt": "2026-06-07T18:35:40Z"
+}
