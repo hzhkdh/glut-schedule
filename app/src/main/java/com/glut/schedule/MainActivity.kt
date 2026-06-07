@@ -186,12 +186,21 @@ class MainActivity : ComponentActivity() {
                     onDispose { }
                 }
 
-                // Check for updates on launch
+                // Check for updates on launch + persist for red dot
+                val updateAvailableVersion by container.settingsStore.updateAvailableVersion.collectAsState(initial = "")
+                val updateSeenVersion by container.settingsStore.updateSeenVersion.collectAsState(initial = "")
+                val showUpdateDot = updateAvailableVersion.isNotBlank()
+                    && updateAvailableVersion != BuildConfig.VERSION_NAME
+                    && updateAvailableVersion != updateSeenVersion
+
                 DisposableEffect(Unit) {
                     scope.launch {
                         val info = container.updateChecker.check(BuildConfig.VERSION_NAME)
                         if (info != null && info.isNewer) {
-                            showUpdateDialog = info
+                            container.settingsStore.setUpdateAvailable(info.latestVersion)
+                            if (updateSeenVersion != info.latestVersion) {
+                                showUpdateDialog = info
+                            }
                         }
                     }
                     onDispose { }
@@ -219,7 +228,13 @@ class MainActivity : ComponentActivity() {
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
+                                            showDot = item == DrawerItem.About && showUpdateDot,
                                             onClick = {
+                                                if (item == DrawerItem.About && showUpdateDot) {
+                                                    scope.launch {
+                                                        container.settingsStore.markUpdateSeen(updateAvailableVersion)
+                                                    }
+                                                }
                                                 selectedItem = item
                                                 scope.launch { drawerState.close() }
                                             }
@@ -382,6 +397,7 @@ private fun DrawerHeader(onClose: () -> Unit) {
 private fun DrawerMenuItem(
     item: DrawerItem,
     isSelected: Boolean,
+    showDot: Boolean = false,
     onClick: () -> Unit
 ) {
     val bgColor = if (isSelected) Color(0xFF3F7DF6).copy(alpha = 0.10f) else Color.Transparent
@@ -398,7 +414,14 @@ private fun DrawerMenuItem(
     ) {
         Icon(item.icon, contentDescription = item.title, tint = contentColor, modifier = Modifier.size(24.dp))
         Spacer(modifier = Modifier.width(16.dp))
-        Text(item.title, color = contentColor, fontSize = 16.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal)
+        Text(item.title, color = contentColor, fontSize = 16.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.weight(1f))
+        if (showDot) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(Color(0xFFDC2626), RoundedCornerShape(4.dp))
+            )
+        }
     }
 }
 

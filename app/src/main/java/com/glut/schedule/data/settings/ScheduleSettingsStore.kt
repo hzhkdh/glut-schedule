@@ -27,6 +27,8 @@ class ScheduleSettingsStore(
     private val semesterEndDateKey = stringPreferencesKey("semester_end_date")
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
     private val campusTypeKey = stringPreferencesKey("campus_type")
+    private val updateAvailableVersionKey = stringPreferencesKey("update_available_version")
+    private val updateSeenVersionKey = stringPreferencesKey("update_seen_version")
 
     val currentWeekNumber: Flow<Int> = context.scheduleSettings.data.map { preferences ->
         clampAcademicWeek(preferences[currentWeekKey] ?: 9)
@@ -96,6 +98,30 @@ class ScheduleSettingsStore(
             } else {
                 preferences[customBackgroundUriKey] = trimmed
             }
+        }
+    }
+
+    // ---- Update notifications ----
+
+    /** Latest version available for download (empty if no update or check hasn't run) */
+    val updateAvailableVersion: Flow<String> = context.scheduleSettings.data.map { preferences ->
+        preferences[updateAvailableVersionKey].orEmpty()
+    }
+
+    /** Version that the user has already seen (to suppress red dot) */
+    val updateSeenVersion: Flow<String> = context.scheduleSettings.data.map { preferences ->
+        preferences[updateSeenVersionKey].orEmpty()
+    }
+
+    suspend fun setUpdateAvailable(version: String) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[updateAvailableVersionKey] = version
+        }
+    }
+
+    suspend fun markUpdateSeen(version: String) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[updateSeenVersionKey] = version
         }
     }
 }

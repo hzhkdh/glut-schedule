@@ -1,0 +1,33 @@
+name: Update Version Check
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-version-json:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate version.json
+        run: |
+          cat > version.json << EOF
+          {
+            "version": "${{ github.event.release.tag_name }}",
+            "versionCode": ${{ github.run_number }},
+            "downloadUrl": "${{ github.event.release.html_url }}",
+            "releaseNotes": $(echo '${{ toJSON(github.event.release.body) }}' | head -c 500),
+            "publishedAt": "${{ github.event.release.published_at }}"
+          }
+          EOF
+          cat version.json
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          keep_files: false
+          commit_message: "ci: update version.json for ${{ github.event.release.tag_name }}"
