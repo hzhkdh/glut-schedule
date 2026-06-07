@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 
+enum class CampusType { GUILIN, NANNING }
+
 private val Context.scheduleSettings by preferencesDataStore(name = "schedule_settings")
 
 class ScheduleSettingsStore(
@@ -24,6 +26,7 @@ class ScheduleSettingsStore(
     private val semesterStartMondayKey = stringPreferencesKey("semester_start_monday")
     private val semesterEndDateKey = stringPreferencesKey("semester_end_date")
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
+    private val campusTypeKey = stringPreferencesKey("campus_type")
 
     val currentWeekNumber: Flow<Int> = context.scheduleSettings.data.map { preferences ->
         clampAcademicWeek(preferences[currentWeekKey] ?: 9)
@@ -48,6 +51,17 @@ class ScheduleSettingsStore(
 
     val customBackgroundUri: Flow<String> = context.scheduleSettings.data.map { preferences ->
         preferences[customBackgroundUriKey].orEmpty()
+    }
+
+    val campusType: Flow<CampusType> = context.scheduleSettings.data.map { preferences ->
+        val name = preferences[campusTypeKey] ?: CampusType.GUILIN.name
+        runCatching { CampusType.valueOf(name) }.getOrDefault(CampusType.GUILIN)
+    }
+
+    suspend fun setCampusType(type: CampusType) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[campusTypeKey] = type.name
+        }
     }
 
     suspend fun setCurrentWeekNumber(week: Int) {
