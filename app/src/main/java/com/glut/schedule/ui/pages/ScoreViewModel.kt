@@ -1,5 +1,6 @@
 package com.glut.schedule.ui.pages
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -19,8 +20,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.nio.charset.Charset
 import java.util.concurrent.TimeUnit
 
 data class ScoreUiState(
@@ -94,6 +97,7 @@ class ScoreViewModel(
                 }
             } catch (e: Exception) {
                 _message.value = "获取失败: ${e.message}"
+                Log.e(TAG, "Score fetch failed", e)
             } finally {
                 _isRefreshing.value = false
             }
@@ -107,26 +111,80 @@ class ScoreViewModel(
         val scoreClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
+
+        // POST with form body — matches the HTML form method and all reference projects
+        // (GlutAssistant, GlutAssistantN, glut Android)
+        val formBody = FormBody.Builder()
+            .add("year", "")
+            .add("term", "")
+            .add("prop", "")
+            .add("groupName", "")
+            .add("para", "0")
+            .add("sortColumn", "")
+            .add("Submit", "查询")
             .build()
 
         val request = Request.Builder()
-            .url("$campusBaseUrl/academic/manager/score/studentOwnScore.do?year=&term=&para=0&sortColumn=&Submit=%E6%9F%A5%E8%AF%A2")
+            .url("$campusBaseUrl/academic/manager/score/studentOwnScore.do")
             .header("Cookie", cookie)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
-            .get()
+            .header("User-Agent", UA)
+            .post(formBody)
             .build()
 
-        val body = withContext(Dispatchers.IO) {
+        Log.d(TAG, "Fetching scores from: $campusBaseUrl")
+
+        val (body, responseCode, contentType) = withContext(Dispatchers.IO) {
             scoreClient.newCall(request).execute().use { response ->
-                response.body?.string().orEmpty()
+                val rawBytes = response.body?.bytes() ?: ByteArray(0)
+                val ct = response.header("Content-Type") ?: ""
+                val code = response.code
+                Triple(rawBytes, code, ct)
             }
         }
 
+        Log.d(TAG, "Score response: code=$responseCode, contentType=$contentType, bodyLen=${body.size}")
+
+        // GLUT academic system returns GBK/GB2312 encoded HTML.
+        // Try to detect charset from Content-Type, fall back to GBK.
+        val charset = detectCharset(contentType)
+        val html = String(body, charset)
+        Log.d(TAG, "Score HTML preview (first 300 chars): ${html.take(300)}")
+
         val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
-        return scoreParser.parseScoreHtml(body, isNanning = isNanning)
+        Log.d(TAG, "Parsing scores: isNanning=$isNanning")
+
+        val scores = scoreParser.parseScoreHtml(html, isNanning = isNanning)
+        Log.d(TAG, "Parsed ${scores.size} scores")
+
+        return scores
+    }
+
+    /**
+     * Detect charset from Content-Type header. The GLUT academic system returns
+     * GBK/GB2312 encoded pages. If no charset is specified, default to GBK
+     * (the server's native encoding for Chinese).
+     */
+    private fun detectCharset(contentType: String): Charset {
+        val charsetName = if (contentType.contains("charset=", ignoreCase = true)) {
+            contentType.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")
+        } else {
+            "GBK"
+        }
+        return try {
+            Charset.forName(charsetName)
+        } catch (_: Exception) {
+            Charsets.UTF_8
+        }
     }
 
     fun clearMessage() { _message.value = "" }
+
+    companion object {
+        private const val TAG = "ScoreViewModel"
+        private const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
+    }
 }
 
 class ScoreViewModelFactory(

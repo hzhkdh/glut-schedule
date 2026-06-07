@@ -490,18 +490,47 @@ class DirectLoginViewModel(
             .readTimeout(10, TimeUnit.SECONDS)
             .build()
         try {
+            // POST with form body — matches the HTML form method and all reference projects
+            val formBody = FormBody.Builder()
+                .add("year", "")
+                .add("term", "")
+                .add("prop", "")
+                .add("groupName", "")
+                .add("para", "0")
+                .add("sortColumn", "")
+                .add("Submit", "查询")
+                .build()
+
             val request = Request.Builder()
-                .url("$campusBaseUrl/academic/manager/score/studentOwnScore.do?year=&term=&para=0&sortColumn=&Submit=%E6%9F%A5%E8%AF%A2")
+                .url("$campusBaseUrl/academic/manager/score/studentOwnScore.do")
                 .header("Cookie", cookie)
                 .header("User-Agent", UA)
-                .get()
+                .post(formBody)
                 .build()
-            val body = withContext(Dispatchers.IO) {
+
+            val (body, contentType) = withContext(Dispatchers.IO) {
                 scoreClient.newCall(request).execute().use { response ->
-                    response.body?.string().orEmpty()
+                    val rawBytes = response.body?.bytes() ?: ByteArray(0)
+                    val ct = response.header("Content-Type") ?: ""
+                    Pair(rawBytes, ct)
                 }
             }
-            val scores = scoreParser.parseScoreHtml(body, isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL)
+
+            // GLUT academic system returns GBK/GB2312 encoded HTML
+            val charset = try {
+                if (contentType.contains("charset=", ignoreCase = true)) {
+                    java.nio.charset.Charset.forName(
+                        contentType.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")
+                    )
+                } else {
+                    java.nio.charset.Charset.forName("GBK")
+                }
+            } catch (_: Exception) {
+                java.nio.charset.Charset.forName("UTF-8")
+            }
+            val html = String(body, charset)
+
+            val scores = scoreParser.parseScoreHtml(html, isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL)
             if (scores.isNotEmpty()) scheduleRepository.replaceScores(scores)
             return scores.size
         } catch (_: Exception) {
