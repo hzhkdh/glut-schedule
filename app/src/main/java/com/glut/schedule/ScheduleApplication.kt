@@ -34,8 +34,8 @@ class AppContainer(application: Application) {
     ).fallbackToDestructiveMigration(false)
      .build()
 
-    val scheduleRepository = ScheduleRepository(database.scheduleDao())
     val settingsStore = ScheduleSettingsStore(application)
+    val scheduleRepository = ScheduleRepository(database.scheduleDao(), settingsStore.campusType)
     val backgroundStore = ScheduleBackgroundStore(application)
     val academicSessionStore = AcademicSessionStore(application)
     val academicScheduleParser = GlutAcademicScheduleParser()
