@@ -85,7 +85,8 @@ fun isLoginPage(url: String): Boolean {
 fun isAcademicDomainPage(url: String): Boolean {
     return runCatching {
         val uri = URI(url)
-        uri.host.contains("glut.edu.cn", ignoreCase = true)
+        uri.host.contains("glut.edu.cn", ignoreCase = true) ||
+            uri.host.contains("glutnn.cn", ignoreCase = true)
     }.getOrDefault(false)
 }
 
