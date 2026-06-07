@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,10 +56,12 @@ fun ScoreScreen(
     val filteredScores = if (selectedYear == null) allScores
     else allScores.filter { it.year == selectedYear }
 
-    val grouped = filteredScores
-        .groupBy { Pair(it.year, it.term) }
-        .entries
-        .sortedByDescending { "${it.key.first}-${it.key.second}" }
+    val grouped = remember(filteredScores) {
+        filteredScores
+            .groupBy { Pair(it.year, it.term) }
+            .entries
+            .sortedByDescending { "${it.key.first}-${it.key.second}" }
+    }
 
     val listState = rememberLazyListState()
 
@@ -146,21 +149,17 @@ fun ScoreScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
-                grouped.forEach { (yearTerm, termScores) ->
-                    val (year, term) = yearTerm
+                items(grouped, key = { "semester_${it.key.first}_${it.key.second}" }) { (yearTerm, termScores) ->
                     val avgGpa = termScores.map { it.gpa }.filter { it > 0 }
                         .average().let { if (it.isNaN()) 0.0 else it }
                     val totalCredit = termScores.sumOf { it.credit }
-
-                    item(key = "semester_${year}_$term") {
-                        SemesterBlock(
-                            year = year,
-                            term = term,
-                            avgGpa = avgGpa,
-                            totalCredit = totalCredit,
-                            scores = termScores
-                        )
-                    }
+                    SemesterBlock(
+                        year = yearTerm.first,
+                        term = yearTerm.second,
+                        avgGpa = avgGpa,
+                        totalCredit = totalCredit,
+                        scores = termScores
+                    )
                 }
 
                 // Bottom summary
