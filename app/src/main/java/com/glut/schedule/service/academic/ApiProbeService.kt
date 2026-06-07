@@ -364,6 +364,21 @@ class ApiProbeService {
                     result.body.contains(""""name"""")
             }
         }
+
+        fun extractInternalIdFromCurrcourse(body: String): String? {
+            return Regex("""showTimetable\.do\?id=(\d+)""")
+                .find(body)?.groupValues?.get(1)
+        }
+
+        fun extractYearIdFromCurrcourse(body: String): String? {
+            return Regex("""showTimetable\.do\?id=\d+&yearid=(\d+)""")
+                .find(body)?.groupValues?.get(1)
+        }
+
+        fun extractTermIdFromCurrcourse(body: String): String? {
+            return Regex("""showTimetable\.do\?id=\d+&yearid=\d+&termid=(\d+)""")
+                .find(body)?.groupValues?.get(1)
+        }
     }
 
     fun findExamJsonResult(results: List<ProbeResult>): ProbeResult? {
