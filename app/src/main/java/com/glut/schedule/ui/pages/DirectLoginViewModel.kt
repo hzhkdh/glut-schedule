@@ -266,10 +266,11 @@ class DirectLoginViewModel(
     }
 
     /**
-     * Execute Nanning login following the same flow as the page's JavaScript:
-     * 1. Double-MD5 hash password (submit_hex_md5)
-     * 2. GET j_acegi_security_check with hashed password + captcha
-     * 3. Follow redirect to verify login
+     * Execute Nanning login following the EXACT same flow as the page's JavaScript:
+     * 1. POST /academic/checkCaptcha.do?captchaCode=xxx → validates captcha server-side
+     * 2. Double-MD5 hash password (submit_hex_md5)
+     * 3. GET j_acegi_security_check with hashed password + captcha (as location.href)
+     * 4. Follow redirect to verify login
      * Returns the final JSESSIONID cookie on success, null on failure.
      */
     private suspend fun performNanningLogin(
@@ -279,48 +280,70 @@ class DirectLoginViewModel(
         sessionCookie: String
     ): String? = withContext(Dispatchers.IO) {
         runCatching {
+            var currentCookie = sessionCookie
+
+            // Step 1: Validate captcha (matches validCaptcha() → $.ajax POST /academic/checkCaptcha.do)
+            val captchaValid = validateNanningCaptcha(captcha, currentCookie)
+            if (!captchaValid) {
+                return@runCatching null // captcha wrong → refresh and retry
+            }
+
+            // Step 2: Hash password + build login URL (matches trans() + check())
             val hashedPassword = NanningPasswordHash.hash(password)
             val encodedUser = URLEncoder.encode(username, "UTF-8")
             val encodedPass = URLEncoder.encode(hashedPassword, "UTF-8")
             val encodedCaptcha = URLEncoder.encode(captcha, "UTF-8")
 
-            // Build the same URL the page JS uses in check():
-            // /academic/j_acegi_security_check?j_username=...&j_password=<MD5>&j_captcha=...
             val loginUrl = "${AcademicLoginResult.NANNING_URL}/academic/j_acegi_security_check" +
                 "?j_username=$encodedUser&j_password=$encodedPass&j_captcha=$encodedCaptcha"
 
+            // Step 3: Execute login (matches location.href = link)
             val request = Request.Builder()
                 .url(loginUrl)
-                .header("Cookie", sessionCookie)
+                .header("Cookie", currentCookie)
                 .header("User-Agent", UA)
                 .header("Referer", "${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
                 .get()
                 .build()
 
-            var currentCookie = sessionCookie
             httpClient.newCall(request).execute().use { response ->
-                // Merge any new cookies
                 val newCookies = extractCookie(response.headers("Set-Cookie"))
                 if (newCookies.isNotBlank()) currentCookie = mergeCookies(currentCookie, newCookies)
 
-                // Check for login failure indicators
                 val location = response.header("Location") ?: ""
 
                 when {
-                    // Redirect to login page = credentials/captcha wrong
+                    // Redirect to login page = bad credentials
                     location.contains("affairLogin", ignoreCase = true) ||
                         location.contains("error", ignoreCase = true) -> return@runCatching null
 
-                    // Got a redirect → follow it (the server redirects on success)
+                    // Follow redirect chain on success
                     location.isNotBlank() -> {
                         currentCookie = followRedirects(location, currentCookie)
                     }
                 }
             }
 
-            // Verify by fetching a protected page
+            // Step 4: Verify by fetching a protected page
             currentCookie.takeIf { verifyNanningLogin(currentCookie) }
         }.getOrNull()
+    }
+
+    /** POST /academic/checkCaptcha.do — validates captcha code with the server. */
+    private fun validateNanningCaptcha(captcha: String, cookie: String): Boolean {
+        val encodedCaptcha = URLEncoder.encode(captcha, "UTF-8")
+        val request = Request.Builder()
+            .url("${AcademicLoginResult.NANNING_URL}/academic/checkCaptcha.do?captchaCode=$encodedCaptcha")
+            .header("Cookie", cookie)
+            .header("User-Agent", UA)
+            .header("X-Requested-With", "XMLHttpRequest")  // simulate AJAX
+            .post(FormBody.Builder().build())  // empty POST body (JS sends POST with query param)
+            .build()
+
+        return httpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            body.trim() == "true"
+        }
     }
 
     /** Follow the post-login redirect chain to get the final session cookie. */
