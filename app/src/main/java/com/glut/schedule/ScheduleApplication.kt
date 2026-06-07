@@ -6,7 +6,6 @@ import com.glut.schedule.data.local.ScheduleDatabase
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicSessionStore
-import com.glut.schedule.service.academic.DebugCaptureService
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginService
@@ -40,7 +39,6 @@ class AppContainer(application: Application) {
     val backgroundStore = ScheduleBackgroundStore(application)
     val academicSessionStore = AcademicSessionStore(application)
     val academicScheduleParser = GlutAcademicScheduleParser()
-    val captureService = DebugCaptureService()
     val apiProbeService = ApiProbeService()
     val examParser = GlutExamParser()
     val academicExamService = AcademicExamService(examParser)

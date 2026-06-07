@@ -18,13 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.AccessTime
@@ -37,13 +33,10 @@ import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -98,14 +91,7 @@ fun ExamScreen(
         modifier = modifier
             .fillMaxSize()
             .background(ExamPaperBackground)
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .navigationBarsPadding()
     ) {
-        ExamTopBar(
-            onBack = onBack,
-            onRefresh = viewModel::refreshExams,
-            isRefreshing = uiState.isRefreshing
-        )
         if (uiState.isRefreshing) {
             LinearProgressIndicator(
                 modifier = Modifier.fillMaxWidth(),
@@ -132,46 +118,6 @@ fun ExamScreen(
                 exams = displayExams,
                 modifier = Modifier.weight(1f)
             )
-        }
-    }
-}
-
-@Composable
-private fun ExamTopBar(
-    onBack: () -> Unit,
-    onRefresh: () -> Unit,
-    isRefreshing: Boolean
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(
-            onClick = onBack,
-            modifier = Modifier.size(44.dp),
-            colors = IconButtonDefaults.iconButtonColors(contentColor = ExamTextPrimary)
-        ) {
-            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", modifier = Modifier.size(27.dp))
-        }
-        Text(
-            text = "考试安排",
-            color = ExamTextPrimary,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.ExtraBold,
-            modifier = Modifier.weight(1f)
-        )
-        IconButton(
-            onClick = onRefresh,
-            enabled = !isRefreshing,
-            modifier = Modifier.size(44.dp),
-            colors = IconButtonDefaults.iconButtonColors(
-                contentColor = ExamTextPrimary,
-                disabledContentColor = ExamTextTertiary
-            )
-        ) {
-            Icon(Icons.Outlined.Refresh, contentDescription = "刷新", modifier = Modifier.size(28.dp))
         }
     }
 }

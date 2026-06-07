@@ -2,19 +2,14 @@ package com.glut.schedule.ui.pages
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
@@ -51,10 +46,8 @@ fun AboutScreen(
     val currentVersion = BuildConfig.VERSION_NAME
 
     Scaffold(
-        modifier = modifier
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .navigationBarsPadding(),
-        containerColor = Color(0xFF0B1622)
+        modifier = modifier,
+        containerColor = Color(0xFFF6F4EF)
     ) { padding ->
         Column(
             modifier = Modifier
@@ -63,37 +56,12 @@ fun AboutScreen(
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(48.dp))
-
-            // App icon
-            Box(
-                modifier = Modifier.size(80.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(text = "🎓", fontSize = 48.sp)
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "桂工课表",
-                color = Color.White,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
-            )
-
-            Text(
-                text = "桂林理工大学 · 课表管理",
-                color = Color(0xFF8A93A3),
-                fontSize = 14.sp
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // Info card
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFF172033),
+                color = Color(0xFFFFFEFB),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.padding(4.dp)) {
@@ -119,7 +87,7 @@ fun AboutScreen(
                             }
                         }
                     )
-                    HorizontalDivider(color = Color(0xFF1E2A3D))
+                    HorizontalDivider(color = Color(0xFFEDE8DE))
                     AboutInfoRow(
                         icon = Icons.Outlined.Lock,
                         label = "开源许可",
@@ -128,7 +96,7 @@ fun AboutScreen(
                             uriHandler.openUri("https://github.com/hzhkdh/glut-schedule/blob/main/LICENSE")
                         }
                     )
-                    HorizontalDivider(color = Color(0xFF1E2A3D))
+                    HorizontalDivider(color = Color(0xFFEDE8DE))
                     AboutInfoRow(
                         icon = Icons.Outlined.Code,
                         label = "项目地址",
@@ -170,24 +138,24 @@ private fun AboutInfoRow(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = Color(0xFF7DD3FC),
+            tint = Color(0xFF3F7DF6),
             modifier = Modifier.size(22.dp)
         )
         Text(
             text = label,
-            color = Color.White,
+            color = Color(0xFF141821),
             fontSize = 15.sp,
             modifier = Modifier.weight(1f)
         )
         Text(
             text = value,
-            color = Color(0xFF8A93A3),
+            color = Color(0xFF667085),
             fontSize = 14.sp
         )
         Icon(
             imageVector = Icons.Outlined.ChevronRight,
             contentDescription = null,
-            tint = Color(0xFF4A5568),
+            tint = Color(0xFF9CA3AF),
             modifier = Modifier.size(20.dp)
         )
     }

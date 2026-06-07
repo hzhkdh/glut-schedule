@@ -1,17 +1,16 @@
 package com.glut.schedule.ui.components
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.CloudDownload
-import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -35,11 +34,9 @@ fun ScheduleHeader(
     week: ScheduleWeek,
     today: LocalDate,
     currentWeekNumber: Int,
-    onImportClick: () -> Unit,
-    onAddClick: () -> Unit,
     onWeekTitleClick: () -> Unit,
     onRefreshClick: () -> Unit,
-    onMoreClick: () -> Unit,
+    onDrawerOpen: () -> Unit = {},
     isRefreshing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -49,9 +46,16 @@ fun ScheduleHeader(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        IconButton(
+            onClick = onDrawerOpen,
+            modifier = Modifier.size(36.dp),
+            colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
+        ) {
+            Icon(Icons.Outlined.Menu, contentDescription = "菜单", modifier = Modifier.size(22.dp))
+        }
+        Spacer(modifier = Modifier.width(8.dp))
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -73,43 +77,20 @@ fun ScheduleHeader(
             )
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
-                onClick = onRefreshClick,
-                enabled = !isRefreshing,
-                modifier = Modifier.size(36.dp),
-                colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
-            ) {
-                if (isRefreshing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(19.dp),
-                        strokeWidth = 2.dp,
-                        color = Color.White
-                    )
-                } else {
-                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新课表", modifier = Modifier.size(21.dp))
-                }
-            }
-            IconButton(
-                onClick = onAddClick,
-                modifier = Modifier.size(36.dp),
-                colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
-            ) {
-                Icon(Icons.Outlined.Add, contentDescription = "添加课程", modifier = Modifier.size(22.dp))
-            }
-            IconButton(
-                onClick = onImportClick,
-                modifier = Modifier.size(36.dp),
-                colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
-            ) {
-                Icon(Icons.Outlined.CloudDownload, contentDescription = "从教务导入课表", modifier = Modifier.size(22.dp))
-            }
-            IconButton(
-                onClick = onMoreClick,
-                modifier = Modifier.size(36.dp),
-                colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
-            ) {
-                Icon(Icons.Outlined.MoreHoriz, contentDescription = "更多", modifier = Modifier.size(22.dp))
+        IconButton(
+            onClick = onRefreshClick,
+            enabled = !isRefreshing,
+            modifier = Modifier.size(36.dp),
+            colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
+        ) {
+            if (isRefreshing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(19.dp),
+                    strokeWidth = 2.dp,
+                    color = Color.White
+                )
+            } else {
+                Icon(Icons.Outlined.Refresh, contentDescription = "刷新课表", modifier = Modifier.size(21.dp))
             }
         }
     }

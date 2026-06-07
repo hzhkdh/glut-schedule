@@ -99,7 +99,8 @@ class ApiProbeService {
         probeGet("http://jw.glut.edu.cn/academic/student/timetable/timetable.do")
         probeGet("http://jw.glut.edu.cn/academic/student/coursetable/coursetable.do")
 
-        // 考试安排接口
+        // 考试安排接口 — 优先使用 glut 项目的可靠单一端点
+        probeGet("http://jw.glut.edu.cn/academic/manager/examstu/studentQueryAllExam.do?pagingNumberPerVLID=1000")
         probeGet("http://jw.glut.edu.cn/academic/student/examination/studentExamQuery.do")
         probePost("http://jw.glut.edu.cn/academic/student/examination/queryExam.do")
         probeGet("http://jw.glut.edu.cn/academic/student/examination/examArrange.do")

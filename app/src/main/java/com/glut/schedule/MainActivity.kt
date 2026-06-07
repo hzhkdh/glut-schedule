@@ -4,7 +4,9 @@ import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.view.View
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +28,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
@@ -35,9 +40,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
@@ -94,6 +102,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            @OptIn(ExperimentalMaterial3Api::class)
             GlutScheduleTheme {
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
@@ -145,6 +154,31 @@ class MainActivity : ComponentActivity() {
                     container.backgroundStore.get(scheduleUiState.customBackgroundUri)
                 } else null
 
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val backgroundPicker = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.OpenDocument()
+                ) { uri: android.net.Uri? ->
+                    uri ?: return@rememberLauncherForActivityResult
+                    val uriText = uri.toString()
+                    runCatching {
+                        context.contentResolver.takePersistableUriPermission(
+                            uri,
+                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                    }
+                    scope.launch {
+                        val metrics = resources.displayMetrics
+                        val loaded = container.backgroundStore.preload(
+                            uri = uriText,
+                            targetWidth = metrics.widthPixels,
+                            targetHeight = metrics.heightPixels
+                        )
+                        if (loaded) {
+                            scheduleViewModel.setCustomBackgroundUri(uriText)
+                        }
+                    }
+                }
+
                 DisposableEffect(selectedItem) {
                     applySystemBarStyle()
                     onDispose { }
@@ -161,15 +195,18 @@ class MainActivity : ComponentActivity() {
                     onDispose { }
                 }
 
+                val isSchedulePage = selectedItem == DrawerItem.Schedule
+
                 ModalNavigationDrawer(
                     drawerState = drawerState,
                     drawerContent = {
                         ModalDrawerSheet(
-                            drawerContainerColor = Color(0xFF0B1622),
-                            drawerContentColor = Color.White
+                            modifier = Modifier.fillMaxWidth(0.75f),
+                            drawerContainerColor = Color(0xFFF6F4EF),
+                            drawerContentColor = Color(0xFF141821)
                         ) {
                             DrawerHeader(onClose = { scope.launch { drawerState.close() } })
-                            HorizontalDivider(color = Color(0xFF1E2A3D))
+                            HorizontalDivider(color = Color(0xFFDDE2EA))
                             Spacer(modifier = Modifier.height(8.dp))
                             LazyColumn {
                                 items(DrawerItem.entries.toList()) { item ->
@@ -188,29 +225,57 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Scaffold(
                         topBar = {
-                            TopAppBar(
-                                title = {
-                                    Text(
-                                        selectedItem.title,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                },
-                                navigationIcon = {
-                                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                        Icon(
-                                            imageVector = selectedItem.icon,
-                                            contentDescription = "菜单",
-                                            tint = Color(0xFF7DD3FC),
-                                            modifier = Modifier.size(26.dp)
+                            // 课程表页面不显示单独的 TopAppBar，菜单按钮集成在 ScheduleHeader 中
+                            if (!isSchedulePage) {
+                                TopAppBar(
+                                    title = {
+                                        Text(
+                                            selectedItem.title,
+                                            color = Color(0xFF141821),
+                                            fontWeight = FontWeight.SemiBold
                                         )
-                                    }
-                                },
-                                colors = TopAppBarDefaults.topAppBarColors(
-                                    containerColor = Color.Transparent
+                                    },
+                                    navigationIcon = {
+                                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.Menu,
+                                                contentDescription = "菜单",
+                                                tint = Color(0xFF141821),
+                                                modifier = Modifier.size(26.dp)
+                                            )
+                                        }
+                                    },
+                                    actions = {
+                                        when (selectedItem) {
+                                            DrawerItem.Exam -> {
+                                                val examState by examViewModel.uiState.collectAsState()
+                                                IconButton(
+                                                    onClick = examViewModel::refreshExams,
+                                                    enabled = !examState.isRefreshing
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                                                }
+                                            }
+                                            DrawerItem.Score -> {
+                                                val scoreState by scoreViewModel.uiState.collectAsState()
+                                                IconButton(
+                                                    onClick = scoreViewModel::refreshScores,
+                                                    enabled = !scoreState.isRefreshing
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                                                }
+                                            }
+                                            else -> {}
+                                        }
+                                    },
+                                    colors = TopAppBarDefaults.topAppBarColors(
+                                        containerColor = Color(0xFFE8E4D6)
+                                    )
                                 )
-                            )
+                            }
                         },
+                        // 课程表页面不消耗系统栏空间，让背景铺满全屏
+                        contentWindowInsets = if (isSchedulePage) WindowInsets(0) else ScaffoldDefaults.contentWindowInsets,
                         containerColor = Color(0xFF07111F)
                     ) { padding ->
                         Box(modifier = Modifier.padding(padding)) {
@@ -220,7 +285,8 @@ class MainActivity : ComponentActivity() {
                                     backgroundStore = container.backgroundStore,
                                     customBackgroundBitmap = scheduleBgBitmap,
                                     onImportClick = { selectedItem = DrawerItem.Import },
-                                    onExamClick = { selectedItem = DrawerItem.Exam }
+                                    onExamClick = { selectedItem = DrawerItem.Exam },
+                                    onDrawerOpen = { scope.launch { drawerState.open() } }
                                 )
                                 DrawerItem.Score -> ScoreScreen(viewModel = scoreViewModel)
                                 DrawerItem.Exam -> ExamScreen(
@@ -230,7 +296,10 @@ class MainActivity : ComponentActivity() {
                                 DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
                                 DrawerItem.Settings -> SettingsPage(
                                     showWeekend = scheduleUiState.showWeekend,
-                                    onShowWeekendChange = scheduleViewModel::setShowWeekend
+                                    onShowWeekendChange = scheduleViewModel::setShowWeekend,
+                                    hasCustomBackground = scheduleUiState.customBackgroundUri.isNotBlank(),
+                                    onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
+                                    onClearBackground = { scheduleViewModel.clearCustomBackground() }
                                 )
                                 DrawerItem.About -> AboutScreen(
                                     updateChecker = container.updateChecker,
@@ -267,23 +336,30 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun DrawerHeader(onClose: () -> Unit) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 24.dp)
+            .background(Color(0xFFE8E4D6))
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 20.dp, vertical = 24.dp)
         ) {
-            Column {
-                Text("🎓 桂工课表", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text("桂林理工大学", color = Color(0xFF8A93A3), fontSize = 13.sp)
-            }
-            IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Outlined.Close, contentDescription = "关闭", tint = Color(0xFF8A93A3), modifier = Modifier.size(22.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("🎓 桂工课表", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("桂林理工大学", color = Color(0xFF667085), fontSize = 13.sp)
+                }
+                IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "关闭", tint = Color(0xFF667085), modifier = Modifier.size(22.dp))
+                }
             }
         }
     }
@@ -295,8 +371,8 @@ private fun DrawerMenuItem(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
-    val bgColor = if (isSelected) Color(0xFF7DD3FC).copy(alpha = 0.12f) else Color.Transparent
-    val contentColor = if (isSelected) Color(0xFF7DD3FC) else Color(0xFFB0B8C4)
+    val bgColor = if (isSelected) Color(0xFF3F7DF6).copy(alpha = 0.10f) else Color.Transparent
+    val contentColor = if (isSelected) Color(0xFF3F7DF6) else Color(0xFF667085)
 
     Row(
         modifier = Modifier
@@ -318,29 +394,77 @@ private fun DrawerMenuItem(
 @Composable
 private fun SettingsPage(
     showWeekend: Boolean,
-    onShowWeekendChange: (Boolean) -> Unit
+    onShowWeekendChange: (Boolean) -> Unit,
+    hasCustomBackground: Boolean = false,
+    onPickBackground: () -> Unit = {},
+    onClearBackground: () -> Unit = {}
 ) {
+    val settingsBg = Color(0xFFF6F4EF)
+    val settingsPrimary = Color(0xFF141821)
+    val settingsSecondary = Color(0xFF667085)
+    val settingsCardBg = Color(0xFFFFFEFB)
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0B1622))
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .navigationBarsPadding()
-            .padding(24.dp)
+            .background(settingsBg)
     ) {
-        Text("设置", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
-        Spacer(modifier = Modifier.height(24.dp))
-        androidx.compose.material3.Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = Color(0xFF172033),
-            shape = RoundedCornerShape(16.dp)
+        Column(
+            modifier = Modifier.padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // Display section
+            Text("显示", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
             ) {
-                Text("显示周末", color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                Switch(checked = showWeekend, onCheckedChange = onShowWeekendChange)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("显示周末", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = showWeekend, onCheckedChange = onShowWeekendChange)
+                }
+            }
+
+            // Background section
+            Text("背景", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onPickBackground)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("选择背景图片", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Icon(
+                            Icons.Outlined.ChevronRight,
+                            contentDescription = null,
+                            tint = settingsSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    if (hasCustomBackground) {
+                        HorizontalDivider(color = Color(0xFFEDE8DE))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onClearBackground)
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("恢复默认背景", color = Color(0xFFDC2626), fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
             }
         }
     }

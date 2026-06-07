@@ -1,6 +1,5 @@
 package com.glut.schedule.ui.pages
 
-import android.graphics.BitmapFactory
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -10,6 +9,7 @@ import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicLoginHttpClient
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
+import com.glut.schedule.service.academic.AcademicOALoginClient
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.CredentialStore
@@ -22,7 +22,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -31,8 +30,6 @@ data class DirectLoginUiState(
     val username: String = "",
     val password: String = "",
     val rememberPassword: Boolean = true,
-    val captchaBitmap: android.graphics.Bitmap? = null,
-    val captchaText: String = "",
     val isLoggingIn: Boolean = false,
     val message: String = "",
     val importResult: ImportResult? = null
@@ -59,12 +56,8 @@ class DirectLoginViewModel(
     private val _uiState = MutableStateFlow(DirectLoginUiState())
     val uiState: StateFlow<DirectLoginUiState> = _uiState
 
-    private val captchaClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .build()
-
     private val loginHttpClient = AcademicLoginHttpClient()
+    private val oaLoginClient = AcademicOALoginClient()
 
     init {
         viewModelScope.launch {
@@ -75,50 +68,11 @@ class DirectLoginViewModel(
                 password = savedPassword,
                 rememberPassword = savedUsername.isNotBlank()
             )
-            loadCaptcha()
-        }
-    }
-
-    fun loadCaptcha() {
-        viewModelScope.launch {
-            try {
-                val pageRequest = Request.Builder()
-                    .url("http://jw.glut.edu.cn/academic/affairLogin.do")
-                    .header("User-Agent", MOBILE_USER_AGENT)
-                    .get()
-                    .build()
-
-                val sessionCookies = withContext(Dispatchers.IO) {
-                    captchaClient.newCall(pageRequest).execute().use { response ->
-                        response.headers("Set-Cookie").joinToString("; ")
-                    }
-                }
-
-                val captchaRequest = Request.Builder()
-                    .url("http://jw.glut.edu.cn/academic/getCaptcha.do")
-                    .header("Cookie", sessionCookies)
-                    .header("User-Agent", MOBILE_USER_AGENT)
-                    .get()
-                    .build()
-
-                withContext(Dispatchers.IO) {
-                    captchaClient.newCall(captchaRequest).execute().use { response ->
-                        val bytes = response.body?.bytes()
-                        if (bytes != null && bytes.isNotEmpty()) {
-                            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                            _uiState.value = _uiState.value.copy(captchaBitmap = bitmap)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(message = "验证码加载失败: ${e.message}")
-            }
         }
     }
 
     fun updateUsername(username: String) { _uiState.value = _uiState.value.copy(username = username) }
     fun updatePassword(password: String) { _uiState.value = _uiState.value.copy(password = password) }
-    fun updateCaptchaText(captchaText: String) { _uiState.value = _uiState.value.copy(captchaText = captchaText) }
     fun updateRememberPassword(remember: Boolean) { _uiState.value = _uiState.value.copy(rememberPassword = remember) }
 
     fun loginAndImport() {
@@ -146,11 +100,25 @@ class DirectLoginViewModel(
                         _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "请输入学号和密码")
                     AcademicLoginResult.InvalidCredentials -> {
                         _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "学号或密码错误，请重试")
-                        loadCaptcha()
                     }
                     AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
-                        _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "需要验证码验证")
-                        loadCaptcha()
+                        // JW direct login requires captcha — try OA unified auth as fallback
+                        _uiState.value = _uiState.value.copy(message = "正在尝试统一身份认证登录...")
+                        val oaResult = oaLoginClient.login(state.username, state.password)
+                        when (oaResult) {
+                            is AcademicLoginResult.Success -> {
+                                if (state.rememberPassword) {
+                                    credentialStore.saveCredentials(state.username, state.password)
+                                }
+                                sessionStore.saveCookie(oaResult.cookie)
+                                _uiState.value = _uiState.value.copy(message = "OA登录成功，正在导入数据...")
+                                performImport(oaResult.cookie)
+                            }
+                            AcademicLoginResult.InvalidCredentials ->
+                                _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "学号或密码错误，请重试")
+                            else ->
+                                _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "教务登录需要验证码，OA登录也失败，请稍后重试")
+                        }
                     }
                     is AcademicLoginResult.NetworkError ->
                         _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "网络错误: ${result.message}")
@@ -195,6 +163,14 @@ class DirectLoginViewModel(
                     examCount = exams.size
                 }
             }
+            if (examCount == 0) {
+                val examHtmlResult = apiProbeService.findExamHtmlResult(results)
+                if (examHtmlResult != null) {
+                    examCount = runCatching { examParser.parseExamHtml(examHtmlResult.body) }.getOrDefault(emptyList()).also {
+                        if (it.isNotEmpty()) scheduleRepository.replaceExams(it)
+                    }.size
+                }
+            }
 
             scoreCount = fetchAndSaveScores(cookie)
 
@@ -217,31 +193,27 @@ class DirectLoginViewModel(
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .build()
-        val allScores = mutableListOf<ScoreInfo>()
-        val years = listOf("2025-2026", "2024-2025", "2023-2024", "2022-2023")
-        for (year in years) {
-            for (term in 1..2) {
-                try {
-                    val formBody = FormBody.Builder()
-                        .add("year", year).add("term", term.toString()).add("para", "0")
-                        .build()
-                    val request = Request.Builder()
-                        .url("http://jw.glut.edu.cn/academic/manager/score/studentOwnScore.do")
-                        .header("Cookie", cookie)
-                        .header("User-Agent", MOBILE_USER_AGENT)
-                        .post(formBody).build()
-                    withContext(Dispatchers.IO) {
-                        scoreClient.newCall(request).execute().use { response ->
-                            val body = response.body?.string().orEmpty()
-                            val scores = scoreParser.parseScoreHtml(body, year, term)
-                            allScores.addAll(scores)
-                        }
-                    }
-                } catch (_: Exception) { }
+        try {
+            // Single GET with empty params returns ALL scores across all semesters
+            // (optimized from 8 POST requests down to 1)
+            val request = Request.Builder()
+                .url("http://jw.glut.edu.cn/academic/manager/score/studentOwnScore.do?year=&term=&para=0")
+                .header("Cookie", cookie)
+                .header("User-Agent", MOBILE_USER_AGENT)
+                .get()
+                .build()
+            val body = withContext(Dispatchers.IO) {
+                scoreClient.newCall(request).execute().use { response ->
+                    response.body?.string().orEmpty()
+                }
             }
+            // year/term extracted from HTML cells automatically by ScoreParser
+            val scores = scoreParser.parseScoreHtml(body)
+            if (scores.isNotEmpty()) scheduleRepository.replaceScores(scores)
+            return scores.size
+        } catch (_: Exception) {
+            return 0
         }
-        if (allScores.isNotEmpty()) scheduleRepository.replaceScores(allScores)
-        return allScores.size
     }
 
     private companion object {

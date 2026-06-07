@@ -1,26 +1,18 @@
 package com.glut.schedule.ui.pages
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +27,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.ScoreInfo
 
+private val ScorePrimary = Color(0xFF141821)
+private val ScoreSecondary = Color(0xFF667085)
+private val ScoreAccent = Color(0xFF3F7DF6)
+private val ScoreHeaderBg = Color(0xFFE8E4D6)
+private val ScorePageBg = Color(0xFFF6F4EF)
+private val ScoreCardBg = Color(0xFFFFFEFB)
+
 @Composable
 fun ScoreScreen(
     viewModel: ScoreViewModel,
@@ -48,90 +47,68 @@ fun ScoreScreen(
         .entries
         .sortedByDescending { it.key.first + it.key.second.toString() }
 
-    Scaffold(
+    Column(
         modifier = modifier
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .navigationBarsPadding(),
-        containerColor = Color(0xFF0B1622)
-    ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // Top bar
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            .fillMaxSize()
+            .background(ScorePageBg)
+    ) {
+        if (uiState.isRefreshing) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth(),
+                color = ScoreAccent, trackColor = ScoreAccent.copy(alpha = 0.12f)
+            )
+        }
+
+        if (uiState.message.isNotBlank()) {
+            Text(uiState.message, color = ScoreSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
+        }
+
+        if (uiState.scores.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 Text(
-                    "考试成绩", color = Color.White, fontSize = 24.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.weight(1f).padding(start = 12.dp)
-                )
-                IconButton(
-                    onClick = viewModel::refreshScores, enabled = !uiState.isRefreshing,
-                    modifier = Modifier.size(44.dp),
-                    colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White, disabledContentColor = Color.Gray)
-                ) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新", modifier = Modifier.size(24.dp))
-                }
-            }
-
-            if (uiState.isRefreshing) {
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = Color(0xFF4ADE80), trackColor = Color(0xFF1A2E1A)
+                    if (uiState.hasCookie) "暂无成绩数据\n请点击刷新按钮获取" else "请先在导入课表页面登录教务系统",
+                    color = ScoreSecondary, fontSize = 14.sp, textAlign = TextAlign.Center
                 )
             }
-
-            if (uiState.message.isNotBlank()) {
-                Text(uiState.message, color = Color(0xFF8A93A3), fontSize = 14.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
-            }
-
-            if (uiState.scores.isEmpty()) {
-                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    Text(
-                        if (uiState.hasCookie) "暂无成绩数据\n请点击刷新按钮获取" else "请先在导入课表页面登录教务系统",
-                        color = Color(0xFF8A93A3), fontSize = 14.sp, textAlign = TextAlign.Center
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 18.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    groupedScores.forEach { (yearTerm, termScores) ->
-                        val (year, term) = yearTerm
-                        item(key = "header_${year}_$term") {
-                            val avgGpa = termScores.map { it.gpa }.filter { it > 0 }.average().let {
-                                if (it.isNaN()) 0.0 else it
-                            }
-                            val totalCredit = termScores.sumOf { it.credit }
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    "${year} 第${term}学期",
-                                    color = Color(0xFF7DD3FC), fontSize = 16.sp, fontWeight = FontWeight.Bold
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                    Text("绩点 ${String.format("%.2f", avgGpa)}", color = Color(0xFF8A93A3), fontSize = 13.sp)
-                                    Text("学分 $totalCredit", color = Color(0xFF8A93A3), fontSize = 13.sp)
-                                }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                groupedScores.forEach { (yearTerm, termScores) ->
+                    val (year, term) = yearTerm
+                    item(key = "header_${year}_$term") {
+                        val avgGpa = termScores.map { it.gpa }.filter { it > 0 }.average().let {
+                            if (it.isNaN()) 0.0 else it
+                        }
+                        val totalCredit = termScores.sumOf { it.credit }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "${year} 第${term}学期",
+                                color = ScorePrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Text("绩点 ${String.format("%.2f", avgGpa)}", color = ScoreSecondary, fontSize = 13.sp)
+                                Text("学分 $totalCredit", color = ScoreSecondary, fontSize = 13.sp)
                             }
                         }
-                        item(key = "headerRow_${year}_$term") {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text("课程名称", color = Color(0xFF4A5568), fontSize = 12.sp, modifier = Modifier.weight(2.5f))
-                                Text("成绩", color = Color(0xFF4A5568), fontSize = 12.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-                                Text("绩点", color = Color(0xFF4A5568), fontSize = 12.sp, modifier = Modifier.weight(0.8f), textAlign = TextAlign.Center)
-                                Text("学分", color = Color(0xFF4A5568), fontSize = 12.sp, modifier = Modifier.weight(0.7f), textAlign = TextAlign.Center)
-                            }
+                    }
+                    item(key = "headerRow_${year}_$term") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text("课程名称", color = ScoreSecondary, fontSize = 12.sp, modifier = Modifier.weight(2.5f))
+                            Text("成绩", color = ScoreSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+                            Text("绩点", color = ScoreSecondary, fontSize = 12.sp, modifier = Modifier.weight(0.8f), textAlign = TextAlign.Center)
+                            Text("学分", color = ScoreSecondary, fontSize = 12.sp, modifier = Modifier.weight(0.7f), textAlign = TextAlign.Center)
                         }
-                        items(termScores, key = { it.id }) { score ->
-                            ScoreRow(score)
-                        }
+                    }
+                    items(termScores, key = { it.id }) { score ->
+                        ScoreRow(score)
                     }
                 }
             }
@@ -142,16 +119,16 @@ fun ScoreScreen(
 @Composable
 private fun ScoreRow(score: ScoreInfo) {
     val gpaColor = when {
-        score.gpa >= 3.7 -> Color(0xFF4ADE80)
-        score.gpa >= 3.0 -> Color(0xFF7DD3FC)
-        score.gpa >= 2.0 -> Color(0xFFFBBF24)
-        score.gpa > 0 -> Color(0xFFF87171)
-        else -> Color(0xFF8A93A3)
+        score.gpa >= 3.7 -> Color(0xFF2D9A72)
+        score.gpa >= 3.0 -> Color(0xFF3F7DF6)
+        score.gpa >= 2.0 -> Color(0xFFD97706)
+        score.gpa > 0 -> Color(0xFFDC2626)
+        else -> ScoreSecondary
     }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = Color(0xFF172033),
+        color = ScoreCardBg,
         shape = RoundedCornerShape(10.dp)
     ) {
         Row(
@@ -159,14 +136,14 @@ private fun ScoreRow(score: ScoreInfo) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(2.5f)) {
-                Text(score.courseName, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(score.courseName, color = ScorePrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 if (score.category.isNotBlank()) {
-                    Text(score.category, color = Color(0xFF4A5568), fontSize = 11.sp)
+                    Text(score.category, color = ScoreSecondary, fontSize = 11.sp)
                 }
             }
             Text(score.score, color = gpaColor, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
             Text(if (score.gpa > 0) String.format("%.1f", score.gpa) else "-", color = gpaColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(0.8f), textAlign = TextAlign.Center)
-            Text(if (score.credit > 0) String.format("%.1f", score.credit) else "-", color = Color(0xFF8A93A3), fontSize = 13.sp, modifier = Modifier.weight(0.7f), textAlign = TextAlign.Center)
+            Text(if (score.credit > 0) String.format("%.1f", score.credit) else "-", color = ScoreSecondary, fontSize = 13.sp, modifier = Modifier.weight(0.7f), textAlign = TextAlign.Center)
         }
     }
 }

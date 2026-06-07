@@ -71,6 +71,7 @@ fun ScheduleScreen(
     customBackgroundBitmap: ImageBitmap?,
     onImportClick: () -> Unit,
     onExamClick: () -> Unit = {},
+    onDrawerOpen: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Log.d("Recompose", "ScheduleScreen compose")
@@ -156,16 +157,12 @@ fun ScheduleScreen(
                 week = uiState.week,
                 today = uiState.today,
                 currentWeekNumber = uiState.currentWeekNumber,
-                onImportClick = onImportClick,
-                onAddClick = {
-                    showAddActions = !showAddActions
-                },
                 onWeekTitleClick = viewModel::returnToCurrentWeek,
                 onRefreshClick = {
                     showAddActions = false
                     viewModel.refreshSchedule()
                 },
-                onMoreClick = { },
+                onDrawerOpen = onDrawerOpen,
                 isRefreshing = uiState.isRefreshing
             )
             HorizontalPager(

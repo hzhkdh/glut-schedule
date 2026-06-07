@@ -5,6 +5,7 @@ import com.glut.schedule.data.local.CourseEntity
 import com.glut.schedule.data.local.CourseOccurrenceEntity
 import com.glut.schedule.data.local.ExamEntity
 import com.glut.schedule.data.local.ScheduleDao
+import com.glut.schedule.data.local.ScoreEntity
 import com.glut.schedule.data.repository.ScheduleRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -165,5 +166,13 @@ class ScheduleRepositoryTest {
         override suspend fun insertExams(exams: List<ExamEntity>) {}
 
         override suspend fun deleteAllExams() {}
+
+        override fun observeScores(): Flow<List<ScoreEntity>> = flowOf(emptyList())
+
+        override suspend fun scoreCount(): Int = 0
+
+        override suspend fun insertScores(scores: List<ScoreEntity>) {}
+
+        override suspend fun deleteAllScores() {}
     }
 }
