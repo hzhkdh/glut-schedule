@@ -329,15 +329,19 @@ class DirectLoginViewModel(
         }.getOrNull()
     }
 
-    /** POST /academic/checkCaptcha.do — validates captcha code with the server. */
+    /** POST /academic/checkCaptcha.do — validates captcha code, exactly matching browser XHR. */
     private fun validateNanningCaptcha(captcha: String, cookie: String): Boolean {
         val encodedCaptcha = URLEncoder.encode(captcha, "UTF-8")
         val request = Request.Builder()
             .url("${AcademicLoginResult.NANNING_URL}/academic/checkCaptcha.do?captchaCode=$encodedCaptcha")
             .header("Cookie", cookie)
             .header("User-Agent", UA)
-            .header("X-Requested-With", "XMLHttpRequest")  // simulate AJAX
-            .post(FormBody.Builder().build())  // empty POST body (JS sends POST with query param)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Origin", AcademicLoginResult.NANNING_URL)
+            .header("Referer", "${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
+            .header("Accept", "text/plain, */*; q=0.01")
+            // Empty POST body WITHOUT Content-Type header (browser XHR doesn't set one)
+            .method("POST", okhttp3.RequestBody.create(null, ByteArray(0)))
             .build()
 
         return httpClient.newCall(request).execute().use { response ->
