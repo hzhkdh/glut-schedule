@@ -41,6 +41,9 @@ AGENTS.md
 __pycache__/
 *.pyc
 
+# ===== Docs (personal notes, not for public repo) =====
+docs/
+
 # ===== Kotlin / generated =====
 .kotlin/
 .dart_tool/
