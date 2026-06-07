@@ -7,8 +7,12 @@ class ScoreParser {
      * Parse score HTML. When [year] and [term] are null, they are extracted from the
      * table cells (cells[0] = year like "2025-2026", cells[1] = term like "1"/"2").
      * This enables a single full-query request instead of 8 separate semester requests.
+     *
+     * [isNanning] switches to Nanning campus column layout:
+     *   Guilin: cells[4]=course, cells[7]=score
+     *   Nanning: cells[2]=course, cells[4]=score, cells[5]=credit
      */
-    fun parseScoreHtml(html: String, year: String? = null, term: Int? = null): List<ScoreInfo> {
+    fun parseScoreHtml(html: String, year: String? = null, term: Int? = null, isNanning: Boolean = false): List<ScoreInfo> {
         val scores = mutableListOf<ScoreInfo>()
         val body = html.replace(Regex("""\s+"""), " ")
 
@@ -23,6 +27,11 @@ class ScoreParser {
 
         val headerIndex = rows.indexOfFirst { it.value.contains("<th") }
         val dataRows = if (headerIndex >= 0) rows.drop(headerIndex + 1) else rows.drop(1)
+
+        // Nanning campus has a narrower table: cells[2]=course, cells[4]=score, cells[5]=credit
+        val courseIdx = if (isNanning) 2 else 4
+        val scoreIdx = if (isNanning) 4 else 7
+        val creditIdx = if (isNanning) 5 else null  // Guilin: search multiple cells
 
         for (row in dataRows) {
             val cells = parseCells(row.value)
@@ -44,20 +53,25 @@ class ScoreParser {
                 }
             }
 
-            val courseName = cleanHtmlText(cells.getOrElse(4) { "" })
+            val courseName = cleanHtmlText(cells.getOrElse(courseIdx) { "" })
             if (courseName.isBlank()) continue
 
-            val scoreText = cleanHtmlText(cells.getOrElse(7) { "" })
+            val scoreText = cleanHtmlText(cells.getOrElse(scoreIdx) { "" })
             if (scoreText.isBlank()) continue
 
             val category = cleanHtmlText(cells.getOrElse(1) { "" })
-            // Try multiple cell positions for credit (varies by campus/term);
-            // cells[4] = course name, cells[5..8] may contain credit
-            val credit = listOf(5, 6, 8).firstNotNullOfOrNull { idx ->
-                cells.getOrElse(idx) { "" }.let { raw ->
-                    Regex("""([.\d]+)""").find(cleanHtmlText(raw))?.value?.toDoubleOrNull()
-                }
-            } ?: 0.0
+            val credit = if (creditIdx != null) {
+                // Nanning: credit is directly in the known column
+                cleanHtmlText(cells.getOrElse(creditIdx) { "0" })
+                    .let { Regex("""([.\d]+)""").find(it)?.value?.toDoubleOrNull() } ?: 0.0
+            } else {
+                // Guilin: try multiple cell positions (credit column varies by semester)
+                listOf(5, 6, 8).firstNotNullOfOrNull { idx ->
+                    cells.getOrElse(idx) { "" }.let { raw ->
+                        Regex("""([.\d]+)""").find(cleanHtmlText(raw))?.value?.toDoubleOrNull()
+                    }
+                } ?: 0.0
+            }
             val examType = cleanHtmlText(cells.getOrElse(2) { "" })
             val gpa = scoreToGpa(scoreText)
 

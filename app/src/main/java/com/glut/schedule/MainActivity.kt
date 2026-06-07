@@ -179,8 +179,10 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                val isSchedulePage = selectedItem == DrawerItem.Schedule
+
                 DisposableEffect(selectedItem) {
-                    applySystemBarStyle()
+                    applySystemBarStyle(lightIcons = !isSchedulePage)
                     onDispose { }
                 }
 
@@ -195,29 +197,34 @@ class MainActivity : ComponentActivity() {
                     onDispose { }
                 }
 
-                val isSchedulePage = selectedItem == DrawerItem.Schedule
-
                 ModalNavigationDrawer(
                     drawerState = drawerState,
                     drawerContent = {
                         ModalDrawerSheet(
                             modifier = Modifier.fillMaxWidth(0.75f),
-                            drawerContainerColor = Color(0xFFF6F4EF),
+                            drawerContainerColor = Color(0xFFE8E4D6),
                             drawerContentColor = Color(0xFF141821)
                         ) {
                             DrawerHeader(onClose = { scope.launch { drawerState.close() } })
                             HorizontalDivider(color = Color(0xFFDDE2EA))
-                            Spacer(modifier = Modifier.height(8.dp))
-                            LazyColumn {
-                                items(DrawerItem.entries.toList()) { item ->
-                                    DrawerMenuItem(
-                                        item = item,
-                                        isSelected = selectedItem == item,
-                                        onClick = {
-                                            selectedItem = item
-                                            scope.launch { drawerState.close() }
-                                        }
-                                    )
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                                    .background(Color(0xFFF6F4EF))
+                            ) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LazyColumn {
+                                    items(DrawerItem.entries.toList()) { item ->
+                                        DrawerMenuItem(
+                                            item = item,
+                                            isSelected = selectedItem == item,
+                                            onClick = {
+                                                selectedItem = item
+                                                scope.launch { drawerState.close() }
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -276,7 +283,7 @@ class MainActivity : ComponentActivity() {
                         },
                         // 课程表页面不消耗系统栏空间，让背景铺满全屏
                         contentWindowInsets = if (isSchedulePage) WindowInsets(0) else ScaffoldDefaults.contentWindowInsets,
-                        containerColor = Color(0xFF07111F)
+                        containerColor = if (isSchedulePage) Color(0xFF07111F) else Color(0xFFF6F4EF)
                     ) { padding ->
                         Box(modifier = Modifier.padding(padding)) {
                             when (selectedItem) {
@@ -318,12 +325,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun applySystemBarStyle() {
+    private fun applySystemBarStyle(lightIcons: Boolean) {
         val lightFlag = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         window.statusBarColor = AndroidColor.TRANSPARENT
-        window.decorView.systemUiVisibility =
-            window.decorView.systemUiVisibility and lightFlag.inv()
-        window.navigationBarColor = AndroidColor.rgb(17, 24, 39)
+        val visibility = window.decorView.systemUiVisibility
+        window.decorView.systemUiVisibility = if (lightIcons) {
+            visibility or lightFlag   // dark icons for light page backgrounds
+        } else {
+            visibility and lightFlag.inv()  // white icons for dark page backgrounds
+        }
+        window.navigationBarColor = if (lightIcons) {
+            AndroidColor.rgb(0xF6, 0xF4, 0xEF)  // matches menu page F6F4EF
+        } else {
+            AndroidColor.rgb(17, 24, 39)  // matches schedule dark background
+        }
     }
 
     private fun backgroundTargetSize(): Pair<Int, Int> {
@@ -336,30 +351,28 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun DrawerHeader(onClose: () -> Unit) {
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFE8E4D6))
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(horizontal = 20.dp, vertical = 24.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 20.dp, vertical = 24.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("📅", fontSize = 32.sp)
+                Spacer(modifier = Modifier.width(12.dp))
                 Column {
-                    Text("🎓 桂工课表", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("桂工课表", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("桂林理工大学", color = Color(0xFF667085), fontSize = 13.sp)
+                    Text("简单 高效 纯粹", color = Color(0xFF667085), fontSize = 13.sp)
                 }
-                IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Outlined.Close, contentDescription = "关闭", tint = Color(0xFF667085), modifier = Modifier.size(22.dp))
-                }
+            }
+            IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Outlined.Close, contentDescription = "关闭", tint = Color(0xFF667085), modifier = Modifier.size(22.dp))
             }
         }
     }

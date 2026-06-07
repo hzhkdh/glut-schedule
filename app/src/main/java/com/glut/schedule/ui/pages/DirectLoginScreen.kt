@@ -1,5 +1,7 @@
 package com.glut.schedule.ui.pages
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,7 +9,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -16,8 +17,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -32,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -63,15 +68,6 @@ fun DirectLoginScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var passwordVisible by remember { mutableStateOf(false) }
-
-    // Nanning campus requires captcha → show WebView-based login
-    if (uiState.showNanningWebView) {
-        NanningLoginWebView(
-            onLoginSuccess = viewModel::onNanningWebViewLoginSuccess,
-            onBack = viewModel::onNanningWebViewBack
-        )
-        return
-    }
 
     Scaffold(
         modifier = modifier,
@@ -193,6 +189,93 @@ fun DirectLoginScreen(
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
+
+    // Native captcha dialog for Nanning login
+    if (uiState.showCaptchaDialog && uiState.captchaBitmap != null) {
+        NanningCaptchaDialog(
+            captchaBitmap = uiState.captchaBitmap!!,
+            captchaInput = uiState.captchaInput,
+            isLoggingIn = uiState.isLoggingIn,
+            onCaptchaInputChange = viewModel::updateCaptchaInput,
+            onRefresh = viewModel::refreshNanningCaptcha,
+            onConfirm = viewModel::submitNanningCaptcha,
+            onDismiss = viewModel::cancelNanningCaptcha
+        )
+    }
+}
+
+@Composable
+private fun NanningCaptchaDialog(
+    captchaBitmap: android.graphics.Bitmap,
+    captchaInput: String,
+    isLoggingIn: Boolean,
+    onCaptchaInputChange: (String) -> Unit,
+    onRefresh: () -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("请输入验证码", fontWeight = FontWeight.SemiBold, color = LoginPrimary)
+        },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Captcha image — click to refresh
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Image(
+                        bitmap = captchaBitmap.asImageBitmap(),
+                        contentDescription = "验证码",
+                        modifier = Modifier
+                            .height(44.dp)
+                            .clickable { onRefresh() }
+                    )
+                    IconButton(onClick = onRefresh, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.Outlined.Refresh,
+                            contentDescription = "刷新验证码",
+                            tint = LoginSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Text("点击图片刷新", color = LoginSecondary, fontSize = 11.sp)
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = captchaInput,
+                    onValueChange = onCaptchaInputChange,
+                    label = { Text("验证码", color = LoginSecondary) },
+                    singleLine = true,
+                    colors = loginTextFieldColors(),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = !isLoggingIn,
+                colors = ButtonDefaults.buttonColors(containerColor = LoginAccent)
+            ) {
+                if (isLoggingIn) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                } else {
+                    Text("确认登录", color = Color.White, fontSize = 14.sp)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isLoggingIn) {
+                Text("取消", color = LoginSecondary)
+            }
+        },
+        containerColor = Color.White,
+        shape = RoundedCornerShape(16.dp)
+    )
 }
 
 @Composable

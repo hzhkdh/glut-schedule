@@ -12,17 +12,24 @@ import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 sealed class AcademicLoginResult {
-    data class Success(val cookie: String) : AcademicLoginResult()
+    data class Success(val cookie: String, val campusBaseUrl: String = DEFAULT_GUILIN_URL) : AcademicLoginResult()
     data object MissingCredentials : AcademicLoginResult()
     data object InvalidCredentials : AcademicLoginResult()
     data object CaptchaOrInteractiveLoginRequired : AcademicLoginResult()
     data class NetworkError(val message: String) : AcademicLoginResult()
+
+    companion object {
+        const val DEFAULT_GUILIN_URL = "http://jw.glut.edu.cn"
+        const val NANNING_URL = "http://jw.glutnn.cn"
+    }
 }
 
 class AcademicLoginHttpClient(
     private val cookieJar: CapturingCookieJar = CapturingCookieJar(),
     client: OkHttpClient? = null,
-    private val baseUrl: String = "http://jw.glut.edu.cn"
+    private val baseUrl: String = "http://jw.glut.edu.cn",
+    private val loginPagePath: String = "/academic/affairLogin.do",
+    private val usePostLogin: Boolean = false
 ) {
     private val client: OkHttpClient = client ?: OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -40,20 +47,30 @@ class AcademicLoginHttpClient(
         runCatching {
             val loginPage = fetchLoginPage()
             val loginPath = buildLoginPath(loginPage.sessionId)
-            val loginUrl = "$baseUrl$loginPath" +
-                "?j_username=${encode(username)}&j_password=${encode(password)}&j_captcha="
+            val loginUrl = "$baseUrl$loginPath"
 
             val request = Request.Builder()
                 .url(loginUrl)
                 .header("User-Agent", USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/json,*/*")
-                .header("Referer", "$baseUrl/academic/affairLogin.do")
+                .header("Referer", "$baseUrl$loginPagePath")
                 .apply {
                     if (loginPage.cookie.isNotBlank()) {
                         header("Cookie", loginPage.cookie)
                     }
+                    if (usePostLogin) {
+                        header("Content-Type", "application/x-www-form-urlencoded")
+                        val formBody = FormBody.Builder()
+                            .add("j_username", username)
+                            .add("j_password", password)
+                            .add("j_captcha", "")
+                            .build()
+                        post(formBody)
+                    } else {
+                        url(loginUrl + "?j_username=${encode(username)}&j_password=${encode(password)}&j_captcha=")
+                        get()
+                    }
                 }
-                .get()
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -84,7 +101,7 @@ class AcademicLoginHttpClient(
 
     private fun fetchLoginPage(): LoginPage {
         val request = Request.Builder()
-            .url("$baseUrl/academic/affairLogin.do")
+            .url("$baseUrl$loginPagePath")
             .header("User-Agent", USER_AGENT)
             .header("Accept", "text/html,application/xhtml+xml,*/*")
             .get()
@@ -133,7 +150,7 @@ class AcademicLoginHttpClient(
             when {
                 response.code == 401 || response.code == 403 -> AcademicLoginResult.InvalidCredentials
                 looksLikeLoginPage(body) -> AcademicLoginResult.CaptchaOrInteractiveLoginRequired
-                response.isSuccessful -> AcademicLoginResult.Success(cookie)
+                response.isSuccessful -> AcademicLoginResult.Success(cookie, baseUrl)
                 else -> AcademicLoginResult.NetworkError("教务系统返回 HTTP ${response.code}")
             }
         }
@@ -222,7 +239,7 @@ class AcademicOALoginClient(
 
             val jwCookie = transferOAToJW(step2Cookie)
             if (jwCookie.isNotBlank()) {
-                AcademicLoginResult.Success(jwCookie)
+                AcademicLoginResult.Success(jwCookie, AcademicLoginResult.DEFAULT_GUILIN_URL)
             } else {
                 AcademicLoginResult.CaptchaOrInteractiveLoginRequired
             }
