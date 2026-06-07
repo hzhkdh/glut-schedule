@@ -1,7 +1,7 @@
 {
-  "version": "v0.7.16",
-  "versionCode": 1,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.7.16",
-  "releaseNotes": "## Fixes\n\n### Score Query (4 critical bugs fixed)\n- Year extraction: now handles \"2025-2026\", \"2019\", and encoded \"45\" -> 2025\n- Nanning column indices: corrected per GlutAssistantN reference\n- POST instead of GET: matches HTML form and all 3 reference projects\n- GBK encoding: detect and handle GBK/GB2312 charset\n\n### Update Notification\n- Dual-channel check: GitHub API + GitHub Pages fallback\n- Red dot badge on drawer \"About\" menu item\n- GitHub Actions auto-deploys version.j,
-  "publishedAt": "2026-06-07T18:35:40Z"
+  "version": "v0.7.17",
+  "versionCode": 2,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.7.17",
+  "releaseNotes": "## v0.7.17 更新内容\n\n### 考试安排优化\n- 修复已结束考试排序：先结束的考试排在后面，最近结束的排前面\n- 考试日期加上年份，格式改为 yyyy-MM-dd\n- 已结束标签移至卡片左下角角标，不再挤占课程名称空间\n\n### 成绩页面修复\n- 刷新成绩后消息提示4秒自动消失，不再持久显示\n\n### 测试\n- 新增2个排序测试用例，全部通过\n",
+  "publishedAt": "2026-06-07T19:34:04Z"
 }
