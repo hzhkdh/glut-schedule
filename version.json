@@ -1,7 +1,7 @@
 {
-  "version": "v0.9.6",
-  "versionCode": 4,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.9.6",
-  "releaseNotes": "## 新功能\n- 新增\"教学计划\"菜单，对接教务个人教学计划\n- 桂林: studentScheduleLineShow.do / 南宁: studentScheduleLineShow.do（统一）\n- 表格布局: 课组名称 | 属性 | 学分要求 | 已获学分 | 门数要求 | 通过门数 | 是否合格\n- 同时解析任选课组和必修/限选课组\n- 长课组名自动在括号处换行\n- 响应式字体，根据屏幕宽度自动调整\n- 账号切换自动刷新（基于 cookie 变化检测）\n\nCo-Authored-By:,
-  "publishedAt": "2026-06-08T08:31:38Z"
+  "version": "v0.10.0",
+  "versionCode": 5,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.10.0",
+  "releaseNotes": "## v0.10.0 更新内容\n\n### 新增\n- **FAQ 常见问题菜单**：抽屉「其他」分组新增「常见问题」，包含 11 条问答，卡片式展开/收起\n- 菜单排序：设置 → 常见问题 → 关于\n\n### 代码清理\n- 移除死代码 AcademicTodayPlanParser 及测试\n- 清理 AcademicImportConfig 中 10 个未使用函数\n- 清理 ScheduleDao 中 4 个未使用计数方法\n\n### FAQ 内容\n使用问题（课表无数据、切换校区、多设备同步、隐私安全,
+  "publishedAt": "2026-06-08T17:46:16Z"
 }
