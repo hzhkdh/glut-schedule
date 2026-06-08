@@ -163,15 +163,11 @@ class ScheduleRepositoryTest {
 
         override fun observeExams(): Flow<List<ExamEntity>> = flowOf(emptyList())
 
-        override suspend fun examCount(): Int = 0
-
         override suspend fun insertExams(exams: List<ExamEntity>) {}
 
         override suspend fun deleteAllExams() {}
 
         override fun observeScores(): Flow<List<ScoreEntity>> = flowOf(emptyList())
-
-        override suspend fun scoreCount(): Int = 0
 
         override suspend fun insertScores(scores: List<ScoreEntity>) {}
 
@@ -179,15 +175,11 @@ class ScheduleRepositoryTest {
 
         override fun observeGradeExams(): Flow<List<GradeExamEntity>> = flowOf(emptyList())
 
-        override suspend fun gradeExamCount(): Int = 0
-
         override suspend fun insertGradeExams(exams: List<GradeExamEntity>) {}
 
         override suspend fun deleteAllGradeExams() {}
 
         override fun observeStudyPlanGroups(): Flow<List<com.glut.schedule.data.local.StudyPlanGroupEntity>> = flowOf(emptyList())
-
-        override suspend fun studyPlanGroupCount(): Int = 0
 
         override suspend fun insertStudyPlanGroups(groups: List<com.glut.schedule.data.local.StudyPlanGroupEntity>) {}
 

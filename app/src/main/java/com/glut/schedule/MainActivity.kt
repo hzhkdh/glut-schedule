@@ -70,6 +70,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glut.schedule.service.UpdateInfo
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.pages.AboutScreen
+import com.glut.schedule.ui.pages.FaqScreen
 import com.glut.schedule.ui.pages.DirectLoginScreen
 import com.glut.schedule.ui.pages.DirectLoginViewModel
 import com.glut.schedule.ui.pages.DirectLoginViewModelFactory
@@ -278,7 +279,7 @@ class MainActivity : ComponentActivity() {
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
                                         )
                                     }
-                                    items(listOf(DrawerItem.Settings, DrawerItem.About)) { item ->
+                                    items(listOf(DrawerItem.Settings, DrawerItem.FAQ, DrawerItem.About)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
@@ -397,6 +398,7 @@ class MainActivity : ComponentActivity() {
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
                                     onClearBackground = { scheduleViewModel.clearCustomBackground() }
                                 )
+                                DrawerItem.FAQ -> FaqScreen()
                                 DrawerItem.About -> AboutScreen(
                                     updateChecker = container.updateChecker,
                                     onShowUpdateDialog = { showUpdateDialog = it }
