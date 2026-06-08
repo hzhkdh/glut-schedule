@@ -26,12 +26,9 @@ images/
 # ===== Debug artifacts (may contain cookies, tokens, PII) =====
 debug/
 *.pkl
-nanning_captcha*.png
-nanning_login_page.png
 nanning_session.pkl
 cookies.txt
 login.html
-captcha*.png
 
 # ===== Local agent / tooling temp files =====
 .codegraph/
