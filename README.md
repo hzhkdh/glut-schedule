@@ -11,7 +11,7 @@
 - 彩色课程卡片展示课程名、教室、教师、周次
 - 同一时段多门冲突课程自动分组，点击轮换显示
 - 调课处的卡片消失，在补课的节次补上卡片
-- 暗色星空渐变背景，支持自定义背景图片
+- 默认图片背景，支持自定义背景图片
 
 ### 数据导入
 - 直接输入学号密码登录教务系统（桂林 / 南宁自动检测）
@@ -27,6 +27,7 @@
 | 考试安排 | 考试时间、地点、座位号 | 多端点探测 (JSON/HTML) |
 | 等级考级 | 英语四六级、普通话等国家考试 | skilltest.jsdo (moduleId=2090) |
 | 教学计划 | 课组学分/门数要求与完成情况 | studentSelfSchedule.jsdo → studentScheduleLineShow.do |
+| 常见问题 | FAQ 常见问题解答，卡片展开/收起 | — |
 | 导入课表 | 学号密码登录，一键导入全部数据 | 多端点并行探测 |
 | 设置 | 显示周末开关、自定义背景 | — |
 | 关于 | 版本信息、更新检测 | GitHub Releases |
@@ -107,8 +108,6 @@ app/src/main/java/com/glut/schedule/
       AcademicSessionStore.kt       Cookie / campus URL 持久化
       AcademicExamService.kt        考试数据获取 + 多端点探针
       AcademicLoginService.kt       静默登录（凭据 → Cookie）
-      AcademicLoginHttpClient.kt    HTTP 登录客户端（CapturingCookieJar）
-      AcademicOALoginClient.kt      OA 统一认证登录（ca.glut.edu.cn）
       AcademicImportConfig.kt       教务 URL 构建
       ApiProbeService.kt            多端点并行探测引擎
       CredentialStore.kt            加密凭据存储
@@ -125,7 +124,7 @@ app/src/main/java/com/glut/schedule/
 
   ui/
     components/
-      ScheduleBackground.kt         星空渐变背景 + 自定义图片（LRU 缓存）
+      ScheduleBackground.kt         默认图片背景 + 自定义图片（LRU 缓存）
       ScheduleHeader.kt             周次、日期、操作按钮
       ScheduleGrid.kt               课表网格
     navigation/
@@ -137,6 +136,7 @@ app/src/main/java/com/glut/schedule/
       GradeExamScreen.kt / GradeExamViewModel.kt
       StudyPlanScreen.kt / StudyPlanViewModel.kt
       DirectLoginScreen.kt / DirectLoginViewModel.kt
+      FaqScreen.kt
       AboutScreen.kt
     theme/
       Theme.kt                      深色 Material 3 主题
