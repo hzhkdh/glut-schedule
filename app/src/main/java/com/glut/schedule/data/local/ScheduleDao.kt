@@ -60,9 +60,6 @@ interface ScheduleDao {
     @Query("SELECT * FROM exams ORDER BY examDate, startTime")
     fun observeExams(): Flow<List<ExamEntity>>
 
-    @Query("SELECT COUNT(*) FROM exams")
-    suspend fun examCount(): Int
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertExams(exams: List<ExamEntity>)
 
@@ -77,9 +74,6 @@ interface ScheduleDao {
 
     @Query("SELECT * FROM scores ORDER BY year DESC, term DESC, courseName")
     fun observeScores(): Flow<List<ScoreEntity>>
-
-    @Query("SELECT COUNT(*) FROM scores")
-    suspend fun scoreCount(): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertScores(scores: List<ScoreEntity>)
@@ -96,9 +90,6 @@ interface ScheduleDao {
     @Query("SELECT * FROM grade_exams ORDER BY examTime DESC")
     fun observeGradeExams(): Flow<List<GradeExamEntity>>
 
-    @Query("SELECT COUNT(*) FROM grade_exams")
-    suspend fun gradeExamCount(): Int
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertGradeExams(exams: List<GradeExamEntity>)
 
@@ -113,9 +104,6 @@ interface ScheduleDao {
 
     @Query("SELECT * FROM study_plan_groups ORDER BY groupName")
     fun observeStudyPlanGroups(): Flow<List<StudyPlanGroupEntity>>
-
-    @Query("SELECT COUNT(*) FROM study_plan_groups")
-    suspend fun studyPlanGroupCount(): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStudyPlanGroups(groups: List<StudyPlanGroupEntity>)
