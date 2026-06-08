@@ -80,6 +80,9 @@ import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
+import com.glut.schedule.ui.pages.GradeExamScreen
+import com.glut.schedule.ui.pages.GradeExamViewModel
+import com.glut.schedule.ui.pages.GradeExamViewModelFactory
 import com.glut.schedule.ui.theme.GlutScheduleTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -135,6 +138,14 @@ class MainActivity : ComponentActivity() {
                         scoreParser = container.scoreParser
                     )
                 )
+                val gradeExamViewModel: GradeExamViewModel = viewModel(
+                    factory = GradeExamViewModelFactory(
+                        repository = container.scheduleRepository,
+                        sessionStore = container.academicSessionStore,
+                        loginService = container.academicLoginService,
+                        gradeExamParser = container.gradeExamParser
+                    )
+                )
                 val directLoginViewModel: DirectLoginViewModel = viewModel(
                     factory = DirectLoginViewModelFactory(
                         loginService = container.academicLoginService,
@@ -145,7 +156,8 @@ class MainActivity : ComponentActivity() {
                         apiProbeService = container.apiProbeService,
                         scheduleParser = container.academicScheduleParser,
                         examParser = container.examParser,
-                        scoreParser = container.scoreParser
+                        scoreParser = container.scoreParser,
+                        gradeExamParser = container.gradeExamParser
                     )
                 )
 
@@ -284,6 +296,15 @@ class MainActivity : ComponentActivity() {
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
+                                            DrawerItem.GradeExam -> {
+                                                val gradeExamState by gradeExamViewModel.uiState.collectAsState()
+                                                IconButton(
+                                                    onClick = gradeExamViewModel::refresh,
+                                                    enabled = !gradeExamState.isRefreshing
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                                                }
+                                            }
                                             else -> {}
                                         }
                                     },
@@ -308,6 +329,7 @@ class MainActivity : ComponentActivity() {
                                     onDrawerOpen = { scope.launch { drawerState.open() } }
                                 )
                                 DrawerItem.Score -> ScoreScreen(viewModel = scoreViewModel)
+                                DrawerItem.GradeExam -> GradeExamScreen(viewModel = gradeExamViewModel)
                                 DrawerItem.Exam -> ExamScreen(
                                     viewModel = examViewModel,
                                     onBack = { selectedItem = DrawerItem.Schedule }

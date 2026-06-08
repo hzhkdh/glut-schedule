@@ -125,7 +125,9 @@ class ExamViewModel(
 
     private suspend fun fetchAndSaveExams(cookie: String): Boolean {
         val examApiUrl = sessionStore.examApiUrl.first()
-        return examService.fetchExamData(cookie, examApiUrl)
+        val campusBaseUrl = sessionStore.campusBaseUrl.first()
+            .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
+        return examService.fetchExamData(cookie, examApiUrl, campusBaseUrl)
             .onSuccess { exams ->
                 repository.replaceExams(exams)
                 val successfulUrl = examService.lastSuccessfulExamUrl

@@ -26,11 +26,12 @@ class ScoreParserTest {
 
     @Test
     fun parsesGuilinScoreTableWithExplicitYearTerm() {
+        // Guilin: cells[8]=绩点 (extracted), credit=0.0 (not in Guilin score table)
         val html = """
             <table class="datalist" width="100%">
-                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>学分</th></tr>
+                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>绩点</th></tr>
                 <tr><td>2025-2026</td><td>春</td><td></td><td></td><td>高等数学（二）</td><td></td><td></td><td>91</td><td>4.0</td></tr>
-                <tr><td>2025-2026</td><td>春</td><td></td><td></td><td>大学英语（四）</td><td></td><td></td><td>85</td><td>3.0</td></tr>
+                <tr><td>2025-2026</td><td>春</td><td></td><td></td><td>大学英语（四）</td><td></td><td></td><td>85</td><td>3.7</td></tr>
             </table>
         """.trimIndent()
 
@@ -38,11 +39,12 @@ class ScoreParserTest {
         assertEquals(2, scores.size)
         assertEquals("高等数学（二）", scores[0].courseName)
         assertEquals("91", scores[0].score)
-        assertEquals(4.0, scores[0].gpa, 0.01)
-        assertEquals(4.0, scores[0].credit, 0.01)
+        assertEquals(4.0, scores[0].gpa, 0.01)   // extracted from cells[8] (GPA column)
+        assertEquals(0.0, scores[0].credit, 0.01) // Guilin: no credit column in score table
         assertEquals("2025-2026", scores[0].year)
         assertEquals(1, scores[0].term)
         assertEquals("大学英语（四）", scores[1].courseName)
+        assertEquals(3.7, scores[1].gpa, 0.01)   // extracted from cells[8]
     }
 
     @Test
@@ -50,9 +52,9 @@ class ScoreParserTest {
         // Auto-extract year from cells when year=null — dash format "2025-2026"
         val html = """
             <table class="datalist" width="100%">
-                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>学分</th></tr>
+                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>绩点</th></tr>
                 <tr><td>2025-2026</td><td>春</td><td></td><td></td><td>高等数学</td><td></td><td></td><td>91</td><td>4.0</td></tr>
-                <tr><td>2024-2025</td><td>秋</td><td></td><td></td><td>大学英语</td><td></td><td></td><td>85</td><td>3.0</td></tr>
+                <tr><td>2024-2025</td><td>秋</td><td></td><td></td><td>大学英语</td><td></td><td></td><td>85</td><td>3.7</td></tr>
             </table>
         """.trimIndent()
 
@@ -69,9 +71,9 @@ class ScoreParserTest {
         // The real GLUT academic system uses simple 4-digit years like "2019"
         val html = """
             <table class="datalist" width="100%">
-                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>学分</th></tr>
+                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>绩点</th></tr>
                 <tr><td>2025</td><td>春</td><td></td><td></td><td>高等数学</td><td></td><td></td><td>91</td><td>4.0</td></tr>
-                <tr><td>2024</td><td>秋</td><td></td><td></td><td>大学英语</td><td></td><td></td><td>85</td><td>3.0</td></tr>
+                <tr><td>2024</td><td>秋</td><td></td><td></td><td>大学英语</td><td></td><td></td><td>85</td><td>3.7</td></tr>
             </table>
         """.trimIndent()
 
@@ -86,9 +88,9 @@ class ScoreParserTest {
         // Encoded year format (year - 1980): "45" = 2025, "44" = 2024
         val html = """
             <table class="datalist" width="100%">
-                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>学分</th></tr>
+                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>绩点</th></tr>
                 <tr><td>45</td><td>春</td><td></td><td></td><td>高等数学</td><td></td><td></td><td>91</td><td>4.0</td></tr>
-                <tr><td>44</td><td>秋</td><td></td><td></td><td>大学英语</td><td></td><td></td><td>85</td><td>3.0</td></tr>
+                <tr><td>44</td><td>秋</td><td></td><td></td><td>大学英语</td><td></td><td></td><td>85</td><td>3.7</td></tr>
             </table>
         """.trimIndent()
 
@@ -100,18 +102,20 @@ class ScoreParserTest {
 
     @Test
     fun parsesChineseGradeLevels() {
+        // Test scoreToGpa fallback: cells[8] is empty/non-numeric, so GPA is calculated from score
         val html = """
             <table class="datalist" width="100%">
-                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>学分</th></tr>
-                <tr><td>2025-2026</td><td>春</td><td></td><td></td><td>体育</td><td></td><td></td><td>优秀</td><td>1.0</td></tr>
-                <tr><td>2025-2026</td><td>春</td><td></td><td></td><td>实验课</td><td></td><td></td><td>及格</td><td>2.0</td></tr>
+                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>绩点</th></tr>
+                <tr><td>2025-2026</td><td>春</td><td></td><td></td><td>体育</td><td></td><td></td><td>优秀</td><td></td></tr>
+                <tr><td>2025-2026</td><td>春</td><td></td><td></td><td>实验课</td><td></td><td></td><td>及格</td><td></td></tr>
             </table>
         """.trimIndent()
 
         val scores = parser.parseScoreHtml(html, year = "2025-2026", term = 1)
         assertEquals(2, scores.size)
-        assertEquals(4.0, scores[0].gpa, 0.01)
-        assertEquals(1.0, scores[1].gpa, 0.01)
+        assertEquals(4.0, scores[0].gpa, 0.01) // 优秀 → 4.0 (from scoreToGpa, cells[8] empty)
+        assertEquals(1.0, scores[1].gpa, 0.01) // 及格 → 1.0 (from scoreToGpa, cells[8] empty)
+        assertEquals(0.0, scores[0].credit, 0.01) // Guilin: no credit
     }
 
     // ---- Nanning Campus Tests (column indices from GlutAssistantN: course=3, score=5, gpa=6, credit=7) ----
@@ -190,14 +194,16 @@ class ScoreParserTest {
         assertEquals(1, scores.size)
         assertEquals("高等数学", scores[0].courseName)
         assertEquals("91", scores[0].score)
+        assertEquals(4.0, scores[0].gpa, 0.01)   // cells[8]=4.0 extracted as GPA
+        assertEquals(0.0, scores[0].credit, 0.01) // Guilin: no credit column
     }
 
     @Test
     fun handlesMixedWhitespaceAndNbspInHtml() {
         val html = """
             <table class="datalist" width="100%">
-                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th></tr>
-                <tr><td>  2025-2026  </td><td>&nbsp;春&nbsp;</td><td></td><td></td><td>  高等数学（二）  </td><td></td><td></td><td>  &nbsp;91&nbsp;  </td></tr>
+                <tr><th>学年</th><th>学期</th><th></th><th></th><th>课程名称</th><th></th><th></th><th>成绩</th><th>绩点</th></tr>
+                <tr><td>  2025-2026  </td><td>&nbsp;春&nbsp;</td><td></td><td></td><td>  高等数学（二）  </td><td></td><td></td><td>  &nbsp;91&nbsp;  </td><td>&nbsp;4.0&nbsp;</td></tr>
             </table>
         """.trimIndent()
 
@@ -205,6 +211,8 @@ class ScoreParserTest {
         assertEquals(1, scores.size)
         assertEquals("高等数学（二）", scores[0].courseName)
         assertEquals("91", scores[0].score)
+        assertEquals(4.0, scores[0].gpa, 0.01)   // cells[8]=4.0 (cleaned &nbsp;)
+        assertEquals(0.0, scores[0].credit, 0.01) // Guilin: no credit
     }
 
     @Test

@@ -5,6 +5,7 @@ import androidx.room.PrimaryKey
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ExamInfo
+import com.glut.schedule.data.model.GradeExamInfo
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.sanitized
@@ -134,4 +135,26 @@ fun ScoreEntity.toModel(): ScoreInfo = ScoreInfo(
     id = id, courseName = courseName, score = score,
     gpa = gpa, credit = credit, year = year,
     term = term, category = category, examType = examType
+)
+
+@Entity(tableName = "grade_exams")
+data class GradeExamEntity(
+    @PrimaryKey val id: String,
+    val examName: String,
+    val examTime: String,
+    val ticketNumber: String,
+    val score: String,
+    val status: String
+)
+
+fun GradeExamInfo.toEntity(): GradeExamEntity = GradeExamEntity(
+    id = id, examName = examName, examTime = examTime,
+    ticketNumber = ticketNumber, score = score,
+    status = status
+)
+
+fun GradeExamEntity.toModel(): GradeExamInfo = GradeExamInfo(
+    id = id, examName = examName, examTime = examTime,
+    ticketNumber = ticketNumber, score = score,
+    status = status
 )

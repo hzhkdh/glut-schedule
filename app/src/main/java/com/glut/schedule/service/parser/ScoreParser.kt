@@ -38,13 +38,24 @@ class ScoreParser {
         val headerIndex = rows.indexOfFirst { it.value.contains("<th") }
         val dataRows = if (headerIndex >= 0) rows.drop(headerIndex + 1) else rows
 
-        // Column indices differ between Guilin and Nanning campuses
-        // Verified against GlutAssistantN and glut Android reference projects
+        // Column indices differ between Guilin and Nanning campuses.
+        // Verified against GlutAssistant (Flutter), GlutAssistantN (Flutter), and glut (Kotlin/Android).
+        //
+        // Guilin layout (glut project Jsoup child indices):
+        //   [0]=year [1]=term [2]=courseCode [3]=courseName [4]=teacher [5]=hours
+        //   [6]=creditFlag [7]=score [8]=gpa ... [20]=failState
+        //   → GlutAssistant Guilin regex: GPA at the cell after score (cells[8]).
+        //
+        // Nanning layout (GlutAssistantN Jsoup child indices):
+        //   [2]=courseCode [3]=courseName [4]=teacher [5]=score [6]=gpa [7]=credit [11]=category
+        //
+        // Guilin score table does NOT have a credit (学分) column — confirmed by both
+        // GlutAssistant (only extracts GPA) and glut (only extracts name + score + failState).
         val courseIdx = if (isNanning) 3 else 4
         val scoreIdx = if (isNanning) 5 else 7
-        val gpaIdx: Int? = if (isNanning) 6 else null      // Nanning has GPA in the table
-        val creditIdx = if (isNanning) 7 else null          // Guilin: auto-detect from cells 5/6/8
-        val categoryIdx = if (isNanning) 11 else null       // Nanning: course category at [11]
+        val gpaIdx: Int? = if (isNanning) 6 else 8          // Guilin: GPA right after score (cells[8])
+        val creditIdx = if (isNanning) 7 else null           // Guilin: no credit column in score table
+        val categoryIdx = if (isNanning) 11 else null        // Nanning: course category at [11]
 
         for (row in dataRows) {
             val cells = parseCells(row.value)
@@ -84,23 +95,28 @@ class ScoreParser {
 
             // Credit extraction
             val credit = if (creditIdx != null) {
-                // Nanning: credit is directly at the known column
+                // Nanning: credit is directly at the known column (cells[7])
                 cleanHtmlText(cells.getOrElse(creditIdx) { "0" })
                     .let { Regex("""([.\d]+)""").find(it)?.value?.toDoubleOrNull() } ?: 0.0
             } else {
-                // Guilin: try multiple cell positions (credit column varies by semester)
-                listOf(5, 6, 8).firstNotNullOfOrNull { idx ->
-                    cells.getOrElse(idx) { "" }.let { raw ->
-                        Regex("""([.\d]+)""").find(cleanHtmlText(raw))?.value?.toDoubleOrNull()
-                    }
-                } ?: 0.0
+                // Guilin: score table has NO credit column.
+                // Both GlutAssistant and glut do not extract credit for Guilin.
+                // The old auto-detection from cells[5]/[6]/[8] picked up hours
+                // or other metadata (causing bugs like 学分=118.0 for 体育3).
+                0.0
             }
 
-            // GPA: use table value for Nanning, calculate for Guilin
+            // GPA: use table value when available, calculate from score as fallback
             val gpa = if (gpaIdx != null) {
-                cleanHtmlText(cells.getOrElse(gpaIdx) { "" })
-                    .let { Regex("""([.\d]+)""").find(it)?.value?.toDoubleOrNull() }
-                    ?: scoreToGpa(scoreText)
+                // Extract GPA from the table (Nanning: cells[6], Guilin: cells[8])
+                val rawGpa = cleanHtmlText(cells.getOrElse(gpaIdx) { "" })
+                val parsedGpa = Regex("""([.\d]+)""").find(rawGpa)?.value?.toDoubleOrNull()
+                // Validate: GPA should be in 0.0–4.x range
+                if (parsedGpa != null && parsedGpa in 0.0..5.0) {
+                    parsedGpa
+                } else {
+                    scoreToGpa(scoreText)
+                }
             } else {
                 scoreToGpa(scoreText)
             }

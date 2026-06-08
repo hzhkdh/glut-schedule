@@ -92,4 +92,22 @@ interface ScheduleDao {
         deleteAllScores()
         insertScores(scores)
     }
+
+    @Query("SELECT * FROM grade_exams ORDER BY examTime DESC")
+    fun observeGradeExams(): Flow<List<GradeExamEntity>>
+
+    @Query("SELECT COUNT(*) FROM grade_exams")
+    suspend fun gradeExamCount(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGradeExams(exams: List<GradeExamEntity>)
+
+    @Query("DELETE FROM grade_exams")
+    suspend fun deleteAllGradeExams()
+
+    @Transaction
+    suspend fun replaceGradeExams(exams: List<GradeExamEntity>) {
+        deleteAllGradeExams()
+        insertGradeExams(exams)
+    }
 }

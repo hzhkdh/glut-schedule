@@ -6,7 +6,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 class AcademicExamService(
@@ -24,14 +23,25 @@ class AcademicExamService(
 
     suspend fun fetchExamData(
         cookie: String,
-        storedExamApiUrl: String = ""
+        storedExamApiUrl: String = "",
+        baseUrl: String = "http://jw.glut.edu.cn"
     ): Result<List<ExamInfo>> {
         if (cookie.isBlank()) return Result.failure(IllegalStateException("请先登录教务系统"))
 
-        // Try the stored URL first, then fall back to the known access module URL
+        // Try probes first — same strategy as import (performImport).
+        // Probes scan multiple exam endpoints and prefer JSON responses,
+        // which return ALL exams (not just current semester).
+        val probeResults = apiProbeService.probeAllEndpoints(cookie = cookie, baseUrl = baseUrl)
+        val selected = selectExamDataFromProbeResults(probeResults)
+        if (selected != null) {
+            lastSuccessfulExamUrl = selected.url
+            return Result.success(selected.exams)
+        }
+
+        // Fall back to stored URL or the known access module URL
         val urlsToTry = buildList {
             if (storedExamApiUrl.isNotBlank()) add(storedExamApiUrl)
-            add("http://jw.glut.edu.cn/academic/accessModule.do?moduleId=2030")
+            add("$baseUrl/academic/accessModule.do?moduleId=2030")
         }.distinct()
 
         for (url in urlsToTry) {
@@ -40,13 +50,6 @@ class AcademicExamService(
                 lastSuccessfulExamUrl = url
                 return result
             }
-        }
-
-        val probeResults = apiProbeService.probeAllEndpoints(cookie = cookie)
-        val selected = selectExamDataFromProbeResults(probeResults)
-        if (selected != null) {
-            lastSuccessfulExamUrl = selected.url
-            return Result.success(filterCurrentSemester(selected.exams))
         }
 
         return Result.failure(IllegalStateException("会话已过期，请在课表导入页面重新登录后刷新"))
@@ -94,7 +97,7 @@ class AcademicExamService(
                         examParser.parseExamHtml(body)
                     }
                     if (exams.isNotEmpty()) {
-                        Result.success(filterCurrentSemester(exams))
+                        Result.success(exams)
                     } else {
                         Result.failure(IllegalStateException("解析结果为空"))
                     }
@@ -105,12 +108,4 @@ class AcademicExamService(
         }
     }
 
-    private fun filterCurrentSemester(exams: List<ExamInfo>): List<ExamInfo> {
-        val now = LocalDate.now()
-        val cutoff = now.plusMonths(6)
-        val filtered = exams.filter { exam ->
-            exam.examDate.isBefore(cutoff) && exam.examDate.isAfter(now.minusMonths(6))
-        }
-        return filtered.ifEmpty { exams }
-    }
 }

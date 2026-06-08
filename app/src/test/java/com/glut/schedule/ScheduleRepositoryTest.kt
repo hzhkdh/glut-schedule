@@ -4,6 +4,7 @@ import com.glut.schedule.data.local.ClassPeriodEntity
 import com.glut.schedule.data.local.CourseEntity
 import com.glut.schedule.data.local.CourseOccurrenceEntity
 import com.glut.schedule.data.local.ExamEntity
+import com.glut.schedule.data.local.GradeExamEntity
 import com.glut.schedule.data.local.ScheduleDao
 import com.glut.schedule.data.local.ScoreEntity
 import com.glut.schedule.data.repository.ScheduleRepository
@@ -175,5 +176,13 @@ class ScheduleRepositoryTest {
         override suspend fun insertScores(scores: List<ScoreEntity>) {}
 
         override suspend fun deleteAllScores() {}
+
+        override fun observeGradeExams(): Flow<List<GradeExamEntity>> = flowOf(emptyList())
+
+        override suspend fun gradeExamCount(): Int = 0
+
+        override suspend fun insertGradeExams(exams: List<GradeExamEntity>) {}
+
+        override suspend fun deleteAllGradeExams() {}
     }
 }

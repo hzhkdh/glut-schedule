@@ -221,21 +221,26 @@ private fun NanningCaptchaDialog(
         },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                // Captcha image — click to refresh
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Image(
-                        bitmap = captchaBitmap.asImageBitmap(),
-                        contentDescription = "验证码",
-                        modifier = Modifier
-                            .height(44.dp)
-                            .clickable { onRefresh() }
-                    )
-                    IconButton(onClick = onRefresh, modifier = Modifier.size(36.dp)) {
+                // Captcha image — click to refresh, enlarged for readability
+                Image(
+                    bitmap = captchaBitmap.asImageBitmap(),
+                    contentDescription = "验证码",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp)
+                        .clickable { onRefresh() }
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                ) {
+                    IconButton(onClick = onRefresh, modifier = Modifier.size(28.dp)) {
                         Icon(
                             Icons.Outlined.Refresh,
                             contentDescription = "刷新验证码",
                             tint = LoginSecondary,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                     Text("点击图片刷新", color = LoginSecondary, fontSize = 11.sp)

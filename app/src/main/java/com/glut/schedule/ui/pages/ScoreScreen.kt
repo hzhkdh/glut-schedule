@@ -152,12 +152,10 @@ fun ScoreScreen(
                 items(grouped, key = { "semester_${it.key.first}_${it.key.second}" }) { (yearTerm, termScores) ->
                     val avgGpa = termScores.map { it.gpa }.filter { it > 0 }
                         .average().let { if (it.isNaN()) 0.0 else it }
-                    val totalCredit = termScores.sumOf { it.credit }
                     SemesterBlock(
                         year = yearTerm.first,
                         term = yearTerm.second,
                         avgGpa = avgGpa,
-                        totalCredit = totalCredit,
                         scores = termScores
                     )
                 }
@@ -166,14 +164,13 @@ fun ScoreScreen(
                 item {
                     val overallGpa = allScores.map { it.gpa }.filter { it > 0 }
                         .average().let { if (it.isNaN()) 0.0 else it }
-                    val overallCredit = allScores.sumOf { it.credit }
                     Surface(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                         color = ScoreSemesterHeaderBg,
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Text(
-                            "全部课程平均绩点 ${String.format("%.2f", overallGpa)} · 总学分 ${String.format("%.1f", overallCredit)}",
+                            "全部课程平均绩点 ${String.format("%.2f", overallGpa)}",
                             color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -215,7 +212,6 @@ private fun SemesterBlock(
     year: String,
     term: Int,
     avgGpa: Double,
-    totalCredit: Double,
     scores: List<ScoreInfo>
 ) {
     Surface(
@@ -239,18 +235,11 @@ private fun SemesterBlock(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text(
-                        "绩点 ${String.format("%.2f", avgGpa)}",
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontSize = 12.sp
-                    )
-                    Text(
-                        "学分 ${String.format("%.1f", totalCredit)}",
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontSize = 12.sp
-                    )
-                }
+                Text(
+                    "绩点 ${String.format("%.2f", avgGpa)}",
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 12.sp
+                )
             }
 
             // Column headers
@@ -259,10 +248,9 @@ private fun SemesterBlock(
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp, vertical = 8.dp)
             ) {
-                Text("课程名称", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(2.5f))
-                Text("成绩", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-                Text("绩点", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(0.8f), textAlign = TextAlign.Center)
-                Text("学分", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(0.7f), textAlign = TextAlign.Center)
+                Text("课程名称", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(3f))
+                Text("成绩", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1.2f), textAlign = TextAlign.Center)
+                Text("绩点", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
             }
 
             // Score rows
@@ -292,7 +280,7 @@ private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
             .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(2.5f)) {
+        Column(modifier = Modifier.weight(3f)) {
             Text(
                 score.courseName,
                 color = ScorePrimary,
@@ -308,7 +296,7 @@ private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
             color = gpaColor,
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1.2f),
             textAlign = TextAlign.Center
         )
         Text(
@@ -316,14 +304,7 @@ private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
             color = gpaColor,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(0.8f),
-            textAlign = TextAlign.Center
-        )
-        Text(
-            if (score.credit > 0) String.format("%.1f", score.credit) else "-",
-            color = ScoreSecondary,
-            fontSize = 12.sp,
-            modifier = Modifier.weight(0.7f),
+            modifier = Modifier.weight(1f),
             textAlign = TextAlign.Center
         )
     }

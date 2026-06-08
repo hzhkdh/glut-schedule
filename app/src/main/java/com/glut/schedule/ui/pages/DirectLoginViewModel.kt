@@ -18,6 +18,7 @@ import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.academic.NanningPasswordHash
 import com.glut.schedule.service.parser.AcademicScheduleParser
 import com.glut.schedule.service.parser.GlutExamParser
+import com.glut.schedule.service.parser.GradeExamParser
 import com.glut.schedule.service.parser.ScoreParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,7 +49,8 @@ data class DirectLoginUiState(
 data class ImportResult(
     val courseCount: Int,
     val examCount: Int,
-    val scoreCount: Int
+    val scoreCount: Int,
+    val gradeExamCount: Int = 0
 )
 
 class DirectLoginViewModel(
@@ -60,13 +62,14 @@ class DirectLoginViewModel(
     private val apiProbeService: ApiProbeService,
     private val scheduleParser: AcademicScheduleParser,
     private val examParser: GlutExamParser,
-    private val scoreParser: ScoreParser
+    private val scoreParser: ScoreParser,
+    private val gradeExamParser: GradeExamParser = GradeExamParser()
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DirectLoginUiState())
     val uiState: StateFlow<DirectLoginUiState> = _uiState
 
-    private val loginHttpClient = AcademicLoginHttpClient()
+    private var loginHttpClient = AcademicLoginHttpClient()
     private val oaLoginClient = AcademicOALoginClient()
 
     // Nanning login session state (lives outside uiState to avoid data class issues)
@@ -111,6 +114,11 @@ class DirectLoginViewModel(
             _uiState.value = state.copy(message = "请输入学号和密码")
             return
         }
+
+        // Create fresh login client to clear any cookies from previous sessions.
+        // Without this, the CapturingCookieJar from a prior login can cause the
+        // new login to fail with "CaptchaOrInteractiveLoginRequired".
+        loginHttpClient = AcademicLoginHttpClient()
 
         if (state.isNanning) {
             startNanningLoginFlow()
@@ -389,6 +397,7 @@ class DirectLoginViewModel(
         var courseCount = 0
         var examCount = 0
         var scoreCount = 0
+        var gradeExamCount = 0
 
         try {
             val results = apiProbeService.probeAllEndpoints(cookie = cookie, baseUrl = campusBaseUrl)
@@ -454,32 +463,40 @@ class DirectLoginViewModel(
             val examJsonResult = apiProbeService.findExamJsonResult(results)
             if (examJsonResult != null) {
                 val exams = runCatching { examParser.parseExamJson(examJsonResult.body) }.getOrDefault(emptyList())
-                if (exams.isNotEmpty()) {
-                    scheduleRepository.replaceExams(exams)
-                    examCount = exams.size
-                }
+                scheduleRepository.replaceExams(exams)
+                examCount = exams.size
             }
             if (examCount == 0) {
                 val examHtmlResult = apiProbeService.findExamHtmlResult(results)
                 if (examHtmlResult != null) {
-                    examCount = runCatching { examParser.parseExamHtml(examHtmlResult.body) }.getOrDefault(emptyList()).also {
-                        if (it.isNotEmpty()) scheduleRepository.replaceExams(it)
-                    }.size
+                    val exams = runCatching { examParser.parseExamHtml(examHtmlResult.body) }.getOrDefault(emptyList())
+                    scheduleRepository.replaceExams(exams)
+                    examCount = exams.size
                 }
             }
 
             scoreCount = fetchAndSaveScores(cookie, campusBaseUrl)
 
+            // Import grade exams from probe result
+            val gradeExamResult = apiProbeService.findGradeExamResult(results)
+            if (gradeExamResult != null) {
+                val gradeExams = runCatching {
+                    gradeExamParser.parse(gradeExamResult.body)
+                }.getOrDefault(emptyList())
+                scheduleRepository.replaceGradeExams(gradeExams)
+                gradeExamCount = gradeExams.size
+            }
+
             _uiState.value = _uiState.value.copy(
                 isLoggingIn = false,
                 message = "导入完成",
-                importResult = ImportResult(courseCount, examCount, scoreCount)
+                importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount)
             )
         } catch (e: Exception) {
             _uiState.value = _uiState.value.copy(
                 isLoggingIn = false,
                 message = "部分导入失败: ${e.message}",
-                importResult = ImportResult(courseCount, examCount, scoreCount)
+                importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount)
             )
         }
     }
@@ -531,7 +548,7 @@ class DirectLoginViewModel(
             val html = String(body, charset)
 
             val scores = scoreParser.parseScoreHtml(html, isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL)
-            if (scores.isNotEmpty()) scheduleRepository.replaceScores(scores)
+            scheduleRepository.replaceScores(scores)
             return scores.size
         } catch (_: Exception) {
             return 0
@@ -579,14 +596,15 @@ class DirectLoginViewModelFactory(
     private val apiProbeService: ApiProbeService,
     private val scheduleParser: AcademicScheduleParser,
     private val examParser: GlutExamParser,
-    private val scoreParser: ScoreParser
+    private val scoreParser: ScoreParser,
+    private val gradeExamParser: GradeExamParser = GradeExamParser()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return DirectLoginViewModel(
             loginService, sessionStore, credentialStore,
             scheduleRepository, settingsStore, apiProbeService,
-            scheduleParser, examParser, scoreParser
+            scheduleParser, examParser, scoreParser, gradeExamParser
         ) as T
     }
 }

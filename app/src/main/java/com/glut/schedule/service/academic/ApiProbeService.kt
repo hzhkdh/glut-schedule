@@ -133,6 +133,9 @@ class ApiProbeService {
         probePost("$baseUrl/academic/manager/examarrange/examStudentQuery.do")
         probeGet("$baseUrl/academic/student/examination/examinationForStudent.do")
 
+        // 等级考试 — moduleId=2090 (两校区通用)
+        probeGet("$baseUrl/academic/student/skilltest/skilltest.jsdo?moduleId=2090")
+
         // 从 moduleMenu 响应中提取考试菜单的真实 URL 并探测
         val menuResult = results.find { it.url.contains("moduleMenu.do") && it.httpCode == 200 }
         if (menuResult != null) {
@@ -399,6 +402,11 @@ class ApiProbeService {
             .sortedByDescending { (_, score) -> score }
             .firstOrNull()
             ?.first
+    }
+
+    fun findGradeExamResult(results: List<ProbeResult>): ProbeResult? {
+        return results
+            .firstOrNull { it.httpCode == 200 && it.url.contains("skilltest.jsdo") && it.body.length > 500 }
     }
 
     private fun looksLikeExamJson(body: String): Boolean {
