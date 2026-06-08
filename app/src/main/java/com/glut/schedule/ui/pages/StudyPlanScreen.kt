@@ -148,7 +148,7 @@ private fun StudyPlanRow(
     val attrColor = when (group.attribute) {
         "必修" -> Color(0xFF3F7DF6)
         "限选" -> Color(0xFFD97706)
-        else -> Color(0xFF7C5FE7)
+        else -> Color(0xFF16A34A)
     }
 
     Row(modifier = Modifier.fillMaxWidth().background(bg).padding(vertical = 6.dp, horizontal = pad),
