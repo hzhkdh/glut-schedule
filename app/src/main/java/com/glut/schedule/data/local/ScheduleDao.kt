@@ -110,4 +110,22 @@ interface ScheduleDao {
         deleteAllGradeExams()
         insertGradeExams(exams)
     }
+
+    @Query("SELECT * FROM study_plan_groups ORDER BY groupName")
+    fun observeStudyPlanGroups(): Flow<List<StudyPlanGroupEntity>>
+
+    @Query("SELECT COUNT(*) FROM study_plan_groups")
+    suspend fun studyPlanGroupCount(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStudyPlanGroups(groups: List<StudyPlanGroupEntity>)
+
+    @Query("DELETE FROM study_plan_groups")
+    suspend fun deleteAllStudyPlanGroups()
+
+    @Transaction
+    suspend fun replaceStudyPlanGroups(groups: List<StudyPlanGroupEntity>) {
+        deleteAllStudyPlanGroups()
+        insertStudyPlanGroups(groups)
+    }
 }

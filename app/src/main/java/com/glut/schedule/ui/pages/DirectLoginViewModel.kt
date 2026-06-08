@@ -20,6 +20,7 @@ import com.glut.schedule.service.parser.AcademicScheduleParser
 import com.glut.schedule.service.parser.GlutExamParser
 import com.glut.schedule.service.parser.GradeExamParser
 import com.glut.schedule.service.parser.ScoreParser
+import com.glut.schedule.service.parser.StudyPlanParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,7 +51,8 @@ data class ImportResult(
     val courseCount: Int,
     val examCount: Int,
     val scoreCount: Int,
-    val gradeExamCount: Int = 0
+    val gradeExamCount: Int = 0,
+    val studyPlanCount: Int = 0
 )
 
 class DirectLoginViewModel(
@@ -63,7 +65,8 @@ class DirectLoginViewModel(
     private val scheduleParser: AcademicScheduleParser,
     private val examParser: GlutExamParser,
     private val scoreParser: ScoreParser,
-    private val gradeExamParser: GradeExamParser = GradeExamParser()
+    private val gradeExamParser: GradeExamParser = GradeExamParser(),
+    private val studyPlanParser: StudyPlanParser = StudyPlanParser()
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DirectLoginUiState())
@@ -398,6 +401,7 @@ class DirectLoginViewModel(
         var examCount = 0
         var scoreCount = 0
         var gradeExamCount = 0
+        var studyPlanCount = 0
 
         try {
             val results = apiProbeService.probeAllEndpoints(cookie = cookie, baseUrl = campusBaseUrl)
@@ -487,16 +491,42 @@ class DirectLoginViewModel(
                 gradeExamCount = gradeExams.size
             }
 
+            try {
+                // Fetch studentSelfSchedule.jsdo with raw bytes (GBK) for reliable parsing
+                val selfClient = OkHttpClient.Builder()
+                    .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
+                val selfReq = Request.Builder()
+                    .url("$campusBaseUrl/academic/manager/studyschedule/studentSelfSchedule.jsdo")
+                    .header("Cookie", cookie).header("User-Agent", UA).get().build()
+                val selfBytes = selfClient.newCall(selfReq).execute().use { it.body?.bytes() ?: ByteArray(0) }
+                val gbkCharset = try { java.nio.charset.Charset.forName("GBK") } catch (_: Exception) { Charsets.UTF_8 }
+                val selfHtml = String(selfBytes, gbkCharset)
+                val parsedIds = studyPlanParser.parseStudentIds(selfHtml)
+                if (parsedIds != null) {
+                    val (studentId, classId) = parsedIds
+                    val planClient = OkHttpClient.Builder()
+                        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
+                    val planReq = Request.Builder()
+                        .url("$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId")
+                        .header("Cookie", cookie).header("User-Agent", UA).get().build()
+                    val planBytes = planClient.newCall(planReq).execute().use { it.body?.bytes() ?: ByteArray(0) }
+                    val planHtml = String(planBytes, Charsets.UTF_8)
+                    val groups = studyPlanParser.parseGroups(planHtml)
+                    scheduleRepository.replaceStudyPlanGroups(groups)
+                    studyPlanCount = groups.size
+                }
+            } catch (_: Exception) { }
+
             _uiState.value = _uiState.value.copy(
                 isLoggingIn = false,
                 message = "导入完成",
-                importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount)
+                importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount, studyPlanCount)
             )
         } catch (e: Exception) {
             _uiState.value = _uiState.value.copy(
                 isLoggingIn = false,
                 message = "部分导入失败: ${e.message}",
-                importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount)
+                importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount, studyPlanCount)
             )
         }
     }
@@ -597,14 +627,15 @@ class DirectLoginViewModelFactory(
     private val scheduleParser: AcademicScheduleParser,
     private val examParser: GlutExamParser,
     private val scoreParser: ScoreParser,
-    private val gradeExamParser: GradeExamParser = GradeExamParser()
+    private val gradeExamParser: GradeExamParser = GradeExamParser(),
+    private val studyPlanParser: StudyPlanParser = StudyPlanParser()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return DirectLoginViewModel(
             loginService, sessionStore, credentialStore,
             scheduleRepository, settingsStore, apiProbeService,
-            scheduleParser, examParser, scoreParser, gradeExamParser
+            scheduleParser, examParser, scoreParser, gradeExamParser, studyPlanParser
         ) as T
     }
 }

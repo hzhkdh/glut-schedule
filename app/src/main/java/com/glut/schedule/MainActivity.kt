@@ -83,6 +83,9 @@ import com.glut.schedule.ui.pages.ScoreViewModelFactory
 import com.glut.schedule.ui.pages.GradeExamScreen
 import com.glut.schedule.ui.pages.GradeExamViewModel
 import com.glut.schedule.ui.pages.GradeExamViewModelFactory
+import com.glut.schedule.ui.pages.StudyPlanScreen
+import com.glut.schedule.ui.pages.StudyPlanViewModel
+import com.glut.schedule.ui.pages.StudyPlanViewModelFactory
 import com.glut.schedule.ui.theme.GlutScheduleTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -146,6 +149,14 @@ class MainActivity : ComponentActivity() {
                         gradeExamParser = container.gradeExamParser
                     )
                 )
+                val studyPlanViewModel: StudyPlanViewModel = viewModel(
+                    factory = StudyPlanViewModelFactory(
+                        repository = container.scheduleRepository,
+                        sessionStore = container.academicSessionStore,
+                        loginService = container.academicLoginService,
+                        studyPlanParser = container.studyPlanParser
+                    )
+                )
                 val directLoginViewModel: DirectLoginViewModel = viewModel(
                     factory = DirectLoginViewModelFactory(
                         loginService = container.academicLoginService,
@@ -157,7 +168,8 @@ class MainActivity : ComponentActivity() {
                         scheduleParser = container.academicScheduleParser,
                         examParser = container.examParser,
                         scoreParser = container.scoreParser,
-                        gradeExamParser = container.gradeExamParser
+                        gradeExamParser = container.gradeExamParser,
+                        studyPlanParser = container.studyPlanParser
                     )
                 )
 
@@ -305,6 +317,15 @@ class MainActivity : ComponentActivity() {
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
+                                            DrawerItem.StudyPlan -> {
+                                                val studyPlanState by studyPlanViewModel.uiState.collectAsState()
+                                                IconButton(
+                                                    onClick = studyPlanViewModel::refresh,
+                                                    enabled = !studyPlanState.isRefreshing
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                                                }
+                                            }
                                             else -> {}
                                         }
                                     },
@@ -330,6 +351,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 DrawerItem.Score -> ScoreScreen(viewModel = scoreViewModel)
                                 DrawerItem.GradeExam -> GradeExamScreen(viewModel = gradeExamViewModel)
+                                DrawerItem.StudyPlan -> StudyPlanScreen(viewModel = studyPlanViewModel)
                                 DrawerItem.Exam -> ExamScreen(
                                     viewModel = examViewModel,
                                     onBack = { selectedItem = DrawerItem.Schedule }

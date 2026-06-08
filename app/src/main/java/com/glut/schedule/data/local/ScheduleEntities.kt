@@ -6,6 +6,7 @@ import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.GradeExamInfo
+import com.glut.schedule.data.model.StudyPlanGroup
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.sanitized
@@ -157,4 +158,30 @@ fun GradeExamEntity.toModel(): GradeExamInfo = GradeExamInfo(
     id = id, examName = examName, examTime = examTime,
     ticketNumber = ticketNumber, score = score,
     status = status
+)
+
+@Entity(tableName = "study_plan_groups")
+data class StudyPlanGroupEntity(
+    @PrimaryKey val id: String,
+    val groupName: String,
+    val attribute: String,
+    val creditRequired: Double,
+    val creditEarned: Double,
+    val countRequired: Int,
+    val countPassed: Int,
+    val isPassed: Boolean
+)
+
+fun StudyPlanGroup.toEntity(): StudyPlanGroupEntity = StudyPlanGroupEntity(
+    id = id, groupName = groupName, attribute = attribute,
+    creditRequired = creditRequired, creditEarned = creditEarned,
+    countRequired = countRequired, countPassed = countPassed,
+    isPassed = isPassed
+)
+
+fun StudyPlanGroupEntity.toModel(): StudyPlanGroup = StudyPlanGroup(
+    id = id, groupName = groupName, attribute = attribute,
+    creditRequired = creditRequired, creditEarned = creditEarned,
+    countRequired = countRequired, countPassed = countPassed,
+    isPassed = isPassed
 )

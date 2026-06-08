@@ -184,5 +184,13 @@ class ScheduleRepositoryTest {
         override suspend fun insertGradeExams(exams: List<GradeExamEntity>) {}
 
         override suspend fun deleteAllGradeExams() {}
+
+        override fun observeStudyPlanGroups(): Flow<List<com.glut.schedule.data.local.StudyPlanGroupEntity>> = flowOf(emptyList())
+
+        override suspend fun studyPlanGroupCount(): Int = 0
+
+        override suspend fun insertStudyPlanGroups(groups: List<com.glut.schedule.data.local.StudyPlanGroupEntity>) {}
+
+        override suspend fun deleteAllStudyPlanGroups() {}
     }
 }

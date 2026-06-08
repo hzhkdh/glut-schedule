@@ -136,6 +136,9 @@ class ApiProbeService {
         // 等级考试 — moduleId=2090 (两校区通用)
         probeGet("$baseUrl/academic/student/skilltest/skilltest.jsdo?moduleId=2090")
 
+        // 教学计划 — studentId/classId 提取
+        probeGet("$baseUrl/academic/manager/studyschedule/studentSelfSchedule.jsdo")
+
         // 从 moduleMenu 响应中提取考试菜单的真实 URL 并探测
         val menuResult = results.find { it.url.contains("moduleMenu.do") && it.httpCode == 200 }
         if (menuResult != null) {
