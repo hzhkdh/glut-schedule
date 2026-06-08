@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
@@ -245,7 +247,38 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 LazyColumn {
-                                    items(DrawerItem.entries.toList()) { item ->
+                                    // 常用
+                                    item {
+                                        Text(
+                                            "常用",
+                                            color = Color(0xFF3F7DF6),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 4.dp)
+                                        )
+                                    }
+                                    items(listOf(DrawerItem.Schedule, DrawerItem.Score, DrawerItem.Exam, DrawerItem.GradeExam, DrawerItem.StudyPlan, DrawerItem.Import)) { item ->
+                                        DrawerMenuItem(
+                                            item = item,
+                                            isSelected = selectedItem == item,
+                                            showDot = item == DrawerItem.About && showUpdateDot,
+                                            onClick = {
+                                                selectedItem = item
+                                                scope.launch { drawerState.close() }
+                                            }
+                                        )
+                                    }
+                                    // 其他
+                                    item {
+                                        Text(
+                                            "其他",
+                                            color = Color(0xFF3F7DF6),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
+                                        )
+                                    }
+                                    items(listOf(DrawerItem.Settings, DrawerItem.About)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
@@ -419,7 +452,11 @@ private fun DrawerHeader(onClose: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("📅", fontSize = 32.sp)
+                Image(
+                    painter = painterResource(R.drawable.glut_logo),
+                    contentDescription = "校徽",
+                    modifier = Modifier.size(38.dp)
+                )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text("桂工课表", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold)

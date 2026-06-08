@@ -140,50 +140,39 @@ private fun GradeExamCard(
         color = ScoreCardBg,
         shape = RoundedCornerShape(10.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(14.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     exam.examName,
                     color = ScorePrimary,
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f)
+                    fontWeight = FontWeight.Bold
                 )
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // Status badge
-                if (exam.status.isNotBlank()) {
-                    StatusBadge(status = exam.status)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     exam.examTime,
                     color = ScoreSecondary,
                     fontSize = 13.sp
                 )
-
-                Text(
-                    if (exam.score.isNotBlank()) exam.score else "-",
-                    color = scoreColor,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                if (exam.status.isNotBlank() && exam.status != "已批准") {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    StatusBadge(status = exam.status)
+                }
             }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Text(
+                if (exam.score.isNotBlank()) exam.score else "-",
+                color = scoreColor,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }

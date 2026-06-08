@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -66,7 +68,7 @@ fun AboutScreen(
             ) {
                 Column(modifier = Modifier.padding(4.dp)) {
                     AboutInfoRow(
-                        icon = Icons.Outlined.Code,
+                        icon = Icons.Outlined.Info,
                         label = "当前版本",
                         value = "v$currentVersion",
                         onClick = {
@@ -98,17 +100,34 @@ fun AboutScreen(
                     )
                     HorizontalDivider(color = Color(0xFFEDE8DE))
                     AboutInfoRow(
-                        icon = Icons.Outlined.Code,
+                        icon = Icons.Outlined.Language,
                         label = "项目地址",
                         value = "GitHub",
                         onClick = {
                             uriHandler.openUri("https://github.com/hzhkdh/glut-schedule")
                         }
                     )
+                    HorizontalDivider(color = Color(0xFFEDE8DE))
+                    AboutInfoRow(
+                        icon = Icons.Outlined.Email,
+                        label = "反馈建议",
+                        value = "hezh0425@qq.com",
+                        onClick = {
+                            uriHandler.openUri("mailto:hezh0425@qq.com")
+                        }
+                    )
                 }
             }
 
             Spacer(modifier = Modifier.weight(1f))
+
+            Text(
+                text = "本应用图标及导航栏校徽为桂林理工大学标识，\n仅供校内学生个人使用，与学校官方无关。",
+                color = Color(0xFF9CA3AF),
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
 
             Text(
                 text = "Made with ❤️ by hezh",
@@ -145,12 +164,14 @@ private fun AboutInfoRow(
             text = label,
             color = Color(0xFF141821),
             fontSize = 15.sp,
+            maxLines = 1,
             modifier = Modifier.weight(1f)
         )
         Text(
             text = value,
             color = Color(0xFF667085),
-            fontSize = 14.sp
+            fontSize = 13.sp,
+            maxLines = 1
         )
         Icon(
             imageVector = Icons.Outlined.ChevronRight,
