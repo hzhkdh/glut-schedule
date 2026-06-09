@@ -82,11 +82,12 @@ class ScoreParser {
             val scoreText = cleanHtmlText(cells.getOrElse(scoreIdx) { "" })
             if (scoreText.isBlank()) continue
 
-            // Category: Guilin [12] = 必修/限选/任选 directly, Nanning [11] = 课程类别
+            // Category: Guilin [12] = 必修/限选/任选 directly
+            // Nanning: look up by course code [2] from teaching plan attribute map
             val rawCategory = cleanHtmlText(cells.getOrElse(categoryIdx) { "" })
-            // Nanning: use teaching plan attribute map, fall back to hardcoded rules
             val category = if (isNanning) {
-                attributeMap[rawCategory]
+                val courseCode = cleanHtmlText(cells.getOrElse(2) { "" })
+                attributeMap[courseCode]
                     ?: normalizeNanningCategory(rawCategory)
             } else rawCategory
 

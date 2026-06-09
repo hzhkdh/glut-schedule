@@ -202,7 +202,7 @@ class ScoreViewModel(
             }
             val lineHtml = String(lineBody, Charsets.UTF_8)
 
-            studyPlanParser.parseCategoryAttributeMap(lineHtml)
+            studyPlanParser.parseCourseAttributeMap(lineHtml)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch Nanning attribute map", e)
             emptyMap()
