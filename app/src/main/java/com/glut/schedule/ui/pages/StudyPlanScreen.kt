@@ -183,4 +183,4 @@ private fun RowScope.DataCell(
 }
 
 private fun formatNum(value: Double): String =
-    if (value == value.toLong().toDouble()) value.toLong().toString() else String.format("%.1f", value)
+    if (value == value.toLong().toDouble()) value.toLong().toString() else String.format("%.2f", value)

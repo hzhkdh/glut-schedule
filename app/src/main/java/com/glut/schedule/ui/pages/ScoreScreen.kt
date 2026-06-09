@@ -34,8 +34,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.ScoreInfo
@@ -63,9 +65,18 @@ fun ScoreScreen(
 
     val grouped = remember(filteredScores) {
         filteredScores
-            .groupBy { Pair(it.year, it.term) }
-            .entries
-            .sortedByDescending { "${it.key.first}-${it.key.second}" }
+            .groupBy { score ->
+                val y = score.year.toIntOrNull() ?: 0
+                if (score.term == 1) y else y - 1  // 秋学期 year=Y, 春学期 year=Y+1 → 学年起点 Y
+            }
+            .map { (startYear, scores) ->
+                AcademicYearGroup(
+                    startYear = startYear,
+                    term1Scores = scores.filter { it.term == 1 }.sortedBy { it.courseName },
+                    term2Scores = scores.filter { it.term == 2 }.sortedBy { it.courseName }
+                )
+            }
+            .sortedByDescending { it.startYear }
     }
 
     val listState = rememberLazyListState()
@@ -154,19 +165,12 @@ fun ScoreScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
-                items(grouped, key = { "semester_${it.key.first}_${it.key.second}" }) { (yearTerm, termScores) ->
-                    val avgGpa = termScores
-                        .filter { it.category == "必修" }
-                        .let { req ->
-                            val totalCredit = req.sumOf { it.credit }
-                            if (totalCredit > 0) req.sumOf { it.credit * it.gpa } / totalCredit
-                            else 0.0
-                        }
-                    SemesterBlock(
-                        year = yearTerm.first,
-                        term = yearTerm.second,
-                        avgGpa = avgGpa,
-                        scores = termScores
+                items(grouped, key = { "year_${it.startYear}" }) { group ->
+                    AcademicYearBlock(
+                        startYear = group.startYear,
+                        gpa = group.allGpa,
+                        term1Scores = group.term1Scores,
+                        term2Scores = group.term2Scores
                     )
                 }
 
@@ -206,21 +210,34 @@ fun ScoreScreen(
                         }
                     }
                     if (showGpaInfo) {
+                        val uriHandler = LocalUriHandler.current
+                        val linkUrl = "https://jwc.glut.edu.cn/xsfw/cjhks1/pjxfjd.htm"
                         AlertDialog(
                             onDismissRequest = { showGpaInfo = false },
-                            title = { Text("绩点计算说明", color = ScorePrimary, fontSize = 16.sp) },
+                            title = { Text("绩点计算说明", fontSize = 16.sp) },
                             text = {
-                                Text(
-                                    "计算公式：\n\n" +
-                                    "GPA = Σ(必修课学分 × 绩点) ÷ Σ(必修课学分)\n\n" +
-                                    "• 仅统计选课属性为「必修」的课程\n" +
-                                    "• 限选、任选课不参与计算\n" +
-                                    "• 不及格课程绩点为 0，仍计入分母\n" +
-                                    "• 同一门课多次修读，分子取最高分，分母累加\n\n" +
-                                    "数据来源：桂林理工大学教务处",
-                                    color = ScoreSecondary,
-                                    fontSize = 14.sp
-                                )
+                                Column {
+                                    Text(
+                                        "计算公式：\n\n" +
+                                        "GPA = Σ(必修课学分 × 绩点) ÷ Σ(必修课学分)\n\n" +
+                                        "• 仅统计选课属性为「必修」的课程\n" +
+                                        "• 限选、任选课不参与计算\n" +
+                                        "• 不及格课程绩点为 0，仍计入分母\n" +
+                                        "• 同一门课多次修读，分子取最高分，分母累加",
+                                        fontSize = 14.sp
+                                    )
+                                    Spacer(modifier = Modifier.padding(top = 8.dp))
+                                    Row {
+                                        Text("数据来源：", fontSize = 14.sp)
+                                        Text(
+                                            "桂林理工大学教务处",
+                                            color = ScoreAccent,
+                                            fontSize = 14.sp,
+                                            textDecoration = TextDecoration.Underline,
+                                            modifier = Modifier.clickable { uriHandler.openUri(linkUrl) }
+                                        )
+                                    }
+                                }
                             },
                             confirmButton = {
                                 Text("知道了", color = ScoreAccent, fontSize = 14.sp,
@@ -257,12 +274,37 @@ private fun FilterChip(
     }
 }
 
+private data class AcademicYearGroup(
+    val startYear: Int,
+    val term1Scores: List<ScoreInfo>,
+    val term2Scores: List<ScoreInfo>
+) {
+    val label = "$startYear-${startYear + 1}"
+    val allGpa: Double get() {
+        val required = (term1Scores + term2Scores).filter { it.category == "必修" }
+        val totalCredit = required.sumOf { it.credit }
+        return if (totalCredit > 0) required.sumOf { it.credit * it.gpa } / totalCredit else 0.0
+    }
+}
+
 @Composable
-private fun SemesterBlock(
-    year: String,
-    term: Int,
-    avgGpa: Double,
-    scores: List<ScoreInfo>
+private fun ScoreColumnHeaders() {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
+    ) {
+        Text("课程名称", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(2.8f))
+        Text("学分", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+        Text("成绩", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1.2f), textAlign = TextAlign.Center)
+        Text("绩点", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun AcademicYearBlock(
+    startYear: Int,
+    gpa: Double,
+    term1Scores: List<ScoreInfo>,
+    term2Scores: List<ScoreInfo>
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -280,40 +322,62 @@ private fun SemesterBlock(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "$year 第${term}学期",
+                    "$startYear-${startYear + 1} 学年",
                     color = Color.White,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "GPA ${String.format("%.2f", avgGpa)}",
+                    "GPA ${String.format("%.2f", gpa)}",
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 12.sp
                 )
             }
 
-            // Column headers
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 8.dp)
-            ) {
-                Text("课程名称", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(2.8f))
-                Text("学分", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-                Text("成绩", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1.2f), textAlign = TextAlign.Center)
-                Text("绩点", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-            }
+            // Term 1 (秋)
+            TermSection("第1学期（秋）", term1Scores)
 
-            // Score rows
-            scores.forEachIndexed { index, score ->
-                ScoreRow(
-                    score = score,
-                    showDivider = index < scores.lastIndex
+            // Term 2 (春)
+            if (term2Scores.isNotEmpty()) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 10.dp),
+                    color = Color(0xFFEDE8DE),
+                    thickness = 1.dp
                 )
+                TermSection("第2学期（春）", term2Scores)
             }
         }
     }
 }
+
+@Composable
+private fun TermSection(subtitle: String, scores: List<ScoreInfo>) {
+    Text(
+        subtitle,
+        color = ScoreSecondary,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 2.dp)
+    )
+    if (scores.isEmpty()) {
+        Text(
+            "暂无成绩",
+            color = ScoreSecondary.copy(alpha = 0.5f),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
+        )
+    } else {
+        ScoreColumnHeaders()
+        scores.forEachIndexed { index, score ->
+            ScoreRow(
+                score = score,
+                showDivider = index < scores.lastIndex
+            )
+        }
+    }
+}
+
+
 
 @Composable
 private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
@@ -391,4 +455,4 @@ private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
 }
 
 private fun formatCredit(value: Double): String =
-    if (value == value.toLong().toDouble()) value.toLong().toString() else String.format("%.1f", value)
+    if (value == value.toLong().toDouble()) value.toLong().toString() else String.format("%.2f", value)
