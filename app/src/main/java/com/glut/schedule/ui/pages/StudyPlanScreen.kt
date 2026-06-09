@@ -182,5 +182,7 @@ private fun RowScope.DataCell(
         modifier = modifier.weight(w).padding(start = startPad, end = 0.dp))
 }
 
-private fun formatNum(value: Double): String =
-    if (value == value.toLong().toDouble()) value.toLong().toString() else String.format("%.2f", value)
+private fun formatNum(value: Double): String {
+    if (value == value.toLong().toDouble()) return value.toLong().toString()
+    return String.format("%.2f", value).trimEnd('0').trimEnd('.')
+}

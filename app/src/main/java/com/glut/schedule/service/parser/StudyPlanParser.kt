@@ -141,6 +141,50 @@ class StudyPlanParser {
         return cellRegex.findAll(rowHtml).map { it.groupValues[1] }.toList()
     }
 
+    /**
+     * Parse 课程类别 → 选课属性 mapping from the teaching plan page.
+     * Used by ScoreParser for Nanning campus where the score table doesn't include
+     * a dedicated 选课属性 column — we infer it from the teaching plan's课组 definitions.
+     *
+     * Structure: each课组 table (class "form output_ctx") has columns:
+     *   课组层级 | 课组名称 | 课程要求 | ...
+     * Data rows with 课组层级 == "课组" or "子课组" map 课组名称 → 课程要求.
+     */
+    fun parseCategoryAttributeMap(html: String): Map<String, String> {
+        val map = mutableMapOf<String, String>()
+        val body = html.replace(Regex("""\s+"""), " ")
+
+        val tableRegex = Regex("""<table[^>]*class\s*=\s*["'][^"']*form[^"']*output_ctx[^"']*["'][^>]*>(.*?)</table>""", RegexOption.DOT_MATCHES_ALL)
+        val rowRegex = Regex("""<tr[^>]*>(.*?)</tr>""", RegexOption.DOT_MATCHES_ALL)
+
+        for (table in tableRegex.findAll(body)) {
+            val rows = rowRegex.findAll(table.groupValues[1]).toList()
+            if (rows.isEmpty()) continue
+
+            val headerCells = parseCells(rows.first().value)
+            val headerText = headerCells.joinToString(",") { cleanHtmlText(it) }
+
+            // Only process课组 definition tables (not course tables)
+            if (!headerText.contains("课组名称") || !headerText.contains("课程要求")) continue
+
+            val headerIndex = rows.indexOfFirst { it.value.contains("<th") }
+            val dataRows = if (headerIndex >= 0) rows.drop(headerIndex + 1) else rows
+
+            for (row in dataRows) {
+                val cells = parseCells(row.value)
+                if (cells.size < 3) continue
+                val level = cleanHtmlText(cells[0])  // 课组层级: 课组/子课组/父课组
+                if (level != "课组" && level != "子课组") continue
+                val name = cleanHtmlText(cells[1])
+                val attr = cleanHtmlText(cells[2])
+                if (name.isNotBlank() && (attr == "必修" || attr == "限选" || attr == "任选")) {
+                    map[name] = attr
+                }
+            }
+        }
+        return map
+    }
+
     private fun cleanHtmlText(text: String): String {
         return text
             .replace(Regex("""<[^>]+>"""), "")

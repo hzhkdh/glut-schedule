@@ -30,7 +30,8 @@ class ScoreParser {
         html: String,
         year: String? = null,
         term: Int? = null,
-        isNanning: Boolean = false
+        isNanning: Boolean = false,
+        attributeMap: Map<String, String> = emptyMap()
     ): List<ScoreInfo> {
         val scores = mutableListOf<ScoreInfo>()
         val body = html.replace(Regex("""\s+"""), " ")
@@ -83,7 +84,11 @@ class ScoreParser {
 
             // Category: Guilin [12] = 必修/限选/任选 directly, Nanning [11] = 课程类别
             val rawCategory = cleanHtmlText(cells.getOrElse(categoryIdx) { "" })
-            val category = if (isNanning) normalizeNanningCategory(rawCategory) else rawCategory
+            // Nanning: use teaching plan attribute map, fall back to hardcoded rules
+            val category = if (isNanning) {
+                attributeMap[rawCategory]
+                    ?: normalizeNanningCategory(rawCategory)
+            } else rawCategory
 
             // Credit extraction
             val credit = cleanHtmlText(cells.getOrElse(creditIdx) { "0" })

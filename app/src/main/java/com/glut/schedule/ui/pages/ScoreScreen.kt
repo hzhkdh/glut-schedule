@@ -70,14 +70,14 @@ fun ScoreScreen(
                     springScores = scores.filter { it.term == 1 }.sortedBy { it.courseName }
                 )
             }
-            .sortedByDescending { it.startYear }
+            .sortedBy { it.startYear }
     }
 
     var selectedStartYear by remember { mutableStateOf<Int?>(null) }
-    // Default to latest year on first load
+    // Default to latest year on first load (last in ascending list)
     LaunchedEffect(allGroups) {
         if (selectedStartYear == null && allGroups.isNotEmpty()) {
-            selectedStartYear = allGroups.first().startYear
+            selectedStartYear = allGroups.last().startYear
         }
     }
     val selectedGroup = allGroups.find { it.startYear == selectedStartYear }
@@ -442,5 +442,7 @@ private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
     }
 }
 
-private fun formatCredit(value: Double): String =
-    if (value == value.toLong().toDouble()) value.toLong().toString() else String.format("%.2f", value)
+private fun formatCredit(value: Double): String {
+    if (value == value.toLong().toDouble()) return value.toLong().toString()
+    return String.format("%.2f", value).trimEnd('0').trimEnd('.')
+}

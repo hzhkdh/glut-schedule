@@ -10,6 +10,7 @@ import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.ScoreParser
+import com.glut.schedule.service.parser.StudyPlanParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,7 +39,8 @@ class ScoreViewModel(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
-    private val scoreParser: ScoreParser = ScoreParser()
+    private val scoreParser: ScoreParser = ScoreParser(),
+    private val studyPlanParser: StudyPlanParser = StudyPlanParser()
 ) : ViewModel() {
 
     private val _isRefreshing = MutableStateFlow(false)
@@ -160,10 +162,51 @@ class ScoreViewModel(
         val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
         Log.d(TAG, "Parsing scores: isNanning=$isNanning")
 
-        val scores = scoreParser.parseScoreHtml(html, isNanning = isNanning)
+        // For Nanning, fetch teaching plan to build 课程类别 → 选课属性 mapping
+        val attributeMap = if (isNanning) fetchNanningAttributeMap(cookie, campusBaseUrl, scoreClient) else emptyMap()
+        Log.d(TAG, "Attribute map entries: ${attributeMap.size}")
+
+        val scores = scoreParser.parseScoreHtml(html, isNanning = isNanning, attributeMap = attributeMap)
         Log.d(TAG, "Parsed ${scores.size} scores")
 
         return scores
+    }
+
+    /**
+     * Fetch Nanning teaching plan page and extract 课程类别 → 选课属性 mapping.
+     * Two-step: (1) get studentId+classId from studentSelfSchedule.jsdo, (2) parse mapping from studentScheduleLineShow.do.
+     */
+    private suspend fun fetchNanningAttributeMap(
+        cookie: String,
+        campusBaseUrl: String,
+        client: OkHttpClient
+    ): Map<String, String> = withContext(Dispatchers.IO) {
+        try {
+            // Step 1: Fetch studentSelfSchedule.jsdo to get studentId + classId
+            val selfUrl = "$campusBaseUrl/academic/manager/studyschedule/studentSelfSchedule.jsdo"
+            val selfBody = client.newCall(Request.Builder().url(selfUrl)
+                .header("Cookie", cookie).header("User-Agent", UA).get().build()
+            ).execute().use { response ->
+                response.body?.bytes() ?: ByteArray(0)
+            }
+            val selfHtml = String(selfBody, Charset.forName("GBK"))
+            val ids = studyPlanParser.parseStudentIds(selfHtml) ?: return@withContext emptyMap()
+            val (studentId, classId) = ids
+
+            // Step 2: Fetch studentScheduleLineShow.do
+            val lineUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId"
+            val lineBody = client.newCall(Request.Builder().url(lineUrl)
+                .header("Cookie", cookie).header("User-Agent", UA).get().build()
+            ).execute().use { response ->
+                response.body?.bytes() ?: ByteArray(0)
+            }
+            val lineHtml = String(lineBody, Charsets.UTF_8)
+
+            studyPlanParser.parseCategoryAttributeMap(lineHtml)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch Nanning attribute map", e)
+            emptyMap()
+        }
     }
 
     /**
@@ -196,10 +239,11 @@ class ScoreViewModelFactory(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
-    private val scoreParser: ScoreParser = ScoreParser()
+    private val scoreParser: ScoreParser = ScoreParser(),
+    private val studyPlanParser: StudyPlanParser = StudyPlanParser()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return ScoreViewModel(repository, sessionStore, loginService, scoreParser) as T
+        return ScoreViewModel(repository, sessionStore, loginService, scoreParser, studyPlanParser) as T
     }
 }
