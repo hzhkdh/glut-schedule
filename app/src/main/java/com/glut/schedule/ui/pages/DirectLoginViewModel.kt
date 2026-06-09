@@ -466,9 +466,7 @@ class DirectLoginViewModel(
                 sessionStore.saveTimetableUrl(htmlResult.url)
                 val adjustments = scheduleParser.parseAdjustments(htmlResult.body)
                 Log.d(TAG, "Parsed ${adjustments.size} semester adjustments from timetable HTML")
-                if (adjustments.isNotEmpty()) {
-                    scheduleRepository.replaceSemesterAdjustments(adjustments)
-                }
+                scheduleRepository.replaceSemesterAdjustments(adjustments)
             }
 
             val examJsonResult = apiProbeService.findExamJsonResult(results)

@@ -177,7 +177,8 @@ class ScoreParser {
         category == "实践教学环节" -> "必修"
         category == "专业选修课" -> "限选"
         category == "公共选修课" -> "任选"
-        else -> category
+        category == "必修" || category == "限选" || category == "任选" -> category
+        else -> ""  // unrecognized (e.g. "学位课") → no badge
     }
 
     private fun parseCells(rowHtml: String): List<String> {

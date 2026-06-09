@@ -163,12 +163,9 @@ class SemesterOverviewViewModel(
                     return@launch
                 }
                 val adjustments = scheduleParser.parseAdjustments(html)
-                if (adjustments.isNotEmpty()) {
-                    repository.replaceSemesterAdjustments(adjustments)
-                    _message.value = "已更新 ${adjustments.size} 条调课记录"
-                } else {
-                    _message.value = "当前无调课记录"
-                }
+                repository.replaceSemesterAdjustments(adjustments)
+                _message.value = if (adjustments.isNotEmpty()) "已更新 ${adjustments.size} 条调课记录"
+                else "当前无调课记录"
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to refresh adjustments", e)
                 _message.value = "获取失败，请检查网络后重试"
