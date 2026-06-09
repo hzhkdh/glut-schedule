@@ -83,12 +83,15 @@ class ScoreParser {
             if (scoreText.isBlank()) continue
 
             // Category: Guilin [12] = 必修/限选/任选 directly
-            // Nanning: look up by course code [2] from teaching plan attribute map
+            // Nanning: "慕课" courses are always任选, then look up by course code
             val rawCategory = cleanHtmlText(cells.getOrElse(categoryIdx) { "" })
             val category = if (isNanning) {
-                val courseCode = cleanHtmlText(cells.getOrElse(2) { "" })
-                attributeMap[courseCode]
-                    ?: normalizeNanningCategory(rawCategory)
+                if (courseName.contains("慕课")) "任选"
+                else {
+                    val courseCode = cleanHtmlText(cells.getOrElse(2) { "" })
+                    attributeMap[courseCode]
+                        ?: normalizeNanningCategory(rawCategory)
+                }
             } else rawCategory
 
             // Credit extraction
