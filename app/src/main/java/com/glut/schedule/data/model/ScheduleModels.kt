@@ -8,7 +8,17 @@ import java.time.temporal.TemporalAdjusters
 const val MIN_ACADEMIC_WEEK = 1
 const val MAX_ACADEMIC_WEEK = 22
 val DEFAULT_SEMESTER_START_MONDAY: LocalDate = LocalDate.of(2026, 3, 9)
-val DEFAULT_SEMESTER_END_DATE: LocalDate = DEFAULT_SEMESTER_START_MONDAY.plusWeeks((MAX_ACADEMIC_WEEK - 1).toLong()).plusDays(6)
+
+/** Estimate semester end date when教务 system doesn't provide it.
+ *  Spring semesters (Feb–Jul start) typically run ~19 weeks.
+ *  Fall semesters (Aug–Jan start) typically run ~20 weeks. */
+fun defaultSemesterEndDate(startMonday: LocalDate): LocalDate {
+    val weeks = if (startMonday.monthValue in 2..7) 18 else 19
+    return startMonday.plusWeeks(weeks.toLong()).plusDays(6)
+}
+
+/** Backward-compatible shortcut for the hardcoded default start date. */
+val DEFAULT_SEMESTER_END_DATE: LocalDate get() = defaultSemesterEndDate(DEFAULT_SEMESTER_START_MONDAY)
 
 fun clampAcademicWeek(week: Int): Int = week.coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
 

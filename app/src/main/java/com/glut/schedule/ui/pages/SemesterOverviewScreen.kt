@@ -1,5 +1,6 @@
 package com.glut.schedule.ui.pages
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
@@ -30,6 +31,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -288,19 +290,48 @@ private fun HolidayRow(h: HolidayDisplay) {
 @Composable
 private fun AdjustmentWeekCard(week: Int, adjustments: List<SemesterAdjustment>, currentWeek: Int) {
     val isPast = week < currentWeek
+    val isCurrent = week == currentWeek
+    val cardBg = if (isCurrent) AccentBlue.copy(alpha = 0.06f) else CardBg
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = CardBg,
-        shape = RoundedCornerShape(12.dp)
+        color = cardBg,
+        shape = RoundedCornerShape(12.dp),
+        border = if (isCurrent) BorderStroke(1.dp, AccentBlue) else null
     ) {
         Column {
-            Text(
-                "第${week}周 补课",
-                color = TextSecondary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(start = 14.dp, top = 8.dp)
-            )
+            if (isCurrent) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "第${week}周 补课",
+                        color = AccentBlue,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 14.dp, top = 8.dp)
+                    )
+                    Text(
+                        "本周",
+                        color = AccentBlue,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .padding(start = 6.dp, top = 8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(AccentBlue.copy(alpha = 0.12f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            } else {
+                Text(
+                    "第${week}周 补课",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(start = 14.dp, top = 8.dp)
+                )
+            }
             adjustments.forEachIndexed { idx, adj ->
                 if (idx > 0) HorizontalDivider(color = Color(0xFFEDE8DE))
                 AdjustmentRow(adj, isPast)

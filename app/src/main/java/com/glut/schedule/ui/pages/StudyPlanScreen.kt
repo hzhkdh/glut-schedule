@@ -68,11 +68,15 @@ fun StudyPlanScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    // Auto-refresh ONLY on account switch (cookie value change), not on every page visit
+    // Auto-refresh on account switch (cookie value change) AND on first login when data is empty
     var prevCookie by remember { mutableStateOf("") }
     LaunchedEffect(uiState.cookieValue) {
-        if (uiState.hasCookie && !uiState.isRefreshing && uiState.cookieValue != prevCookie && prevCookie.isNotEmpty()) {
-            viewModel.refresh()
+        if (uiState.hasCookie && !uiState.isRefreshing && uiState.cookieValue != prevCookie) {
+            val isFirstLogin = prevCookie.isEmpty()
+            val dataMissing = uiState.groups.isEmpty()
+            if (!isFirstLogin || dataMissing) {
+                viewModel.refresh()
+            }
         }
         prevCookie = uiState.cookieValue
     }

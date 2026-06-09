@@ -8,8 +8,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -323,44 +326,77 @@ private fun AcademicYearBlock(
             }
 
             // Term 1 (秋)
-            TermSection("第1学期（秋）", autumnScores)
+            TermSection("第1学期", "秋", Color(0xFFD97706), autumnScores)
 
             // Term 2 (春)
             if (springScores.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 10.dp),
                     color = Color(0xFFEDE8DE),
                     thickness = 1.dp
                 )
-                TermSection("第2学期（春）", springScores)
+                Spacer(Modifier.height(4.dp))
+                TermSection("第2学期", "春", Color(0xFF16A34A), springScores)
             }
         }
     }
 }
 
 @Composable
-private fun TermSection(subtitle: String, scores: List<ScoreInfo>) {
-    Text(
-        subtitle,
-        color = ScoreSecondary,
-        fontSize = 12.sp,
-        fontWeight = FontWeight.Medium,
-        modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 2.dp)
-    )
-    if (scores.isEmpty()) {
-        Text(
-            "暂无成绩",
-            color = ScoreSecondary.copy(alpha = 0.5f),
-            fontSize = 12.sp,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
+private fun TermSection(
+    termLabel: String,
+    seasonChar: String,
+    badgeColor: Color,
+    scores: List<ScoreInfo>
+) {
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        // 彩色左边框
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp))
+                .background(badgeColor)
         )
-    } else {
-        ScoreColumnHeaders()
-        scores.forEachIndexed { index, score ->
-            ScoreRow(
-                score = score,
-                showDivider = index < scores.lastIndex
-            )
+        Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+            // 标题行：学期名 + 季节徽章 + 课程数
+            Row(
+                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(termLabel, color = ScorePrimary, fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    seasonChar,
+                    color = badgeColor,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(badgeColor.copy(alpha = 0.12f))
+                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("${scores.size}门课程", color = ScoreSecondary, fontSize = 12.sp)
+            }
+            if (scores.isEmpty()) {
+                Text(
+                    "暂无成绩",
+                    color = ScoreSecondary.copy(alpha = 0.5f),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(vertical = 12.dp)
+                )
+            } else {
+                ScoreColumnHeaders()
+                scores.forEachIndexed { index, score ->
+                    ScoreRow(
+                        score = score,
+                        showDivider = index < scores.lastIndex
+                    )
+                }
+            }
         }
     }
 }

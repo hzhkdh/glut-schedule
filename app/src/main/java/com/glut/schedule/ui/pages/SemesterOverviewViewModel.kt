@@ -104,6 +104,23 @@ class SemesterOverviewViewModel(
             else -> "${year}-${year + 1} 秋季学期"
         }
 
+        // Append semester-end vacation (暑假/寒假) reactively — uses latest semesterEndDate from settings,
+        // unlike the baked-in _holidays which is set once at init and becomes stale after教务 import.
+        val vacationName = if (base.startMonday.monthValue in 2..7) "暑假" else "寒假"
+        val vacationDays = ChronoUnit.DAYS.between(today, base.endDate)
+        val holidaysWithVacation = if (vacationDays > 0) {
+            val hasNext = holidays.none { it.isNext }
+            holidays + HolidayDisplay(
+                name = vacationName,
+                startDate = base.endDate.toString(),
+                endDate = base.endDate.toString(),
+                daysOff = 0,
+                isPast = false,
+                isNext = hasNext,
+                daysUntil = vacationDays
+            )
+        } else holidays
+
         SemesterOverviewUiState(
             semesterLabel = label,
             semesterStartDate = base.startMonday,
@@ -113,7 +130,7 @@ class SemesterOverviewViewModel(
             progressPercent = if (totalDays > 0) (elapsed.toFloat() / totalDays.toFloat()) else 0f,
             elapsedDays = elapsed,
             remainingDays = remaining,
-            holidays = holidays,
+            holidays = holidaysWithVacation,
             adjustmentsByWeek = base.adjustments.groupBy { it.makeupWeek },
             isRefreshing = isRefreshing,
             message = message
@@ -248,22 +265,6 @@ class SemesterOverviewViewModel(
         val nextIdx = displays.indexOfFirst { !it.isPast }
         if (nextIdx >= 0) {
             displays[nextIdx] = displays[nextIdx].copy(isNext = true)
-        }
-
-        val vacationName = if (semesterStart.monthValue in 2..7) "暑假" else "寒假"
-        val vacationDays = ChronoUnit.DAYS.between(today, semesterEnd)
-        if (vacationDays > 0) {
-            displays.add(
-                HolidayDisplay(
-                    name = vacationName,
-                    startDate = semesterEnd.toString(),
-                    endDate = semesterEnd.toString(),
-                    daysOff = 0,
-                    isPast = false,
-                    isNext = displays.none { it.isNext },
-                    daysUntil = vacationDays
-                )
-            )
         }
 
         _holidays.value = displays

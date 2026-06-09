@@ -49,15 +49,17 @@ class AcademicLoginHttpClient(
             val loginPath = buildLoginPath(loginPage.sessionId)
             val loginUrl = "$baseUrl$loginPath"
 
+            // NOTE: Do NOT set a manual Cookie header here.
+            // The CookieJar already holds the JSESSIONID from fetchLoginPage(),
+            // and OkHttp will send it automatically. A manual Cookie header would
+            // persist through redirects, preventing the CookieJar from sending the
+            // authenticated JSESSIONID that the server sets during the login redirect.
             val request = Request.Builder()
                 .url(loginUrl)
                 .header("User-Agent", USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/json,*/*")
                 .header("Referer", "$baseUrl$loginPagePath")
                 .apply {
-                    if (loginPage.cookie.isNotBlank()) {
-                        header("Cookie", loginPage.cookie)
-                    }
                     if (usePostLogin) {
                         header("Content-Type", "application/x-www-form-urlencoded")
                         val formBody = FormBody.Builder()
@@ -137,9 +139,10 @@ class AcademicLoginHttpClient(
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
 
     private fun verifyLogin(cookie: String): AcademicLoginResult {
+        // Rely on CookieJar (same authenticated JSESSIONID) instead of manual header,
+        // consistent with the login request fix above.
         val verifyRequest = Request.Builder()
             .url("$baseUrl/academic/personal/framePage.do")
-            .header("Cookie", cookie)
             .header("User-Agent", USER_AGENT)
             .header("Accept", "text/html,application/json,*/*")
             .post(FormBody.Builder().build())

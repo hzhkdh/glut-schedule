@@ -497,28 +497,25 @@ class DirectLoginViewModel(
             }
 
             try {
-                // Fetch studentSelfSchedule.jsdo with raw bytes (GBK) for reliable parsing
-                val selfClient = OkHttpClient.Builder()
-                    .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
-                val selfReq = Request.Builder()
-                    .url("$campusBaseUrl/academic/manager/studyschedule/studentSelfSchedule.jsdo")
-                    .header("Cookie", cookie).header("User-Agent", UA).get().build()
-                val selfBytes = selfClient.newCall(selfReq).execute().use { it.body?.bytes() ?: ByteArray(0) }
-                val gbkCharset = try { java.nio.charset.Charset.forName("GBK") } catch (_: Exception) { Charsets.UTF_8 }
-                val selfHtml = String(selfBytes, gbkCharset)
-                val parsedIds = studyPlanParser.parseStudentIds(selfHtml)
+                // Step 1: Use probed studentSelfSchedule.jsdo result (like exams/grade exams use probe results)
+                val selfResult = results.find {
+                    it.url.contains("studentSelfSchedule.jsdo") && it.httpCode == 200 && it.body.length > 500
+                }
+                val parsedIds = if (selfResult != null) {
+                    studyPlanParser.parseStudentIds(selfResult.body)
+                } else {
+                    null
+                }
                 if (parsedIds != null) {
                     val (studentId, classId) = parsedIds
-                    val planClient = OkHttpClient.Builder()
-                        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
-                    val planReq = Request.Builder()
-                        .url("$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId")
-                        .header("Cookie", cookie).header("User-Agent", UA).get().build()
-                    val planBytes = planClient.newCall(planReq).execute().use { it.body?.bytes() ?: ByteArray(0) }
-                    val planHtml = String(planBytes, Charsets.UTF_8)
-                    val groups = studyPlanParser.parseGroups(planHtml)
-                    scheduleRepository.replaceStudyPlanGroups(groups)
-                    studyPlanCount = groups.size
+                    // Step 2: Fetch study plan via probeUrl (uses same reliable client as probing)
+                    val planUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId"
+                    val planResult = apiProbeService.probeUrl(cookie, planUrl)
+                    if (planResult != null && planResult.httpCode == 200 && planResult.body.length > 500) {
+                        val groups = studyPlanParser.parseGroups(planResult.body)
+                        scheduleRepository.replaceStudyPlanGroups(groups)
+                        studyPlanCount = groups.size
+                    }
                 }
             } catch (_: Exception) { }
 
