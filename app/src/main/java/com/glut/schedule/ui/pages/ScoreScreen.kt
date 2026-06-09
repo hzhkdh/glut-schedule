@@ -13,10 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -56,36 +53,34 @@ fun ScoreScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val selectedYear by viewModel.selectedYear.collectAsState()
-    val availableYears by viewModel.availableYears.collectAsState()
 
     val allScores = uiState.scores
-    val filteredScores = if (selectedYear == null) allScores
-    else allScores.filter { it.year == selectedYear }
 
-    val grouped = remember(filteredScores) {
-        filteredScores
+    // Build academic-year groups from ALL scores
+    val allGroups = remember(allScores) {
+        allScores
             .groupBy { score ->
                 val y = score.year.toIntOrNull() ?: 0
-                if (score.term == 1) y else y - 1  // 秋学期 year=Y, 春学期 year=Y+1 → 学年起点 Y
+                if (score.term == 2) y else y - 1  // 秋=2 marks学年起点, 春=1 → year-1
             }
             .map { (startYear, scores) ->
                 AcademicYearGroup(
                     startYear = startYear,
-                    term1Scores = scores.filter { it.term == 1 }.sortedBy { it.courseName },
-                    term2Scores = scores.filter { it.term == 2 }.sortedBy { it.courseName }
+                    autumnScores = scores.filter { it.term == 2 }.sortedBy { it.courseName },
+                    springScores = scores.filter { it.term == 1 }.sortedBy { it.courseName }
                 )
             }
             .sortedByDescending { it.startYear }
     }
 
-    val listState = rememberLazyListState()
-
-    LaunchedEffect(selectedYear) {
-        if (grouped.isNotEmpty()) {
-            listState.animateScrollToItem(0)
+    var selectedStartYear by remember { mutableStateOf<Int?>(null) }
+    // Default to latest year on first load
+    LaunchedEffect(allGroups) {
+        if (selectedStartYear == null && allGroups.isNotEmpty()) {
+            selectedStartYear = allGroups.first().startYear
         }
     }
+    val selectedGroup = allGroups.find { it.startYear == selectedStartYear }
 
     Column(
         modifier = modifier
@@ -109,28 +104,21 @@ fun ScoreScreen(
             )
         }
 
-        // Filter chips
-        if (availableYears.isNotEmpty()) {
-            LazyRow(
+        // Academic year filter chips
+        if (allGroups.size > 1) {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.White)
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                item {
+                allGroups.forEach { group ->
                     FilterChip(
-                        label = "全部学期",
-                        isSelected = selectedYear == null,
-                        onClick = { viewModel.selectYear(null) }
-                    )
-                }
-                items(availableYears) { year ->
-                    FilterChip(
-                        label = year,
-                        isSelected = selectedYear == year,
-                        onClick = { viewModel.selectYear(year) }
+                        label = "${group.startYear}-${group.startYear + 1}",
+                        isSelected = group.startYear == selectedStartYear,
+                        onClick = { selectedStartYear = group.startYear },
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -150,7 +138,7 @@ fun ScoreScreen(
                     textAlign = TextAlign.Center
                 )
             }
-        } else if (filteredScores.isEmpty()) {
+        } else if (selectedGroup == null) {
             Box(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 contentAlignment = Alignment.Center
@@ -158,19 +146,18 @@ fun ScoreScreen(
                 Text("该学年暂无成绩", color = ScoreSecondary, fontSize = 14.sp)
             }
         } else {
-            // Semester blocks
+            // Single academic year card
             LazyColumn(
-                state = listState,
                 modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
-                items(grouped, key = { "year_${it.startYear}" }) { group ->
+                item(key = "year_${selectedGroup.startYear}") {
                     AcademicYearBlock(
-                        startYear = group.startYear,
-                        gpa = group.allGpa,
-                        term1Scores = group.term1Scores,
-                        term2Scores = group.term2Scores
+                        startYear = selectedGroup.startYear,
+                        gpa = selectedGroup.allGpa,
+                        autumnScores = selectedGroup.autumnScores,
+                        springScores = selectedGroup.springScores
                     )
                 }
 
@@ -255,10 +242,11 @@ fun ScoreScreen(
 private fun FilterChip(
     label: String,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick),
         color = if (isSelected) ScoreSemesterHeaderBg else ScoreChipBg,
@@ -269,19 +257,19 @@ private fun FilterChip(
             color = if (isSelected) Color.White else ScorePrimary,
             fontSize = 13.sp,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp).fillMaxWidth()
         )
     }
 }
 
 private data class AcademicYearGroup(
     val startYear: Int,
-    val term1Scores: List<ScoreInfo>,
-    val term2Scores: List<ScoreInfo>
+    val autumnScores: List<ScoreInfo>,
+    val springScores: List<ScoreInfo>
 ) {
-    val label = "$startYear-${startYear + 1}"
     val allGpa: Double get() {
-        val required = (term1Scores + term2Scores).filter { it.category == "必修" }
+        val required = (autumnScores + springScores).filter { it.category == "必修" }
         val totalCredit = required.sumOf { it.credit }
         return if (totalCredit > 0) required.sumOf { it.credit * it.gpa } / totalCredit else 0.0
     }
@@ -303,8 +291,8 @@ private fun ScoreColumnHeaders() {
 private fun AcademicYearBlock(
     startYear: Int,
     gpa: Double,
-    term1Scores: List<ScoreInfo>,
-    term2Scores: List<ScoreInfo>
+    autumnScores: List<ScoreInfo>,
+    springScores: List<ScoreInfo>
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -335,16 +323,16 @@ private fun AcademicYearBlock(
             }
 
             // Term 1 (秋)
-            TermSection("第1学期（秋）", term1Scores)
+            TermSection("第1学期（秋）", autumnScores)
 
             // Term 2 (春)
-            if (term2Scores.isNotEmpty()) {
+            if (springScores.isNotEmpty()) {
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 10.dp),
                     color = Color(0xFFEDE8DE),
                     thickness = 1.dp
                 )
-                TermSection("第2学期（春）", term2Scores)
+                TermSection("第2学期（春）", springScores)
             }
         }
     }
