@@ -1,7 +1,7 @@
 {
-  "version": "v0.12.0",
-  "versionCode": 8,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.12.0",
-  "releaseNotes": "**考试成绩菜单重构：**\n- GPA 从简单算术平均改为官方学分加权公式，仅统计必修课\n- 新增学分列和属性徽章（蓝=必修、橙=限选、绿=任选）\n- 成绩卡片按学年分组（2024-2025 格式），学年 chip 固定等宽切换\n- 弹窗说明计算规则，可跳转教务处官方 GPA 说明页\n- 南宁校区：从个人教学计划按课程号精确匹配选课属性\n\n**Bug 修复：**\n- 修复桂林成绩表学分/选课属性解析缺失\n- ,
-  "publishedAt": "2026-06-09T14:53:37Z"
+  "version": "v0.12.1",
+  "versionCode": 9,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.12.1",
+  "releaseNotes": "## v0.12.1\n\n### Bug 修复\n- 修复「学期概览」暑假日期显示错误（_holidays 烘焙旧值 → 改为 combine 响应式计算）\n- 修复「教学计划」登录后不自动刷新（LaunchedEffect 条件 + 导入改用探针结果）\n\n### UI 优化\n- 「考试成绩」学期区块增加彩色左边框（秋=橙 春=绿）+ 季节徽章，界限更清晰\n- 「调课一览」当前周卡片高亮显示（浅蓝底 + 蓝边框 + \"本周\"标签）\n\n### 其他\n- FAQ 追加\",
+  "publishedAt": "2026-06-09T17:28:32Z"
 }
