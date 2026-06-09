@@ -3,6 +3,7 @@ package com.glut.schedule.ui.navigation
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Assessment
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.EventNote
@@ -23,6 +24,7 @@ enum class DrawerItem(
     StudyPlan("教学计划", Icons.Outlined.MenuBook),
     Import("导入课表", Icons.Outlined.Download),
     Settings("设置", Icons.Outlined.Settings),
+    SemesterOverview("学期概览", Icons.Outlined.DateRange),
     FAQ("常见问题", Icons.Outlined.HelpOutline),
     About("关于", Icons.Outlined.Info);
 }

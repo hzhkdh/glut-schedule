@@ -2,6 +2,7 @@ package com.glut.schedule.ui.pages
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -462,6 +463,12 @@ class DirectLoginViewModel(
                     scheduleRepository.replaceImportedCourses(courses)
                     courseCount = courses.size
                 }
+                sessionStore.saveTimetableUrl(htmlResult.url)
+                val adjustments = scheduleParser.parseAdjustments(htmlResult.body)
+                Log.d(TAG, "Parsed ${adjustments.size} semester adjustments from timetable HTML")
+                if (adjustments.isNotEmpty()) {
+                    scheduleRepository.replaceSemesterAdjustments(adjustments)
+                }
             }
 
             val examJsonResult = apiProbeService.findExamJsonResult(results)
@@ -586,6 +593,7 @@ class DirectLoginViewModel(
     }
 
     private companion object {
+        private const val TAG = "DirectLoginVM"
         const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
 
         fun extractCookie(setCookieHeaders: List<String>): String {

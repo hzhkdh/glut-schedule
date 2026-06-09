@@ -71,6 +71,9 @@ import com.glut.schedule.service.UpdateInfo
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.pages.AboutScreen
 import com.glut.schedule.ui.pages.FaqScreen
+import com.glut.schedule.ui.pages.SemesterOverviewScreen
+import com.glut.schedule.ui.pages.SemesterOverviewViewModel
+import com.glut.schedule.ui.pages.SemesterOverviewViewModelFactory
 import com.glut.schedule.ui.pages.DirectLoginScreen
 import com.glut.schedule.ui.pages.DirectLoginViewModel
 import com.glut.schedule.ui.pages.DirectLoginViewModelFactory
@@ -158,6 +161,14 @@ class MainActivity : ComponentActivity() {
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
                         studyPlanParser = container.studyPlanParser
+                    )
+                )
+                val semesterOverviewViewModel: SemesterOverviewViewModel = viewModel(
+                    factory = SemesterOverviewViewModelFactory(
+                        repository = container.scheduleRepository,
+                        settingsStore = container.settingsStore,
+                        sessionStore = container.academicSessionStore,
+                        scheduleParser = container.academicScheduleParser
                     )
                 )
                 val directLoginViewModel: DirectLoginViewModel = viewModel(
@@ -258,7 +269,7 @@ class MainActivity : ComponentActivity() {
                                             modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 4.dp)
                                         )
                                     }
-                                    items(listOf(DrawerItem.Schedule, DrawerItem.Score, DrawerItem.Exam, DrawerItem.GradeExam, DrawerItem.StudyPlan, DrawerItem.Import)) { item ->
+                                    items(listOf(DrawerItem.Schedule, DrawerItem.Score, DrawerItem.Exam, DrawerItem.GradeExam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
@@ -398,6 +409,7 @@ class MainActivity : ComponentActivity() {
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
                                     onClearBackground = { scheduleViewModel.clearCustomBackground() }
                                 )
+                                DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
                                 DrawerItem.FAQ -> FaqScreen()
                                 DrawerItem.About -> AboutScreen(
                                     updateChecker = container.updateChecker,

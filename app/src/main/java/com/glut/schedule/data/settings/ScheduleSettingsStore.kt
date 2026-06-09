@@ -29,6 +29,8 @@ class ScheduleSettingsStore(
     private val campusTypeKey = stringPreferencesKey("campus_type")
     private val updateAvailableVersionKey = stringPreferencesKey("update_available_version")
     private val updateSeenVersionKey = stringPreferencesKey("update_seen_version")
+    private val holidaysCacheKey = stringPreferencesKey("holidays_cache")
+    private val holidaysCacheDateKey = stringPreferencesKey("holidays_cache_date")
 
     val currentWeekNumber: Flow<Int> = context.scheduleSettings.data.map { preferences ->
         clampAcademicWeek(preferences[currentWeekKey] ?: 9)
@@ -122,6 +124,22 @@ class ScheduleSettingsStore(
     suspend fun markUpdateSeen(version: String) {
         context.scheduleSettings.edit { preferences ->
             preferences[updateSeenVersionKey] = version
+        }
+    }
+
+    // ---- Holidays cache ----
+
+    /** Cached holiday JSON from timor.tech API, paired with the date it was fetched. */
+    val holidaysCache: Flow<Pair<String, String>> = context.scheduleSettings.data.map { preferences ->
+        val json = preferences[holidaysCacheKey].orEmpty()
+        val date = preferences[holidaysCacheDateKey].orEmpty()
+        json to date
+    }
+
+    suspend fun setHolidaysCache(json: String) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[holidaysCacheKey] = json
+            preferences[holidaysCacheDateKey] = LocalDate.now().toString()
         }
     }
 }

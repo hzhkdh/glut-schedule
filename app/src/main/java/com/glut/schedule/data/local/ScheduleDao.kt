@@ -116,4 +116,19 @@ interface ScheduleDao {
         deleteAllStudyPlanGroups()
         insertStudyPlanGroups(groups)
     }
+
+    @Query("SELECT * FROM semester_adjustments ORDER BY makeupWeek, makeupDay, makeupStartSection")
+    fun observeSemesterAdjustments(): Flow<List<SemesterAdjustmentEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSemesterAdjustments(adjustments: List<SemesterAdjustmentEntity>)
+
+    @Query("DELETE FROM semester_adjustments")
+    suspend fun deleteAllSemesterAdjustments()
+
+    @Transaction
+    suspend fun replaceSemesterAdjustments(adjustments: List<SemesterAdjustmentEntity>) {
+        deleteAllSemesterAdjustments()
+        insertSemesterAdjustments(adjustments)
+    }
 }

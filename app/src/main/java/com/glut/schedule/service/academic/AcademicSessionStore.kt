@@ -16,6 +16,7 @@ class AcademicSessionStore(
     private val lastHtmlPreviewKey = stringPreferencesKey("last_timetable_html_preview")
     private val examApiUrlKey = stringPreferencesKey("exam_api_url")
     private val campusUrlKey = stringPreferencesKey("campus_base_url")
+    private val timetableUrlKey = stringPreferencesKey("timetable_url")
 
     val academicCookie: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
         preferences[cookieKey].orEmpty()
@@ -54,6 +55,16 @@ class AcademicSessionStore(
     suspend fun saveCampusBaseUrl(url: String) {
         context.academicSessionDataStore.edit { preferences ->
             preferences[campusUrlKey] = url
+        }
+    }
+
+    val timetableUrl: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
+        preferences[timetableUrlKey].orEmpty()
+    }
+
+    suspend fun saveTimetableUrl(url: String) {
+        context.academicSessionDataStore.edit { preferences ->
+            preferences[timetableUrlKey] = url
         }
     }
 }

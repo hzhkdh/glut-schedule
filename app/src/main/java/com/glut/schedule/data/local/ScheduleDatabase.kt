@@ -4,8 +4,8 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [CourseEntity::class, CourseOccurrenceEntity::class, ClassPeriodEntity::class, ExamEntity::class, ScoreEntity::class, GradeExamEntity::class, StudyPlanGroupEntity::class],
-    version = 5,
+    entities = [CourseEntity::class, CourseOccurrenceEntity::class, ClassPeriodEntity::class, ExamEntity::class, ScoreEntity::class, GradeExamEntity::class, StudyPlanGroupEntity::class, SemesterAdjustmentEntity::class],
+    version = 6,
     exportSchema = false
 )
 abstract class ScheduleDatabase : RoomDatabase() {

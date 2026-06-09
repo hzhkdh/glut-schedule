@@ -3,13 +3,38 @@ package com.glut.schedule.service.parser
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.SemesterAdjustment
 import java.security.MessageDigest
 
 interface AcademicScheduleParser {
     fun parsePersonalSchedule(html: String): List<ScheduleCourse>
+    fun parseAdjustments(html: String): List<SemesterAdjustment> = emptyList()
 }
 
 class GlutAcademicScheduleParser : AcademicScheduleParser {
+    /** Parse just the course adjustment (调课/补课) rows from the timetable HTML. */
+    override fun parseAdjustments(html: String): List<SemesterAdjustment> {
+        if (html.isBlank()) return emptyList()
+        return parseSupplementalAdjustmentRows(html).map { adj ->
+            val adjId = stableId("adj-${adj.title}-${adj.teacher}-${adj.originalWeek}-${adj.originalDay}-${adj.makeupWeek}-${adj.makeupDay}")
+            SemesterAdjustment(
+                id = adjId,
+                title = adj.title,
+                teacher = adj.teacher,
+                originalWeek = adj.originalWeek,
+                originalDay = adj.originalDay,
+                originalStartSection = adj.originalStartSection,
+                originalEndSection = adj.originalEndSection,
+                originalRoom = adj.originalRoom,
+                makeupWeek = adj.makeupWeek,
+                makeupDay = adj.makeupDay,
+                makeupStartSection = adj.makeupStartSection,
+                makeupEndSection = adj.makeupEndSection,
+                makeupRoom = adj.makeupRoom
+            )
+        }
+    }
+
     override fun parsePersonalSchedule(html: String): List<ScheduleCourse> {
         require(html.isNotBlank()) { "课表 HTML 不能为空" }
         if (looksLikeNonTimetablePage(html)) return emptyList()

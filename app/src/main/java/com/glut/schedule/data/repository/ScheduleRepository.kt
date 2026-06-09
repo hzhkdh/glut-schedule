@@ -10,6 +10,7 @@ import com.glut.schedule.data.model.GradeExamInfo
 import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.StudyPlanGroup
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.defaultClassPeriods
 import com.glut.schedule.data.model.guilinClassPeriods
 import com.glut.schedule.data.model.nanningClassPeriods
@@ -90,6 +91,14 @@ class ScheduleRepository(
 
     suspend fun replaceStudyPlanGroups(groups: List<StudyPlanGroup>) {
         dao.replaceStudyPlanGroups(groups.map { it.toEntity() })
+    }
+
+    val semesterAdjustments: Flow<List<SemesterAdjustment>> = dao.observeSemesterAdjustments().map { entities ->
+        entities.map { it.toModel() }
+    }
+
+    suspend fun replaceSemesterAdjustments(adjustments: List<SemesterAdjustment>) {
+        dao.replaceSemesterAdjustments(adjustments.map { it.toEntity() })
     }
 
     suspend fun replaceImportedCourses(courses: List<ScheduleCourse>) {

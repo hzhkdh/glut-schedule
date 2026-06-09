@@ -9,6 +9,7 @@ import com.glut.schedule.data.model.GradeExamInfo
 import com.glut.schedule.data.model.StudyPlanGroup
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.ScoreInfo
+import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.sanitized
 
 @Entity(tableName = "courses")
@@ -184,4 +185,41 @@ fun StudyPlanGroupEntity.toModel(): StudyPlanGroup = StudyPlanGroup(
     creditRequired = creditRequired, creditEarned = creditEarned,
     countRequired = countRequired, countPassed = countPassed,
     isPassed = isPassed
+)
+
+@Entity(tableName = "semester_adjustments")
+data class SemesterAdjustmentEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val teacher: String,
+    val originalWeek: Int,
+    val originalDay: Int,
+    val originalStartSection: Int,
+    val originalEndSection: Int,
+    val originalRoom: String,
+    val makeupWeek: Int,
+    val makeupDay: Int,
+    val makeupStartSection: Int,
+    val makeupEndSection: Int,
+    val makeupRoom: String
+)
+
+fun SemesterAdjustment.toEntity(): SemesterAdjustmentEntity = SemesterAdjustmentEntity(
+    id = id, title = title, teacher = teacher,
+    originalWeek = originalWeek, originalDay = originalDay,
+    originalStartSection = originalStartSection, originalEndSection = originalEndSection,
+    originalRoom = originalRoom,
+    makeupWeek = makeupWeek, makeupDay = makeupDay,
+    makeupStartSection = makeupStartSection, makeupEndSection = makeupEndSection,
+    makeupRoom = makeupRoom
+)
+
+fun SemesterAdjustmentEntity.toModel(): SemesterAdjustment = SemesterAdjustment(
+    id = id, title = title, teacher = teacher,
+    originalWeek = originalWeek, originalDay = originalDay,
+    originalStartSection = originalStartSection, originalEndSection = originalEndSection,
+    originalRoom = originalRoom,
+    makeupWeek = makeupWeek, makeupDay = makeupDay,
+    makeupStartSection = makeupStartSection, makeupEndSection = makeupEndSection,
+    makeupRoom = makeupRoom
 )
