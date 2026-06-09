@@ -7,10 +7,19 @@ class ScoreParser {
      * Parse score HTML. When [year] and [term] are null, they are extracted from the
      * table cells (cells[0] = year, cells[1] = term).
      *
-     * Column layout (from reference projects):
-     *   Guilin (glut Android): cells[0]=year, [1]=term, [4]=courseName, [7]=score, [20]=failState
-     *   Nanning (GlutAssistantN): cells[2]=courseCode, [3]=courseName, [4]=teacher,
-     *                              [5]=score, [6]=gpa, [7]=credit, [11]=category
+     * Column layout verified via Chrome DevTools on live教务 system (2026-06-09):
+     *
+     *   Guilin (22 columns):
+     *     [0]=year [1]=term [2]=dept [3]=courseCode [4]=courseName
+     *     [5]=serial [6]=teacher [7]=score [8]=gpa [9]=credit
+     *     [10]=hours [11]=examType [12]=attribute(必修/限选/任选) [13]=remark
+     *     [14]=examNature [15]=deferred [16]=requirement [17]=category [18]=K
+     *     [19]=doubleDegree [20]=passFlag [21]=proceduralScore
+     *
+     *   Nanning (13 columns):
+     *     [0]=year [1]=term [2]=courseCode [3]=courseName [4]=teacher
+     *     [5]=score [6]=gpa [7]=credit [8]=remark [9]=examNature
+     *     [10]=deferred [11]=category(公共必修课/专业选修课…) [12]=passFlag
      *
      * Year formats handled:
      *   - "2025-2026" → extracts "2025"
@@ -39,23 +48,11 @@ class ScoreParser {
         val dataRows = if (headerIndex >= 0) rows.drop(headerIndex + 1) else rows
 
         // Column indices differ between Guilin and Nanning campuses.
-        // Verified against GlutAssistant (Flutter), GlutAssistantN (Flutter), and glut (Kotlin/Android).
-        //
-        // Guilin layout (glut project Jsoup child indices):
-        //   [0]=year [1]=term [2]=courseCode [3]=courseName [4]=teacher [5]=hours
-        //   [6]=creditFlag [7]=score [8]=gpa ... [20]=failState
-        //   → GlutAssistant Guilin regex: GPA at the cell after score (cells[8]).
-        //
-        // Nanning layout (GlutAssistantN Jsoup child indices):
-        //   [2]=courseCode [3]=courseName [4]=teacher [5]=score [6]=gpa [7]=credit [11]=category
-        //
-        // Guilin score table does NOT have a credit (学分) column — confirmed by both
-        // GlutAssistant (only extracts GPA) and glut (only extracts name + score + failState).
         val courseIdx = if (isNanning) 3 else 4
         val scoreIdx = if (isNanning) 5 else 7
-        val gpaIdx: Int? = if (isNanning) 6 else 8          // Guilin: GPA right after score (cells[8])
-        val creditIdx = if (isNanning) 7 else null           // Guilin: no credit column in score table
-        val categoryIdx = if (isNanning) 11 else null        // Nanning: course category at [11]
+        val gpaIdx: Int? = if (isNanning) 6 else 8
+        val creditIdx = if (isNanning) 7 else 9
+        val categoryIdx = if (isNanning) 11 else 12
 
         for (row in dataRows) {
             val cells = parseCells(row.value)
@@ -84,27 +81,13 @@ class ScoreParser {
             val scoreText = cleanHtmlText(cells.getOrElse(scoreIdx) { "" })
             if (scoreText.isBlank()) continue
 
-            // Category: use dedicated column for Nanning, fallback for Guilin
-            val category = if (categoryIdx != null) {
-                cleanHtmlText(cells.getOrElse(categoryIdx) { "" })
-            } else {
-                // Guilin: category column is not at a known fixed position
-                // cells[1] is term, not category — leave blank for Guilin
-                ""
-            }
+            // Category: Guilin [12] = 必修/限选/任选 directly, Nanning [11] = 课程类别
+            val rawCategory = cleanHtmlText(cells.getOrElse(categoryIdx) { "" })
+            val category = if (isNanning) normalizeNanningCategory(rawCategory) else rawCategory
 
             // Credit extraction
-            val credit = if (creditIdx != null) {
-                // Nanning: credit is directly at the known column (cells[7])
-                cleanHtmlText(cells.getOrElse(creditIdx) { "0" })
-                    .let { Regex("""([.\d]+)""").find(it)?.value?.toDoubleOrNull() } ?: 0.0
-            } else {
-                // Guilin: score table has NO credit column.
-                // Both GlutAssistant and glut do not extract credit for Guilin.
-                // The old auto-detection from cells[5]/[6]/[8] picked up hours
-                // or other metadata (causing bugs like 学分=118.0 for 体育3).
-                0.0
-            }
+            val credit = cleanHtmlText(cells.getOrElse(creditIdx) { "0" })
+                .let { Regex("""([.\d]+)""").find(it)?.value?.toDoubleOrNull() } ?: 0.0
 
             // GPA: use table value when available, calculate from score as fallback
             val gpa = if (gpaIdx != null) {
@@ -175,6 +158,21 @@ class ScoreParser {
         }
 
         return null
+    }
+
+    /**
+     * Normalize Nanning course category (课程类别) to standard attribute (必修/限选/任选).
+     * Nanning score table does not have a dedicated 选课属性 column; the [11] 课程类别
+     * column contains values like "公共必修课", "专业选修课" etc.
+     */
+    private fun normalizeNanningCategory(category: String): String = when {
+        category == "公共必修课" -> "必修"
+        category == "专业基础课" -> "必修"
+        category == "专业核心课" -> "必修"
+        category == "实践教学环节" -> "必修"
+        category == "专业选修课" -> "限选"
+        category == "公共选修课" -> "任选"
+        else -> category
     }
 
     private fun parseCells(rowHtml: String): List<String> {

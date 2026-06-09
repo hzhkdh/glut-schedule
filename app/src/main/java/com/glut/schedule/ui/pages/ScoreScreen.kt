@@ -7,15 +7,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
@@ -24,7 +27,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -150,8 +155,13 @@ fun ScoreScreen(
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
                 items(grouped, key = { "semester_${it.key.first}_${it.key.second}" }) { (yearTerm, termScores) ->
-                    val avgGpa = termScores.map { it.gpa }.filter { it > 0 }
-                        .average().let { if (it.isNaN()) 0.0 else it }
+                    val avgGpa = termScores
+                        .filter { it.category == "必修" }
+                        .let { req ->
+                            val totalCredit = req.sumOf { it.credit }
+                            if (totalCredit > 0) req.sumOf { it.credit * it.gpa } / totalCredit
+                            else 0.0
+                        }
                     SemesterBlock(
                         year = yearTerm.first,
                         term = yearTerm.second,
@@ -162,20 +172,60 @@ fun ScoreScreen(
 
                 // Bottom summary
                 item {
-                    val overallGpa = allScores.map { it.gpa }.filter { it > 0 }
-                        .average().let { if (it.isNaN()) 0.0 else it }
+                    var showGpaInfo by remember { mutableStateOf(false) }
+                    val overallGpa = allScores
+                        .filter { it.category == "必修" }
+                        .let { req ->
+                            val totalCredit = req.sumOf { it.credit }
+                            if (totalCredit > 0) req.sumOf { it.credit * it.gpa } / totalCredit
+                            else 0.0
+                        }
                     Surface(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                         color = ScoreSemesterHeaderBg,
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text(
-                            "全部课程平均绩点 ${String.format("%.2f", overallGpa)}",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(14.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "平均学分绩点 ${String.format("%.2f", overallGpa)}",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "ℹ",
+                                color = Color.White.copy(alpha = 0.6f),
+                                fontSize = 14.sp,
+                                modifier = Modifier.clickable { showGpaInfo = true }
+                            )
+                        }
+                    }
+                    if (showGpaInfo) {
+                        AlertDialog(
+                            onDismissRequest = { showGpaInfo = false },
+                            title = { Text("绩点计算说明", color = ScorePrimary, fontSize = 16.sp) },
+                            text = {
+                                Text(
+                                    "计算公式：\n\n" +
+                                    "GPA = Σ(必修课学分 × 绩点) ÷ Σ(必修课学分)\n\n" +
+                                    "• 仅统计选课属性为「必修」的课程\n" +
+                                    "• 限选、任选课不参与计算\n" +
+                                    "• 不及格课程绩点为 0，仍计入分母\n" +
+                                    "• 同一门课多次修读，分子取最高分，分母累加\n\n" +
+                                    "数据来源：桂林理工大学教务处",
+                                    color = ScoreSecondary,
+                                    fontSize = 14.sp
+                                )
+                            },
+                            confirmButton = {
+                                Text("知道了", color = ScoreAccent, fontSize = 14.sp,
+                                    modifier = Modifier.clickable { showGpaInfo = false })
+                            }
                         )
                     }
                 }
@@ -236,7 +286,7 @@ private fun SemesterBlock(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "绩点 ${String.format("%.2f", avgGpa)}",
+                    "GPA ${String.format("%.2f", avgGpa)}",
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 12.sp
                 )
@@ -248,7 +298,8 @@ private fun SemesterBlock(
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp, vertical = 8.dp)
             ) {
-                Text("课程名称", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(3f))
+                Text("课程名称", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(2.8f))
+                Text("学分", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
                 Text("成绩", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1.2f), textAlign = TextAlign.Center)
                 Text("绩点", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
             }
@@ -274,13 +325,19 @@ private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
         else -> ScoreSecondary
     }
 
+    val attrColor = when (score.category) {
+        "必修" -> Color(0xFF3F7DF6)
+        "限选" -> Color(0xFFD97706)
+        else -> Color(0xFF16A34A)
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(3f)) {
+        Column(modifier = Modifier.weight(2.8f)) {
             Text(
                 score.courseName,
                 color = ScorePrimary,
@@ -288,9 +345,24 @@ private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
                 fontWeight = FontWeight.Medium
             )
             if (score.category.isNotBlank()) {
-                Text(score.category, color = ScoreSecondary, fontSize = 11.sp)
+                Text(
+                    score.category,
+                    color = attrColor,
+                    fontSize = 10.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(attrColor.copy(alpha = 0.12f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                )
             }
         }
+        Text(
+            if (score.credit > 0) formatCredit(score.credit) else "-",
+            color = ScoreSecondary,
+            fontSize = 13.sp,
+            modifier = Modifier.weight(1f),
+            textAlign = TextAlign.Center
+        )
         Text(
             score.score,
             color = gpaColor,
@@ -317,3 +389,6 @@ private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
         )
     }
 }
+
+private fun formatCredit(value: Double): String =
+    if (value == value.toLong().toDouble()) value.toLong().toString() else String.format("%.1f", value)
