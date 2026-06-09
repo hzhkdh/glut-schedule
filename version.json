@@ -1,7 +1,7 @@
 {
-  "version": "v0.11.8",
-  "versionCode": 7,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.11.8",
-  "releaseNotes": "学期概览：学期进度饼状图、法定节假日提醒（提莫API+按年缓存）、调课一览（支持独立刷新）；FAQ 追加5条；修复调课刷新请求头缺失问题",
-  "publishedAt": "2026-06-09T07:49:59Z"
+  "version": "v0.12.0",
+  "versionCode": 8,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.12.0",
+  "releaseNotes": "**考试成绩菜单重构：**\n- GPA 从简单算术平均改为官方学分加权公式，仅统计必修课\n- 新增学分列和属性徽章（蓝=必修、橙=限选、绿=任选）\n- 成绩卡片按学年分组（2024-2025 格式），学年 chip 固定等宽切换\n- 弹窗说明计算规则，可跳转教务处官方 GPA 说明页\n- 南宁校区：从个人教学计划按课程号精确匹配选课属性\n\n**Bug 修复：**\n- 修复桂林成绩表学分/选课属性解析缺失\n- ,
+  "publishedAt": "2026-06-09T14:53:37Z"
 }
