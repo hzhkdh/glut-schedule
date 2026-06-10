@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit
 data class UpdateInfo(
     val latestVersion: String,
     val downloadUrl: String,
+    val apkDownloadUrl: String,
     val releaseNotes: String,
     val isNewer: Boolean
 )
@@ -76,9 +77,14 @@ class UpdateChecker(
             val tagName = obj.optString("tag_name", "").removePrefix("v")
             val htmlUrl = obj.optString("html_url", "")
             val notes = obj.optString("body", "")
+            val assets = obj.optJSONArray("assets")
+            val apkUrl = if (assets != null && assets.length() > 0) {
+                assets.optJSONObject(0)?.optString("browser_download_url", "") ?: htmlUrl
+            } else htmlUrl
             UpdateInfo(
                 latestVersion = tagName,
                 downloadUrl = htmlUrl,
+                apkDownloadUrl = apkUrl,
                 releaseNotes = notes,
                 isNewer = compareVersions(tagName, currentVersion) > 0
             )
@@ -94,6 +100,7 @@ class UpdateChecker(
             UpdateInfo(
                 latestVersion = version,
                 downloadUrl = downloadUrl,
+                apkDownloadUrl = downloadUrl,
                 releaseNotes = notes,
                 isNewer = compareVersions(version, currentVersion) > 0
             )

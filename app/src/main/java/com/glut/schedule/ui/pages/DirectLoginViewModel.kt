@@ -382,6 +382,8 @@ class DirectLoginViewModel(
     private fun onLoginSuccess(cookie: String, campusBaseUrl: String, remember: Boolean) {
         if (remember) {
             credentialStore.saveCredentials(_uiState.value.username, _uiState.value.password)
+        } else {
+            credentialStore.clearCredentials()
         }
         viewModelScope.launch {
             sessionStore.saveCookie(cookie)

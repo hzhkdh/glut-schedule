@@ -32,6 +32,10 @@ class CredentialStore(context: Context) {
 
     fun hasCredentials(): Boolean = getUsername().isNotBlank() && getPassword().isNotBlank()
 
+    fun clearCredentials() {
+        prefs.edit().remove(KEY_USERNAME).remove(KEY_PASSWORD).apply()
+    }
+
     companion object {
         private const val KEY_USERNAME = "enc_username"
         private const val KEY_PASSWORD = "enc_password"

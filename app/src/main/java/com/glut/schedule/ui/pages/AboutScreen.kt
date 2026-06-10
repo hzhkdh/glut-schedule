@@ -81,6 +81,7 @@ fun AboutScreen(
                                         UpdateInfo(
                                             latestVersion = currentVersion,
                                             downloadUrl = "",
+                                            apkDownloadUrl = "",
                                             releaseNotes = "已是最新版本",
                                             isNewer = false
                                         )

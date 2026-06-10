@@ -37,6 +37,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -119,7 +120,7 @@ class MainActivity : ComponentActivity() {
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
                 var selectedItem by remember { mutableStateOf(DrawerItem.Schedule) }
-                var showUpdateDialog by remember { mutableStateOf<UpdateInfo?>(null) }
+                var showUpdateDialog by remember { mutableStateOf<UpdateDialogState?>(null) }
 
                 val scheduleViewModel: ScheduleViewModel = viewModel(
                     factory = ScheduleViewModelFactory(
@@ -413,7 +414,9 @@ class MainActivity : ComponentActivity() {
                                 DrawerItem.FAQ -> FaqScreen()
                                 DrawerItem.About -> AboutScreen(
                                     updateChecker = container.updateChecker,
-                                    onShowUpdateDialog = { showUpdateDialog = it }
+                                    onShowUpdateDialog = { info ->
+                                        showUpdateDialog = UpdateDialogState.Idle(info)
+                                    }
                                 )
                             }
                         }
@@ -421,8 +424,13 @@ class MainActivity : ComponentActivity() {
                 }
 
                 // Update dialog
-                showUpdateDialog?.let { info ->
-                    UpdateDialog(info = info, onDismiss = { showUpdateDialog = null })
+                showUpdateDialog?.let { state ->
+                    UpdateDialog(
+                        state = state,
+                        appUpdater = container.appUpdater,
+                        onDismiss = { showUpdateDialog = null },
+                        onStateChange = { showUpdateDialog = it }
+                    )
                 }
             }
         }
@@ -600,34 +608,137 @@ private fun SettingsPage(
 
 // ---- Update Dialog ----
 
+private sealed class UpdateDialogState {
+    data class Idle(val info: UpdateInfo) : UpdateDialogState()
+    data class Downloading(
+        val info: UpdateInfo,
+        val progress: Float,
+        val downloadedMB: String,
+        val totalMB: String
+    ) : UpdateDialogState()
+    data class Done(val info: UpdateInfo, val apkFile: java.io.File) : UpdateDialogState()
+}
+
 @Composable
-private fun UpdateDialog(info: UpdateInfo, onDismiss: () -> Unit) {
-    val uriHandler = LocalUriHandler.current
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(if (info.isNewer) "发现新版本 v${info.latestVersion}" else "已是最新版本")
-        },
-        text = {
-            Column {
-                if (info.isNewer) {
-                    Text("当前版本: v${BuildConfig.VERSION_NAME}")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (info.releaseNotes.isNotBlank()) {
-                        Text(info.releaseNotes.take(500), fontSize = 13.sp, color = Color.Gray)
+private fun UpdateDialog(
+    state: UpdateDialogState,
+    appUpdater: com.glut.schedule.service.AppUpdater,
+    onDismiss: () -> Unit,
+    onStateChange: (UpdateDialogState?) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+
+    when (state) {
+        is UpdateDialogState.Idle -> {
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = {
+                    Text(
+                        if (state.info.isNewer) "发现新版本 v${state.info.latestVersion}"
+                        else "已是最新版本"
+                    )
+                },
+                text = {
+                    Column {
+                        if (state.info.isNewer) {
+                            Text("当前版本: v${BuildConfig.VERSION_NAME}")
+                            Spacer(modifier = Modifier.height(8.dp))
+                            if (state.info.releaseNotes.isNotBlank()) {
+                                Text(
+                                    state.info.releaseNotes.take(500),
+                                    fontSize = 13.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                        } else {
+                            Text("当前已是最新版本 v${BuildConfig.VERSION_NAME}")
+                        }
                     }
-                } else {
-                    Text("当前已是最新版本 v${BuildConfig.VERSION_NAME}")
+                },
+                confirmButton = {
+                    if (state.info.isNewer && state.info.apkDownloadUrl.isNotBlank()) {
+                        TextButton(onClick = {
+                            scope.launch {
+                                onStateChange(
+                                    UpdateDialogState.Downloading(
+                                        info = state.info,
+                                        progress = 0f,
+                                        downloadedMB = "0",
+                                        totalMB = "..."
+                                    )
+                                )
+                                try {
+                                    val apkFile = appUpdater.downloadApk(state.info.apkDownloadUrl) { downloaded, total ->
+                                        val progress = if (total > 0) downloaded.toFloat() / total else 0f
+                                        val dMB = "%.1f".format(downloaded / 1_000_000.0)
+                                        val tMB = if (total > 0) "%.1f".format(total / 1_000_000.0) else "?"
+                                        onStateChange(
+                                            UpdateDialogState.Downloading(
+                                                info = state.info,
+                                                progress = progress,
+                                                downloadedMB = dMB,
+                                                totalMB = tMB
+                                            )
+                                        )
+                                    }
+                                    onStateChange(UpdateDialogState.Done(state.info, apkFile))
+                                } catch (e: Exception) {
+                                    onDismiss()
+                                }
+                            }
+                        }) {
+                            Text("立即更新")
+                        }
+                    }
+                },
+                dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+            )
+        }
+
+        is UpdateDialogState.Downloading -> {
+            AlertDialog(
+                onDismissRequest = { onDismiss(); onStateChange(null) },
+                title = { Text("正在下载 v${state.info.latestVersion}") },
+                text = {
+                    Column {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            progress = { state.progress },
+                            color = Color(0xFF3F7DF6),
+                            trackColor = Color(0xFF3F7DF6).copy(alpha = 0.12f)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "${state.downloadedMB} MB / ${state.totalMB} MB  (${(state.progress * 100).toInt()}%)",
+                            fontSize = 13.sp,
+                            color = Color(0xFF667085)
+                        )
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { onDismiss(); onStateChange(null) }) {
+                        Text("取消下载")
+                    }
                 }
-            }
-        },
-        confirmButton = {
-            if (info.isNewer && info.downloadUrl.isNotBlank()) {
-                TextButton(onClick = { uriHandler.openUri(info.downloadUrl); onDismiss() }) {
-                    Text("前往下载")
-                }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("确定") } }
-    )
+            )
+        }
+
+        is UpdateDialogState.Done -> {
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text("下载完成") },
+                text = { Text("v${state.info.latestVersion} 已下载，是否立即安装？") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        appUpdater.installApk(state.apkFile)
+                        onDismiss()
+                    }) {
+                        Text("立即安装")
+                    }
+                },
+                dismissButton = { TextButton(onClick = onDismiss) { Text("稍后") } }
+            )
+        }
+    }
 }
