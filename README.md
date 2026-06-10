@@ -1,40 +1,60 @@
-# 桂林理工大学课表
+# 桂工课表
 
-面向桂林理工大学（含南宁分校）学生的本地 Android 课表 App。支持直接输入学号密码导入教务数据，无需手动操作 WebView。
+面向桂林理工大学（含南宁分校）学生的本地 Android 课表 App。支持直接输入学号密码导入教务数据，无需手动操作 WebView。所有数据加密存储在本地，不经过任何第三方服务器。
 
 ## 功能
 
 ### 课表
 - 启动即进入课表页面，无需登录注册
-- 顶部显示当前周数、星期和日期，左右滑动切换周次（1-22 周）
-- 左侧节次列显示节次与上下课时间，顶部显示周一至周日
-- 彩色课程卡片展示课程名、教室、教师、周次
+- 顶部显示当前周数、星期和日期，左右滑动或点击箭头切换周次
+- 左侧节次列显示节次与上下课时间（桂林/南宁两套作息）
+- 彩色课程卡片展示课程名、教室、教师，选课属性徽章（必修蓝/限选橙/任选绿）
 - 同一时段多门冲突课程自动分组，点击轮换显示
-- 调课处的卡片消失，在补课的节次补上卡片
-- 默认图片背景，支持自定义背景图片
+- 调课自动处理：原课消失，补课出现在对应的周次/节次
+- 支持自定义背景图片
 
 ### 数据导入
-- 直接输入学号密码登录教务系统（桂林 / 南宁自动检测）
+- 直接输入学号密码登录教务系统，自动检测桂林/南宁校区
 - 南宁分校支持验证码登录
-- 登录后自动拉取：课表、考试安排、考试成绩、等级考试、教学计划
-- 凭据加密存储（EncryptedSharedPreferences），静默登录刷新
+- 登录后自动拉取：课表、考试安排、考试成绩、等级考试、教学计划、调课信息
+- 凭据加密存储（EncryptedSharedPreferences），支持静默登录刷新
+- 记住密码：勾选后加密保存，不勾选自动清除已存密码
 
 ### 菜单功能
 | 菜单 | 功能 | 数据来源 |
 |------|------|---------|
-| 课程表 | 当前学期课表 | currcourse.jsdo / showTimetable.do |
-| 考试成绩 | 历年课程成绩 + 绩点 | studentOwnScore.do |
-| 考试安排 | 考试时间、地点、座位号 | 多端点探测 (JSON/HTML) |
+| 课程表 | 当前学期课表，周次导航 | currcourse.jsdo / showTimetable.do |
+| 考试成绩 | 历年课程成绩，学年分组 + GPA 汇总 | studentOwnScore.do (POST) |
+| 考试安排 | 考试时间、地点、座位号，时间线 UI | 多端点探测 (JSON/HTML) |
 | 等级考级 | 英语四六级、普通话等国家考试 | skilltest.jsdo (moduleId=2090) |
 | 教学计划 | 课组学分/门数要求与完成情况 | studentSelfSchedule.jsdo → studentScheduleLineShow.do |
-| 常见问题 | FAQ 常见问题解答，卡片展开/收起 | — |
+| 学期概览 | 学期日期、进度、节假日、调课一览 | 教务日历 + timor.tech 节假日 API |
 | 导入课表 | 学号密码登录，一键导入全部数据 | 多端点并行探测 |
-| 设置 | 显示周末开关、自定义背景 | — |
-| 关于 | 版本信息、更新检测 | GitHub Releases |
+| 常见问题 | FAQ 分类展开/收起（常见问题/数据解读/隐私安全/关于项目） | — |
+| 设置 | 显示周末、自定义背景 | — |
+| 关于 | 版本信息、检测更新、App 内下载安装 | GitHub Releases API |
+
+### 学期概览
+- **学期进度**：圆形进度环 + 已过/剩余天数精确计算
+- **节假日**：本学期法定节假日列表，含倒计时，按学期范围过滤
+- **暑假/寒假**：学期结束后自动显示倒计时
+- **调课一览**：按补课周次分组展示，当前周高亮（浅蓝底 + 蓝色边框 + "本周"标签）
+
+### 成绩页
+- 按学年分组（秋季+春季），学年 Chip 快速切换
+- 学期区块彩色左边框（秋=橙 春=绿）+ 季节徽章
+- 必修课学分加权 GPA 汇总（底部深色卡片）
+- 课程选课属性徽章、绩点颜色分段（优秀绿/良好蓝/及格橙/不及格红）
+
+### App 内更新
+- 启动时自动检测 GitHub Releases 最新版本
+- 三步弹窗：更新日志 → [立即更新] → 下载进度 → [立即安装] → 系统安装器
+- 支持下载中取消
 
 ### 数据持久化
 - Room 本地数据库，所有数据离线可用
-- 切换账号自动清除旧数据，各菜单独立刷新按钮
+- 切换账号自动清除旧数据
+- 各菜单独立刷新按钮，登录后自动刷新
 
 ## 技术栈
 
@@ -93,17 +113,20 @@ app/src/main/java/com/glut/schedule/
       ExamModels.kt                 考试（ExamInfo）
       GradeExamModels.kt            等级考试（GradeExamInfo）
       StudyPlanModels.kt            教学计划（StudyPlanGroup）
+      SemesterOverviewModels.kt     调课（SemesterAdjustment）、节假日（HolidayInfo）
       CourseColorMapper.kt          课程颜色分配
     local/
       ScheduleEntities.kt           Room 实体
       ScheduleDao.kt                Room DAO
-      ScheduleDatabase.kt           Room 数据库（version 5）
+      ScheduleDatabase.kt           Room 数据库
     repository/
       ScheduleRepository.kt         统一数据仓库，组合各 DAO Flow
     settings/
-      ScheduleSettingsStore.kt      DataStore（周数、周末、背景、校区类型、更新版本）
+      ScheduleSettingsStore.kt      DataStore（周数、周末、背景、校区、学期日期、节假日缓存）
 
   service/
+    AppUpdater.kt                    App 内更新：OkHttp 流式下载 APK + FileProvider 安装
+    UpdateChecker.kt                 版本更新检测（GitHub API + Pages 双通道）
     academic/
       AcademicSessionStore.kt       Cookie / campus URL 持久化
       AcademicExamService.kt        考试数据获取 + 多端点探针
@@ -111,7 +134,7 @@ app/src/main/java/com/glut/schedule/
       AcademicImportConfig.kt       教务 URL 构建
       ApiProbeService.kt            多端点并行探测引擎
       CredentialStore.kt            加密凭据存储
-      NanningPasswordHash.kt        南宁密码 MD5(MD5(password)) 哈希
+      NanningPasswordHash.kt        南宁密码哈希
     parser/
       AcademicScheduleParser.kt     GLUT 课表 HTML 解析器
       NanningCurrcourseParser.kt    南宁课表 HTML 解析器
@@ -119,8 +142,7 @@ app/src/main/java/com/glut/schedule/
       ExamParser.kt                 考试 JSON/HTML 双模式解析
       ScoreParser.kt                成绩 HTML 解析（桂林/南宁列映射）
       GradeExamParser.kt            等级考试 HTML 解析
-      StudyPlanParser.kt            教学计划 HTML 解析（selfSchedule → 课组提取）
-    UpdateChecker.kt                版本更新检测
+      StudyPlanParser.kt            教学计划 HTML 解析
 
   ui/
     components/
@@ -135,18 +157,20 @@ app/src/main/java/com/glut/schedule/
       ExamScreen.kt / ExamViewModel.kt
       GradeExamScreen.kt / GradeExamViewModel.kt
       StudyPlanScreen.kt / StudyPlanViewModel.kt
+      SemesterOverviewScreen.kt / SemesterOverviewViewModel.kt
       DirectLoginScreen.kt / DirectLoginViewModel.kt
       FaqScreen.kt
       AboutScreen.kt
     theme/
-      Theme.kt                      深色 Material 3 主题
+      Theme.kt                      Material 3 主题
 ```
 
 ## 数据流
 
-- `ScheduleSettingsStore`（DataStore）→ 当前周数 → `ScheduleViewModel` → 计算 `ScheduleWeek`
-- `ScheduleRepository`（Room DAO Flow）→ 各 DAO Flow → ViewModel `combine()` → `StateFlow<UiState>`
+- `ScheduleSettingsStore`（DataStore）→ 学期日期/周数 → ViewModel Flow combine → StateFlow<UiState>
+- `ScheduleRepository`（Room DAO Flow）→ 各 DAO Flow → ViewModel `combine()` → 响应式 UI
 - 导入时 `ApiProbeService.probeAllEndpoints()` 并行探测多个教务端点 → 挑选最佳结果 → 解析保存
+- 更新时 `UpdateChecker` 查询 GitHub API → `AppUpdater` 下载 APK → FileProvider 触发系统安装
 
 ## 教务端点
 
@@ -157,6 +181,7 @@ app/src/main/java/com/glut/schedule/
 | 考试 | studentQueryAllExam.do, queryExam.do 等 | JSON/HTML |
 | 等级考试 | skilltest.jsdo?moduleId=2090 | GBK |
 | 教学计划 | studentSelfSchedule.jsdo → studentScheduleLineShow.do | GBK/UTF-8 |
+| 节假日 | timor.tech API | JSON |
 
 ## 测试
 
