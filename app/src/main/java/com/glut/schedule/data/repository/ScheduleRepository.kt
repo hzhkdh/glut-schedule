@@ -9,6 +9,8 @@ import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.GradeExamInfo
 import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.StudyPlanGroup
+import com.glut.schedule.data.model.StudyPlanCourse
+import com.glut.schedule.data.model.StudyPlanGroupWithCourses
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.defaultClassPeriods
@@ -89,8 +91,33 @@ class ScheduleRepository(
         entities.map { it.toModel() }
     }
 
+    val studyPlanCourses: Flow<List<StudyPlanCourse>> = dao.observeStudyPlanCourses().map { entities ->
+        entities.map { it.toModel() }
+    }
+
+    val studyPlanGroupsWithCourses: Flow<List<StudyPlanGroupWithCourses>> =
+        combine(studyPlanGroups, studyPlanCourses) { groups, courses ->
+            val coursesByGroup = courses.groupBy { it.groupId }
+            groups.map { group ->
+                StudyPlanGroupWithCourses(
+                    group = group,
+                    courses = coursesByGroup[group.id] ?: emptyList()
+                )
+            }
+        }
+
     suspend fun replaceStudyPlanGroups(groups: List<StudyPlanGroup>) {
         dao.replaceStudyPlanGroups(groups.map { it.toEntity() })
+    }
+
+    suspend fun replaceStudyPlanData(
+        groups: List<StudyPlanGroup>,
+        courses: List<StudyPlanCourse>
+    ) {
+        dao.replaceStudyPlanData(
+            groups = groups.map { it.toEntity() },
+            courses = courses.map { it.toEntity() }
+        )
     }
 
     val semesterAdjustments: Flow<List<SemesterAdjustment>> = dao.observeSemesterAdjustments().map { entities ->

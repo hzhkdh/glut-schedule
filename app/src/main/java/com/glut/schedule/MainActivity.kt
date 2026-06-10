@@ -68,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.UpdateInfo
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.pages.AboutScreen
@@ -225,12 +226,10 @@ class MainActivity : ComponentActivity() {
                     onDispose { }
                 }
 
-                // Check for updates on launch + persist for red dot
+                // Red dot persists until user actually updates to the latest version
                 val updateAvailableVersion by container.settingsStore.updateAvailableVersion.collectAsState(initial = "")
-                val updateSeenVersion by container.settingsStore.updateSeenVersion.collectAsState(initial = "")
                 val showUpdateDot = updateAvailableVersion.isNotBlank()
-                    && updateAvailableVersion != BuildConfig.VERSION_NAME
-                    && updateAvailableVersion != updateSeenVersion
+                    && UpdateChecker.compareVersions(updateAvailableVersion, BuildConfig.VERSION_NAME) > 0
 
                 DisposableEffect(Unit) {
                     scope.launch {
@@ -297,11 +296,6 @@ class MainActivity : ComponentActivity() {
                                             isSelected = selectedItem == item,
                                             showDot = item == DrawerItem.About && showUpdateDot,
                                             onClick = {
-                                                if (item == DrawerItem.About && showUpdateDot) {
-                                                    scope.launch {
-                                                        container.settingsStore.markUpdateSeen(updateAvailableVersion)
-                                                    }
-                                                }
                                                 selectedItem = item
                                                 scope.launch { drawerState.close() }
                                             }
@@ -414,6 +408,7 @@ class MainActivity : ComponentActivity() {
                                 DrawerItem.FAQ -> FaqScreen()
                                 DrawerItem.About -> AboutScreen(
                                     updateChecker = container.updateChecker,
+                                    updateAvailableVersion = updateAvailableVersion,
                                     onShowUpdateDialog = { info ->
                                         showUpdateDialog = UpdateDialogState.Idle(info)
                                     }

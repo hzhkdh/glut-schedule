@@ -514,8 +514,8 @@ class DirectLoginViewModel(
                     val planUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId"
                     val planResult = apiProbeService.probeUrl(cookie, planUrl)
                     if (planResult != null && planResult.httpCode == 200 && planResult.body.length > 500) {
-                        val groups = studyPlanParser.parseGroups(planResult.body)
-                        scheduleRepository.replaceStudyPlanGroups(groups)
+                        val (groups, courses) = studyPlanParser.parseData(planResult.body)
+                        scheduleRepository.replaceStudyPlanData(groups, courses)
                         studyPlanCount = groups.size
                     }
                 }

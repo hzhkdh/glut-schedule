@@ -107,18 +107,19 @@ class UpdateChecker(
         }.getOrNull()
     }
 
-    private fun compareVersions(a: String, b: String): Int {
-        val partsA = a.split(".").map { it.toIntOrNull() ?: 0 }
-        val partsB = b.split(".").map { it.toIntOrNull() ?: 0 }
-        for (i in 0 until maxOf(partsA.size, partsB.size)) {
-            val va = partsA.getOrElse(i) { 0 }
-            val vb = partsB.getOrElse(i) { 0 }
-            if (va != vb) return va.compareTo(vb)
-        }
-        return 0
-    }
-
     companion object {
         private const val TAG = "UpdateChecker"
+
+        /** Returns >0 if a is newer, <0 if b is newer, 0 if equal. */
+        fun compareVersions(a: String, b: String): Int {
+            val partsA = a.split(".").map { it.toIntOrNull() ?: 0 }
+            val partsB = b.split(".").map { it.toIntOrNull() ?: 0 }
+            for (i in 0 until maxOf(partsA.size, partsB.size)) {
+                val va = partsA.getOrElse(i) { 0 }
+                val vb = partsB.getOrElse(i) { 0 }
+                if (va != vb) return va.compareTo(vb)
+            }
+            return 0
+        }
     }
 }

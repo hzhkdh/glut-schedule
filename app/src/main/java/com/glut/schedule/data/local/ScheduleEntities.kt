@@ -1,12 +1,16 @@
 package com.glut.schedule.data.local
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.GradeExamInfo
+import com.glut.schedule.data.model.CourseStatus
 import com.glut.schedule.data.model.StudyPlanGroup
+import com.glut.schedule.data.model.StudyPlanCourse
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.SemesterAdjustment
@@ -185,6 +189,40 @@ fun StudyPlanGroupEntity.toModel(): StudyPlanGroup = StudyPlanGroup(
     creditRequired = creditRequired, creditEarned = creditEarned,
     countRequired = countRequired, countPassed = countPassed,
     isPassed = isPassed
+)
+
+@Entity(
+    tableName = "study_plan_courses",
+    foreignKeys = [ForeignKey(
+        entity = StudyPlanGroupEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["groupId"],
+        onDelete = ForeignKey.CASCADE
+    )],
+    indices = [Index(value = ["groupId"])]
+)
+data class StudyPlanCourseEntity(
+    @PrimaryKey val id: String,
+    val groupId: String,
+    val courseName: String,
+    val credit: Double,
+    val hours: String,
+    val assessment: String,
+    val semester: String,
+    val status: String
+)
+
+fun StudyPlanCourse.toEntity(): StudyPlanCourseEntity = StudyPlanCourseEntity(
+    id = id, groupId = groupId, courseName = courseName,
+    credit = credit, hours = hours, assessment = assessment,
+    semester = semester, status = status.name
+)
+
+fun StudyPlanCourseEntity.toModel(): StudyPlanCourse = StudyPlanCourse(
+    id = id, groupId = groupId, courseName = courseName,
+    credit = credit, hours = hours, assessment = assessment,
+    semester = semester,
+    status = try { CourseStatus.valueOf(status) } catch (_: Exception) { CourseStatus.UNKNOWN }
 )
 
 @Entity(tableName = "semester_adjustments")

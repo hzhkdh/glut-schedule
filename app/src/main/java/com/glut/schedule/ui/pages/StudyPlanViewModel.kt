@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.StudyPlanGroup
+import com.glut.schedule.data.model.StudyPlanCourse
+import com.glut.schedule.data.model.StudyPlanGroupWithCourses
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
@@ -25,6 +27,17 @@ import okhttp3.Request
 import java.nio.charset.Charset
 import java.util.concurrent.TimeUnit
 
+data class StudyPlanUiState(
+    val groupsWithCourses: List<StudyPlanGroupWithCourses> = emptyList(),
+    val groups: List<StudyPlanGroup> = emptyList(),
+    val isRefreshing: Boolean = false,
+    val message: String = "",
+    val hasCookie: Boolean = false,
+    val cookieValue: String = "",
+    val expandedGroupId: String? = null,
+    val showLegend: Boolean = false
+)
+
 class StudyPlanViewModel(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
@@ -34,25 +47,43 @@ class StudyPlanViewModel(
 
     private val _isRefreshing = MutableStateFlow(false)
     private val _message = MutableStateFlow("")
+    private val _expandedGroupId = MutableStateFlow<String?>(null)
+    private val _showLegend = MutableStateFlow(false)
 
     val uiState: StateFlow<StudyPlanUiState> = combine(
-        repository.studyPlanGroups,
-        sessionStore.academicCookie,
+        combine(
+            repository.studyPlanGroupsWithCourses,
+            repository.studyPlanGroups,
+            sessionStore.academicCookie
+        ) { gwc, g, c -> Triple(gwc, g, c) },
         _isRefreshing,
-        _message
-    ) { groups, cookie, isRefreshing, message ->
+        _message,
+        _expandedGroupId,
+        _showLegend
+    ) { (gwc, g, c), refreshing, msg, expId, legend ->
         StudyPlanUiState(
-            groups = groups,
-            isRefreshing = isRefreshing,
-            message = message,
-            hasCookie = cookie.isNotBlank(),
-            cookieValue = cookie
+            groupsWithCourses = gwc,
+            groups = g,
+            isRefreshing = refreshing,
+            message = msg,
+            hasCookie = c.isNotBlank(),
+            cookieValue = c,
+            expandedGroupId = expId,
+            showLegend = legend
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = StudyPlanUiState()
     )
+
+    fun toggleExpanded(groupId: String) {
+        _expandedGroupId.value = if (_expandedGroupId.value == groupId) null else groupId
+    }
+
+    fun toggleLegend() {
+        _showLegend.value = !_showLegend.value
+    }
 
     fun refresh() {
         viewModelScope.launch {
@@ -75,10 +106,10 @@ class StudyPlanViewModel(
                 val campusBaseUrl = sessionStore.campusBaseUrl.first()
                     .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
 
-                val groups = fetchStudyPlanGroups(cookie, campusBaseUrl)
+                val (groups, courses) = fetchStudyPlanData(cookie, campusBaseUrl)
                 if (groups.isNotEmpty()) {
-                    repository.replaceStudyPlanGroups(groups)
-                    _message.value = "已获取 ${groups.size} 个培养计划课组"
+                    repository.replaceStudyPlanData(groups, courses)
+                    _message.value = "已获取 ${groups.size} 个课组，共 ${courses.size} 门课程"
                 } else {
                     _message.value = "暂无培养计划数据"
                 }
@@ -93,10 +124,10 @@ class StudyPlanViewModel(
         }
     }
 
-    internal suspend fun fetchStudyPlanGroups(
+    internal suspend fun fetchStudyPlanData(
         cookie: String,
         campusBaseUrl: String
-    ): List<StudyPlanGroup> {
+    ): Pair<List<StudyPlanGroup>, List<StudyPlanCourse>> {
         val client = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
@@ -136,7 +167,7 @@ class StudyPlanViewModel(
         val ids = studyPlanParser.parseStudentIds(selfHtml)
         if (ids == null) {
             Log.e(TAG, "Failed to parse studentId/classId from self schedule page")
-            return emptyList()
+            return Pair(emptyList(), emptyList())
         }
         val (studentId, classId) = ids
         Log.d(TAG, "Parsed studentId=$studentId, classId=$classId")
@@ -175,7 +206,7 @@ class StudyPlanViewModel(
         val lineHtml = String(lineBody, utfCharset)
         Log.d(TAG, "Line show HTML preview: ${lineHtml.take(300)}")
 
-        return studyPlanParser.parseGroups(lineHtml)
+        return studyPlanParser.parseData(lineHtml)
     }
 
     companion object {

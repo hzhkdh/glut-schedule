@@ -1,7 +1,9 @@
 package com.glut.schedule.ui.pages
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
@@ -40,12 +44,15 @@ import kotlinx.coroutines.launch
 @Composable
 fun AboutScreen(
     updateChecker: UpdateChecker,
+    updateAvailableVersion: String,
     onShowUpdateDialog: (UpdateInfo) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     val currentVersion = BuildConfig.VERSION_NAME
+    val hasUpdate = updateAvailableVersion.isNotBlank()
+        && UpdateChecker.compareVersions(updateAvailableVersion, currentVersion) > 0
 
     Scaffold(
         modifier = modifier,
@@ -71,6 +78,26 @@ fun AboutScreen(
                         icon = Icons.Outlined.Info,
                         label = "当前版本",
                         value = "v$currentVersion",
+                        trailing = {
+                            if (hasUpdate) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "v$updateAvailableVersion",
+                                        color = Color(0xFFDC2626),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(Color(0xFFDC2626), CircleShape)
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.width(1.dp))
+                            }
+                        },
                         onClick = {
                             scope.launch {
                                 val info = updateChecker.check(currentVersion)
@@ -145,7 +172,8 @@ private fun AboutInfoRow(
     icon: ImageVector,
     label: String,
     value: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    trailing: @Composable () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -168,6 +196,7 @@ private fun AboutInfoRow(
             maxLines = 1,
             modifier = Modifier.weight(1f)
         )
+        trailing()
         Text(
             text = value,
             color = Color(0xFF667085),

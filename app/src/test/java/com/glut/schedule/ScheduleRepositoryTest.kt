@@ -185,6 +185,12 @@ class ScheduleRepositoryTest {
 
         override suspend fun deleteAllStudyPlanGroups() {}
 
+        override fun observeStudyPlanCourses(): Flow<List<com.glut.schedule.data.local.StudyPlanCourseEntity>> = flowOf(emptyList())
+
+        override suspend fun insertStudyPlanCourses(courses: List<com.glut.schedule.data.local.StudyPlanCourseEntity>) {}
+
+        override suspend fun deleteAllStudyPlanCourses() {}
+
         override fun observeSemesterAdjustments(): Flow<List<com.glut.schedule.data.local.SemesterAdjustmentEntity>> = flowOf(emptyList())
 
         override suspend fun insertSemesterAdjustments(adjustments: List<com.glut.schedule.data.local.SemesterAdjustmentEntity>) {}

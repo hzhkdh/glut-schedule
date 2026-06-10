@@ -28,7 +28,6 @@ class ScheduleSettingsStore(
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
     private val campusTypeKey = stringPreferencesKey("campus_type")
     private val updateAvailableVersionKey = stringPreferencesKey("update_available_version")
-    private val updateSeenVersionKey = stringPreferencesKey("update_seen_version")
     private val holidaysCacheKey = stringPreferencesKey("holidays_cache")
     private val holidaysCacheDateKey = stringPreferencesKey("holidays_cache_date")
 
@@ -110,20 +109,9 @@ class ScheduleSettingsStore(
         preferences[updateAvailableVersionKey].orEmpty()
     }
 
-    /** Version that the user has already seen (to suppress red dot) */
-    val updateSeenVersion: Flow<String> = context.scheduleSettings.data.map { preferences ->
-        preferences[updateSeenVersionKey].orEmpty()
-    }
-
     suspend fun setUpdateAvailable(version: String) {
         context.scheduleSettings.edit { preferences ->
             preferences[updateAvailableVersionKey] = version
-        }
-    }
-
-    suspend fun markUpdateSeen(version: String) {
-        context.scheduleSettings.edit { preferences ->
-            preferences[updateSeenVersionKey] = version
         }
     }
 
