@@ -8,9 +8,11 @@ import com.glut.schedule.data.model.HolidayInfo
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
+import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicLoginResult
+import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.AcademicScheduleParser
 import kotlinx.coroutines.Dispatchers
@@ -59,7 +61,6 @@ data class HolidayDisplay(
 private data class SemesterBase(
     val startMonday: LocalDate,
     val endDate: LocalDate,
-    val week: Int,
     val adjustments: List<SemesterAdjustment>
 )
 
@@ -67,7 +68,8 @@ class SemesterOverviewViewModel(
     private val repository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
-    private val scheduleParser: AcademicScheduleParser
+    private val scheduleParser: AcademicScheduleParser,
+    private val loginService: AcademicLoginService
 ) : ViewModel() {
 
     private val _isRefreshing = MutableStateFlow(false)
@@ -82,10 +84,9 @@ class SemesterOverviewViewModel(
         combine(
             settingsStore.semesterStartMonday,
             settingsStore.semesterEndDate,
-            settingsStore.currentWeekNumber,
             repository.semesterAdjustments
-        ) { startMonday, endDate, week, adjustments ->
-            SemesterBase(startMonday, endDate, week, adjustments)
+        ) { startMonday, endDate, adjustments ->
+            SemesterBase(startMonday, endDate, adjustments)
         },
         _holidays,
         _isRefreshing,
@@ -93,6 +94,7 @@ class SemesterOverviewViewModel(
     ) { base, holidays, isRefreshing, message ->
         val today = LocalDate.now()
         val maxWeek = academicMaxWeekForCalendar(base.startMonday, base.endDate)
+        val currentWeek = academicWeekForDate(today, base.startMonday, maxWeek)
         val totalDays = ChronoUnit.DAYS.between(base.startMonday, base.endDate) + 1
         val elapsed = ChronoUnit.DAYS.between(base.startMonday, today).coerceIn(0, totalDays)
         val remaining = (totalDays - elapsed).coerceAtLeast(0)
@@ -125,7 +127,7 @@ class SemesterOverviewViewModel(
             semesterLabel = label,
             semesterStartDate = base.startMonday,
             semesterEndDate = base.endDate,
-            currentWeek = base.week,
+            currentWeek = currentWeek,
             totalWeeks = maxWeek,
             progressPercent = if (totalDays > 0) (elapsed.toFloat() / totalDays.toFloat()) else 0f,
             elapsedDays = elapsed,
@@ -163,16 +165,54 @@ class SemesterOverviewViewModel(
             _isRefreshing.value = true
             _message.value = "正在获取调课信息..."
             try {
-                val cookie = sessionStore.academicCookie.first()
-                if (cookie.isBlank()) {
-                    _message.value = "请先在「导入课表」登录教务系统后再刷新"
-                    delay(4000)
-                    _message.value = ""
-                    return@launch
-                }
                 val campusBaseUrl = sessionStore.campusBaseUrl.first()
                     .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
-                val html = fetchTimetableHtml(cookie, campusBaseUrl)
+
+                // Try existing cookie first
+                var cookie = sessionStore.academicCookie.first()
+                var html = if (cookie.isNotBlank()) {
+                    fetchTimetableHtml(cookie, campusBaseUrl)
+                } else ""
+
+                // If cookie expired or missing, try silent login
+                if (html.isBlank()) {
+                    _message.value = "会话已过期，正在使用已保存的账号自动登录..."
+                    when (val loginResult = loginService.silentLogin()) {
+                        is AcademicLoginResult.Success -> {
+                            cookie = sessionStore.academicCookie.first()
+                            html = fetchTimetableHtml(cookie, campusBaseUrl)
+                        }
+                        AcademicLoginResult.MissingCredentials -> {
+                            _message.value = "请先在导入课表页面登录教务系统以保存账号密码"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                        AcademicLoginResult.InvalidCredentials -> {
+                            _message.value = "教务账号或密码错误，请重新登录"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                        is AcademicLoginResult.NetworkError -> {
+                            _message.value = "自动登录失败: ${loginResult.message}"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                        AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
+                            val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
+                            _message.value = if (isNanning)
+                                "南宁登录需验证码，请到导入课表页面重新登录"
+                            else
+                                "教务需要手动验证，请到导入课表页面重新登录"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                    }
+                }
+
                 if (html.isBlank()) {
                     _message.value = "获取失败，请检查网络后重试"
                     delay(4000)
@@ -340,10 +380,11 @@ class SemesterOverviewViewModelFactory(
     private val repository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
-    private val scheduleParser: AcademicScheduleParser
+    private val scheduleParser: AcademicScheduleParser,
+    private val loginService: AcademicLoginService
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return SemesterOverviewViewModel(repository, settingsStore, sessionStore, scheduleParser) as T
+        return SemesterOverviewViewModel(repository, settingsStore, sessionStore, scheduleParser, loginService) as T
     }
 }

@@ -170,7 +170,8 @@ class MainActivity : ComponentActivity() {
                         repository = container.scheduleRepository,
                         settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
-                        scheduleParser = container.academicScheduleParser
+                        scheduleParser = container.academicScheduleParser,
+                        loginService = container.academicLoginService
                     )
                 )
                 val directLoginViewModel: DirectLoginViewModel = viewModel(

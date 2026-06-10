@@ -90,23 +90,55 @@ class StudyPlanViewModel(
             _isRefreshing.value = true
             _message.value = "正在获取培养计划..."
             try {
-                var cookie = sessionStore.academicCookie.first()
-                if (cookie.isBlank()) {
-                    val loginResult = loginService.silentLogin()
-                    if (loginResult is AcademicLoginResult.Success) {
-                        cookie = sessionStore.academicCookie.first()
-                    } else {
-                        _message.value = "请先在导入课表页面登录教务系统"
-                        delay(4000)
-                        _message.value = ""
-                        return@launch
-                    }
-                }
-
                 val campusBaseUrl = sessionStore.campusBaseUrl.first()
                     .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
 
-                val (groups, courses) = fetchStudyPlanData(cookie, campusBaseUrl)
+                // Try existing cookie first
+                var cookie = sessionStore.academicCookie.first()
+                var data = if (cookie.isNotBlank()) {
+                    fetchStudyPlanData(cookie, campusBaseUrl)
+                } else null
+
+                // If cookie expired or missing, try silent login
+                if (data == null || data.first.isEmpty()) {
+                    _message.value = "会话已过期，正在使用已保存的账号自动登录..."
+                    when (val loginResult = loginService.silentLogin()) {
+                        is AcademicLoginResult.Success -> {
+                            cookie = sessionStore.academicCookie.first()
+                            data = fetchStudyPlanData(cookie, campusBaseUrl)
+                        }
+                        AcademicLoginResult.MissingCredentials -> {
+                            _message.value = "请先在导入课表页面登录教务系统以保存账号密码"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                        AcademicLoginResult.InvalidCredentials -> {
+                            _message.value = "教务账号或密码错误，请重新登录"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                        is AcademicLoginResult.NetworkError -> {
+                            _message.value = "自动登录失败: ${loginResult.message}"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                        AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
+                            val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
+                            _message.value = if (isNanning)
+                                "南宁登录需验证码，请到导入课表页面重新登录"
+                            else
+                                "教务需要手动验证，请到导入课表页面重新登录"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                    }
+                }
+
+                val (groups, courses) = data!!
                 if (groups.isNotEmpty()) {
                     repository.replaceStudyPlanData(groups, courses)
                     _message.value = "已获取 ${groups.size} 个课组，共 ${courses.size} 门课程"

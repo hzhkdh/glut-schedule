@@ -80,20 +80,50 @@ class ScoreViewModel(
             _isRefreshing.value = true
             _message.value = "正在获取成绩..."
             try {
+                // Try existing cookie first
                 var cookie = sessionStore.academicCookie.first()
-                if (cookie.isBlank()) {
-                    val loginResult = loginService.silentLogin()
-                    if (loginResult is AcademicLoginResult.Success) {
-                        cookie = sessionStore.academicCookie.first()
-                    } else {
-                        _message.value = "请先在导入课表页面登录教务系统"
-                        delay(4000)
-                        _message.value = ""
-                        return@launch
+                var allScores = if (cookie.isNotBlank()) fetchAllScores(cookie) else emptyList()
+
+                // If cookie expired or missing, try silent login
+                if (allScores.isEmpty()) {
+                    _message.value = "会话已过期，正在使用已保存的账号自动登录..."
+                    when (val loginResult = loginService.silentLogin()) {
+                        is AcademicLoginResult.Success -> {
+                            cookie = sessionStore.academicCookie.first()
+                            allScores = fetchAllScores(cookie)
+                        }
+                        AcademicLoginResult.MissingCredentials -> {
+                            _message.value = "请先在导入课表页面登录教务系统以保存账号密码"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                        AcademicLoginResult.InvalidCredentials -> {
+                            _message.value = "教务账号或密码错误，请重新登录"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                        is AcademicLoginResult.NetworkError -> {
+                            _message.value = "自动登录失败: ${loginResult.message}"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
+                        AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
+                            val campusBaseUrl = sessionStore.campusBaseUrl.first()
+                            val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
+                            _message.value = if (isNanning)
+                                "南宁登录需验证码，请到导入课表页面重新登录"
+                            else
+                                "教务需要手动验证，请到导入课表页面重新登录"
+                            delay(4000)
+                            _message.value = ""
+                            return@launch
+                        }
                     }
                 }
 
-                val allScores = fetchAllScores(cookie)
                 if (allScores.isNotEmpty()) {
                     repository.replaceScores(allScores)
                     _message.value = "已获取 ${allScores.size} 条成绩记录"
