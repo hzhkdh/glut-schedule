@@ -1,7 +1,7 @@
 {
-  "version": "v0.13.5",
-  "versionCode": 12,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.13.5",
-  "releaseNotes": "### 新功能\n- 所有刷新按钮无视 cookie 过期：用已保存的账号密码自动静默登录\n- 南宁/桂工区分提示（南宁需验证码，桂工静默登录）\n- semesterOverview 当前周改用日期计算\n\n### 修复\n- 学期概览「第x周」不再随课表滑动而变化\n- 教学计划解析器学期名提取修正\n\n### 改造\n- StudyPlanViewModel / ScoreViewModel / GradeExamViewModel / SemesterOverviewViewModel 统一刷新逻辑",
-  "publishedAt": "2026-06-10T16:54:33Z"
+  "version": "v0.13.7",
+  "versionCode": 13,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.13.7",
+  "releaseNotes": "Release v0.13.7",
+  "publishedAt": "2026-06-11T05:39:15Z"
 }
