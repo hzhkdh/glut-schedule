@@ -189,6 +189,7 @@ fun ScheduleScreen(
                     periods = uiState.classPeriods,
                     blocks = blocksByWeek[pageWeekNumber].orEmpty(),
                     showWeekend = uiState.showWeekend,
+                    showNoon = uiState.showNoon,
                     modifier = Modifier.fillMaxSize()
                 )
             }

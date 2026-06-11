@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.ClassPeriod
+import com.glut.schedule.data.model.NOON_SECTIONS
+import com.glut.schedule.data.model.periodLabel
 import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.ScheduleWeek
 import com.glut.schedule.data.model.visibleDayCount
@@ -50,6 +52,7 @@ fun ScheduleGrid(
     periods: List<ClassPeriod>,
     blocks: List<CourseBlock>,
     showWeekend: Boolean,
+    showNoon: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -57,8 +60,11 @@ fun ScheduleGrid(
         val leftWidth = 52.dp
         val dayCount = visibleDayCount(showWeekend)
         val dayWidth = (maxWidth - leftWidth) / dayCount
-        val visibleBlocks = remember(blocks, dayCount) {
-            blocks.filter { it.occurrence.dayOfWeek <= dayCount }
+        val visibleBlocks = remember(blocks, dayCount, showNoon) {
+            blocks.filter { block ->
+                block.occurrence.dayOfWeek <= dayCount &&
+                    (showNoon || block.occurrence.startSection !in NOON_SECTIONS)
+            }
         }
 
         Column {
@@ -72,13 +78,14 @@ fun ScheduleGrid(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                PeriodColumn(periods = periods, rowHeight = rowHeight, width = leftWidth)
+                PeriodColumn(periods = periods, rowHeight = rowHeight, width = leftWidth, showNoon = showNoon)
                 TimetableBody(
                     periods = periods,
                     blocks = visibleBlocks,
                     rowHeight = rowHeight,
                     dayWidth = dayWidth,
-                    dayCount = dayCount
+                    dayCount = dayCount,
+                    showNoon = showNoon
                 )
             }
         }
@@ -163,24 +170,29 @@ private fun WeekDayHeader(
 private fun PeriodColumn(
     periods: List<ClassPeriod>,
     rowHeight: Dp,
-    width: Dp
+    width: Dp,
+    showNoon: Boolean = false
 ) {
     Column(modifier = Modifier.width(width)) {
         periods.forEach { period ->
-            Column(
-                modifier = Modifier
-                    .height(rowHeight)
-                    .padding(start = 6.dp, top = 7.dp),
-                horizontalAlignment = Alignment.Start
-            ) {
-                Text(
-                    text = period.section.toString(),
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(text = period.startsAt, color = Color.White.copy(alpha = 0.56f), fontSize = 9.sp)
-                Text(text = period.endsAt, color = Color.White.copy(alpha = 0.56f), fontSize = 9.sp)
+            val isNoon = period.section in NOON_SECTIONS
+            val h = if (!showNoon && isNoon) 0.dp else rowHeight
+            if (h > 0.dp) {
+                Column(
+                    modifier = Modifier
+                        .height(h)
+                        .padding(start = 6.dp, top = 7.dp),
+                    horizontalAlignment = Alignment.Start
+                ) {
+                    Text(
+                        text = period.periodLabel(),
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(text = period.startsAt, color = Color.White.copy(alpha = 0.56f), fontSize = 9.sp)
+                    Text(text = period.endsAt, color = Color.White.copy(alpha = 0.56f), fontSize = 9.sp)
+                }
             }
         }
     }
@@ -192,9 +204,11 @@ private fun TimetableBody(
     blocks: List<CourseBlock>,
     rowHeight: Dp,
     dayWidth: Dp,
-    dayCount: Int
+    dayCount: Int,
+    showNoon: Boolean = false
 ) {
-    val totalHeight = rowHeight * periods.size
+    val visiblePeriodCount = if (showNoon) periods.size else periods.size - NOON_SECTIONS.size
+    val totalHeight = rowHeight * visiblePeriodCount
     Box(
         modifier = Modifier
             .size(width = dayWidth * dayCount, height = totalHeight)
@@ -218,7 +232,10 @@ private fun TimetableBody(
                     modifier = Modifier
                         .offset(
                             x = dayWidth * (activeBlock.occurrence.dayOfWeek - 1) + 2.dp,
-                            y = rowHeight * (activeBlock.occurrence.startSection - 1) + 3.dp
+                            y = rowHeight * (if (!showNoon && activeBlock.occurrence.startSection > 6)
+                                activeBlock.occurrence.startSection - 3
+                            else
+                                activeBlock.occurrence.startSection - 1) + 3.dp
                         )
                         .size(
                             width = dayWidth - 4.dp,
@@ -306,15 +323,11 @@ private fun CourseCard(
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(11.dp))
-            .clipToBounds()
             .background(color)
             .then(clickableModifier)
             .padding(horizontal = 4.dp, vertical = 4.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(end = if (conflictCount > 1) 13.dp else 0.dp),
-            verticalArrangement = Arrangement.spacedBy(1.dp)
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(
                 text = block.course.title,
                 color = Color.White,
@@ -343,6 +356,7 @@ private fun CourseCard(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .offset(x = 4.dp, y = (-4).dp)
                     .size(15.dp)
                     .clip(CircleShape)
                     .background(Color(0xFFE11D48)),

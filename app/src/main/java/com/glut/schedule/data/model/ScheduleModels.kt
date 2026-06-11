@@ -84,6 +84,13 @@ data class ClassPeriod(
     val endsAt: String
 )
 
+/** 课时标签（简化：午1/午2，其余用数字，7-14映射为5-12） */
+fun ClassPeriod.periodLabel(): String = when (section) {
+    5 -> "午1"
+    6 -> "午2"
+    else -> if (section > 6) "${section - 2}" else "$section"
+}
+
 data class CourseOccurrence(
     val id: String,
     val courseId: String,
@@ -152,15 +159,20 @@ fun guilinClassPeriods(): List<ClassPeriod> = listOf(
     ClassPeriod(2, "09:20", "10:05"),
     ClassPeriod(3, "10:25", "11:10"),
     ClassPeriod(4, "11:15", "12:00"),
-    ClassPeriod(5, "14:30", "15:15"),
-    ClassPeriod(6, "15:20", "16:05"),
-    ClassPeriod(7, "16:25", "17:10"),
-    ClassPeriod(8, "17:15", "18:00"),
-    ClassPeriod(9, "18:30", "19:15"),
-    ClassPeriod(10, "19:20", "20:05"),
-    ClassPeriod(11, "20:10", "20:55"),
-    ClassPeriod(12, "21:00", "21:45")
+    ClassPeriod(5, "12:30", "13:15"), // 中午1（教务节次=5）
+    ClassPeriod(6, "13:20", "14:05"), // 中午2（教务节次=6）
+    ClassPeriod(7, "14:30", "15:15"), // 第5节
+    ClassPeriod(8, "15:20", "16:05"), // 第6节
+    ClassPeriod(9, "16:25", "17:10"), // 第7节
+    ClassPeriod(10, "17:15", "18:00"), // 第8节
+    ClassPeriod(11, "18:30", "19:15"), // 第9节
+    ClassPeriod(12, "19:20", "20:05"), // 第10节
+    ClassPeriod(13, "20:10", "20:55"), // 第11节
+    ClassPeriod(14, "21:00", "21:45"), // 第12节
 )
+
+/** 中午时段节次号（教务用5/6表示中午1/2，设置>显示中午 开关控制） */
+val NOON_SECTIONS = setOf(5, 6)
 
 fun nanningClassPeriods(): List<ClassPeriod> = listOf(
     ClassPeriod(1, "08:40", "09:20"),

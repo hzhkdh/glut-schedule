@@ -2,6 +2,7 @@ package com.glut.schedule.data.model
 
 data class SemesterAdjustment(
     val id: String,
+    val type: String,
     val title: String,
     val teacher: String,
     val originalWeek: Int,

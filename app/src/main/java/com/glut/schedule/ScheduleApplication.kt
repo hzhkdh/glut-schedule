@@ -37,6 +37,7 @@ class AppContainer(application: Application) {
         ScheduleDatabase::class.java,
         "glut_schedule.db"
     ).fallbackToDestructiveMigration(false)
+     .addMigrations(ScheduleDatabase.MIGRATION_7_8)
      .build()
 
     val settingsStore = ScheduleSettingsStore(application)

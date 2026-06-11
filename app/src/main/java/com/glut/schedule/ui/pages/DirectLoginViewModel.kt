@@ -418,9 +418,26 @@ class DirectLoginViewModel(
             var htmlResult = apiProbeService.findTimetableHtmlResult(results)
 
             // Nanning: currcourse.jsdo is the primary schedule endpoint.
-            // showTimetable.do requires yearid/termid extracted from currcourse.jsdo.
+            // showTimetable.do has the adjustment table but needs yearid/termid from currcourse.
+            var nanningShowResult: ApiProbeService.ProbeResult? = null
             if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
-                // Priority 1: currcourse.jsdo (primary Nanning endpoint)
+                // Always attempt to probe showTimetable.do for adjustments
+                val currcourseBody = results
+                    .find { it.url.contains("currcourse.jsdo") }?.body ?: ""
+                val extractedId = ApiProbeService.extractInternalIdFromCurrcourse(currcourseBody)
+                val extractedYearId = ApiProbeService.extractYearIdFromCurrcourse(currcourseBody)
+                val extractedTermId = ApiProbeService.extractTermIdFromCurrcourse(currcourseBody)
+                val id = extractedId ?: _uiState.value.username
+                if (id.isNotBlank()) {
+                    val showUrl = "$campusBaseUrl/academic/manager/coursearrange/showTimetable.do" +
+                        "?id=$id" +
+                        "&yearid=${extractedYearId ?: "46"}" +
+                        "&termid=${extractedTermId ?: "1"}" +
+                        "&timetableType=STUDENT&sectionType=BASE"
+                    nanningShowResult = apiProbeService.probeUrl(cookie, showUrl)
+                }
+
+                // Priority 1: currcourse.jsdo (primary Nanning course source)
                 val currcourse = results.find {
                     it.url.contains("currcourse.jsdo") && it.httpCode == 200
                 }
@@ -428,31 +445,9 @@ class DirectLoginViewModel(
                     htmlResult = currcourse
                 }
 
-                // Priority 2: showTimetable.do with params from currcourse.jsdo
+                // Priority 2: fall back to showTimetable.do for courses as well
                 if (htmlResult == null) {
-                    val currcourseBody = results
-                        .find { it.url.contains("currcourse.jsdo") }?.body ?: ""
-                    val extractedId = ApiProbeService.extractInternalIdFromCurrcourse(currcourseBody)
-                    val extractedYearId = ApiProbeService.extractYearIdFromCurrcourse(currcourseBody)
-                    val extractedTermId = ApiProbeService.extractTermIdFromCurrcourse(currcourseBody)
-                    if (extractedId != null) {
-                        val showUrl = "$campusBaseUrl/academic/manager/coursearrange/showTimetable.do" +
-                            "?id=$extractedId" +
-                            "&yearid=${extractedYearId ?: "46"}" +
-                            "&termid=${extractedTermId ?: "1"}" +
-                            "&timetableType=STUDENT&sectionType=BASE"
-                        htmlResult = apiProbeService.probeUrl(cookie, showUrl)
-                    }
-                }
-
-                // Priority 3: Last resort with student ID + default yearid/termid
-                if (htmlResult == null) {
-                    val username = _uiState.value.username
-                    if (username.isNotBlank()) {
-                        val fallbackUrl = "$campusBaseUrl/academic/manager/coursearrange/showTimetable.do" +
-                            "?id=$username&yearid=46&termid=1&timetableType=STUDENT&sectionType=BASE"
-                        htmlResult = apiProbeService.probeUrl(cookie, fallbackUrl)
-                    }
+                    htmlResult = nanningShowResult
                 }
             }
 
@@ -465,8 +460,11 @@ class DirectLoginViewModel(
                     scheduleRepository.replaceImportedCourses(courses)
                     courseCount = courses.size
                 }
-                sessionStore.saveTimetableUrl(htmlResult.url)
-                val adjustments = scheduleParser.parseAdjustments(htmlResult.body)
+                // Save showTimetable.do URL for adjustments (Nanning) or the course source URL (Guilin)
+                val timetableUrl = nanningShowResult?.url ?: htmlResult.url
+                sessionStore.saveTimetableUrl(timetableUrl)
+                val adjustmentHtml = nanningShowResult?.body ?: htmlResult.body
+                val adjustments = scheduleParser.parseAdjustments(adjustmentHtml)
                 Log.d(TAG, "Parsed ${adjustments.size} semester adjustments from timetable HTML")
                 scheduleRepository.replaceSemesterAdjustments(adjustments)
             }

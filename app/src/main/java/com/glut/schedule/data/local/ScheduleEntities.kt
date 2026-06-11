@@ -228,6 +228,7 @@ fun StudyPlanCourseEntity.toModel(): StudyPlanCourse = StudyPlanCourse(
 @Entity(tableName = "semester_adjustments")
 data class SemesterAdjustmentEntity(
     @PrimaryKey val id: String,
+    val type: String,
     val title: String,
     val teacher: String,
     val originalWeek: Int,
@@ -243,7 +244,7 @@ data class SemesterAdjustmentEntity(
 )
 
 fun SemesterAdjustment.toEntity(): SemesterAdjustmentEntity = SemesterAdjustmentEntity(
-    id = id, title = title, teacher = teacher,
+    id = id, type = type, title = title, teacher = teacher,
     originalWeek = originalWeek, originalDay = originalDay,
     originalStartSection = originalStartSection, originalEndSection = originalEndSection,
     originalRoom = originalRoom,
@@ -253,7 +254,7 @@ fun SemesterAdjustment.toEntity(): SemesterAdjustmentEntity = SemesterAdjustment
 )
 
 fun SemesterAdjustmentEntity.toModel(): SemesterAdjustment = SemesterAdjustment(
-    id = id, title = title, teacher = teacher,
+    id = id, type = type, title = title, teacher = teacher,
     originalWeek = originalWeek, originalDay = originalDay,
     originalStartSection = originalStartSection, originalEndSection = originalEndSection,
     originalRoom = originalRoom,

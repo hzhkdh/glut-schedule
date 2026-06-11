@@ -18,7 +18,8 @@ data class UpdateInfo(
 
 class UpdateChecker(
     private val repoOwner: String = "hzhkdh",
-    private val repoName: String = "glut-schedule"
+    private val repoName: String = "glut-schedule",
+    private val cfPagesUrl: String = "https://update.999314.xyz"
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -26,16 +27,58 @@ class UpdateChecker(
         .build()
 
     suspend fun check(currentVersion: String): UpdateInfo? = withContext(Dispatchers.IO) {
-        // Channel 1: GitHub Releases API
+        // Channel 1: Cloudflare Pages (primary, fast CDN in China)
+        checkCloudflarePages(currentVersion)?.let { return@withContext it }
+
+        Log.w(TAG, "Cloudflare Pages failed, trying GitHub API...")
+
+        // Channel 2: GitHub Releases API
         checkGitHubApi(currentVersion)?.let { return@withContext it }
 
         Log.w(TAG, "GitHub API failed, trying GitHub Pages fallback...")
 
-        // Channel 2: GitHub Pages static JSON
+        // Channel 3: GitHub Pages static JSON
         checkGitHubPages(currentVersion)?.let { return@withContext it }
 
         Log.w(TAG, "All update channels failed")
         null
+    }
+
+    private fun checkCloudflarePages(currentVersion: String): UpdateInfo? {
+        return runCatching {
+            val request = Request.Builder()
+                .url("$cfPagesUrl/update.json")
+                .header("User-Agent", "GlutSchedule/$currentVersion")
+                .get()
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val body = response.body?.string() ?: return null
+                parseCfPagesResponse(body, currentVersion)
+            }
+        }.getOrNull()
+    }
+
+    private fun parseCfPagesResponse(json: String, currentVersion: String): UpdateInfo? {
+        return runCatching {
+            val obj = JSONObject(json)
+            val versionCode = obj.optInt("versionCode", 0)
+            val versionName = obj.optString("versionName", "")
+            val downloadUrl = obj.optString("downloadUrl", "")
+            val updateDesc = obj.optString("updateDesc", "")
+            val forceUpdate = obj.optBoolean("forceUpdate", false)
+
+            if (versionName.isBlank() || downloadUrl.isBlank()) return null
+
+            UpdateInfo(
+                latestVersion = versionName,
+                downloadUrl = downloadUrl,
+                apkDownloadUrl = downloadUrl,
+                releaseNotes = updateDesc,
+                isNewer = compareVersions(versionName, currentVersion) > 0
+            )
+        }.getOrNull()
     }
 
     private fun checkGitHubApi(currentVersion: String): UpdateInfo? {

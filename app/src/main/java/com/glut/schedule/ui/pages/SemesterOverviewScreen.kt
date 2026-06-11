@@ -287,11 +287,20 @@ private fun HolidayRow(h: HolidayDisplay) {
     }
 }
 
+private fun adjustmentTypeColor(type: String): Color = when (type) {
+    "调课" -> Color(0xFF3F7DF6)
+    "补课" -> Color(0xFFD97706)
+    "停课" -> Color(0xFFDC2626)
+    else -> Color(0xFF667085)
+}
+
 @Composable
 private fun AdjustmentWeekCard(week: Int, adjustments: List<SemesterAdjustment>, currentWeek: Int) {
     val isPast = week < currentWeek
     val isCurrent = week == currentWeek
     val cardBg = if (isCurrent) AccentBlue.copy(alpha = 0.06f) else CardBg
+    val type = adjustments.firstOrNull()?.type ?: "调课"
+    val typeColor = adjustmentTypeColor(type)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = cardBg,
@@ -299,18 +308,29 @@ private fun AdjustmentWeekCard(week: Int, adjustments: List<SemesterAdjustment>,
         border = if (isCurrent) BorderStroke(1.dp, AccentBlue) else null
     ) {
         Column {
-            if (isCurrent) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "第${week}周 补课",
-                        color = AccentBlue,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(start = 14.dp, top = 8.dp)
-                    )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "第${week}周",
+                    color = if (isCurrent) AccentBlue else TextSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 14.dp, top = 8.dp)
+                )
+                Text(
+                    type,
+                    color = typeColor,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .padding(start = 6.dp, top = 8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(typeColor.copy(alpha = 0.12f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+                if (isCurrent) {
                     Text(
                         "本周",
                         color = AccentBlue,
@@ -323,14 +343,6 @@ private fun AdjustmentWeekCard(week: Int, adjustments: List<SemesterAdjustment>,
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
-            } else {
-                Text(
-                    "第${week}周 补课",
-                    color = TextSecondary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 14.dp, top = 8.dp)
-                )
             }
             adjustments.forEachIndexed { idx, adj ->
                 if (idx > 0) HorizontalDivider(color = Color(0xFFEDE8DE))
@@ -344,22 +356,34 @@ private fun AdjustmentWeekCard(week: Int, adjustments: List<SemesterAdjustment>,
 private fun AdjustmentRow(adj: SemesterAdjustment, isPast: Boolean) {
     val dayNames = listOf("", "周一", "周二", "周三", "周四", "周五", "周六", "周日")
     val alpha = if (isPast) 0.5f else 1f
+    val typePrefix = when (adj.type) {
+        "停课" -> "停"
+        "补课" -> "补"
+        "调课" -> "调"
+        else -> adj.type
+    }
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         Text(adj.title, color = TextPrimary.copy(alpha = alpha), fontSize = 15.sp, fontWeight = FontWeight.Medium)
-        Spacer(modifier = Modifier.height(4.dp))
-        val mDay = dayNames.getOrElse(adj.makeupDay) { "周${adj.makeupDay}" }
-        Text(
-            "补  ${mDay} ${adj.makeupStartSection}-${adj.makeupEndSection}节  ${adj.makeupRoom}",
-            color = AccentBlue.copy(alpha = alpha),
-            fontSize = 13.sp
-        )
-        val oDay = dayNames.getOrElse(adj.originalDay) { "周${adj.originalDay}" }
-        Text(
-            "原  第${adj.originalWeek}周 ${oDay} ${adj.originalStartSection}-${adj.originalEndSection}节  ${adj.originalRoom}",
-            color = TextSecondary.copy(alpha = alpha),
-            fontSize = 12.sp
-        )
+        val hasMakeup = adj.makeupWeek > 0 && adj.makeupDay > 0
+        val hasOriginal = adj.originalWeek > 0 && adj.originalDay > 0
+        if (hasMakeup || hasOriginal) Spacer(modifier = Modifier.height(4.dp))
+        if (hasMakeup) {
+            val mDay = dayNames.getOrElse(adj.makeupDay) { "周${adj.makeupDay}" }
+            Text(
+                "$typePrefix  ${mDay} ${adj.makeupStartSection}-${adj.makeupEndSection}节  ${adj.makeupRoom}",
+                color = AccentBlue.copy(alpha = alpha),
+                fontSize = 13.sp
+            )
+        }
+        if (hasOriginal) {
+            val oDay = dayNames.getOrElse(adj.originalDay) { "周${adj.originalDay}" }
+            Text(
+                "原  第${adj.originalWeek}周 ${oDay} ${adj.originalStartSection}-${adj.originalEndSection}节  ${adj.originalRoom}",
+                color = TextSecondary.copy(alpha = alpha),
+                fontSize = 12.sp
+            )
+        }
     }
 }

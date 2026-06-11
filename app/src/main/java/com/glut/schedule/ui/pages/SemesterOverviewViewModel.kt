@@ -133,7 +133,9 @@ class SemesterOverviewViewModel(
             elapsedDays = elapsed,
             remainingDays = remaining,
             holidays = holidaysWithVacation,
-            adjustmentsByWeek = base.adjustments.groupBy { it.makeupWeek },
+            adjustmentsByWeek = base.adjustments.groupBy { adj ->
+                if (adj.makeupWeek > 0) adj.makeupWeek else adj.originalWeek
+            },
             isRefreshing = isRefreshing,
             message = message
         )

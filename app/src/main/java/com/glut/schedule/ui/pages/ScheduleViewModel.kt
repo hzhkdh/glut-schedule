@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.ClassPeriod
+import com.glut.schedule.data.model.NOON_SECTIONS
 import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.CourseOccurrence
@@ -47,6 +48,7 @@ data class ScheduleUiState(
     val courses: List<ScheduleCourse> = emptyList(),
     val courseBlocks: List<CourseBlock> = emptyList(),
     val showWeekend: Boolean = false,
+    val showNoon: Boolean = false,
     val customBackgroundUri: String = "",
     val isRefreshing: Boolean = false,
     val message: String = "",
@@ -56,6 +58,7 @@ data class ScheduleUiState(
 private data class ScheduleSettingsUiState(
     val weekNumber: Int,
     val showWeekend: Boolean,
+    val showNoon: Boolean,
     val semesterStartMonday: LocalDate,
     val semesterEndDate: LocalDate,
     val customBackgroundUri: String
@@ -82,6 +85,9 @@ class ScheduleViewModel(
         val coldShowWeekend = runBlocking(Dispatchers.IO) {
             settingsStore.showWeekend.first()
         }
+        val coldShowNoon = runBlocking(Dispatchers.IO) {
+            settingsStore.showNoon.first()
+        }
         val coldCourses = runBlocking(Dispatchers.IO) {
             CourseColorMapper.assignColors(repository.courses.first())
         }
@@ -103,17 +109,23 @@ class ScheduleViewModel(
         }
 
         val settingsState = combine(
-            settingsStore.currentWeekNumber,
-            settingsStore.showWeekend,
-            settingsStore.semesterStartMonday,
-            settingsStore.semesterEndDate,
+            combine(
+                settingsStore.currentWeekNumber,
+                settingsStore.showWeekend,
+                settingsStore.showNoon,
+                settingsStore.semesterStartMonday,
+                settingsStore.semesterEndDate
+            ) { weekNumber, showWeekend, showNoon, semesterStartMonday, semesterEndDate ->
+                arrayOf(weekNumber, showWeekend, showNoon, semesterStartMonday, semesterEndDate)
+            },
             settingsStore.customBackgroundUri
-        ) { weekNumber, showWeekend, semesterStartMonday, semesterEndDate, customBackgroundUri ->
+        ) { base, customBackgroundUri ->
             ScheduleSettingsUiState(
-                weekNumber = weekNumber,
-                showWeekend = showWeekend,
-                semesterStartMonday = semesterStartMonday,
-                semesterEndDate = semesterEndDate,
+                weekNumber = base[0] as Int,
+                showWeekend = base[1] as Boolean,
+                showNoon = base[2] as Boolean,
+                semesterStartMonday = base[3] as LocalDate,
+                semesterEndDate = base[4] as LocalDate,
                 customBackgroundUri = customBackgroundUri
             )
         }
@@ -152,6 +164,7 @@ class ScheduleViewModel(
                         .map { occurrence -> CourseBlock(course, occurrence) }
                 },
                 showWeekend = settings.showWeekend,
+                showNoon = settings.showNoon,
                 customBackgroundUri = settings.customBackgroundUri
             )
         }
@@ -174,6 +187,7 @@ class ScheduleViewModel(
                 week = initialWeek,
                 customBackgroundUri = coldBgUri,
                 showWeekend = coldShowWeekend,
+                showNoon = coldShowNoon,
                 courses = coldCourses,
                 classPeriods = coldPeriods,
                 courseBlocks = coldBlocks,
@@ -200,6 +214,10 @@ class ScheduleViewModel(
 
     fun setShowWeekend(showWeekend: Boolean) {
         viewModelScope.launch { settingsStore.setShowWeekend(showWeekend) }
+    }
+
+    fun setShowNoon(showNoon: Boolean) {
+        viewModelScope.launch { settingsStore.setShowNoon(showNoon) }
     }
 
     fun returnToCurrentWeek() {

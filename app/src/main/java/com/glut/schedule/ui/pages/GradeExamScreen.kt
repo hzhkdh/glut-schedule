@@ -168,7 +168,7 @@ private fun GradeExamCard(
             Spacer(modifier = Modifier.width(16.dp))
 
             Text(
-                if (exam.score.isNotBlank()) exam.score else "-",
+                if (exam.score.isNotBlank()) exam.score.replace(Regex("\\.0+$"), "") else "-",
                 color = scoreColor,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold

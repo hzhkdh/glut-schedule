@@ -19,6 +19,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             val adjId = stableId("adj-${adj.title}-${adj.teacher}-${adj.originalWeek}-${adj.originalDay}-${adj.makeupWeek}-${adj.makeupDay}")
             SemesterAdjustment(
                 id = adjId,
+                type = adj.type,
                 title = adj.title,
                 teacher = adj.teacher,
                 originalWeek = adj.originalWeek,
@@ -168,7 +169,8 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                 .toList()
 
             val periodCell = cells.firstOrNull()?.let { htmlToLines(it).joinToString(" ") }.orEmpty()
-            val sectionNumber = periodNumberRegex.find(periodCell)?.groupValues?.get(1)?.toIntOrNull()
+            val sectionNumber = mapDisplaySection(periodCell)
+                ?: periodNumberRegex.find(periodCell)?.groupValues?.get(1)?.toIntOrNull()
                 ?: (rowIndex + 1)
 
             cells.drop(1).forEachIndexed { colIndex, cellHtml ->
@@ -196,10 +198,8 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             if (cells.size < 2) return@forEach
 
             val periodText = htmlToLines(cells.first().groupValues[2]).joinToString(" ")
-            val sectionNumber = periodNumberRegex.find(periodText)
-                ?.groupValues
-                ?.get(1)
-                ?.toIntOrNull()
+            val sectionNumber = mapDisplaySection(periodText)
+                ?: periodNumberRegex.find(periodText)?.groupValues?.get(1)?.toIntOrNull()
                 ?: return@forEach
 
             cells.drop(1).forEachIndexed { index, cellMatch ->
@@ -313,56 +313,81 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         return results
     }
 
+    // 教务多行调课：首行含完整课程信息，续行 MM-DD 开头仅含时间/教室
+    private val continuationRowDateRegex = Regex("""^\d{2}-\d{2}$""")
+
     private fun parseSupplementalAdjustmentRows(html: String): List<ScheduleAdjustment> {
-        return rowRegex.findAll(html).mapNotNull { rowMatch ->
+        val results = mutableListOf<ScheduleAdjustment>()
+        var pendingType = ""
+        var pendingTitle = ""
+        var pendingTeacher = ""
+
+        for (rowMatch in rowRegex.findAll(html)) {
             val cells = tableCellRegex.findAll(rowMatch.value)
                 .map { htmlToLines(it.groupValues[1]).joinToString(" ").trim() }
                 .toList()
-            if (cells.size < 12) return@mapNotNull null
-            if (!cells.first().contains("调课") && !cells.first().contains("补课")) return@mapNotNull null
+            if (cells.size < 5) continue
 
-            val title = cells.getOrNull(2)
-                ?.takeUnless { it.isBlank() || it.contains("课程名") }
-                ?: return@mapNotNull null
-            val teacher = cells.getOrNull(4).orEmpty().ifBlank { "待确认" }
+            val typeCell = cells.first()
 
-            val makeupBase = cells.size - 5
-            val originalWeek = cells.getOrNull(makeupBase - 4)
-                ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() }
-                ?: return@mapNotNull null
-            val originalDay = cells.getOrNull(makeupBase - 3)
-                ?.let { parseWeekdayText(it) }
-                ?: return@mapNotNull null
-            val (originalStart, originalEnd) = cells.getOrNull(makeupBase - 2)
-                ?.let { parseSectionRange(it) }
-                ?: return@mapNotNull null
-            val originalRoom = cells.getOrNull(makeupBase - 1).orEmpty()
-            val week = cells.getOrNull(makeupBase + 1)
-                ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() }
-                ?: return@mapNotNull null
-            val day = cells.getOrNull(makeupBase + 2)
-                ?.let { parseWeekdayText(it) }
-                ?: return@mapNotNull null
-            val (start, end) = cells.getOrNull(makeupBase + 3)
-                ?.let { parseSectionRange(it) }
-                ?: return@mapNotNull null
-            val room = cells.getOrNull(makeupBase + 4).orEmpty()
+            // 主行：类型（调课/补课/停课）
+            if (typeCell in KNOWN_TYPES && cells.size >= 12) {
+                val title = cells.getOrNull(2)
+                    ?.takeUnless { it.isBlank() || it.contains("课程名") }
+                    ?: continue
+                val teacher = cells.getOrNull(4).orEmpty().ifBlank { "待确认" }
+                pendingType = typeCell; pendingTitle = title; pendingTeacher = teacher
+                results.add(parseAdjustmentRow(cells, typeCell, title, teacher) ?: continue)
+            }
+            // 续行：MM-DD 日期开头，10 列纯时间数据，继承课程信息
+            else if (continuationRowDateRegex.matches(typeCell) && cells.size >= 10 && pendingTitle.isNotBlank()) {
+                val contAdj = parseContinuationRow(cells, pendingType, pendingTitle, pendingTeacher)
+                if (contAdj != null) results.add(contAdj)
+            }
+        }
+        return results
+    }
 
-            ScheduleAdjustment(
-                title = title,
-                teacher = teacher,
-                originalWeek = originalWeek,
-                originalDay = originalDay,
-                originalStartSection = originalStart.coerceIn(1, 12),
-                originalEndSection = originalEnd.coerceIn(originalStart, 12),
-                originalRoom = originalRoom,
-                makeupWeek = week,
-                makeupDay = day,
-                makeupStartSection = start.coerceIn(1, 12),
-                makeupEndSection = end.coerceIn(start, 12),
-                makeupRoom = room
-            )
-        }.toList()
+    private fun parseAdjustmentRow(cells: List<String>, type: String, title: String, teacher: String): ScheduleAdjustment? {
+        val makeupBase = cells.size - 5
+        val originalWeek = cells.getOrNull(makeupBase - 4)
+            ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
+        val originalDay = cells.getOrNull(makeupBase - 3)
+            ?.let { parseWeekdayText(it) } ?: 0
+        val (originalStart, originalEnd) = cells.getOrNull(makeupBase - 2)
+            ?.let { parseSectionRange(it) } ?: Pair(0, 0)
+        val originalRoom = cells.getOrNull(makeupBase - 1).orEmpty()
+        val week = cells.getOrNull(makeupBase + 1)
+            ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
+        val day = cells.getOrNull(makeupBase + 2)
+            ?.let { parseWeekdayText(it) } ?: 0
+        val (start, end) = cells.getOrNull(makeupBase + 3)
+            ?.let { parseSectionRange(it) } ?: Pair(0, 0)
+        val room = cells.getOrNull(makeupBase + 4).orEmpty()
+        val hasValidTime = (originalWeek > 0 && originalDay > 0) || (week > 0 && day > 0)
+        if (!hasValidTime && type != "停课") return null
+        return ScheduleAdjustment(type, title, teacher,
+            originalWeek, originalDay, originalStart, originalEnd, originalRoom,
+            week, day, start, end, room)
+    }
+
+    /** 续行: [0]原日期 [1]原周 [2]原星期 [3]原节次 [4]原教室 [5]补日期 [6]补周 [7]补星期 [8]补节次 [9]补教室 */
+    private fun parseContinuationRow(cells: List<String>, type: String, title: String, teacher: String): ScheduleAdjustment? {
+        val originalWeek = cells.getOrNull(1)
+            ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
+        val originalDay = cells.getOrNull(2)?.let { parseWeekdayText(it) } ?: 0
+        val (originalStart, originalEnd) = cells.getOrNull(3)?.let { parseSectionRange(it) } ?: Pair(0, 0)
+        val originalRoom = cells.getOrNull(4).orEmpty()
+        val makeupWeek = cells.getOrNull(6)
+            ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
+        val makeupDay = cells.getOrNull(7)?.let { parseWeekdayText(it) } ?: 0
+        val (makeupStart, makeupEnd) = cells.getOrNull(8)?.let { parseSectionRange(it) } ?: Pair(0, 0)
+        val makeupRoom = cells.getOrNull(9).orEmpty()
+        val hasValidTime = (originalWeek > 0 && originalDay > 0) || (makeupWeek > 0 && makeupDay > 0)
+        if (!hasValidTime && type != "停课") return null
+        return ScheduleAdjustment(type, title, teacher,
+            originalWeek, originalDay, originalStart, originalEnd, originalRoom,
+            makeupWeek, makeupDay, makeupStart, makeupEnd, makeupRoom)
     }
 
     private fun applyAdjustmentRemovals(
@@ -573,8 +598,8 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                     id = "$courseId-occurrence-$index",
                     courseId = courseId,
                     dayOfWeek = day,
-                    startSection = start.coerceIn(1, 12),
-                    endSection = end.coerceIn(start, 12),
+                    startSection = start.coerceIn(1, 14),
+                    endSection = end.coerceIn(start, 14),
                     weekText = weekText,
                     note = room
                 )
@@ -605,8 +630,8 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                     id = "$id-occurrence",
                     courseId = id,
                     dayOfWeek = day.coerceIn(1, 7),
-                    startSection = effectiveStart.coerceIn(1, 12),
-                    endSection = effectiveEnd.coerceIn(effectiveStart, 12),
+                    startSection = effectiveStart.coerceIn(1, 14),
+                    endSection = effectiveEnd.coerceIn(effectiveStart, 14),
                     weekText = weekText.ifBlank { "全周" },
                     note = room
                 )
@@ -799,6 +824,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
     }
 
     private data class ScheduleAdjustment(
+        val type: String,
         val title: String,
         val teacher: String,
         val originalWeek: Int,
@@ -826,7 +852,21 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
 
     private val dayNames = listOf("一", "二", "三", "四", "五", "六", "日")
 
+    /**
+     * 教务"中午1/2"行夹在第4节和第5节之间，后续节次号偏移+2。
+     * 第1-4节 → 1-4, 中午1/2 → 5/6, 第5-12节 → 7-14
+     */
+    private fun mapDisplaySection(periodText: String): Int? = when {
+        periodText.contains("中午1") -> 5
+        periodText.contains("中午2") -> 6
+        else -> {
+            val n = periodNumberRegex.find(periodText)?.groupValues?.get(1)?.toIntOrNull()
+            if (n != null && n >= 5) n + 2 else n
+        }
+    }
+
     private companion object {
+        val KNOWN_TYPES = setOf("调课", "补课", "停课")
         val cellRegex = Regex("""(?is)<td\b([^>]*)>(.*?)</td>""")
         val timetableTableRegex = Regex("""(?is)<table\b(?=[^>]*\bid\s*=\s*["']timetable["'])[^>]*>.*?</table>""")
         val rowRegex = Regex("""(?is)<tr\b[^>]*>.*?</tr>""")

@@ -23,6 +23,7 @@ class ScheduleSettingsStore(
 ) {
     private val currentWeekKey = intPreferencesKey("current_week")
     private val showWeekendKey = booleanPreferencesKey("show_weekend")
+    private val showNoonKey = booleanPreferencesKey("show_noon")
     private val semesterStartMondayKey = stringPreferencesKey("semester_start_monday")
     private val semesterEndDateKey = stringPreferencesKey("semester_end_date")
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
@@ -76,6 +77,16 @@ class ScheduleSettingsStore(
     suspend fun setShowWeekend(showWeekend: Boolean) {
         context.scheduleSettings.edit { preferences ->
             preferences[showWeekendKey] = showWeekend
+        }
+    }
+
+    val showNoon: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
+        preferences[showNoonKey] ?: false
+    }
+
+    suspend fun setShowNoon(showNoon: Boolean) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[showNoonKey] = showNoon
         }
     }
 

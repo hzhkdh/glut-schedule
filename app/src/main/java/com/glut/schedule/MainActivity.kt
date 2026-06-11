@@ -401,6 +401,8 @@ class MainActivity : ComponentActivity() {
                                 DrawerItem.Settings -> SettingsPage(
                                     showWeekend = scheduleUiState.showWeekend,
                                     onShowWeekendChange = scheduleViewModel::setShowWeekend,
+                                    showNoon = scheduleUiState.showNoon,
+                                    onShowNoonChange = scheduleViewModel::setShowNoon,
                                     hasCustomBackground = scheduleUiState.customBackgroundUri.isNotBlank(),
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
                                     onClearBackground = { scheduleViewModel.clearCustomBackground() }
@@ -527,6 +529,8 @@ private fun DrawerMenuItem(
 private fun SettingsPage(
     showWeekend: Boolean,
     onShowWeekendChange: (Boolean) -> Unit,
+    showNoon: Boolean = false,
+    onShowNoonChange: (Boolean) -> Unit = {},
     hasCustomBackground: Boolean = false,
     onPickBackground: () -> Unit = {},
     onClearBackground: () -> Unit = {}
@@ -558,6 +562,19 @@ private fun SettingsPage(
                 ) {
                     Text("显示周末", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Switch(checked = showWeekend, onCheckedChange = onShowWeekendChange)
+                }
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("显示中午", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = showNoon, onCheckedChange = onShowNoonChange)
                 }
             }
 
