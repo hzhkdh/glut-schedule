@@ -1,7 +1,7 @@
 {
-  "version": "v0.14.0",
-  "versionCode": 15,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.14.0",
-  "releaseNotes": "### 新功能\n- 设置页「显示中午」开关（桂工本部，第4-5节之间显示午1/午2）\n- 调课一览类型徽章（调课=蓝/补课=橙/停课=红）\n- CF Pages 国内加速更新通道（主通道，GitHub 兜底）\n- 等级考试成绩去尾零\n\n### 修复\n- 南宁调课解析（currcourse.jsdo 导致 URL 错误）\n- 解析器中午行跳过（periodNumberRegex 不匹配）\n- 关闭中午后课程仍显示（Grid 层节次偏移）\n- 重课角标移到卡片外侧\n\,
-  "publishedAt": "2026-06-11T10:32:16Z"
+  "version": "v0.14.5",
+  "versionCode": 16,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.14.5",
+  "releaseNotes": "南宁教室拆分 + 桂林调课节次映射修复 + 调课应用到南宁",
+  "publishedAt": "2026-06-11T13:50:16Z"
 }
