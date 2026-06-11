@@ -34,6 +34,15 @@ interface ScheduleDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertClassPeriods(periods: List<ClassPeriodEntity>)
 
+    @Query("DELETE FROM class_periods")
+    suspend fun deleteClassPeriods()
+
+    @Transaction
+    suspend fun replaceClassPeriods(periods: List<ClassPeriodEntity>) {
+        deleteClassPeriods()
+        insertClassPeriods(periods)
+    }
+
     @Query("DELETE FROM courses")
     suspend fun deleteCourses()
 

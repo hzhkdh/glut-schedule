@@ -34,20 +34,15 @@ class ScheduleRepository(
         courses.map { course -> course.toModel(occurrencesByCourse[course.id].orEmpty()) }
     }
 
-    val classPeriods: Flow<List<ClassPeriod>> = combine(
-        dao.observeClassPeriods(),
-        campusType
-    ) { periods, campusType ->
-        periods.map { it.toModel() }.ifEmpty {
-            when (campusType) {
-                CampusType.GUILIN -> guilinClassPeriods()
-                CampusType.NANNING -> nanningClassPeriods()
-            }
+    val classPeriods: Flow<List<ClassPeriod>> = campusType.map { campusType ->
+        when (campusType) {
+            CampusType.GUILIN -> guilinClassPeriods()
+            CampusType.NANNING -> nanningClassPeriods()
         }
     }
 
     suspend fun seedIfEmpty() {
-        dao.insertClassPeriods(defaultClassPeriods().map { it.toEntity() })
+        dao.replaceClassPeriods(defaultClassPeriods().map { it.toEntity() })
 
         if (dao.courseCount() > 0) {
             clearLegacyBundledSampleCoursesIfPresent()
@@ -135,7 +130,7 @@ class ScheduleRepository(
             CampusType.GUILIN -> guilinClassPeriods()
             CampusType.NANNING -> nanningClassPeriods()
         }
-        dao.insertClassPeriods(periods.map { it.toEntity() })
+        dao.replaceClassPeriods(periods.map { it.toEntity() })
         val coloredCourses = CourseColorMapper.assignColors(courses)
         dao.replaceCourses(
             courses = coloredCourses.map { it.toEntity() },

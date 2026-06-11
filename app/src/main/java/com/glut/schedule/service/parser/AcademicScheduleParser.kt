@@ -9,13 +9,17 @@ import java.security.MessageDigest
 interface AcademicScheduleParser {
     fun parsePersonalSchedule(html: String): List<ScheduleCourse>
     fun parseAdjustments(html: String): List<SemesterAdjustment> = emptyList()
+    /** Apply adjustments from HTML to an existing course list (used when courses come from
+     *  a different source than adjustments, e.g. Nanning currcourse.jsdo + showTimetable.do). */
+    fun applyAdjustmentsToCourses(courses: List<ScheduleCourse>, adjustmentHtml: String): List<ScheduleCourse> = courses
 }
 
 class GlutAcademicScheduleParser : AcademicScheduleParser {
     /** Parse just the course adjustment (调课/补课) rows from the timetable HTML. */
     override fun parseAdjustments(html: String): List<SemesterAdjustment> {
         if (html.isBlank()) return emptyList()
-        return parseSupplementalAdjustmentRows(html).map { adj ->
+        val hasNoonInTimetable = html.contains("中午")
+        return parseSupplementalAdjustmentRows(html, hasNoonInTimetable).map { adj ->
             val adjId = stableId("adj-${adj.title}-${adj.teacher}-${adj.originalWeek}-${adj.originalDay}-${adj.makeupWeek}-${adj.makeupDay}")
             SemesterAdjustment(
                 id = adjId,
@@ -36,24 +40,39 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         }
     }
 
+    /** Apply adjustments from HTML to an existing course list (used for Nanning where courses
+     *  come from currcourse.jsdo but adjustments come from showTimetable.do). */
+    override fun applyAdjustmentsToCourses(courses: List<ScheduleCourse>, adjustmentHtml: String): List<ScheduleCourse> {
+        if (adjustmentHtml.isBlank()) return courses
+        val hasNoonInTimetable = adjustmentHtml.contains("中午")
+        val adjustments = parseSupplementalAdjustmentRows(adjustmentHtml, hasNoonInTimetable)
+        if (adjustments.isEmpty()) return courses
+        return mergeCompatibleCourses(
+            applyAdjustmentRemovals(courses, adjustments) +
+                adjustments.map { it.toMakeupCourse() }
+        )
+    }
+
     override fun parsePersonalSchedule(html: String): List<ScheduleCourse> {
         require(html.isNotBlank()) { "课表 HTML 不能为空" }
         if (looksLikeNonTimetablePage(html)) return emptyList()
 
-        // 教务“个人课表”同一页可能同时包含属性单元格、完整大节课表、课程安排表和底部补课表。
+        // 教务"个人课表"同一页可能同时包含属性单元格、完整大节课表、课程安排表和底部补课表。
         // 旧逻辑在读到任意前置表格后提前返回，会丢掉后面的完整课表和补课时间地点。
-        val adjustments = parseSupplementalAdjustmentRows(html)
+        // 南宁课表无中午时段（第1-11节直排），不能应用桂林的中午偏移。
+        val hasNoonInTimetable = html.contains("中午")
+        val adjustments = parseSupplementalAdjustmentRows(html, hasNoonInTimetable)
         val primary = mergeCompatibleCourses(
             applyAdjustmentRemovals(
                 parseExplicitCells(html) +
-                parseGlutStudentTimetableGrid(html) +
+                parseGlutStudentTimetableGrid(html, hasNoonInTimetable) +
                     parseCourseArrangementRows(html),
                 adjustments
             ) + adjustments.map { it.toMakeupCourse() }
         )
         if (primary.isNotEmpty()) return CourseColorMapper.assignColors(primary)
 
-        val secondary = (parseGridTable(html) + parseSimpleTable(html))
+        val secondary = (parseGridTable(html, hasNoonInTimetable) + parseSimpleTable(html))
             .distinctBy { it.id }
         if (secondary.isNotEmpty()) return CourseColorMapper.assignColors(secondary)
 
@@ -153,7 +172,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         }.toList()
     }
 
-    private fun parseGridTable(html: String): List<ScheduleCourse> {
+    private fun parseGridTable(html: String, hasNoonInTimetable: Boolean): List<ScheduleCourse> {
         val rows = rowRegex.findAll(html).toList()
         if (rows.size < 2) return emptyList()
 
@@ -169,7 +188,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                 .toList()
 
             val periodCell = cells.firstOrNull()?.let { htmlToLines(it).joinToString(" ") }.orEmpty()
-            val sectionNumber = mapDisplaySection(periodCell)
+            val sectionNumber = mapDisplaySection(periodCell, hasNoonInTimetable)
                 ?: periodNumberRegex.find(periodCell)?.groupValues?.get(1)?.toIntOrNull()
                 ?: (rowIndex + 1)
 
@@ -187,7 +206,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         return mergeCourseOccurrences(courses)
     }
 
-    private fun parseGlutStudentTimetableGrid(html: String): List<ScheduleCourse> {
+    private fun parseGlutStudentTimetableGrid(html: String, hasNoonInTimetable: Boolean): List<ScheduleCourse> {
         val timetable = timetableTableRegex.find(html)?.value ?: return emptyList()
         val rows = rowRegex.findAll(timetable).drop(1).toList()
         if (rows.isEmpty()) return emptyList()
@@ -198,7 +217,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             if (cells.size < 2) return@forEach
 
             val periodText = htmlToLines(cells.first().groupValues[2]).joinToString(" ")
-            val sectionNumber = mapDisplaySection(periodText)
+            val sectionNumber = mapDisplaySection(periodText, hasNoonInTimetable)
                 ?: periodNumberRegex.find(periodText)?.groupValues?.get(1)?.toIntOrNull()
                 ?: return@forEach
 
@@ -245,7 +264,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             val roomCandidate = detailLines.getOrNull(0).orEmpty()
             val room = roomCandidate.takeIf { looksLikeRoom(it) }.orEmpty()
             val teacherStartIndex = if (room.isBlank()) 0 else 1
-            // 实验课块里会出现“2-1”这类课序字段，它不是周次；优先使用带“周”的显式周次。
+            // 实验课块里会出现"2-1"这类课序字段，它不是周次；优先使用带"周"的显式周次。
             val weekText = detailLines.drop(teacherStartIndex + 1).firstOrNull { looksLikeExplicitWeekText(it) }
                 ?: detailLines.drop(teacherStartIndex + 1).firstOrNull { looksLikeCompactWeekText(it) }
                 ?: rawDetailLines.firstOrNull { looksLikeExplicitWeekText(it) }
@@ -316,7 +335,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
     // 教务多行调课：首行含完整课程信息，续行 MM-DD 开头仅含时间/教室
     private val continuationRowDateRegex = Regex("""^\d{2}-\d{2}$""")
 
-    private fun parseSupplementalAdjustmentRows(html: String): List<ScheduleAdjustment> {
+    private fun parseSupplementalAdjustmentRows(html: String, hasNoonInTimetable: Boolean): List<ScheduleAdjustment> {
         val results = mutableListOf<ScheduleAdjustment>()
         var pendingType = ""
         var pendingTitle = ""
@@ -337,32 +356,41 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                     ?: continue
                 val teacher = cells.getOrNull(4).orEmpty().ifBlank { "待确认" }
                 pendingType = typeCell; pendingTitle = title; pendingTeacher = teacher
-                results.add(parseAdjustmentRow(cells, typeCell, title, teacher) ?: continue)
+                results.add(parseAdjustmentRow(cells, typeCell, title, teacher, hasNoonInTimetable) ?: continue)
             }
             // 续行：MM-DD 日期开头，10 列纯时间数据，继承课程信息
             else if (continuationRowDateRegex.matches(typeCell) && cells.size >= 10 && pendingTitle.isNotBlank()) {
-                val contAdj = parseContinuationRow(cells, pendingType, pendingTitle, pendingTeacher)
+                val contAdj = parseContinuationRow(cells, pendingType, pendingTitle, pendingTeacher, hasNoonInTimetable)
                 if (contAdj != null) results.add(contAdj)
             }
         }
         return results
     }
 
-    private fun parseAdjustmentRow(cells: List<String>, type: String, title: String, teacher: String): ScheduleAdjustment? {
+    /** 将教务显示的节次号映射为内部节次号（桂林中午偏移+2，南宁直排） */
+    private fun mapAdjustmentSection(section: Int, hasNoon: Boolean): Int {
+        return if (hasNoon && section >= 5) section + 2 else section
+    }
+
+    private fun parseAdjustmentRow(cells: List<String>, type: String, title: String, teacher: String, hasNoon: Boolean): ScheduleAdjustment? {
         val makeupBase = cells.size - 5
         val originalWeek = cells.getOrNull(makeupBase - 4)
             ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
         val originalDay = cells.getOrNull(makeupBase - 3)
             ?.let { parseWeekdayText(it) } ?: 0
-        val (originalStart, originalEnd) = cells.getOrNull(makeupBase - 2)
+        val (origStart, origEnd) = cells.getOrNull(makeupBase - 2)
             ?.let { parseSectionRange(it) } ?: Pair(0, 0)
+        val originalStart = mapAdjustmentSection(origStart, hasNoon)
+        val originalEnd = mapAdjustmentSection(origEnd, hasNoon)
         val originalRoom = cells.getOrNull(makeupBase - 1).orEmpty()
         val week = cells.getOrNull(makeupBase + 1)
             ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
         val day = cells.getOrNull(makeupBase + 2)
             ?.let { parseWeekdayText(it) } ?: 0
-        val (start, end) = cells.getOrNull(makeupBase + 3)
+        val (mkStart, mkEnd) = cells.getOrNull(makeupBase + 3)
             ?.let { parseSectionRange(it) } ?: Pair(0, 0)
+        val start = mapAdjustmentSection(mkStart, hasNoon)
+        val end = mapAdjustmentSection(mkEnd, hasNoon)
         val room = cells.getOrNull(makeupBase + 4).orEmpty()
         val hasValidTime = (originalWeek > 0 && originalDay > 0) || (week > 0 && day > 0)
         if (!hasValidTime && type != "停课") return null
@@ -372,16 +400,20 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
     }
 
     /** 续行: [0]原日期 [1]原周 [2]原星期 [3]原节次 [4]原教室 [5]补日期 [6]补周 [7]补星期 [8]补节次 [9]补教室 */
-    private fun parseContinuationRow(cells: List<String>, type: String, title: String, teacher: String): ScheduleAdjustment? {
+    private fun parseContinuationRow(cells: List<String>, type: String, title: String, teacher: String, hasNoon: Boolean): ScheduleAdjustment? {
         val originalWeek = cells.getOrNull(1)
             ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
         val originalDay = cells.getOrNull(2)?.let { parseWeekdayText(it) } ?: 0
-        val (originalStart, originalEnd) = cells.getOrNull(3)?.let { parseSectionRange(it) } ?: Pair(0, 0)
+        val (origStart, origEnd) = cells.getOrNull(3)?.let { parseSectionRange(it) } ?: Pair(0, 0)
+        val originalStart = mapAdjustmentSection(origStart, hasNoon)
+        val originalEnd = mapAdjustmentSection(origEnd, hasNoon)
         val originalRoom = cells.getOrNull(4).orEmpty()
         val makeupWeek = cells.getOrNull(6)
             ?.let { weekNumberRegex.find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 0
         val makeupDay = cells.getOrNull(7)?.let { parseWeekdayText(it) } ?: 0
-        val (makeupStart, makeupEnd) = cells.getOrNull(8)?.let { parseSectionRange(it) } ?: Pair(0, 0)
+        val (mkStart, mkEnd) = cells.getOrNull(8)?.let { parseSectionRange(it) } ?: Pair(0, 0)
+        val makeupStart = mapAdjustmentSection(mkStart, hasNoon)
+        val makeupEnd = mapAdjustmentSection(mkEnd, hasNoon)
         val makeupRoom = cells.getOrNull(9).orEmpty()
         val hasValidTime = (originalWeek > 0 && originalDay > 0) || (makeupWeek > 0 && makeupDay > 0)
         if (!hasValidTime && type != "停课") return null
@@ -854,14 +886,16 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
 
     /**
      * 教务"中午1/2"行夹在第4节和第5节之间，后续节次号偏移+2。
-     * 第1-4节 → 1-4, 中午1/2 → 5/6, 第5-12节 → 7-14
+     * 仅限桂林本部（HTML含"中午"），南宁无中午时段，节次直排1-11。
+     * 桂林: 第1-4节→1-4, 中午1/2→5/6, 第5-12节→7-14
+     * 南宁: 第1-11节→1-11
      */
-    private fun mapDisplaySection(periodText: String): Int? = when {
+    private fun mapDisplaySection(periodText: String, hasNoon: Boolean = true): Int? = when {
         periodText.contains("中午1") -> 5
         periodText.contains("中午2") -> 6
         else -> {
             val n = periodNumberRegex.find(periodText)?.groupValues?.get(1)?.toIntOrNull()
-            if (n != null && n >= 5) n + 2 else n
+            if (n != null && hasNoon && n >= 5) n + 2 else n
         }
     }
 

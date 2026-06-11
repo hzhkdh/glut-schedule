@@ -60,10 +60,12 @@ fun ScheduleGrid(
         val leftWidth = 52.dp
         val dayCount = visibleDayCount(showWeekend)
         val dayWidth = (maxWidth - leftWidth) / dayCount
-        val visibleBlocks = remember(blocks, dayCount, showNoon) {
+        // 南宁课表（periods.size==11）无中午时段，不应过滤/偏移；桂林（14节）按用户设置
+        val effectiveShowNoon = showNoon || periods.size <= 11
+        val visibleBlocks = remember(blocks, dayCount, effectiveShowNoon) {
             blocks.filter { block ->
                 block.occurrence.dayOfWeek <= dayCount &&
-                    (showNoon || block.occurrence.startSection !in NOON_SECTIONS)
+                    (effectiveShowNoon || block.occurrence.startSection !in NOON_SECTIONS)
             }
         }
 
@@ -78,14 +80,14 @@ fun ScheduleGrid(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                PeriodColumn(periods = periods, rowHeight = rowHeight, width = leftWidth, showNoon = showNoon)
+                PeriodColumn(periods = periods, rowHeight = rowHeight, width = leftWidth, showNoon = effectiveShowNoon)
                 TimetableBody(
                     periods = periods,
                     blocks = visibleBlocks,
                     rowHeight = rowHeight,
                     dayWidth = dayWidth,
                     dayCount = dayCount,
-                    showNoon = showNoon
+                    showNoon = effectiveShowNoon
                 )
             }
         }
@@ -173,9 +175,11 @@ private fun PeriodColumn(
     width: Dp,
     showNoon: Boolean = false
 ) {
+    // 南宁（11节）无中午时段，节次标签直排；桂林（14节）用 periodLabel() 含午1/午2+偏移
+    val isNanning = periods.size <= 11
     Column(modifier = Modifier.width(width)) {
         periods.forEach { period ->
-            val isNoon = period.section in NOON_SECTIONS
+            val isNoon = !isNanning && period.section in NOON_SECTIONS
             val h = if (!showNoon && isNoon) 0.dp else rowHeight
             if (h > 0.dp) {
                 Column(
@@ -185,7 +189,7 @@ private fun PeriodColumn(
                     horizontalAlignment = Alignment.Start
                 ) {
                     Text(
-                        text = period.periodLabel(),
+                        text = if (isNanning) "${period.section}" else period.periodLabel(),
                         color = Color.White,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold

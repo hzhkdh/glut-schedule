@@ -26,4 +26,14 @@ class CompositeScheduleParser(
         }
         return emptyList()
     }
+
+    override fun applyAdjustmentsToCourses(courses: List<ScheduleCourse>, adjustmentHtml: String): List<ScheduleCourse> {
+        for (parser in parsers) {
+            val result = runCatching {
+                parser.applyAdjustmentsToCourses(courses, adjustmentHtml)
+            }.getOrDefault(courses)
+            if (result != courses) return result
+        }
+        return courses
+    }
 }

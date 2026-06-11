@@ -9,7 +9,8 @@ class NanningCurrcourseParser : AcademicScheduleParser {
 
     override fun parsePersonalSchedule(html: String): List<ScheduleCourse> {
         if (html.isBlank()) return emptyList()
-        if (!html.contains("infolist_common")) return emptyList()
+        // currcourse.jsdo 格式特征：同时有 infolist_common 行 + 嵌套 table.none
+        if (!html.contains("infolist_common") || !nestedTableRegex.containsMatchIn(html)) return emptyList()
 
         // Step 1: Extract all <table class="none">...</table> blocks
         val nestedTables = mutableListOf<String>()
@@ -46,46 +47,46 @@ class NanningCurrcourseParser : AcademicScheduleParser {
             val nestedHtml = nestedTables[tableIdx]
             val timeRows = tableRowRegex.findAll(nestedHtml).toList()
 
-            val occurrences = mutableListOf<CourseOccurrence>()
-            val id = "import-nn-${stableId("$title-$teacher")}"
-
-            for ((occIdx, timeRow) in timeRows.withIndex()) {
+            // Parse nested time rows into raw data first
+            data class RawSlot(
+                val weekText: String, val dayOfWeek: Int,
+                val startSection: Int, val endSection: Int, val room: String
+            )
+            val rawSlots = mutableListOf<RawSlot>()
+            for (timeRow in timeRows) {
                 val cells = tableCellRegex.findAll(timeRow.value)
                     .map { it.groupValues[1].trim() }
                     .map { htmlToPlainText(it) }
                     .toList()
                 if (cells.size < 4) continue
-
-                val weekText = cells[0]    // "1-18周" or "11-18周单"
-                val dayOfWeek = parseWeekday(cells[1]) // "星期一" -> 1
+                val weekText = cells[0]
+                val dayOfWeek = parseWeekday(cells[1])
                 if (dayOfWeek == 0) continue
-
-                val (startSection, endSection) = parsePeriodRange(cells[2]) // "第5-6节" -> (5,6)
+                val (startSection, endSection) = parsePeriodRange(cells[2])
                 if (startSection == 0) continue
+                val room = cells[3].takeUnless { it == "&nbsp;" || it.isBlank() }.orEmpty()
+                rawSlots.add(RawSlot(weekText, dayOfWeek, startSection, endSection, room))
+            }
 
-                val room = cells[3].takeUnless {
-                    it == "&nbsp;" || it.isBlank()
-                }.orEmpty()
-
-                occurrences.add(
+            if (rawSlots.isNotEmpty()) {
+                val firstRoom = rawSlots.first().room
+                val id = "import-nn-${stableId("$title-$teacher-$firstRoom")}"
+                val occurrences = rawSlots.mapIndexed { occIdx, slot ->
                     CourseOccurrence(
                         id = "$id-occurrence-$occIdx",
                         courseId = id,
-                        dayOfWeek = dayOfWeek.coerceIn(1, 7),
-                        startSection = startSection.coerceIn(1, 11),
-                        endSection = endSection.coerceIn(startSection, 11),
-                        weekText = weekText,
-                        note = room
+                        dayOfWeek = slot.dayOfWeek.coerceIn(1, 7),
+                        startSection = slot.startSection.coerceIn(1, 14),
+                        endSection = slot.endSection.coerceIn(slot.startSection, 14),
+                        weekText = slot.weekText,
+                        note = slot.room
                     )
-                )
-            }
-
-            if (occurrences.isNotEmpty()) {
+                }
                 courses.add(
                     ScheduleCourse(
                         id = id,
                         title = title,
-                        room = occurrences.firstOrNull()?.note.orEmpty(),
+                        room = firstRoom,
                         teacher = teacher,
                         colorHex = CourseColorMapper.colorForCourse(id, title),
                         occurrences = occurrences
@@ -94,7 +95,50 @@ class NanningCurrcourseParser : AcademicScheduleParser {
             }
         }
 
-        return CourseColorMapper.assignColors(courses)
+        return CourseColorMapper.assignColors(mergeCompatibleCourses(courses))
+    }
+
+    /** 按 title|teacher|room 分组，先按 occurrence.note 拆分再归并，同名同师异室拆为独立课程 */
+    private fun mergeCompatibleCourses(courses: List<ScheduleCourse>): List<ScheduleCourse> {
+        return courses.flatMap { splitCourseByOccurrenceRoom(it) }
+            .groupBy { "${it.title.trim()}|${it.teacher.trim()}|${it.room.trim()}" }
+            .map { (_, group) ->
+                val first = group.first()
+                val room = first.room
+                val occurrences = group.flatMap { it.occurrences }
+                    .distinctBy { "${it.dayOfWeek}-${it.startSection}-${it.endSection}-${it.weekText}" }
+                    .mapIndexed { index, occurrence ->
+                        occurrence.copy(
+                            id = "${first.id}-occurrence-$index",
+                            courseId = first.id,
+                            note = room
+                        )
+                    }
+                first.copy(
+                    room = room,
+                    occurrences = occurrences
+                )
+            }
+    }
+
+    /** 将同一课程按 occurrence 的教室拆分，不同教室 → 不同课程 */
+    private fun splitCourseByOccurrenceRoom(course: ScheduleCourse): List<ScheduleCourse> {
+        return course.occurrences
+            .groupBy { occurrence -> occurrence.note.trim().ifBlank { course.room.trim() } }
+            .map { (room, occurrences) ->
+                val id = "import-nn-${stableId("room-bound-${course.title}-${course.teacher}-$room")}"
+                course.copy(
+                    id = id,
+                    room = room,
+                    occurrences = occurrences.mapIndexed { index, occurrence ->
+                        occurrence.copy(
+                            id = "$id-occurrence-$index",
+                            courseId = id,
+                            note = room
+                        )
+                    }
+                )
+            }
     }
 
     // ---- Helpers ----

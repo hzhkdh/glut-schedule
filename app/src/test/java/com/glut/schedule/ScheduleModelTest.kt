@@ -26,10 +26,10 @@ class ScheduleModelTest {
     }
 
     @Test
-    fun defaultClassPeriodsCoverTwelveSections() {
+    fun defaultClassPeriodsCoverFourteenSections() {
         val periods = defaultClassPeriods()
 
-        assertEquals(12, periods.size)
+        assertEquals(14, periods.size)
         assertEquals("08:30", periods.first().startsAt)
         assertEquals("21:45", periods.last().endsAt)
     }

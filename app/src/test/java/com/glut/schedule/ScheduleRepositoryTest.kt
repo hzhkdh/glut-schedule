@@ -23,7 +23,7 @@ class ScheduleRepositoryTest {
 
         repository.seedIfEmpty()
 
-        assertEquals(12, dao.insertedPeriods.size)
+        assertEquals(14, dao.insertedPeriods.size)
         assertEquals(0, dao.insertedCourses.size)
         assertEquals(0, dao.insertedOccurrences.size)
     }
@@ -140,6 +140,15 @@ class ScheduleRepositoryTest {
         }
 
         override suspend fun insertClassPeriods(periods: List<ClassPeriodEntity>) {
+            insertedPeriods.addAll(periods)
+        }
+
+        override suspend fun deleteClassPeriods() {
+            insertedPeriods.clear()
+        }
+
+        override suspend fun replaceClassPeriods(periods: List<ClassPeriodEntity>) {
+            insertedPeriods.clear()
             insertedPeriods.addAll(periods)
         }
 

@@ -453,13 +453,9 @@ class DirectLoginViewModel(
 
             if (htmlResult != null) {
                 sessionStore.saveHtmlPreview(htmlResult.body.take(3000))
-                val courses = runCatching {
+                var courses = runCatching {
                     scheduleParser.parsePersonalSchedule(htmlResult.body)
                 }.getOrDefault(emptyList())
-                if (courses.isNotEmpty()) {
-                    scheduleRepository.replaceImportedCourses(courses)
-                    courseCount = courses.size
-                }
                 // Save showTimetable.do URL for adjustments (Nanning) or the course source URL (Guilin)
                 val timetableUrl = nanningShowResult?.url ?: htmlResult.url
                 sessionStore.saveTimetableUrl(timetableUrl)
@@ -467,6 +463,16 @@ class DirectLoginViewModel(
                 val adjustments = scheduleParser.parseAdjustments(adjustmentHtml)
                 Log.d(TAG, "Parsed ${adjustments.size} semester adjustments from timetable HTML")
                 scheduleRepository.replaceSemesterAdjustments(adjustments)
+                // Nanning: courses come from currcourse.jsdo which does NOT apply adjustments
+                // internally—apply them now from the separately-fetched showTimetable.do
+                if (campusBaseUrl == AcademicLoginResult.NANNING_URL && adjustmentHtml.isNotBlank()) {
+                    courses = scheduleParser.applyAdjustmentsToCourses(courses, adjustmentHtml)
+                    Log.d(TAG, "Applied adjustments to Nanning courses, result: ${courses.size} courses")
+                }
+                if (courses.isNotEmpty()) {
+                    scheduleRepository.replaceImportedCourses(courses)
+                    courseCount = courses.size
+                }
             }
 
             val examJsonResult = apiProbeService.findExamJsonResult(results)
