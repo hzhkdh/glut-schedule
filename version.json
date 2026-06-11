@@ -1,7 +1,7 @@
 {
   "version": "v0.13.7",
-  "versionCode": 13,
+  "versionCode": 14,
   "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.13.7",
-  "releaseNotes": "Release v0.13.7",
-  "publishedAt": "2026-06-11T05:39:15Z"
+  "releaseNotes": "调课一览类型徽章（调课=蓝/补课=橙/停课=红）· 解析器类型识别优化",
+  "publishedAt": "2026-06-11T05:41:26Z"
 }
