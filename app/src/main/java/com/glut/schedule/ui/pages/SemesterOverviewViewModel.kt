@@ -45,7 +45,8 @@ data class SemesterOverviewUiState(
     val holidays: List<HolidayDisplay> = emptyList(),
     val adjustmentsByWeek: Map<Int, List<SemesterAdjustment>> = emptyMap(),
     val isRefreshing: Boolean = false,
-    val message: String = ""
+    val message: String = "",
+    val hasNoon: Boolean = true // 桂林有中午时段（需反向映射节次标签），南宁无
 )
 
 data class HolidayDisplay(
@@ -90,8 +91,9 @@ class SemesterOverviewViewModel(
         },
         _holidays,
         _isRefreshing,
-        _message
-    ) { base, holidays, isRefreshing, message ->
+        _message,
+        sessionStore.campusBaseUrl
+    ) { base, holidays, isRefreshing, message, campusBaseUrl ->
         val today = LocalDate.now()
         val maxWeek = academicMaxWeekForCalendar(base.startMonday, base.endDate)
         val currentWeek = academicWeekForDate(today, base.startMonday, maxWeek)
@@ -137,7 +139,8 @@ class SemesterOverviewViewModel(
                 if (adj.makeupWeek > 0) adj.makeupWeek else adj.originalWeek
             },
             isRefreshing = isRefreshing,
-            message = message
+            message = message,
+            hasNoon = campusBaseUrl != AcademicLoginResult.NANNING_URL
         )
     }.stateIn(
         scope = viewModelScope,

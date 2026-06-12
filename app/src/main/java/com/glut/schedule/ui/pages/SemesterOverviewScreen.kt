@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.displaySectionLabel
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
@@ -127,7 +128,8 @@ fun SemesterOverviewScreen(
                     AdjustmentWeekCard(
                         week,
                         uiState.adjustmentsByWeek[week].orEmpty(),
-                        uiState.currentWeek
+                        uiState.currentWeek,
+                        uiState.hasNoon
                     )
                 }
             }
@@ -295,7 +297,7 @@ private fun adjustmentTypeColor(type: String): Color = when (type) {
 }
 
 @Composable
-private fun AdjustmentWeekCard(week: Int, adjustments: List<SemesterAdjustment>, currentWeek: Int) {
+private fun AdjustmentWeekCard(week: Int, adjustments: List<SemesterAdjustment>, currentWeek: Int, hasNoon: Boolean) {
     val isPast = week < currentWeek
     val isCurrent = week == currentWeek
     val cardBg = if (isCurrent) AccentBlue.copy(alpha = 0.06f) else CardBg
@@ -346,14 +348,14 @@ private fun AdjustmentWeekCard(week: Int, adjustments: List<SemesterAdjustment>,
             }
             adjustments.forEachIndexed { idx, adj ->
                 if (idx > 0) HorizontalDivider(color = Color(0xFFEDE8DE))
-                AdjustmentRow(adj, isPast)
+                AdjustmentRow(adj, isPast, hasNoon)
             }
         }
     }
 }
 
 @Composable
-private fun AdjustmentRow(adj: SemesterAdjustment, isPast: Boolean) {
+private fun AdjustmentRow(adj: SemesterAdjustment, isPast: Boolean, hasNoon: Boolean) {
     val dayNames = listOf("", "周一", "周二", "周三", "周四", "周五", "周六", "周日")
     val alpha = if (isPast) 0.5f else 1f
     val typePrefix = when (adj.type) {
@@ -371,16 +373,20 @@ private fun AdjustmentRow(adj: SemesterAdjustment, isPast: Boolean) {
         if (hasMakeup || hasOriginal) Spacer(modifier = Modifier.height(4.dp))
         if (hasMakeup) {
             val mDay = dayNames.getOrElse(adj.makeupDay) { "周${adj.makeupDay}" }
+            val mStart = displaySectionLabel(adj.makeupStartSection, hasNoon)
+            val mEnd = displaySectionLabel(adj.makeupEndSection, hasNoon)
             Text(
-                "$typePrefix  ${mDay} ${adj.makeupStartSection}-${adj.makeupEndSection}节  ${adj.makeupRoom}",
+                "$typePrefix  ${mDay} ${mStart}-${mEnd}节  ${adj.makeupRoom}",
                 color = AccentBlue.copy(alpha = alpha),
                 fontSize = 13.sp
             )
         }
         if (hasOriginal) {
             val oDay = dayNames.getOrElse(adj.originalDay) { "周${adj.originalDay}" }
+            val oStart = displaySectionLabel(adj.originalStartSection, hasNoon)
+            val oEnd = displaySectionLabel(adj.originalEndSection, hasNoon)
             Text(
-                "原  第${adj.originalWeek}周 ${oDay} ${adj.originalStartSection}-${adj.originalEndSection}节  ${adj.originalRoom}",
+                "原  第${adj.originalWeek}周 ${oDay} ${oStart}-${oEnd}节  ${adj.originalRoom}",
                 color = TextSecondary.copy(alpha = alpha),
                 fontSize = 12.sp
             )

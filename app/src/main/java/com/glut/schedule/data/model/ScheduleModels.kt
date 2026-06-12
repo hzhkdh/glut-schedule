@@ -91,6 +91,16 @@ fun ClassPeriod.periodLabel(): String = when (section) {
     else -> if (section > 6) "${section - 2}" else "$section"
 }
 
+/** 将内部节次号反向映射为显示节次标签。
+ *  桂林（hasNoon=true）: 5→午1, 6→午2, 7-14→5-12
+ *  南宁（hasNoon=false）: 直排 1-11 */
+fun displaySectionLabel(section: Int, hasNoon: Boolean = true): String = when {
+    hasNoon && section == 5 -> "午1"
+    hasNoon && section == 6 -> "午2"
+    hasNoon && section > 6 -> "${section - 2}"
+    else -> "$section"
+}
+
 data class CourseOccurrence(
     val id: String,
     val courseId: String,
