@@ -119,6 +119,8 @@ class ExamViewModel(
                 _needsInteractiveLogin.value = true
             } finally {
                 _isRefreshing.value = false
+                kotlinx.coroutines.delay(4000)
+                _message.value = ""
             }
         }
     }

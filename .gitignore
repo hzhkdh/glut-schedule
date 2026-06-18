@@ -42,7 +42,7 @@ __pycache__/
 *.pyc
 
 # ===== Docs (personal notes, not for public repo) =====
-docs/
+docs
 
 # ===== Kotlin / generated =====
 .kotlin/

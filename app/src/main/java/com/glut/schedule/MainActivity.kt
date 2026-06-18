@@ -4,6 +4,7 @@ import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.view.View
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -122,6 +123,15 @@ class MainActivity : ComponentActivity() {
                 val scope = rememberCoroutineScope()
                 var selectedItem by remember { mutableStateOf(DrawerItem.Schedule) }
                 var showUpdateDialog by remember { mutableStateOf<UpdateDialogState?>(null) }
+
+                // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
+                BackHandler(enabled = true) {
+                    when {
+                        drawerState.isOpen -> scope.launch { drawerState.close() }
+                        selectedItem != DrawerItem.Schedule -> selectedItem = DrawerItem.Schedule
+                        else -> finish()
+                    }
+                }
 
                 val scheduleViewModel: ScheduleViewModel = viewModel(
                     factory = ScheduleViewModelFactory(

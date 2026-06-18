@@ -293,6 +293,7 @@ private fun adjustmentTypeColor(type: String): Color = when (type) {
     "调课" -> Color(0xFF3F7DF6)
     "补课" -> Color(0xFFD97706)
     "停课" -> Color(0xFFDC2626)
+    "代课" -> Color(0xFF8B5CF6)
     else -> Color(0xFF667085)
 }
 
@@ -320,17 +321,6 @@ private fun AdjustmentWeekCard(week: Int, adjustments: List<SemesterAdjustment>,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(start = 14.dp, top = 8.dp)
-                )
-                Text(
-                    type,
-                    color = typeColor,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .padding(start = 6.dp, top = 8.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(typeColor.copy(alpha = 0.12f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 )
                 if (isCurrent) {
                     Text(
@@ -362,12 +352,28 @@ private fun AdjustmentRow(adj: SemesterAdjustment, isPast: Boolean, hasNoon: Boo
         "停课" -> "停"
         "补课" -> "补"
         "调课" -> "调"
+        "代课" -> "代"
         else -> adj.type
     }
+    val typeLabel = adj.type.ifBlank { "调课" }
+    val typeColor = adjustmentTypeColor(adj.type)
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
-        Text(adj.title, color = TextPrimary.copy(alpha = alpha), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(adj.title, color = TextPrimary.copy(alpha = alpha), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                typeLabel,
+                color = typeColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(typeColor.copy(alpha = 0.12f))
+                    .padding(horizontal = 5.dp, vertical = 2.dp)
+            )
+        }
         val hasMakeup = adj.makeupWeek > 0 && adj.makeupDay > 0
         val hasOriginal = adj.originalWeek > 0 && adj.originalDay > 0
         if (hasMakeup || hasOriginal) Spacer(modifier = Modifier.height(4.dp))
