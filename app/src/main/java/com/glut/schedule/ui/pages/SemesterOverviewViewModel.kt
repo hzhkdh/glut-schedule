@@ -55,6 +55,7 @@ data class HolidayDisplay(
     val endDate: String,
     val daysOff: Int,
     val isPast: Boolean,
+    val isOngoing: Boolean,
     val isNext: Boolean,
     val daysUntil: Long
 )
@@ -120,6 +121,7 @@ class SemesterOverviewViewModel(
                 endDate = base.endDate.toString(),
                 daysOff = 0,
                 isPast = false,
+                isOngoing = false,
                 isNext = hasNext,
                 daysUntil = vacationDays
             )
@@ -294,20 +296,23 @@ class SemesterOverviewViewModel(
             .filter { it.endDate >= semesterStart.toString() && it.startDate <= semesterEnd.toString() }
             .map { h ->
                 val start = LocalDate.parse(h.startDate)
-                val isPast = start.isBefore(today)
-                val daysUntil = if (!isPast) ChronoUnit.DAYS.between(today, start) else 0
+                val end = LocalDate.parse(h.endDate)
+                val isPast = end.isBefore(today)
+                val isOngoing = !isPast && !start.isAfter(today) && !end.isBefore(today)
+                val daysUntil = if (!isPast && !isOngoing) ChronoUnit.DAYS.between(today, start) else 0
                 HolidayDisplay(
                     name = h.name,
                     startDate = h.startDate,
                     endDate = h.endDate,
                     daysOff = h.daysOff,
                     isPast = isPast,
+                    isOngoing = isOngoing,
                     isNext = false,
                     daysUntil = daysUntil
                 )
             }.toMutableList()
 
-        val nextIdx = displays.indexOfFirst { !it.isPast }
+        val nextIdx = displays.indexOfFirst { !it.isPast && !it.isOngoing }
         if (nextIdx >= 0) {
             displays[nextIdx] = displays[nextIdx].copy(isNext = true)
         }

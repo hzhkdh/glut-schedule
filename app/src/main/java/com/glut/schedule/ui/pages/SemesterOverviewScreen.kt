@@ -251,6 +251,7 @@ private fun HolidaysCard(holidays: List<HolidayDisplay>) {
 private fun HolidayRow(h: HolidayDisplay) {
     val accentColor = when {
         h.isPast -> PastGray
+        h.isOngoing -> NextGreen
         h.isNext -> NextGreen
         else -> TextSecondary
     }
@@ -282,6 +283,8 @@ private fun HolidayRow(h: HolidayDisplay) {
         }
         if (h.isPast) {
             Text("已过", color = PastGray, fontSize = 13.sp)
+        } else if (h.isOngoing) {
+            Text("假期中", color = NextGreen, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         } else {
             val label = if (h.daysUntil == 0L) "今天" else "还有 ${h.daysUntil} 天"
             Text(label, color = accentColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
