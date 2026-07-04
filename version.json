@@ -1,7 +1,7 @@
 {
-  "version": "v0.14.10",
-  "versionCode": 19,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.14.10",
-  "releaseNotes": "v0.14.10: 学期概览假期显示优化 - 多天假期在范围内显示假期中, isPast改为比较endDate",
-  "publishedAt": "2026-06-19T16:29:19Z"
+  "version": "v0.15.0",
+  "versionCode": 20,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.15.0",
+  "releaseNotes": "Release v0.15.0\n\n- 新增 App 内通知中心，支持从静态 notices.json 拉取通知并显示未读红点。\n- 优化关于页维护者信息与 FAQ 文案。\n- 优化考试安排课程图标映射，物理、思政、数学、代码等课程图标更贴合科目。\r\n",
+  "publishedAt": "2026-07-04T06:58:05Z"
 }
