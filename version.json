@@ -1,7 +1,7 @@
 {
-  "version": "v0.15.0",
-  "versionCode": 20,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.15.0",
-  "releaseNotes": "Release v0.15.0\n\n- 新增 App 内通知中心，支持从静态 notices.json 拉取通知并显示未读红点。\n- 优化关于页维护者信息与 FAQ 文案。\n- 优化考试安排课程图标映射，物理、思政、数学、代码等课程图标更贴合科目。\r\n",
-  "publishedAt": "2026-07-04T06:58:05Z"
+  "version": "v0.15.1",
+  "versionCode": 21,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.15.1",
+  "releaseNotes": "- 优化通知中心：level 显示为中文徽章，并支持通知附件链接。\n- 优化考试安排：倒计时状态使用红/橙/绿/灰分层显示。\n- 精简 FAQ：移除 3 个不再需要的条目。",
+  "publishedAt": "2026-07-04T13:03:56Z"
 }
