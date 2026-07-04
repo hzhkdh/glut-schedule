@@ -21,21 +21,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.MenuBook
-import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.AccessTime
-import androidx.compose.material.icons.outlined.Calculate
-import androidx.compose.material.icons.outlined.Computer
-import androidx.compose.material.icons.outlined.Engineering
-import androidx.compose.material.icons.outlined.Functions
-import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.LocationOn
-import androidx.compose.material.icons.outlined.Memory
-import androidx.compose.material.icons.outlined.Psychology
-import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.Science
-import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
@@ -267,7 +254,7 @@ private fun ExamCard(
     displayState: ExamDisplayState
 ) {
     val completed = displayState == ExamDisplayState.Completed
-    val accent = examCardAccent(exam.courseName)
+    val courseVisual = ExamCourseVisualMapper.visualFor(exam.courseName)
     val typeColors = examTypeColors(exam.examType)
     val timeText = buildString {
         append(exam.startTime)
@@ -294,8 +281,8 @@ private fun ExamCard(
                 verticalAlignment = Alignment.Top
             ) {
                 CourseIcon(
-                    icon = examCourseIcon(exam.courseName),
-                    color = accent,
+                    icon = courseVisual.icon,
+                    color = courseVisual.accent,
                     modifier = Modifier
                         .padding(top = 2.dp)
                         .size(44.dp)
@@ -437,49 +424,6 @@ private data class ExamTypeColors(
     val container: Color,
     val content: Color
 )
-
-private fun examCardAccent(courseName: String): Color {
-    val colors = listOf(
-        Color(0xFF3F7DF6),
-        Color(0xFF7C5FE7),
-        Color(0xFFE8752A),
-        Color(0xFF2D9A72),
-    )
-    return colors[kotlin.math.abs(courseName.hashCode()) % colors.size]
-}
-
-private fun examCourseIcon(courseName: String): ImageVector {
-    val normalized = courseName.lowercase()
-    val keywordIcon = when {
-        normalized.hasAny("微机", "计算机", "接口", "单片机", "嵌入式", "硬件", "芯片") -> Icons.Outlined.Memory
-        normalized.hasAny("程序", "软件", "网络", "数据库", "java", "python", "web") -> Icons.Outlined.Terminal
-        normalized.hasAny("机械", "机电", "工程", "制造", "制图", "电工", "电子", "自动化") -> Icons.Outlined.Engineering
-        normalized.hasAny("数学", "逻辑", "线性代数", "概率", "统计", "高等数学", "离散") -> Icons.Outlined.Functions
-        normalized.hasAny("物理", "化学", "实验", "材料", "生物") -> Icons.Outlined.Science
-        normalized.hasAny("英语", "语言", "翻译", "写作", "阅读") -> Icons.Outlined.Language
-        normalized.hasAny("政治", "思政", "马克思", "毛泽东", "习近平", "中国", "社会", "近代史") -> Icons.Outlined.Public
-        normalized.hasAny("管理", "经济", "会计", "金融", "法律", "法学") -> Icons.Outlined.AccountBalance
-        normalized.hasAny("心理", "教育", "职业", "创新", "创业") -> Icons.Outlined.Psychology
-        normalized.hasAny("数字") -> Icons.Outlined.Calculate
-        else -> null
-    }
-    if (keywordIcon != null) return keywordIcon
-
-    val icons = listOf(
-        Icons.AutoMirrored.Outlined.MenuBook,
-        Icons.Outlined.StarBorder,
-        Icons.Outlined.Functions,
-        Icons.Outlined.Computer,
-        Icons.Outlined.Calculate,
-        Icons.Outlined.Science,
-        Icons.Outlined.Engineering
-    )
-    return icons[kotlin.math.abs(courseName.hashCode()) % icons.size]
-}
-
-private fun String.hasAny(vararg keywords: String): Boolean {
-    return keywords.any { contains(it, ignoreCase = true) }
-}
 
 private fun examTypeColors(examType: String): ExamTypeColors {
     return if (examType.contains("补考") || examType.contains("重修")) {

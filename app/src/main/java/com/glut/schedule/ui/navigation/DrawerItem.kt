@@ -10,6 +10,7 @@ import androidx.compose.material.icons.outlined.EventNote
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -24,6 +25,7 @@ enum class DrawerItem(
     StudyPlan("教学计划", Icons.Outlined.MenuBook),
     Import("导入课表", Icons.Outlined.Download),
     Settings("设置", Icons.Outlined.Settings),
+    Notice("通知", Icons.Outlined.Notifications),
     SemesterOverview("学期概览", Icons.Outlined.DateRange),
     FAQ("常见问题", Icons.Outlined.HelpOutline),
     About("关于", Icons.Outlined.Info);

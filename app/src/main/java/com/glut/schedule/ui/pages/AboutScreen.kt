@@ -21,6 +21,7 @@ import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
@@ -118,6 +119,12 @@ fun AboutScreen(
                         }
                     )
                     HorizontalDivider(color = Color(0xFFEDE8DE))
+                    AboutStaticInfoRow(
+                        icon = Icons.Outlined.Person,
+                        label = "维护者",
+                        value = "24人工智能 hezh"
+                    )
+                    HorizontalDivider(color = Color(0xFFEDE8DE))
                     AboutInfoRow(
                         icon = Icons.Outlined.Lock,
                         label = "开源许可",
@@ -154,16 +161,44 @@ fun AboutScreen(
                 color = Color(0xFF9CA3AF),
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            Text(
-                text = "Made with ❤️ by hezh",
-                color = Color(0xFF4A5568),
-                fontSize = 12.sp,
                 modifier = Modifier.padding(bottom = 24.dp)
             )
         }
+    }
+}
+
+@Composable
+private fun AboutStaticInfoRow(
+    icon: ImageVector,
+    label: String,
+    value: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = Color(0xFF3F7DF6),
+            modifier = Modifier.size(22.dp)
+        )
+        Text(
+            text = label,
+            color = Color(0xFF141821),
+            fontSize = 15.sp,
+            maxLines = 1,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value,
+            color = Color(0xFF667085),
+            fontSize = 13.sp,
+            maxLines = 1
+        )
     }
 }
 
