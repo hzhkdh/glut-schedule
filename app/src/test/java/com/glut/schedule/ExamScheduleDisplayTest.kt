@@ -1,9 +1,11 @@
 package com.glut.schedule
 
 import com.glut.schedule.data.model.ExamInfo
+import com.glut.schedule.ui.pages.ExamDateUrgency
 import com.glut.schedule.ui.pages.ExamDisplayState
 import com.glut.schedule.ui.pages.examDateStatus
 import com.glut.schedule.ui.pages.examDisplayState
+import com.glut.schedule.ui.pages.examGroupDateStatus
 import com.glut.schedule.ui.pages.examsForDisplay
 import com.glut.schedule.ui.pages.isExamUpcoming
 import java.time.LocalDate
@@ -17,10 +19,13 @@ class ExamScheduleDisplayTest {
     private val today: LocalDate = LocalDate.of(2026, 5, 20)
 
     @Test
-    fun examDateStatusLabelsTodayTomorrowAndFutureDates() {
-        assertEquals("今天", examDateStatus(today, today))
-        assertEquals("明天", examDateStatus(today.plusDays(1), today))
-        assertEquals("还有 3 天", examDateStatus(today.plusDays(3), today))
+    fun examDateStatusLabelsAndClassifiesExamDates() {
+        assertEquals("今天考试", examDateStatus(today, today).label)
+        assertEquals(ExamDateUrgency.Today, examDateStatus(today, today).urgency)
+        assertEquals("还有 1 天", examDateStatus(today.plusDays(1), today).label)
+        assertEquals(ExamDateUrgency.Soon, examDateStatus(today.plusDays(3), today).urgency)
+        assertEquals(ExamDateUrgency.Later, examDateStatus(today.plusDays(8), today).urgency)
+        assertEquals(ExamDateUrgency.Completed, examDateStatus(today.minusDays(1), today).urgency)
     }
 
     @Test
@@ -65,6 +70,19 @@ class ExamScheduleDisplayTest {
         val state = examDisplayState(exam, LocalDateTime.of(today, java.time.LocalTime.of(14, 21)))
 
         assertEquals(ExamDisplayState.Completed, state)
+    }
+
+    @Test
+    fun todayGroupWithOnlyCompletedExamsIsMarkedCompleted() {
+        val display = examsForDisplay(
+            listOf(exam(date = today, startTime = "12:30", endTime = "14:20")),
+            LocalDateTime.of(today, java.time.LocalTime.of(14, 21))
+        )
+
+        val status = examGroupDateStatus(today, today, display)
+
+        assertEquals("已结束", status.label)
+        assertEquals(ExamDateUrgency.Completed, status.urgency)
     }
 
     @Test

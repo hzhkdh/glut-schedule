@@ -63,6 +63,10 @@ private val ExamAccentSoft = Color(0xFFEAF1FF)
 private val ExamWarning = Color(0xFFE8752A)
 private val ExamWarningSoft = Color(0xFFFFEFE4)
 private val ExamCardBorder = Color(0xFFEDE8DE)
+private val ExamToday = Color(0xFFDC2626)
+private val ExamSoon = Color(0xFFF59E0B)
+private val ExamLater = Color(0xFF16A34A)
+private val ExamCompleted = Color(0xFF9AA2AF)
 
 @Composable
 fun ExamScreen(
@@ -154,7 +158,7 @@ private fun ExamList(
                 ExamTimelineGroup(
                     date = date,
                     dayExams = dayExams,
-                    isToday = date == today,
+                    dateStatus = examGroupDateStatus(date, today, dayExams),
                     isLast = index == groupedByDate.size - 1
                 )
             }
@@ -166,9 +170,11 @@ private fun ExamList(
 private fun ExamTimelineGroup(
     date: LocalDate,
     dayExams: List<ExamDisplayItem>,
-    isToday: Boolean,
+    dateStatus: ExamDateStatus,
     isLast: Boolean
 ) {
+    val statusColors = examDateStatusColors(dateStatus.urgency)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -196,14 +202,14 @@ private fun ExamTimelineGroup(
                     .padding(top = 7.dp)
                     .size(18.dp)
                     .clip(RoundedCornerShape(9.dp))
-                    .background(if (isToday) ExamAccent else Color(0xFFC4CAD3))
+                    .background(statusColors.content)
             )
         }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            ExamDateHeader(date = date, isToday = isToday)
+            ExamDateHeader(date = date, dateStatus = dateStatus)
             dayExams.forEach { item ->
                 ExamCard(exam = item.exam, displayState = item.state)
             }
@@ -214,11 +220,11 @@ private fun ExamTimelineGroup(
 @Composable
 private fun ExamDateHeader(
     date: LocalDate,
-    isToday: Boolean
+    dateStatus: ExamDateStatus
 ) {
     val dayLabel = dayLabel(date.dayOfWeek)
     val dateStr = date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
-    val status = examDateStatus(date, LocalDate.now())
+    val statusColors = examDateStatusColors(dateStatus.urgency)
 
     Row(
         modifier = Modifier
@@ -228,20 +234,20 @@ private fun ExamDateHeader(
     ) {
         Text(
             text = "$dateStr $dayLabel",
-            color = if (isToday) ExamAccent else ExamTextSecondary,
+            color = if (dateStatus.urgency == ExamDateUrgency.Today) ExamTextPrimary else ExamTextSecondary,
             fontSize = 19.sp,
-            fontWeight = if (isToday) FontWeight.Bold else FontWeight.SemiBold
+            fontWeight = if (dateStatus.urgency == ExamDateUrgency.Today) FontWeight.Bold else FontWeight.SemiBold
         )
-        if (status.isNotBlank()) {
+        if (dateStatus.label.isNotBlank()) {
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = status,
-                color = ExamAccent,
+                text = dateStatus.label,
+                color = statusColors.content,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .background(ExamAccentSoft)
+                    .background(statusColors.container)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
             )
         }
@@ -267,8 +273,8 @@ private fun ExamCard(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .graphicsLayer(alpha = if (completed) 0.66f else 1f),
-            color = if (completed) Color(0xFFF3F4F6) else ExamPaperCard,
+                .graphicsLayer(alpha = if (completed) 0.82f else 1f),
+            color = ExamPaperCard,
             shape = RoundedCornerShape(14.dp),
             border = BorderStroke(1.dp, if (completed) Color(0xFFE2E5EA) else ExamCardBorder),
             shadowElevation = if (completed) 1.dp else 6.dp
@@ -433,6 +439,32 @@ private fun examTypeColors(examType: String): ExamTypeColors {
     }
 }
 
+private data class ExamDateStatusColors(
+    val container: Color,
+    val content: Color
+)
+
+private fun examDateStatusColors(urgency: ExamDateUrgency): ExamDateStatusColors {
+    return when (urgency) {
+        ExamDateUrgency.Today -> ExamDateStatusColors(
+            container = ExamToday.copy(alpha = 0.10f),
+            content = ExamToday
+        )
+        ExamDateUrgency.Soon -> ExamDateStatusColors(
+            container = ExamSoon.copy(alpha = 0.12f),
+            content = ExamSoon
+        )
+        ExamDateUrgency.Later -> ExamDateStatusColors(
+            container = ExamLater.copy(alpha = 0.10f),
+            content = ExamLater
+        )
+        ExamDateUrgency.Completed -> ExamDateStatusColors(
+            container = ExamCompleted.copy(alpha = 0.16f),
+            content = ExamCompleted
+        )
+    }
+}
+
 private fun dayLabel(dayOfWeek: DayOfWeek): String = when (dayOfWeek) {
     DayOfWeek.MONDAY -> "周一"
     DayOfWeek.TUESDAY -> "周二"
@@ -459,6 +491,18 @@ internal enum class ExamDisplayState {
     Upcoming,
     Completed
 }
+
+internal enum class ExamDateUrgency {
+    Today,
+    Soon,
+    Later,
+    Completed
+}
+
+internal data class ExamDateStatus(
+    val label: String,
+    val urgency: ExamDateUrgency
+)
 
 internal data class ExamDisplayItem(
     val exam: ExamInfo,
@@ -494,13 +538,25 @@ internal fun examsForDisplay(exams: List<ExamInfo>, now: LocalDateTime): List<Ex
         )
 }
 
-internal fun examDateStatus(date: LocalDate, today: LocalDate): String {
+internal fun examDateStatus(date: LocalDate, today: LocalDate): ExamDateStatus {
     val days = ChronoUnit.DAYS.between(today, date)
     return when {
-        days == 0L -> "今天"
-        days == 1L -> "明天"
-        days > 1L -> "还有 $days 天"
-        else -> ""
+        days == 0L -> ExamDateStatus("今天考试", ExamDateUrgency.Today)
+        days in 1..7 -> ExamDateStatus("还有 $days 天", ExamDateUrgency.Soon)
+        days > 7 -> ExamDateStatus("还有 $days 天", ExamDateUrgency.Later)
+        else -> ExamDateStatus("已结束", ExamDateUrgency.Completed)
+    }
+}
+
+internal fun examGroupDateStatus(
+    date: LocalDate,
+    today: LocalDate,
+    dayExams: List<ExamDisplayItem>
+): ExamDateStatus {
+    return if (dayExams.isNotEmpty() && dayExams.all { it.state == ExamDisplayState.Completed }) {
+        ExamDateStatus("已结束", ExamDateUrgency.Completed)
+    } else {
+        examDateStatus(date, today)
     }
 }
 

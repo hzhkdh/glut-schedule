@@ -16,8 +16,8 @@ android {
         applicationId = "com.glut.schedule"
         minSdk = 26
         targetSdk = 36
-        versionCode = 109
-        versionName = "0.15.0"
+        versionCode = 110
+        versionName = "0.15.1"
 
     }
 

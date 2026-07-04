@@ -54,7 +54,19 @@
       "level": "info",
       "publishedAt": "2026-07-04",
       "expiresAt": "",
-      "url": ""
+      "url": "",
+      "attachments": [
+        {
+          "name": "通知文件.pdf",
+          "url": "https://update.999314.xyz/files/notice.pdf",
+          "type": "pdf"
+        },
+        {
+          "name": "报名表.docx",
+          "url": "https://update.999314.xyz/files/form.docx",
+          "type": "word"
+        }
+      ]
     }
   ]
 }
@@ -79,6 +91,23 @@
 | `publishedAt` | string | 是 | 发布日期，格式必须是 `yyyy-MM-dd`，例如 `"2026-07-04"`。App 按它从新到旧排序。 |
 | `expiresAt` | string | 否 | 过期日期，格式为 `yyyy-MM-dd`。为空字符串表示不过期。早于当天的通知不会显示。 |
 | `url` | string | 否 | 详情链接。为空时不显示“查看详情”。 |
+| `attachments` | array | 否 | 附件列表。没有附件时可省略，或填写空数组 `[]`。 |
+
+附件字段说明：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `name` | string | 是 | 附件显示名称，例如 `"通知文件.pdf"`。为空时 App 会忽略这个附件。 |
+| `url` | string | 是 | 附件访问链接。可以是 PDF、Word、图片或其他可公开访问的文件链接。为空时 App 会忽略这个附件。 |
+| `type` | string | 否 | 附件类型标签，例如 `pdf`、`word`、`docx`、`image`。仅用于显示；为空时 App 显示为“附件”。 |
+
+附件使用规则：
+
+- App 不内置 PDF 或 Word 预览，点击附件后会交给系统浏览器或外部应用打开。
+- 附件链接必须是公网可访问地址。图床、对象存储、Cloudflare Pages 静态文件都可以使用。
+- 一条通知可以同时有 `url` 和 `attachments`：`url` 显示为“查看详情”，`attachments` 显示为多个附件入口。
+- 旧版本 App 不识别 `attachments` 时会忽略该字段，不影响通知主体和 `url` 详情链接。
+- 如果文件名很长，App 会在通知页单行省略显示，但点击仍打开完整链接。
 
 `level` 可选值：
 

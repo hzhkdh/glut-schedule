@@ -10,10 +10,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -22,11 +24,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.glut.schedule.data.model.NoticeAttachment
 import com.glut.schedule.data.model.NoticeInfo
 
 @Composable
@@ -59,11 +64,7 @@ fun NoticeScreen(
         items(notices, key = { it.id }) { notice ->
             NoticeItem(
                 notice = notice,
-                onOpenUrl = {
-                    if (notice.url.isNotBlank()) {
-                        uriHandler.openUri(notice.url)
-                    }
-                }
+                onOpenUrl = { url -> uriHandler.openUri(url) }
             )
         }
     }
@@ -72,7 +73,7 @@ fun NoticeScreen(
 @Composable
 private fun NoticeItem(
     notice: NoticeInfo,
-    onOpenUrl: () -> Unit
+    onOpenUrl: (String) -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -90,14 +91,11 @@ private fun NoticeItem(
                     color = Color(0xFF141821),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                Text(
-                    text = notice.level,
-                    color = levelColor(notice.level),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                NoticeLevelBadge(level = notice.level)
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
@@ -114,13 +112,21 @@ private fun NoticeItem(
                     lineHeight = 20.sp
                 )
             }
-            if (notice.url.isNotBlank()) {
+            if (notice.attachments.isNotEmpty() || notice.url.isNotBlank()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 HorizontalDivider(color = Color(0xFFEDE8DE))
+            }
+            notice.attachments.forEach { attachment ->
+                AttachmentRow(
+                    attachment = attachment,
+                    onOpen = { onOpenUrl(attachment.url) }
+                )
+            }
+            if (notice.url.isNotBlank()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = onOpenUrl)
+                        .clickable { onOpenUrl(notice.url) }
                         .padding(top = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -142,11 +148,86 @@ private fun NoticeItem(
     }
 }
 
-private fun levelColor(level: String): Color {
+@Composable
+private fun AttachmentRow(
+    attachment: NoticeAttachment,
+    onOpen: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen)
+            .padding(top = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.AttachFile,
+            contentDescription = null,
+            tint = Color(0xFF667085),
+            modifier = Modifier.size(18.dp)
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = attachment.name,
+                color = Color(0xFF2D3748),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            val typeLabel = attachment.type.ifBlank { "附件" }
+            Text(
+                text = typeLabel.uppercase(),
+                color = Color(0xFF9CA3AF),
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Icon(
+            imageVector = Icons.Outlined.ChevronRight,
+            contentDescription = null,
+            tint = Color(0xFF9CA3AF)
+        )
+    }
+}
+
+@Composable
+private fun NoticeLevelBadge(level: String) {
+    val colors = noticeLevelColors(level)
+    Text(
+        text = noticeLevelLabel(level),
+        color = colors.content,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(colors.container)
+            .padding(horizontal = 9.dp, vertical = 4.dp)
+    )
+}
+
+private data class NoticeLevelColors(
+    val container: Color,
+    val content: Color
+)
+
+private fun noticeLevelColors(level: String): NoticeLevelColors {
     return when (level.lowercase()) {
-        "warning" -> Color(0xFFD97706)
-        "update" -> Color(0xFF3F7DF6)
-        "important" -> Color(0xFFDC2626)
-        else -> Color(0xFF667085)
+        "important" -> NoticeLevelColors(Color(0xFFFEE2E2), Color(0xFFDC2626))
+        "warning" -> NoticeLevelColors(Color(0xFFFFF3D8), Color(0xFFD97706))
+        "update" -> NoticeLevelColors(Color(0xFFEAF1FF), Color(0xFF3F7DF6))
+        else -> NoticeLevelColors(Color(0xFFEEF2F7), Color(0xFF667085))
+    }
+}
+
+internal fun noticeLevelLabel(level: String): String {
+    return when (level.lowercase()) {
+        "important" -> "重要"
+        "warning" -> "提醒"
+        "update" -> "更新"
+        else -> "通知"
     }
 }

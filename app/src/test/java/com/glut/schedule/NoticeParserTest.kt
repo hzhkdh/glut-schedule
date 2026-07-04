@@ -80,6 +80,49 @@ class NoticeParserTest {
     }
 
     @Test
+    fun parseNoticesIncludesValidAttachments() {
+        val notices = NoticeChecker.parseNotices(
+            """
+            {
+              "notices": [
+                {
+                  "id": "with-attachments",
+                  "title": "附件通知",
+                  "content": "请查看附件",
+                  "publishedAt": "2026-07-04",
+                  "url": "https://example.com/detail",
+                  "attachments": [
+                    {
+                      "name": "通知文件.pdf",
+                      "url": "https://example.com/notice.pdf",
+                      "type": "pdf"
+                    },
+                    {
+                      "name": "",
+                      "url": "https://example.com/ignored.docx",
+                      "type": "word"
+                    },
+                    {
+                      "name": "空链接.docx",
+                      "url": "",
+                      "type": "word"
+                    }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent(),
+            today = LocalDate.of(2026, 7, 6)
+        )
+
+        assertEquals("https://example.com/detail", notices.single().url)
+        assertEquals(1, notices.single().attachments.size)
+        assertEquals("通知文件.pdf", notices.single().attachments.single().name)
+        assertEquals("https://example.com/notice.pdf", notices.single().attachments.single().url)
+        assertEquals("pdf", notices.single().attachments.single().type)
+    }
+
+    @Test
     fun invalidJsonReturnsEmptyList() {
         assertEquals(emptyList<String>(), NoticeChecker.parseNotices("{bad json").map { it.id })
     }

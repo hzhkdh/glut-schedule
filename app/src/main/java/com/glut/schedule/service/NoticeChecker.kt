@@ -1,5 +1,6 @@
 package com.glut.schedule.service
 
+import com.glut.schedule.data.model.NoticeAttachment
 import com.glut.schedule.data.model.NoticeInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -67,7 +68,8 @@ class NoticeChecker(
                                 level = obj.optString("level", "info").trim().ifBlank { "info" },
                                 publishedAt = publishedAt,
                                 expiresAt = expiresAt,
-                                url = obj.optString("url").trim()
+                                url = obj.optString("url").trim(),
+                                attachments = parseAttachments(obj)
                             )
                         )
                     }
@@ -80,6 +82,26 @@ class NoticeChecker(
 
         private fun parseDate(value: String): LocalDate {
             return parseOptionalDate(value) ?: LocalDate.MIN
+        }
+
+        private fun parseAttachments(obj: JSONObject): List<NoticeAttachment> {
+            val items = obj.optJSONArray("attachments") ?: return emptyList()
+            return buildList {
+                for (index in 0 until items.length()) {
+                    val attachment = items.optJSONObject(index) ?: continue
+                    val name = attachment.optString("name").trim()
+                    val url = attachment.optString("url").trim()
+                    if (name.isBlank() || url.isBlank()) continue
+
+                    add(
+                        NoticeAttachment(
+                            name = name,
+                            url = url,
+                            type = attachment.optString("type").trim()
+                        )
+                    )
+                }
+            }
         }
 
         private fun parseOptionalDate(value: String): LocalDate? {
