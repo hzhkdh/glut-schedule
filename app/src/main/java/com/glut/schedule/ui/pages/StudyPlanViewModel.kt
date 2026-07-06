@@ -238,7 +238,81 @@ class StudyPlanViewModel(
         val lineHtml = String(lineBody, utfCharset)
         Log.d(TAG, "Line show HTML preview: ${lineHtml.take(300)}")
 
-        return studyPlanParser.parseData(lineHtml)
+        // Parse flat-mode data (必修/限选 groups + courses)
+        val (groups, courses) = studyPlanParser.parseData(lineHtml)
+
+        // Hybrid mode: also fetch framework-mode data for 任选 group details
+        val frameStudentId = studyPlanParser.parseFrameStudentId(selfHtml)
+        if (frameStudentId != null) {
+            val frameHtml = fetchFrameHtml(cookie, campusBaseUrl, frameStudentId, classId, client)
+            if (frameHtml != null) {
+                val freeGroupIds = studyPlanParser.extractFreeGroupIds(frameHtml)
+                Log.d(TAG, "Found ${freeGroupIds.size} free elective groups in frame mode")
+
+                val freeGroupResults = freeGroupIds.map { (id, name) ->
+                    asyncFetchFreeGroup(cookie, campusBaseUrl, id, name, client)
+                }
+
+                val mergedGroups = groups.toMutableList()
+                val mergedCourses = courses.toMutableList()
+                for (result in freeGroupResults) {
+                    val (freeGroup, freeCourses) = result
+                    if (freeGroup != null) {
+                        val idx = mergedGroups.indexOfFirst { it.groupName == freeGroup.groupName }
+                        if (idx >= 0) mergedGroups[idx] = freeGroup else mergedGroups.add(freeGroup)
+                        mergedCourses.addAll(freeCourses)
+                    }
+                }
+                return Pair(mergedGroups.distinctBy { it.id }, mergedCourses.distinctBy { it.id })
+            }
+        }
+
+        return Pair(groups, courses)
+    }
+
+    private suspend fun fetchFrameHtml(
+        cookie: String, baseUrl: String, frameStudentId: String, classId: String,
+        client: OkHttpClient
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val frameUrl = "$baseUrl/academic/manager/studyschedule/studentScheduleShowFrame.do?z=z&studentId=$frameStudentId&classId=$classId"
+            val req = Request.Builder().url(frameUrl)
+                .header("Cookie", cookie).header("User-Agent", UA).get().build()
+            client.newCall(req).execute().use { response ->
+                val rawBytes = response.body?.bytes() ?: ByteArray(0)
+                val ct = response.header("Content-Type") ?: ""
+                val charset = if (ct.contains("charset=", ignoreCase = true))
+                    try { Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
+                    catch (_: Exception) { Charsets.UTF_8 }
+                else Charsets.UTF_8
+                String(rawBytes, charset)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to fetch frame page: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun asyncFetchFreeGroup(
+        cookie: String, baseUrl: String, groupId: String, name: String,
+        client: OkHttpClient
+    ): Pair<StudyPlanGroup?, List<StudyPlanCourse>> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/academic/manager/studyschedule/scheduleFreeGroupCourseList.do?pojoTypeId=2&id=$groupId"
+            val req = Request.Builder().url(url)
+                .header("Cookie", cookie).header("User-Agent", UA).get().build()
+            client.newCall(req).execute().use { response ->
+                val rawBytes = response.body?.bytes() ?: ByteArray(0)
+                val ct = response.header("Content-Type") ?: ""
+                val charset = try { Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
+                    catch (_: Exception) { Charsets.UTF_8 }
+                val html = String(rawBytes, charset)
+                studyPlanParser.parseFreeGroupDetail(html)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to fetch free group '$name': ${e.message}")
+            Pair(null, emptyList())
+        }
     }
 
     companion object {

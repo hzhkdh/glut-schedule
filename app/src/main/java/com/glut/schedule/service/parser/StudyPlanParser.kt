@@ -17,6 +17,80 @@ class StudyPlanParser {
         return Pair(lastMatch.groupValues[1], lastMatch.groupValues[2])
     }
 
+    /** Extract framework-mode studentId from selfHtml (different from flat-mode id). */
+    fun parseFrameStudentId(html: String): String? {
+        val re = Regex("""studentScheduleShowFrame\.do[^"'\s<>]*studentId=([^&"'\s<>]+)""", RegexOption.IGNORE_CASE)
+        re.findAll(html).forEach { m -> val sid = m.groupValues[1]; if (sid.isNotBlank()) return sid }
+        return null
+    }
+
+    /** Extract free-elective group IDs from framework main page HTML. */
+    fun extractFreeGroupIds(frameHtml: String): List<Pair<String, String>> {
+        val ids = mutableListOf<Pair<String, String>>()
+        val re = Regex("""changeFrameFreeSrc\((\d+)\)">([^<]+)<""", RegexOption.IGNORE_CASE)
+        re.findAll(frameHtml).forEach { m ->
+            val name = m.groupValues[2].replace(Regex("""^[-\s]+"""), "").trim()
+            ids.add(Pair(m.groupValues[1], name))
+        }
+        return ids
+    }
+
+    /** Parse single free-elective group detail page (scheduleFreeGroupCourseList.do). */
+    fun parseFreeGroupDetail(html: String): Pair<StudyPlanGroup?, List<StudyPlanCourse>> {
+        val body = html.replace(Regex("""\s+"""), " ")
+        val tableRegex = Regex("""<table[^>]*>(.*?)</table>""", RegexOption.DOT_MATCHES_ALL)
+        val tables = tableRegex.findAll(body).toList()
+        val rowRegex = Regex("""<tr[^>]*>(.*?)</tr>""", RegexOption.DOT_MATCHES_ALL)
+        var group: StudyPlanGroup? = null
+        val courses = mutableListOf<StudyPlanCourse>()
+        for (table in tables) {
+            val rows = rowRegex.findAll(table.groupValues[1]).toList()
+            if (rows.isEmpty()) continue
+            val headerCells = parseCells(rows.first().value)
+            val headerText = headerCells.joinToString(",") { cleanHtmlText(it) }
+            // Group summary table
+            if (headerText.contains("课组名称") && headerText.contains("课程要求")) {
+                val hi = rows.indexOfFirst { it.value.contains("<th") }
+                val dr = if (hi >= 0) rows.drop(hi + 1) else rows
+                for (row in dr) {
+                    val cells = parseCells(row.value)
+                    if (cells.size < 5) continue
+                    val name = cleanHtmlText(cells[0])
+                    if (name.isBlank()) continue
+                    val attr = cleanHtmlText(cells[2])
+                    val credit = parseNumPair(cleanHtmlText(cells[3]))
+                    val count = parseIntPair(cleanHtmlText(cells[4]))
+                    val passed = cells[5].contains("course_pass.png") || cleanHtmlText(cells[5]).contains("通过")
+                    group = makeGroup(name, attr, credit.first, credit.second, count.first, count.second, passed)
+                }
+            }
+            // Course table
+            if (headerText.contains("课程号") && headerText.contains("课程名")) {
+                val hi = rows.indexOfFirst { it.value.contains("<th") }
+                val dr = if (hi >= 0) rows.drop(hi + 2) else rows
+                for (row in dr) {
+                    val cells = parseCells(row.value)
+                    if (cells.size < 4) continue
+                    val code = cleanHtmlText(cells[0])
+                    if (code.isBlank()) continue
+                    val nameCell = cells[1]
+                    val cname = cleanHtmlText(nameCell)
+                        .replace(Regex("""^(最高成绩[^ ]+|已选课[^ ]+)\s+"""), "").trim()
+                    if (cname.isBlank() || cname.contains("课程名")) continue
+                    val gid = group?.id ?: StudyPlanGroup.stableId("任选课组", "")
+                    courses.add(StudyPlanCourse(
+                        id = StudyPlanCourse.stableId(gid, cname), groupId = gid,
+                        courseName = cname,
+                        credit = cleanHtmlText(cells[3]).toDoubleOrNull() ?: 0.0,
+                        hours = cleanHtmlText(cells[4]), assessment = cleanHtmlText(cells[2]),
+                        semester = "", status = parseCourseStatus(nameCell)
+                    ))
+                }
+            }
+        }
+        return Pair(group, courses)
+    }
+
     /**
      * Parse all study plan groups from the teaching plan page.
      *

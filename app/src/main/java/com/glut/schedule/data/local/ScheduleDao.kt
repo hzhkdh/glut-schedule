@@ -160,4 +160,17 @@ interface ScheduleDao {
         deleteAllSemesterAdjustments()
         insertSemesterAdjustments(adjustments)
     }
+
+    @Transaction
+    suspend fun clearAll() {
+        deleteCourses()
+        deleteOccurrences()
+        deleteAllExams()
+        deleteAllScores()
+        deleteAllGradeExams()
+        deleteAllStudyPlanGroups()
+        deleteAllStudyPlanCourses()
+        deleteAllSemesterAdjustments()
+        deleteClassPeriods()
+    }
 }

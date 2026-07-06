@@ -138,6 +138,10 @@ class ScheduleRepository(
         )
     }
 
+    suspend fun clearAllData() {
+        dao.clearAll()
+    }
+
     private companion object {
         val legacyBundledSampleCourseIds = setOf(
             "digital-logic",

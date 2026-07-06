@@ -67,4 +67,8 @@ class AcademicSessionStore(
             preferences[timetableUrlKey] = url
         }
     }
+
+    suspend fun clearAll() {
+        context.academicSessionDataStore.edit { it.clear() }
+    }
 }

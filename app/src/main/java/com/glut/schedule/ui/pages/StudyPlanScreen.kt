@@ -158,7 +158,7 @@ fun StudyPlanScreen(
                         )
 
                         AnimatedVisibility(
-                            visible = isExpanded && gwc.group.attribute != "任选",
+                            visible = isExpanded,
                             enter = expandVertically() + fadeIn(),
                             exit = shrinkVertically() + fadeOut()
                         ) {
@@ -285,15 +285,13 @@ private fun GroupRow(
 ) {
     val aColor = attrColor(group.attribute)
     val displayName = wrapName(group.groupName)
-    val isRenxuan = group.attribute == "任选"
-
     // Arrow overlays on right edge — doesn't consume layout width
     Box(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier.fillMaxWidth()
-                .then(if (isRenxuan) Modifier else Modifier.clickable { onClick() })
+                .clickable { onClick() }
                 .padding(vertical = 6.dp, horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -344,17 +342,15 @@ private fun GroupRow(
         }
 
         // Expand arrow overlaid on right edge — no layout space consumed
-        if (!isRenxuan) {
-            Icon(
-                if (isExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                contentDescription = if (isExpanded) "收起" else "展开",
-                tint = SPSecondary,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 2.dp)
-                    .size(18.dp)
-            )
-        }
+        Icon(
+            if (isExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+            contentDescription = if (isExpanded) "收起" else "展开",
+            tint = SPSecondary,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 2.dp)
+                .size(18.dp)
+        )
     }
 }
 

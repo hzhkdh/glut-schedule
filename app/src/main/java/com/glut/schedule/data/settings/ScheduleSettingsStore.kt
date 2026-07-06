@@ -171,4 +171,8 @@ class ScheduleSettingsStore(
             preferences[holidaysCacheDateKey] = LocalDate.now().toString()
         }
     }
+
+    suspend fun clearAll() {
+        context.scheduleSettings.edit { it.clear() }
+    }
 }

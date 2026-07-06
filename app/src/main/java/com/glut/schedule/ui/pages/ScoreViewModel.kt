@@ -46,6 +46,7 @@ class ScoreViewModel(
     private val _isRefreshing = MutableStateFlow(false)
     private val _message = MutableStateFlow("")
     private val _selectedYear = MutableStateFlow<String?>(null)
+    private var scoreBlockedByEvaluation = false
 
     val uiState: StateFlow<ScoreUiState> = combine(
         repository.scores,
@@ -124,7 +125,10 @@ class ScoreViewModel(
                     }
                 }
 
-                if (allScores.isNotEmpty()) {
+                if (scoreBlockedByEvaluation) {
+                    _message.value = "你有课程未完成评教，必须完成全部评教才能查看成绩，可以在微信小程序中搜索【教学质量管理平台】并完成全部的评教，等待1-2天即可查看成绩"
+                    scoreBlockedByEvaluation = false
+                } else if (allScores.isNotEmpty()) {
                     repository.replaceScores(allScores)
                     _message.value = "已获取 ${allScores.size} 条成绩记录"
                 } else {
@@ -188,6 +192,12 @@ class ScoreViewModel(
         val charset = detectCharset(contentType)
         val html = String(body, charset)
         Log.d(TAG, "Score HTML preview (first 300 chars): ${html.take(300)}")
+
+        scoreBlockedByEvaluation = isEvaluationBlocked(html)
+        if (scoreBlockedByEvaluation) {
+            Log.w(TAG, "Scores blocked by teaching evaluation")
+            return emptyList()
+        }
 
         val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
         Log.d(TAG, "Parsing scores: isNanning=$isNanning")
@@ -262,6 +272,11 @@ class ScoreViewModel(
     companion object {
         private const val TAG = "ScoreViewModel"
         private const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
+
+        fun isEvaluationBlocked(html: String): Boolean {
+            val text = html.ifBlank { "" }
+            return text.contains("评教") && text.contains("不能查看成绩")
+        }
     }
 }
 

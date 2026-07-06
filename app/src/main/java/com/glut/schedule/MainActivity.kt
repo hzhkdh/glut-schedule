@@ -446,7 +446,15 @@ class MainActivity : ComponentActivity() {
                                     onShowNoonChange = scheduleViewModel::setShowNoon,
                                     hasCustomBackground = scheduleUiState.customBackgroundUri.isNotBlank(),
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
-                                    onClearBackground = { scheduleViewModel.clearCustomBackground() }
+                                    onClearBackground = { scheduleViewModel.clearCustomBackground() },
+                                    onReset = {
+                                        scope.launch {
+                                            container.scheduleRepository.clearAllData()
+                                            container.settingsStore.clearAll()
+                                            container.academicSessionStore.clearAll()
+                                            container.credentialStore.clearCredentials()
+                                        }
+                                    }
                                 )
                                 DrawerItem.Notice -> NoticeScreen(notices = notices)
                                 DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
@@ -575,7 +583,8 @@ private fun SettingsPage(
     onShowNoonChange: (Boolean) -> Unit = {},
     hasCustomBackground: Boolean = false,
     onPickBackground: () -> Unit = {},
-    onClearBackground: () -> Unit = {}
+    onClearBackground: () -> Unit = {},
+    onReset: () -> Unit = {}
 ) {
     val settingsBg = Color(0xFFF6F4EF)
     val settingsPrimary = Color(0xFF141821)
@@ -655,6 +664,25 @@ private fun SettingsPage(
                             Text("恢复默认背景", color = Color(0xFFDC2626), fontSize = 15.sp, modifier = Modifier.weight(1f))
                         }
                     }
+                }
+            }
+
+            // Data management section
+            Text("数据管理", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onReset)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("重置应用", color = Color(0xFFDC2626), fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Text("恢复初次使用状态", color = settingsSecondary, fontSize = 12.sp)
                 }
             }
         }
