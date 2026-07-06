@@ -25,14 +25,15 @@
 |------|------|---------|
 | 课程表 | 当前学期课表，周次导航 | currcourse.jsdo / showTimetable.do |
 | 考试成绩 | 历年课程成绩，学年分组 + GPA 汇总 | studentOwnScore.do (POST) |
-| 考试安排 | 考试时间、地点、座位号，时间线 UI | 多端点探测 (JSON/HTML) |
+| 考试安排 | 考试时间、地点、座位号，时间线 UI，按科目显示图标 | 多端点探测 (JSON/HTML) |
 | 等级考级 | 英语四六级、普通话等国家考试 | skilltest.jsdo (moduleId=2090) |
 | 教学计划 | 课组学分/门数要求与完成情况 | studentSelfSchedule.jsdo → studentScheduleLineShow.do |
 | 学期概览 | 学期日期、进度、节假日、调课一览 | 教务日历 + timor.tech 节假日 API |
 | 导入课表 | 学号密码登录，一键导入全部数据 | 多端点并行探测 |
+| 通知 | App 内公告、维护提醒、更新提示，支持未读红点 | Cloudflare Pages notices.json |
 | 常见问题 | FAQ 分类展开/收起（常见问题/数据解读/隐私安全/关于项目） | — |
 | 设置 | 显示周末、自定义背景 | — |
-| 关于 | 版本信息、检测更新、App 内下载安装 | GitHub Releases API |
+| 关于 | 版本信息、维护者、检测更新、App 内下载安装 | Cloudflare Pages + GitHub Releases API |
 
 ### 学期概览
 - **学期进度**：圆形进度环 + 已过/剩余天数精确计算
@@ -47,9 +48,15 @@
 - 课程选课属性徽章、绩点颜色分段（优秀绿/良好蓝/及格橙/不及格红）
 
 ### App 内更新
-- 启动时自动检测 GitHub Releases 最新版本
+- 启动时优先检测 Cloudflare Pages `update.json`，失败后回退 GitHub Releases / GitHub Pages
 - 三步弹窗：更新日志 → [立即更新] → 下载进度 → [立即安装] → 系统安装器
 - 支持下载中取消
+
+### App 内通知
+- 侧边菜单新增「通知」，未读通知显示红点
+- 通知内容来自 Cloudflare Pages 托管的 `notices.json`
+- 按 `publishedAt` 从新到旧排序，支持 `info` / `update` / `warning` / `important` 等级
+- 支持本地缓存，网络失败时不影响 App 使用
 
 ### 数据持久化
 - Room 本地数据库，所有数据离线可用
@@ -114,6 +121,7 @@ app/src/main/java/com/glut/schedule/
       GradeExamModels.kt            等级考试（GradeExamInfo）
       StudyPlanModels.kt            教学计划（StudyPlanGroup）
       SemesterOverviewModels.kt     调课（SemesterAdjustment）、节假日（HolidayInfo）
+      NoticeModels.kt               App 内通知（NoticeInfo）
       CourseColorMapper.kt          课程颜色分配
     local/
       ScheduleEntities.kt           Room 实体
@@ -126,7 +134,8 @@ app/src/main/java/com/glut/schedule/
 
   service/
     AppUpdater.kt                    App 内更新：OkHttp 流式下载 APK + FileProvider 安装
-    UpdateChecker.kt                 版本更新检测（GitHub API + Pages 双通道）
+    UpdateChecker.kt                 版本更新检测（Cloudflare Pages + GitHub API + GitHub Pages）
+    NoticeChecker.kt                 App 内通知拉取与 JSON 解析
     academic/
       AcademicSessionStore.kt       Cookie / campus URL 持久化
       AcademicExamService.kt        考试数据获取 + 多端点探针
@@ -155,10 +164,12 @@ app/src/main/java/com/glut/schedule/
       ScheduleScreen.kt / ScheduleViewModel.kt
       ScoreScreen.kt / ScoreViewModel.kt
       ExamScreen.kt / ExamViewModel.kt
+      ExamCourseVisualMapper.kt      考试课程图标与强调色映射
       GradeExamScreen.kt / GradeExamViewModel.kt
       StudyPlanScreen.kt / StudyPlanViewModel.kt
       SemesterOverviewScreen.kt / SemesterOverviewViewModel.kt
       DirectLoginScreen.kt / DirectLoginViewModel.kt
+      NoticeScreen.kt
       FaqScreen.kt
       AboutScreen.kt
     theme/
@@ -170,7 +181,8 @@ app/src/main/java/com/glut/schedule/
 - `ScheduleSettingsStore`（DataStore）→ 学期日期/周数 → ViewModel Flow combine → StateFlow<UiState>
 - `ScheduleRepository`（Room DAO Flow）→ 各 DAO Flow → ViewModel `combine()` → 响应式 UI
 - 导入时 `ApiProbeService.probeAllEndpoints()` 并行探测多个教务端点 → 挑选最佳结果 → 解析保存
-- 更新时 `UpdateChecker` 查询 GitHub API → `AppUpdater` 下载 APK → FileProvider 触发系统安装
+- 更新时 `UpdateChecker` 查询 Cloudflare Pages / GitHub API → `AppUpdater` 下载 APK → FileProvider 触发系统安装
+- 通知时 `NoticeChecker` 拉取 `notices.json` → DataStore 缓存与已读 ID → 侧边栏红点与通知页
 
 ## 教务端点
 

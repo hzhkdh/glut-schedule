@@ -21,21 +21,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.MenuBook
-import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.AccessTime
-import androidx.compose.material.icons.outlined.Calculate
-import androidx.compose.material.icons.outlined.Computer
-import androidx.compose.material.icons.outlined.Engineering
-import androidx.compose.material.icons.outlined.Functions
-import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.LocationOn
-import androidx.compose.material.icons.outlined.Memory
-import androidx.compose.material.icons.outlined.Psychology
-import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.Science
-import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
@@ -76,6 +63,10 @@ private val ExamAccentSoft = Color(0xFFEAF1FF)
 private val ExamWarning = Color(0xFFE8752A)
 private val ExamWarningSoft = Color(0xFFFFEFE4)
 private val ExamCardBorder = Color(0xFFEDE8DE)
+private val ExamToday = Color(0xFFDC2626)
+private val ExamSoon = Color(0xFFF59E0B)
+private val ExamLater = Color(0xFF16A34A)
+private val ExamCompleted = Color(0xFF9AA2AF)
 
 @Composable
 fun ExamScreen(
@@ -167,7 +158,7 @@ private fun ExamList(
                 ExamTimelineGroup(
                     date = date,
                     dayExams = dayExams,
-                    isToday = date == today,
+                    dateStatus = examGroupDateStatus(date, today, dayExams),
                     isLast = index == groupedByDate.size - 1
                 )
             }
@@ -179,9 +170,11 @@ private fun ExamList(
 private fun ExamTimelineGroup(
     date: LocalDate,
     dayExams: List<ExamDisplayItem>,
-    isToday: Boolean,
+    dateStatus: ExamDateStatus,
     isLast: Boolean
 ) {
+    val statusColors = examDateStatusColors(dateStatus.urgency)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -209,14 +202,14 @@ private fun ExamTimelineGroup(
                     .padding(top = 7.dp)
                     .size(18.dp)
                     .clip(RoundedCornerShape(9.dp))
-                    .background(if (isToday) ExamAccent else Color(0xFFC4CAD3))
+                    .background(statusColors.content)
             )
         }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            ExamDateHeader(date = date, isToday = isToday)
+            ExamDateHeader(date = date, dateStatus = dateStatus)
             dayExams.forEach { item ->
                 ExamCard(exam = item.exam, displayState = item.state)
             }
@@ -227,11 +220,11 @@ private fun ExamTimelineGroup(
 @Composable
 private fun ExamDateHeader(
     date: LocalDate,
-    isToday: Boolean
+    dateStatus: ExamDateStatus
 ) {
     val dayLabel = dayLabel(date.dayOfWeek)
     val dateStr = date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
-    val status = examDateStatus(date, LocalDate.now())
+    val statusColors = examDateStatusColors(dateStatus.urgency)
 
     Row(
         modifier = Modifier
@@ -241,20 +234,20 @@ private fun ExamDateHeader(
     ) {
         Text(
             text = "$dateStr $dayLabel",
-            color = if (isToday) ExamAccent else ExamTextSecondary,
+            color = if (dateStatus.urgency == ExamDateUrgency.Today) ExamTextPrimary else ExamTextSecondary,
             fontSize = 19.sp,
-            fontWeight = if (isToday) FontWeight.Bold else FontWeight.SemiBold
+            fontWeight = if (dateStatus.urgency == ExamDateUrgency.Today) FontWeight.Bold else FontWeight.SemiBold
         )
-        if (status.isNotBlank()) {
+        if (dateStatus.label.isNotBlank()) {
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = status,
-                color = ExamAccent,
+                text = dateStatus.label,
+                color = statusColors.content,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .background(ExamAccentSoft)
+                    .background(statusColors.container)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
             )
         }
@@ -267,7 +260,7 @@ private fun ExamCard(
     displayState: ExamDisplayState
 ) {
     val completed = displayState == ExamDisplayState.Completed
-    val accent = examCardAccent(exam.courseName)
+    val courseVisual = ExamCourseVisualMapper.visualFor(exam.courseName)
     val typeColors = examTypeColors(exam.examType)
     val timeText = buildString {
         append(exam.startTime)
@@ -280,8 +273,8 @@ private fun ExamCard(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .graphicsLayer(alpha = if (completed) 0.66f else 1f),
-            color = if (completed) Color(0xFFF3F4F6) else ExamPaperCard,
+                .graphicsLayer(alpha = if (completed) 0.82f else 1f),
+            color = ExamPaperCard,
             shape = RoundedCornerShape(14.dp),
             border = BorderStroke(1.dp, if (completed) Color(0xFFE2E5EA) else ExamCardBorder),
             shadowElevation = if (completed) 1.dp else 6.dp
@@ -294,8 +287,8 @@ private fun ExamCard(
                 verticalAlignment = Alignment.Top
             ) {
                 CourseIcon(
-                    icon = examCourseIcon(exam.courseName),
-                    color = accent,
+                    icon = courseVisual.icon,
+                    color = courseVisual.accent,
                     modifier = Modifier
                         .padding(top = 2.dp)
                         .size(44.dp)
@@ -438,54 +431,37 @@ private data class ExamTypeColors(
     val content: Color
 )
 
-private fun examCardAccent(courseName: String): Color {
-    val colors = listOf(
-        Color(0xFF3F7DF6),
-        Color(0xFF7C5FE7),
-        Color(0xFFE8752A),
-        Color(0xFF2D9A72),
-    )
-    return colors[kotlin.math.abs(courseName.hashCode()) % colors.size]
-}
-
-private fun examCourseIcon(courseName: String): ImageVector {
-    val normalized = courseName.lowercase()
-    val keywordIcon = when {
-        normalized.hasAny("微机", "计算机", "接口", "单片机", "嵌入式", "硬件", "芯片") -> Icons.Outlined.Memory
-        normalized.hasAny("程序", "软件", "网络", "数据库", "java", "python", "web") -> Icons.Outlined.Terminal
-        normalized.hasAny("机械", "机电", "工程", "制造", "制图", "电工", "电子", "自动化") -> Icons.Outlined.Engineering
-        normalized.hasAny("数学", "逻辑", "线性代数", "概率", "统计", "高等数学", "离散") -> Icons.Outlined.Functions
-        normalized.hasAny("物理", "化学", "实验", "材料", "生物") -> Icons.Outlined.Science
-        normalized.hasAny("英语", "语言", "翻译", "写作", "阅读") -> Icons.Outlined.Language
-        normalized.hasAny("政治", "思政", "马克思", "毛泽东", "习近平", "中国", "社会", "近代史") -> Icons.Outlined.Public
-        normalized.hasAny("管理", "经济", "会计", "金融", "法律", "法学") -> Icons.Outlined.AccountBalance
-        normalized.hasAny("心理", "教育", "职业", "创新", "创业") -> Icons.Outlined.Psychology
-        normalized.hasAny("数字") -> Icons.Outlined.Calculate
-        else -> null
-    }
-    if (keywordIcon != null) return keywordIcon
-
-    val icons = listOf(
-        Icons.AutoMirrored.Outlined.MenuBook,
-        Icons.Outlined.StarBorder,
-        Icons.Outlined.Functions,
-        Icons.Outlined.Computer,
-        Icons.Outlined.Calculate,
-        Icons.Outlined.Science,
-        Icons.Outlined.Engineering
-    )
-    return icons[kotlin.math.abs(courseName.hashCode()) % icons.size]
-}
-
-private fun String.hasAny(vararg keywords: String): Boolean {
-    return keywords.any { contains(it, ignoreCase = true) }
-}
-
 private fun examTypeColors(examType: String): ExamTypeColors {
     return if (examType.contains("补考") || examType.contains("重修")) {
         ExamTypeColors(container = ExamWarningSoft, content = ExamWarning)
     } else {
         ExamTypeColors(container = ExamAccentSoft, content = ExamAccent)
+    }
+}
+
+private data class ExamDateStatusColors(
+    val container: Color,
+    val content: Color
+)
+
+private fun examDateStatusColors(urgency: ExamDateUrgency): ExamDateStatusColors {
+    return when (urgency) {
+        ExamDateUrgency.Today -> ExamDateStatusColors(
+            container = ExamToday.copy(alpha = 0.10f),
+            content = ExamToday
+        )
+        ExamDateUrgency.Soon -> ExamDateStatusColors(
+            container = ExamSoon.copy(alpha = 0.12f),
+            content = ExamSoon
+        )
+        ExamDateUrgency.Later -> ExamDateStatusColors(
+            container = ExamLater.copy(alpha = 0.10f),
+            content = ExamLater
+        )
+        ExamDateUrgency.Completed -> ExamDateStatusColors(
+            container = ExamCompleted.copy(alpha = 0.16f),
+            content = ExamCompleted
+        )
     }
 }
 
@@ -515,6 +491,18 @@ internal enum class ExamDisplayState {
     Upcoming,
     Completed
 }
+
+internal enum class ExamDateUrgency {
+    Today,
+    Soon,
+    Later,
+    Completed
+}
+
+internal data class ExamDateStatus(
+    val label: String,
+    val urgency: ExamDateUrgency
+)
 
 internal data class ExamDisplayItem(
     val exam: ExamInfo,
@@ -550,13 +538,25 @@ internal fun examsForDisplay(exams: List<ExamInfo>, now: LocalDateTime): List<Ex
         )
 }
 
-internal fun examDateStatus(date: LocalDate, today: LocalDate): String {
+internal fun examDateStatus(date: LocalDate, today: LocalDate): ExamDateStatus {
     val days = ChronoUnit.DAYS.between(today, date)
     return when {
-        days == 0L -> "今天"
-        days == 1L -> "明天"
-        days > 1L -> "还有 $days 天"
-        else -> ""
+        days == 0L -> ExamDateStatus("今天考试", ExamDateUrgency.Today)
+        days in 1..7 -> ExamDateStatus("还有 $days 天", ExamDateUrgency.Soon)
+        days > 7 -> ExamDateStatus("还有 $days 天", ExamDateUrgency.Later)
+        else -> ExamDateStatus("已结束", ExamDateUrgency.Completed)
+    }
+}
+
+internal fun examGroupDateStatus(
+    date: LocalDate,
+    today: LocalDate,
+    dayExams: List<ExamDisplayItem>
+): ExamDateStatus {
+    return if (dayExams.isNotEmpty() && dayExams.all { it.state == ExamDisplayState.Completed }) {
+        ExamDateStatus("已结束", ExamDateUrgency.Completed)
+    } else {
+        examDateStatus(date, today)
     }
 }
 

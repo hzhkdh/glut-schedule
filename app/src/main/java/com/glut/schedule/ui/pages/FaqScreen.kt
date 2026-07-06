@@ -61,14 +61,6 @@ private val faqList = listOf(
         "核心功能（课表导入、成绩查询、考试安排、学期概览等）两个校区完全一致。差异在于：南宁成绩表结构不同（13 列 vs 22 列），选课属性从个人教学计划精确推断，含「慕课」的课程自动归为任选。"
     )),
     FaqListItem.Entry(FaqItem(
-        "为什么南宁校区导入课表需要填写验证码，而桂林不需要？",
-        "两个校区的教务系统是独立部署的，安全策略不同：\n· 桂林本部（jw.glut.edu.cn）的学生登录页面未启用验证码，用户名密码验证通过即可登录。\n· 南宁分校（jw.glutnn.cn）的登录接口强制要求验证码校验，输入正确的验证码后才能获取会话 Cookie。\n这是教务系统服务端的策略，App 无法绕过。验证码图片直接从南宁教务服务器拉取，App 不会存储或处理验证码内容。"
-    )),
-    FaqListItem.Entry(FaqItem(
-        "为什么成绩按学年分组显示，而不是按学期？",
-        "一个完整学年 = 秋季学期 + 次年春季学期。按学年分组可以让大一、大二等学年的成绩一目了然，避免同一年级的两个学期被拆散。卡片顶部有学年 chip 可快速切换。"
-    )),
-    FaqListItem.Entry(FaqItem(
         "为什么有些节假日没有显示？",
         "只显示本学期范围内的节假日。如果节假日在学期开始之前或学期结束之后，则不会出现在列表中。"
     )),
@@ -77,8 +69,8 @@ private val faqList = listOf(
         "最常见的原因是教务系统会话已过期（Cookie 失效）。请到「导入课表」重新登录教务系统，完成后再试。如果仍失败，可能是网络异常或教务服务器繁忙，可稍后重试。\n\n终极方案：清除应用数据（系统设置 → 应用 → 桂工课表 → 清除数据），重新导入并登录教务。"
     )),
     FaqListItem.Entry(FaqItem(
-        "为什么更新下载这么慢？",
-        "安装包托管在 GitHub Releases，服务器在境外，国内直接下载速度可能较慢（几十 KB/s 甚至更慢）。建议：1) 切换移动数据试试，有时候比校园网快；2) 实在不行可以挂代理/加速器下载。"
+        "更新逻辑",
+        "App 会通过更新源检查是否有新版本：优先读取 Cloudflare Pages 上的 update.json，获取最新版本号、更新说明和 APK 下载地址；如果主更新源暂时不可用，会尝试备用检查通道。只有检测到远端版本高于当前版本时，才会在「关于」页显示红点并弹出更新提示。\n\n安装包下载地址由 update.json 中的 downloadUrl 决定，目前托管在 Cloudflare Pages，通常比直接从 GitHub 下载更稳定。若检查或下载失败，一般是网络波动或更新源暂时不可访问，稍后重新进入「关于」页点击当前版本即可再次检查。"
     )),
 
     // ── 数据解读 ──
@@ -122,11 +114,6 @@ private val faqList = listOf(
         "我的学号和密码安全吗？应用会收集个人信息吗？",
         "学号和密码经过加密存储在手机本地，仅用于登录教务系统获取数据。本应用不会收集、上传任何个人信息到第三方服务器，我们无法访问你的数据。"
     )),
-    FaqListItem.Entry(FaqItem(
-        "可以多台设备同步数据吗？",
-        "目前不支持。所有课表、成绩等数据仅存储在手机本地，不会上传到云端。"
-    )),
-
     // ── 关于项目 ──
     FaqListItem.Header("关于项目"),
     FaqListItem.Entry(FaqItem(
@@ -135,15 +122,11 @@ private val faqList = listOf(
     )),
     FaqListItem.Entry(FaqItem(
         "参考了什么项目？",
-        "参考了三个项目：\nhttps://github.com/nano71/GlutAssistantN\nhttps://github.com/flylai/GlutAssistant\nhttps://github.com/Jacknic/glut\n\n感谢前辈大佬，他们的时代可没有 AI ！"
+        "参考了三个项目：\nhttps://github.com/nano71/GlutAssistantN\nhttps://github.com/flylai/GlutAssistant\nhttps://github.com/Jacknic/glut\n\n感谢前辈大佬，致敬开源！"
     )),
     FaqListItem.Entry(FaqItem(
         "这个app是自己手搓的吗？",
         "并非，本人无任何代码能力、开发经验以及工程能力，全部的分析、构建、编译、推送等均由 ClaudeCode 完成。利用 Subagents 能力并行分析三个项目的获取教务逻辑，取长补短融合进该项目。"
-    )),
-    FaqListItem.Entry(FaqItem(
-        "为什么想到开发这个项目？",
-        "1. 受够了易班经常崩溃、操作路径长的缺点（打开易班app → 找到 in桂工 → 登入验证 → 终于看到了课表！）\n2. 商店的课表app是商业软件，有开屏广告\n3. 最近 vibe coding 大火，鄙人也当一下弄潮儿！体验由 idea 到产出落地的感觉\n4. 融合更多的教务接口，例如考试安排、成绩查看、简易教学计划等集于一体，给桂工学子带来一丝丝的便利"
     ))
 )
 

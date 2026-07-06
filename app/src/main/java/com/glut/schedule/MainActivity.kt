@@ -55,6 +55,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +70,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.glut.schedule.data.model.hasUnreadNotices
+import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.UpdateInfo
 import com.glut.schedule.ui.navigation.DrawerItem
@@ -95,6 +98,7 @@ import com.glut.schedule.ui.pages.ProfessionalScoreViewModelFactory
 import com.glut.schedule.ui.pages.GradeExamScreen
 import com.glut.schedule.ui.pages.GradeExamViewModel
 import com.glut.schedule.ui.pages.GradeExamViewModelFactory
+import com.glut.schedule.ui.pages.NoticeScreen
 import com.glut.schedule.ui.pages.StudyPlanScreen
 import com.glut.schedule.ui.pages.StudyPlanViewModel
 import com.glut.schedule.ui.pages.StudyPlanViewModelFactory
@@ -253,6 +257,15 @@ class MainActivity : ComponentActivity() {
                 val updateAvailableVersion by container.settingsStore.updateAvailableVersion.collectAsState(initial = "")
                 val showUpdateDot = updateAvailableVersion.isNotBlank()
                     && UpdateChecker.compareVersions(updateAvailableVersion, BuildConfig.VERSION_NAME) > 0
+                val cachedNoticesJson by container.settingsStore.cachedNoticesJson.collectAsState(initial = "")
+                val readNoticeIds by container.settingsStore.readNoticeIds.collectAsState(initial = emptySet())
+                var notices by remember { mutableStateOf(NoticeChecker.parseNotices(cachedNoticesJson)) }
+                val currentNoticeIds = notices.map { it.id }.toSet()
+                val showNoticeDot = hasUnreadNotices(currentNoticeIds, readNoticeIds)
+
+                LaunchedEffect(cachedNoticesJson) {
+                    notices = NoticeChecker.parseNotices(cachedNoticesJson)
+                }
 
                 DisposableEffect(Unit) {
                     scope.launch {
@@ -262,6 +275,23 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     onDispose { }
+                }
+
+                DisposableEffect(Unit) {
+                    scope.launch {
+                        val result = container.noticeChecker.check()
+                        if (result != null) {
+                            notices = result.notices
+                            container.settingsStore.setCachedNoticesJson(result.rawJson)
+                        }
+                    }
+                    onDispose { }
+                }
+
+                LaunchedEffect(selectedItem, currentNoticeIds) {
+                    if (selectedItem == DrawerItem.Notice) {
+                        container.settingsStore.markNoticesRead(currentNoticeIds)
+                    }
                 }
 
                 ModalNavigationDrawer(
@@ -313,11 +343,12 @@ class MainActivity : ComponentActivity() {
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
                                         )
                                     }
-                                    items(listOf(DrawerItem.Settings, DrawerItem.FAQ, DrawerItem.About)) { item ->
+                                    items(listOf(DrawerItem.Settings, DrawerItem.Notice, DrawerItem.FAQ, DrawerItem.About)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
-                                            showDot = item == DrawerItem.About && showUpdateDot,
+                                            showDot = (item == DrawerItem.About && showUpdateDot)
+                                                || (item == DrawerItem.Notice && showNoticeDot),
                                             onClick = {
                                                 selectedItem = item
                                                 scope.launch { drawerState.close() }
@@ -439,6 +470,7 @@ class MainActivity : ComponentActivity() {
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
                                     onClearBackground = { scheduleViewModel.clearCustomBackground() }
                                 )
+                                DrawerItem.Notice -> NoticeScreen(notices = notices)
                                 DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
                                 DrawerItem.FAQ -> FaqScreen()
                                 DrawerItem.About -> AboutScreen(

@@ -18,6 +18,7 @@ import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.GradeExamParser
 import com.glut.schedule.service.parser.StudyPlanParser
 import com.glut.schedule.service.AppUpdater
+import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
 
@@ -58,5 +59,6 @@ class AppContainer(application: Application) {
     val gradeExamParser = GradeExamParser()
     val studyPlanParser = StudyPlanParser()
     val updateChecker = UpdateChecker()
+    val noticeChecker = NoticeChecker()
     val appUpdater = AppUpdater(application)
 }

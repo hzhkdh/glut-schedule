@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
@@ -29,6 +30,8 @@ class ScheduleSettingsStore(
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
     private val campusTypeKey = stringPreferencesKey("campus_type")
     private val updateAvailableVersionKey = stringPreferencesKey("update_available_version")
+    private val cachedNoticesJsonKey = stringPreferencesKey("cached_notices_json")
+    private val readNoticeIdsKey = stringSetPreferencesKey("read_notice_ids")
     private val holidaysCacheKey = stringPreferencesKey("holidays_cache")
     private val holidaysCacheDateKey = stringPreferencesKey("holidays_cache_date")
 
@@ -123,6 +126,33 @@ class ScheduleSettingsStore(
     suspend fun setUpdateAvailable(version: String) {
         context.scheduleSettings.edit { preferences ->
             preferences[updateAvailableVersionKey] = version
+        }
+    }
+
+    // ---- App notices ----
+
+    val cachedNoticesJson: Flow<String> = context.scheduleSettings.data.map { preferences ->
+        preferences[cachedNoticesJsonKey].orEmpty()
+    }
+
+    val readNoticeIds: Flow<Set<String>> = context.scheduleSettings.data.map { preferences ->
+        preferences[readNoticeIdsKey].orEmpty()
+    }
+
+    suspend fun setCachedNoticesJson(json: String) {
+        context.scheduleSettings.edit { preferences ->
+            if (json.isBlank()) {
+                preferences.remove(cachedNoticesJsonKey)
+            } else {
+                preferences[cachedNoticesJsonKey] = json
+            }
+        }
+    }
+
+    suspend fun markNoticesRead(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        context.scheduleSettings.edit { preferences ->
+            preferences[readNoticeIdsKey] = preferences[readNoticeIdsKey].orEmpty() + ids
         }
     }
 

@@ -16,8 +16,8 @@ android {
         applicationId = "com.glut.schedule"
         minSdk = 26
         targetSdk = 36
-        versionCode = 108
-        versionName = "0.14.10"
+        versionCode = 110
+        versionName = "0.15.1"
 
     }
 
@@ -104,6 +104,7 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("org.json:json:20240303")
 }
 
 // ── Publishing ──
