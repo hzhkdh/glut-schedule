@@ -518,7 +518,34 @@ class DirectLoginViewModel(
                     val planUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId"
                     val planResult = apiProbeService.probeUrl(cookie, planUrl)
                     if (planResult != null && planResult.httpCode == 200 && planResult.body.length > 500) {
-                        val (groups, courses) = studyPlanParser.parseData(planResult.body)
+                        var (groups, courses) = studyPlanParser.parseData(planResult.body)
+                        // Step 3: 框架模式 — 任选课组详情
+                        val frameStudentId = studyPlanParser.parseFrameStudentId(selfResult.body)
+                        if (frameStudentId != null) {
+                            val frameUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleShowFrame.do?z=z&studentId=$frameStudentId&classId=$classId"
+                            val frameResult = apiProbeService.probeUrl(cookie, frameUrl)
+                            if (frameResult != null && frameResult.httpCode == 200 && frameResult.body.length > 500) {
+                                val freeGroupIds = studyPlanParser.extractFreeGroupIds(frameResult.body)
+                                if (freeGroupIds.isNotEmpty()) {
+                                    val mg = groups.toMutableList()
+                                    val mc = courses.toMutableList()
+                                    for ((gid, gname) in freeGroupIds) {
+                                        val gUrl = "$campusBaseUrl/academic/manager/studyschedule/scheduleFreeGroupCourseList.do?pojoTypeId=2&id=$gid"
+                                        val gResult = apiProbeService.probeUrl(cookie, gUrl)
+                                        if (gResult != null && gResult.httpCode == 200) {
+                                            val (fg, fcs) = studyPlanParser.parseFreeGroupDetail(gResult.body)
+                                            if (fg != null) {
+                                                val idx = mg.indexOfFirst { it.groupName == fg.groupName }
+                                                if (idx >= 0) mg[idx] = fg else mg.add(fg)
+                                                mc.addAll(fcs)
+                                            }
+                                        }
+                                    }
+                                    groups = mg.distinctBy { it.id }
+                                    courses = mc.distinctBy { it.id }
+                                }
+                            }
+                        }
                         scheduleRepository.replaceStudyPlanData(groups, courses)
                         studyPlanCount = groups.size
                     }
