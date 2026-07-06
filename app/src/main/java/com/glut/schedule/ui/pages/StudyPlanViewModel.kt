@@ -13,9 +13,6 @@ import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.StudyPlanParser
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -169,100 +166,117 @@ class StudyPlanViewModel(
             .followRedirects(true)
             .build()
 
-        // ---- helpers ----
-        fun mergeCookie(existing: String, response: okhttp3.Response): String {
-            val setCookie = response.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
-            if (setCookie.isBlank()) return existing
-            val map = linkedMapOf<String, String>()
-            existing.split(";").forEach { val i = it.indexOf("="); if (i > 0) map[it.substring(0, i).trim()] = it.trim() }
-            setCookie.split(";").forEach { val i = it.indexOf("="); if (i > 0) map[it.substring(0, i).trim()] = it.trim() }
-            return map.values.joinToString("; ")
-        }
-
-        fun resolveCharset(ct: String?): Charset {
-            if (ct != null && ct.contains("charset=", ignoreCase = true)) {
-                try { return Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
-                catch (_: Exception) {}
-            }
-            try { return Charset.forName("GBK") } catch (_: Exception) { return Charsets.UTF_8 }
-        }
-
-        suspend fun fetchBytes(req: Request) = withContext(Dispatchers.IO) {
-            client.newCall(req).execute()
-        }
-
-        var curCookie = cookie
-
         // Step 1: selfHtml (GBK)
-        val selfUrl = "$campusBaseUrl/academic/manager/studyschedule/studentSelfSchedule.jsdo"
-        val selfResp = fetchBytes(Request.Builder().url(selfUrl).header("Cookie", curCookie).header("User-Agent", UA).get().build())
-        curCookie = mergeCookie(curCookie, selfResp)
-        val selfHtml = String(selfResp.body?.bytes() ?: ByteArray(0), Charset.forName("GBK"))
-        Log.d(TAG, "Self: ${selfHtml.length}B, cookie=${curCookie.take(30)}...")
+        val selfScheduleUrl = "$campusBaseUrl/academic/manager/studyschedule/studentSelfSchedule.jsdo"
+        val selfRequest = Request.Builder().url(selfScheduleUrl)
+            .header("Cookie", cookie).header("User-Agent", UA).get().build()
+
+        val (selfBody, selfContentType) = withContext(Dispatchers.IO) {
+            client.newCall(selfRequest).execute().use { response ->
+                Pair(response.body?.bytes() ?: ByteArray(0), response.header("Content-Type") ?: "")
+            }
+        }
+        val gbkCharset = try { Charset.forName("GBK") } catch (_: Exception) { Charsets.UTF_8 }
+        val selfHtml = String(selfBody, gbkCharset)
+        Log.d(TAG, "Self: ${selfHtml.length}B")
 
         val ids = studyPlanParser.parseStudentIds(selfHtml)
-        if (ids == null) { Log.e(TAG, "No student IDs found"); return Pair(emptyList(), emptyList()) }
+            ?: return Pair(emptyList(), emptyList()).also { Log.e(TAG, "No student IDs") }
         val (studentId, classId) = ids
-        Log.d(TAG, "IDs: studentId=$studentId, classId=$classId")
 
         // Step 2: lineHtml (平铺模式)
-        val lineUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId"
-        val lineResp = fetchBytes(Request.Builder().url(lineUrl).header("Cookie", curCookie).header("User-Agent", UA).get().build())
-        curCookie = mergeCookie(curCookie, lineResp)
-        val lineCt = lineResp.header("Content-Type") ?: ""
-        val lineHtml = String(lineResp.body?.bytes() ?: ByteArray(0), resolveCharset(lineCt))
-        Log.d(TAG, "LineShow: ${lineHtml.length}B, status=${lineResp.code}")
+        val lineShowUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId"
+        val lineRequest = Request.Builder().url(lineShowUrl)
+            .header("Cookie", cookie).header("User-Agent", UA).get().build()
+
+        val (lineBody, lineContentType) = withContext(Dispatchers.IO) {
+            client.newCall(lineRequest).execute().use { response ->
+                Pair(response.body?.bytes() ?: ByteArray(0), response.header("Content-Type") ?: "")
+            }
+        }
+        val utfCharset = if (lineContentType.contains("charset=", ignoreCase = true))
+            try { Charset.forName(lineContentType.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
+            catch (_: Exception) { Charsets.UTF_8 }
+        else Charsets.UTF_8
+        val lineHtml = String(lineBody, utfCharset)
+        Log.d(TAG, "LineShow: ${lineHtml.length}B")
 
         val (groups, courses) = studyPlanParser.parseData(lineHtml)
 
-        // Step 3: 框架模式 — 任选课组详情
-        val frameStudentId = studyPlanParser.parseFrameStudentId(selfHtml)
-        Log.d(TAG, "Frame studentId: ${frameStudentId ?: "NOT FOUND"}")
-
-        if (frameStudentId != null) {
-            val frameUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleShowFrame.do?z=z&studentId=$frameStudentId&classId=$classId"
-            val frameResp = fetchBytes(Request.Builder().url(frameUrl).header("Cookie", curCookie).header("User-Agent", UA).get().build())
-            curCookie = mergeCookie(curCookie, frameResp)
-            val frameHtml = String(frameResp.body?.bytes() ?: ByteArray(0), resolveCharset(frameResp.header("Content-Type")))
-            Log.d(TAG, "Frame: ${frameHtml.length}B, status=${frameResp.code}")
-
-            val freeGroupIds = studyPlanParser.extractFreeGroupIds(frameHtml)
-            Log.d(TAG, "Free groups: ${freeGroupIds.size} — ${freeGroupIds.joinToString { "${it.first}=${it.second}" }}")
-
-            if (freeGroupIds.isNotEmpty()) {
-                // Parallel fetch
-                val freeResults = coroutineScope {
-                    freeGroupIds.map { (gid, gname) ->
-                        async(Dispatchers.IO) {
-                            try {
-                                val gUrl = "$campusBaseUrl/academic/manager/studyschedule/scheduleFreeGroupCourseList.do?pojoTypeId=2&id=$gid"
-                                val gResp = client.newCall(Request.Builder().url(gUrl).header("Cookie", curCookie).header("User-Agent", UA).get().build()).execute()
-                                val gHtml = String(gResp.body?.bytes() ?: ByteArray(0), resolveCharset(gResp.header("Content-Type")))
-                                Log.d(TAG, "Free '$gname': ${gHtml.length}B, status=${gResp.code}")
-                                studyPlanParser.parseFreeGroupDetail(gHtml)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Free '$gname' failed: ${e.message}")
-                                Pair<StudyPlanGroup?, List<StudyPlanCourse>>(null, emptyList())
+        // Step 3: 框架模式 — 任选课组详情（best-effort，失败不影响主流程）
+        try {
+            val frameStudentId = studyPlanParser.parseFrameStudentId(selfHtml)
+            Log.d(TAG, "Frame studentId: ${frameStudentId ?: "NOT FOUND"}")
+            if (frameStudentId != null) {
+                val frameHtml = fetchFrameHtml(cookie, campusBaseUrl, frameStudentId, classId, client)
+                if (frameHtml != null) {
+                    val freeGroupIds = studyPlanParser.extractFreeGroupIds(frameHtml)
+                    Log.d(TAG, "Free groups: ${freeGroupIds.size}")
+                    if (freeGroupIds.isNotEmpty()) {
+                        val freeResults = freeGroupIds.map { (gid, gname) ->
+                            fetchFreeGroup(cookie, campusBaseUrl, gid, gname, client)
+                        }
+                        val mg = groups.toMutableList()
+                        val mc = courses.toMutableList()
+                        for ((fg, fcs) in freeResults) {
+                            if (fg != null) {
+                                val idx = mg.indexOfFirst { it.groupName == fg.groupName }
+                                if (idx >= 0) mg[idx] = fg else mg.add(fg)
+                                mc.addAll(fcs)
                             }
                         }
-                    }.awaitAll()
-                }
-
-                val mergedGroups = groups.toMutableList()
-                val mergedCourses = courses.toMutableList()
-                for ((freeGroup, freeCourses) in freeResults) {
-                    if (freeGroup != null) {
-                        val idx = mergedGroups.indexOfFirst { it.groupName == freeGroup.groupName }
-                        if (idx >= 0) mergedGroups[idx] = freeGroup else mergedGroups.add(freeGroup)
-                        mergedCourses.addAll(freeCourses)
-                        Log.d(TAG, "Merged '${freeGroup.groupName}': ${freeCourses.size} courses")
+                        return Pair(mg.distinctBy { it.id }, mc.distinctBy { it.id })
                     }
                 }
-                return Pair(mergedGroups.distinctBy { it.id }, mergedCourses.distinctBy { it.id })
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Frame mode fetch failed (non-fatal): ${e.message}")
         }
 
         return Pair(groups, courses)
+    }
+
+    private suspend fun fetchFrameHtml(
+        cookie: String, baseUrl: String, frameStudentId: String, classId: String,
+        client: OkHttpClient
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/academic/manager/studyschedule/studentScheduleShowFrame.do?z=z&studentId=$frameStudentId&classId=$classId"
+            val req = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", UA).get().build()
+            client.newCall(req).execute().use { resp ->
+                val ct = resp.header("Content-Type") ?: ""
+                val cs = if (ct.contains("charset=", ignoreCase = true))
+                    try { Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
+                    catch (_: Exception) { Charsets.UTF_8 }
+                else Charsets.UTF_8
+                String(resp.body?.bytes() ?: ByteArray(0), cs)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Frame page failed: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun fetchFreeGroup(
+        cookie: String, baseUrl: String, groupId: String, name: String,
+        client: OkHttpClient
+    ): Pair<StudyPlanGroup?, List<StudyPlanCourse>> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/academic/manager/studyschedule/scheduleFreeGroupCourseList.do?pojoTypeId=2&id=$groupId"
+            val req = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", UA).get().build()
+            client.newCall(req).execute().use { resp ->
+                val ct = resp.header("Content-Type") ?: ""
+                val cs = if (ct.contains("charset=", ignoreCase = true))
+                    try { Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
+                    catch (_: Exception) { Charsets.UTF_8 }
+                else Charsets.UTF_8
+                val html = String(resp.body?.bytes() ?: ByteArray(0), cs)
+                studyPlanParser.parseFreeGroupDetail(html)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Free '$name' failed: ${e.message}")
+            Pair(null, emptyList())
+        }
     }
 
     companion object {
