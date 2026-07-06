@@ -127,6 +127,7 @@ class MainActivity : ComponentActivity() {
                 val scope = rememberCoroutineScope()
                 var selectedItem by remember { mutableStateOf(DrawerItem.Schedule) }
                 var showUpdateDialog by remember { mutableStateOf<UpdateDialogState?>(null) }
+                var showResetConfirm by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
@@ -447,14 +448,7 @@ class MainActivity : ComponentActivity() {
                                     hasCustomBackground = scheduleUiState.customBackgroundUri.isNotBlank(),
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
                                     onClearBackground = { scheduleViewModel.clearCustomBackground() },
-                                    onReset = {
-                                        scope.launch {
-                                            container.scheduleRepository.clearAllData()
-                                            container.settingsStore.clearAll()
-                                            container.academicSessionStore.clearAll()
-                                            container.credentialStore.clearCredentials()
-                                        }
-                                    }
+                                    onReset = { showResetConfirm = true }
                                 )
                                 DrawerItem.Notice -> NoticeScreen(notices = notices)
                                 DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
@@ -478,6 +472,29 @@ class MainActivity : ComponentActivity() {
                         appUpdater = container.appUpdater,
                         onDismiss = { showUpdateDialog = null },
                         onStateChange = { showUpdateDialog = it }
+                    )
+                }
+
+                if (showResetConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showResetConfirm = false },
+                        title = { Text("重置应用") },
+                        text = { Text("将清除所有数据（课表、成绩、考试、教学计划、设置、登录凭证），恢复到初次使用状态。此操作不可撤销，确定继续吗？") },
+                        confirmButton = {
+                            Text("确认重置", color = Color(0xFFDC2626),
+                                modifier = Modifier.clickable {
+                                    showResetConfirm = false
+                                    scope.launch {
+                                        container.scheduleRepository.clearAllData()
+                                        container.settingsStore.clearAll()
+                                        container.academicSessionStore.clearAll()
+                                        container.credentialStore.clearCredentials()
+                                    }
+                                }.padding(8.dp))
+                        },
+                        dismissButton = {
+                            Text("取消", modifier = Modifier.clickable { showResetConfirm = false }.padding(8.dp))
+                        }
                     )
                 }
             }

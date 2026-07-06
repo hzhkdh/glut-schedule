@@ -33,7 +33,7 @@ class CredentialStore(context: Context) {
     fun hasCredentials(): Boolean = getUsername().isNotBlank() && getPassword().isNotBlank()
 
     fun clearCredentials() {
-        prefs.edit().remove(KEY_USERNAME).remove(KEY_PASSWORD).apply()
+        prefs.edit().remove(KEY_USERNAME).remove(KEY_PASSWORD).commit()
     }
 
     companion object {

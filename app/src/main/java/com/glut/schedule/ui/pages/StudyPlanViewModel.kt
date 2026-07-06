@@ -270,6 +270,15 @@ class StudyPlanViewModel(
         return Pair(groups, courses)
     }
 
+    private suspend fun resolveCharset(contentType: String?): Charset {
+        if (contentType != null && contentType.contains("charset=", ignoreCase = true)) {
+            try { return Charset.forName(contentType.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
+            catch (_: Exception) { /* fall through */ }
+        }
+        // 教务系统页面通常是 GBK 编码
+        try { return Charset.forName("GBK") } catch (_: Exception) { return Charsets.UTF_8 }
+    }
+
     private suspend fun fetchFrameHtml(
         cookie: String, baseUrl: String, frameStudentId: String, classId: String,
         client: OkHttpClient
@@ -280,12 +289,7 @@ class StudyPlanViewModel(
                 .header("Cookie", cookie).header("User-Agent", UA).get().build()
             client.newCall(req).execute().use { response ->
                 val rawBytes = response.body?.bytes() ?: ByteArray(0)
-                val ct = response.header("Content-Type") ?: ""
-                val charset = if (ct.contains("charset=", ignoreCase = true))
-                    try { Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
-                    catch (_: Exception) { Charsets.UTF_8 }
-                else Charsets.UTF_8
-                String(rawBytes, charset)
+                String(rawBytes, resolveCharset(response.header("Content-Type")))
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to fetch frame page: ${e.message}")
@@ -303,10 +307,7 @@ class StudyPlanViewModel(
                 .header("Cookie", cookie).header("User-Agent", UA).get().build()
             client.newCall(req).execute().use { response ->
                 val rawBytes = response.body?.bytes() ?: ByteArray(0)
-                val ct = response.header("Content-Type") ?: ""
-                val charset = try { Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
-                    catch (_: Exception) { Charsets.UTF_8 }
-                val html = String(rawBytes, charset)
+                val html = String(rawBytes, resolveCharset(response.header("Content-Type")))
                 studyPlanParser.parseFreeGroupDetail(html)
             }
         } catch (e: Exception) {
