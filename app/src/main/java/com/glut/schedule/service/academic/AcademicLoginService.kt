@@ -344,14 +344,26 @@ class AcademicOALoginClient(
 class AcademicLoginService(
     private val sessionStore: AcademicSessionStore,
     private val credentialStore: CredentialStore,
-    private val loginClient: AcademicLoginHttpClient = AcademicLoginHttpClient()
+    private val loginClientFactory: () -> AcademicLoginHttpClient = { AcademicLoginHttpClient() },
+    private val oaLoginClient: AcademicOALoginClient = AcademicOALoginClient()
 ) {
     suspend fun silentLogin(): AcademicLoginResult {
         val username = credentialStore.getUsername()
         val password = credentialStore.getPassword()
-        val result = loginClient.login(username, password)
+        val directResult = loginClientFactory().login(username, password)
+        val result = when (directResult) {
+            is AcademicLoginResult.Success,
+            AcademicLoginResult.MissingCredentials,
+            AcademicLoginResult.InvalidCredentials -> directResult
+            AcademicLoginResult.CaptchaOrInteractiveLoginRequired,
+            is AcademicLoginResult.NetworkError -> {
+                val oaResult = oaLoginClient.login(username, password)
+                if (oaResult is AcademicLoginResult.Success) oaResult else directResult
+            }
+        }
         if (result is AcademicLoginResult.Success) {
             sessionStore.saveCookie(result.cookie)
+            sessionStore.saveCampusBaseUrl(result.campusBaseUrl)
         }
         return result
     }

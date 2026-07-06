@@ -152,11 +152,15 @@ class ProfessionalScoreViewModel(
         }
 
         var data = fetchIfPossible()
-        if (cookie.isNotBlank() && (data.hasAnyRemoteData || data.scoreUnavailableReason.isNotBlank())) {
+        if (cookie.isNotBlank() && data.scores.isNotEmpty() && data.scoreUnavailableReason.isBlank()) {
             return data
         }
 
-        _message.value = "会话已过期，正在尝试自动登录..."
+        if (cookie.isNotBlank() && data.scoreUnavailableReason.isNotBlank()) {
+            _message.value = "成绩页受限，正在重新登录后重试..."
+        } else {
+            _message.value = "会话已过期，正在尝试自动登录..."
+        }
         when (val loginResult = loginService.silentLogin()) {
             is AcademicLoginResult.Success -> {
                 cookie = sessionStore.academicCookie.first()
