@@ -187,7 +187,7 @@ class StudyPlanViewModel(
             try { return Charset.forName("GBK") } catch (_: Exception) { return Charsets.UTF_8 }
         }
 
-        fun fetchBytes(req: Request) = withContext(Dispatchers.IO) {
+        suspend fun fetchBytes(req: Request) = withContext(Dispatchers.IO) {
             client.newCall(req).execute()
         }
 
@@ -201,7 +201,7 @@ class StudyPlanViewModel(
         Log.d(TAG, "Self: ${selfHtml.length}B, cookie=${curCookie.take(30)}...")
 
         val ids = studyPlanParser.parseStudentIds(selfHtml)
-            ?: return Pair(emptyList(), emptyList()).also { Log.e(TAG, "No student IDs found") }
+        if (ids == null) { Log.e(TAG, "No student IDs found"); return Pair(emptyList(), emptyList()) }
         val (studentId, classId) = ids
         Log.d(TAG, "IDs: studentId=$studentId, classId=$classId")
 
