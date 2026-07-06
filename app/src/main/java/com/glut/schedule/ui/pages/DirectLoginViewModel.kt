@@ -520,7 +520,8 @@ class DirectLoginViewModel(
                     if (planResult != null && planResult.httpCode == 200 && planResult.body.length > 500) {
                         var (groups, courses) = studyPlanParser.parseData(planResult.body)
                         // Step 3: 框架模式 — 任选课组详情
-                        val frameStudentId = studyPlanParser.parseFrameStudentId(selfResult.body)
+                        val selfBody = selfResult?.body ?: ""
+                        val frameStudentId = if (selfBody.isNotEmpty()) studyPlanParser.parseFrameStudentId(selfBody) else null
                         if (frameStudentId != null) {
                             val frameUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleShowFrame.do?z=z&studentId=$frameStudentId&classId=$classId"
                             val frameResult = apiProbeService.probeUrl(cookie, frameUrl)
