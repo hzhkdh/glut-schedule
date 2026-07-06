@@ -181,7 +181,7 @@ class StudyPlanViewModel(
         Log.d(TAG, "Self: ${selfHtml.length}B")
 
         val ids = studyPlanParser.parseStudentIds(selfHtml)
-            ?: return Pair(emptyList(), emptyList()).also { Log.e(TAG, "No student IDs") }
+        if (ids == null) { Log.e(TAG, "No student IDs"); return Pair(emptyList(), emptyList()) }
         val (studentId, classId) = ids
 
         // Step 2: lineHtml (平铺模式)
