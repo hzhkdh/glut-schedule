@@ -1,7 +1,7 @@
 {
   "version": "v0.16.0",
-  "versionCode": 26,
+  "versionCode": 27,
   "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.16.0",
-  "releaseNotes": "v0.16.0 - 任选课组下拉 + 设置重置 + 框架模式混合获取",
-  "publishedAt": "2026-07-06T14:13:10Z"
+  "releaseNotes": "v0.16.0 - 任选课组下拉 + 设置重置 + 框架模式",
+  "publishedAt": "2026-07-06T14:14:06Z"
 }
