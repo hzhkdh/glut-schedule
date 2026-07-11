@@ -287,7 +287,13 @@ class ScheduleViewModel(
     }
 
     private suspend fun fetchAndSaveSchedule(cookie: String, oldCourseCount: Int): Boolean {
-        val results = apiProbeService.probeAllEndpoints(cookie = cookie)
+        val campusBaseUrl = sessionStore.campusBaseUrl.first()
+            .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
+        val results = apiProbeService.probeScheduleEndpoints(
+            cookie = cookie,
+            storedTimetableUrl = sessionStore.timetableUrl.first(),
+            baseUrl = campusBaseUrl
+        )
         val calendar = ApiProbeService.extractAcademicCalendar(results)
         if (calendar != null) {
             settingsStore.setSemesterStartMonday(calendar.semesterStartMonday)
@@ -298,6 +304,9 @@ class ScheduleViewModel(
         val courses = parseScheduleFromProbeResults(results)
         if (courses.isEmpty()) return false
 
+        apiProbeService.findTimetableHtmlResult(results)?.let { result ->
+            sessionStore.saveTimetableUrl(result.url)
+        }
         repository.replaceImportedCourses(courses)
         val newCount = courses.size
         message.value = if (newCount != oldCourseCount)

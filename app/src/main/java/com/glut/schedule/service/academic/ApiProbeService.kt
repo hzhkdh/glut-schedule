@@ -59,6 +59,52 @@ class ApiProbeService {
         }.getOrNull()
     }
 
+    suspend fun probeScheduleEndpoints(
+        cookie: String,
+        capturedTimetableUrls: List<String> = emptyList(),
+        storedTimetableUrl: String = "",
+        baseUrl: String = "http://jw.glut.edu.cn"
+    ): List<ProbeResult> {
+        val results = mutableListOf<ProbeResult>()
+
+        suspend fun addProbe(url: String, method: String = "GET") {
+            if (url.isBlank() || results.any { it.url == url && it.method.equals(method, ignoreCase = true) }) return
+            probeUrl(cookie, url, method)?.let(results::add)
+        }
+
+        val timetableUrls = buildProbeUrls(capturedTimetableUrls + storedTimetableUrl)
+        timetableUrls.forEach { addProbe(it) }
+
+        addProbe("$baseUrl/academic/personal/framePage.do", method = "POST")
+        addProbe("$baseUrl/academic/manager/coursearrange/graphicalBasicInfo.do")
+        buildCurrentStudentTimetableUrls(results, baseUrl).forEach { addProbe(it) }
+
+        addProbe("$baseUrl/academic/student/currcourse/currcourse.jsdo")
+        addProbe("$baseUrl/academic/student/timetable/timetable.do")
+        addProbe("$baseUrl/academic/student/coursetable/coursetable.do")
+
+        return results
+    }
+
+    suspend fun probeExamEndpoints(
+        cookie: String,
+        storedExamApiUrl: String = "",
+        baseUrl: String = "http://jw.glut.edu.cn"
+    ): List<ProbeResult> {
+        val results = mutableListOf<ProbeResult>()
+
+        suspend fun addProbe(url: String, method: String = "GET") {
+            if (url.isBlank() || results.any { it.url == url && it.method.equals(method, ignoreCase = true) }) return
+            probeUrl(cookie, url, method)?.let(results::add)
+        }
+
+        buildExamProbeRequests(storedExamApiUrl, baseUrl).forEach { (url, method) ->
+            addProbe(url, method)
+        }
+
+        return results
+    }
+
     suspend fun probeAllEndpoints(
         cookie: String,
         capturedTimetableUrls: List<String> = emptyList(),
@@ -251,6 +297,22 @@ class ApiProbeService {
             return listOf(
                 "${baseUrl}/academic/accessModule.do?moduleId=2030",
             )
+        }
+
+        fun buildExamProbeRequests(
+            storedExamApiUrl: String = "",
+            baseUrl: String = "http://jw.glut.edu.cn"
+        ): List<Pair<String, String>> {
+            return buildList {
+                if (storedExamApiUrl.isNotBlank()) add(storedExamApiUrl to "GET")
+                buildExamUrls(baseUrl).forEach { add(it to "GET") }
+                add("$baseUrl/academic/manager/examstu/studentQueryAllExam.do?pagingNumberPerVLID=1000" to "GET")
+                add("$baseUrl/academic/student/examination/studentExamQuery.do" to "GET")
+                add("$baseUrl/academic/student/examination/queryExam.do" to "POST")
+                add("$baseUrl/academic/student/examination/examArrange.do" to "GET")
+                add("$baseUrl/academic/manager/examarrange/examStudentQuery.do" to "POST")
+                add("$baseUrl/academic/student/examination/examinationForStudent.do" to "GET")
+            }.distinct()
         }
 
         fun extractExamUrlsFromMenuResponse(body: String, baseUrl: String = "http://jw.glut.edu.cn"): List<String> {

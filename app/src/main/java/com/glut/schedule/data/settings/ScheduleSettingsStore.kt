@@ -30,8 +30,10 @@ class ScheduleSettingsStore(
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
     private val campusTypeKey = stringPreferencesKey("campus_type")
     private val updateAvailableVersionKey = stringPreferencesKey("update_available_version")
+    private val dismissedUpdatePopupVersionKey = stringPreferencesKey("dismissed_update_popup_version")
     private val cachedNoticesJsonKey = stringPreferencesKey("cached_notices_json")
     private val readNoticeIdsKey = stringSetPreferencesKey("read_notice_ids")
+    private val dismissedNoticePopupIdsKey = stringSetPreferencesKey("dismissed_notice_popup_ids")
     private val holidaysCacheKey = stringPreferencesKey("holidays_cache")
     private val holidaysCacheDateKey = stringPreferencesKey("holidays_cache_date")
 
@@ -129,6 +131,18 @@ class ScheduleSettingsStore(
         }
     }
 
+    /** Latest update version that has already been shown as an automatic startup popup. */
+    val dismissedUpdatePopupVersion: Flow<String> = context.scheduleSettings.data.map { preferences ->
+        preferences[dismissedUpdatePopupVersionKey].orEmpty()
+    }
+
+    suspend fun markUpdatePopupDismissed(version: String) {
+        if (version.isBlank()) return
+        context.scheduleSettings.edit { preferences ->
+            preferences[dismissedUpdatePopupVersionKey] = version
+        }
+    }
+
     // ---- App notices ----
 
     val cachedNoticesJson: Flow<String> = context.scheduleSettings.data.map { preferences ->
@@ -137,6 +151,10 @@ class ScheduleSettingsStore(
 
     val readNoticeIds: Flow<Set<String>> = context.scheduleSettings.data.map { preferences ->
         preferences[readNoticeIdsKey].orEmpty()
+    }
+
+    val dismissedNoticePopupIds: Flow<Set<String>> = context.scheduleSettings.data.map { preferences ->
+        preferences[dismissedNoticePopupIdsKey].orEmpty()
     }
 
     suspend fun setCachedNoticesJson(json: String) {
@@ -153,6 +171,13 @@ class ScheduleSettingsStore(
         if (ids.isEmpty()) return
         context.scheduleSettings.edit { preferences ->
             preferences[readNoticeIdsKey] = preferences[readNoticeIdsKey].orEmpty() + ids
+        }
+    }
+
+    suspend fun markNoticePopupsDismissed(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        context.scheduleSettings.edit { preferences ->
+            preferences[dismissedNoticePopupIdsKey] = preferences[dismissedNoticePopupIdsKey].orEmpty() + ids
         }
     }
 

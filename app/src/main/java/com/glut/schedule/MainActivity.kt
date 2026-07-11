@@ -67,9 +67,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.glut.schedule.data.model.NoticeInfo
 import com.glut.schedule.data.model.hasUnreadNotices
 import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
@@ -127,6 +129,10 @@ class MainActivity : ComponentActivity() {
                 val scope = rememberCoroutineScope()
                 var selectedItem by remember { mutableStateOf(DrawerItem.Schedule) }
                 var showUpdateDialog by remember { mutableStateOf<UpdateDialogState?>(null) }
+                var autoPopupUpdateVersion by remember { mutableStateOf<String?>(null) }
+                var showNoticePopup by remember { mutableStateOf<List<NoticeInfo>?>(null) }
+                var noticePopupSessionDismissedIds by remember { mutableStateOf(emptySet<String>()) }
+                var initialNoticeCheckFinished by remember { mutableStateOf(false) }
                 var showResetConfirm by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
@@ -248,6 +254,7 @@ class MainActivity : ComponentActivity() {
                     && UpdateChecker.compareVersions(updateAvailableVersion, BuildConfig.VERSION_NAME) > 0
                 val cachedNoticesJson by container.settingsStore.cachedNoticesJson.collectAsState(initial = "")
                 val readNoticeIds by container.settingsStore.readNoticeIds.collectAsState(initial = emptySet())
+                val dismissedNoticePopupIds by container.settingsStore.dismissedNoticePopupIds.collectAsState(initial = emptySet())
                 var notices by remember { mutableStateOf(NoticeChecker.parseNotices(cachedNoticesJson)) }
                 val currentNoticeIds = notices.map { it.id }.toSet()
                 val showNoticeDot = hasUnreadNotices(currentNoticeIds, readNoticeIds)
@@ -256,30 +263,45 @@ class MainActivity : ComponentActivity() {
                     notices = NoticeChecker.parseNotices(cachedNoticesJson)
                 }
 
-                DisposableEffect(Unit) {
-                    scope.launch {
-                        val info = container.updateChecker.check(BuildConfig.VERSION_NAME)
-                        if (info != null && info.isNewer) {
-                            container.settingsStore.setUpdateAvailable(info.latestVersion)
+                LaunchedEffect(Unit) {
+                    val info = container.updateChecker.check(BuildConfig.VERSION_NAME)
+                    if (info != null && info.isNewer) {
+                        container.settingsStore.setUpdateAvailable(info.latestVersion)
+                        val dismissedVersion = container.settingsStore.dismissedUpdatePopupVersion.first()
+                        if (dismissedVersion != info.latestVersion) {
+                            autoPopupUpdateVersion = info.latestVersion
+                            showUpdateDialog = UpdateDialogState.Idle(info)
                         }
                     }
-                    onDispose { }
-                }
 
-                DisposableEffect(Unit) {
-                    scope.launch {
-                        val result = container.noticeChecker.check()
-                        if (result != null) {
-                            notices = result.notices
-                            container.settingsStore.setCachedNoticesJson(result.rawJson)
-                        }
+                    val result = container.noticeChecker.check()
+                    if (result != null) {
+                        notices = result.notices
+                        container.settingsStore.setCachedNoticesJson(result.rawJson)
                     }
-                    onDispose { }
+                    initialNoticeCheckFinished = true
                 }
 
                 LaunchedEffect(selectedItem, currentNoticeIds) {
                     if (selectedItem == DrawerItem.Notice) {
                         container.settingsStore.markNoticesRead(currentNoticeIds)
+                    }
+                }
+
+                LaunchedEffect(
+                    initialNoticeCheckFinished,
+                    notices,
+                    dismissedNoticePopupIds,
+                    noticePopupSessionDismissedIds,
+                    showUpdateDialog,
+                    showNoticePopup
+                ) {
+                    if (initialNoticeCheckFinished && showUpdateDialog == null && showNoticePopup == null) {
+                        val alreadyShownIds = dismissedNoticePopupIds + noticePopupSessionDismissedIds
+                        val popupNotices = notices.filter { it.id !in alreadyShownIds }
+                        if (popupNotices.isNotEmpty()) {
+                            showNoticePopup = popupNotices
+                        }
                     }
                 }
 
@@ -470,8 +492,40 @@ class MainActivity : ComponentActivity() {
                     UpdateDialog(
                         state = state,
                         appUpdater = container.appUpdater,
-                        onDismiss = { showUpdateDialog = null },
+                        onDismiss = {
+                            autoPopupUpdateVersion?.let { version ->
+                                scope.launch {
+                                    container.settingsStore.markUpdatePopupDismissed(version)
+                                }
+                            }
+                            autoPopupUpdateVersion = null
+                            showUpdateDialog = null
+                        },
                         onStateChange = { showUpdateDialog = it }
+                    )
+                }
+
+                showNoticePopup?.let { popupNotices ->
+                    NoticePopupDialog(
+                        notices = popupNotices,
+                        onDismiss = {
+                            val ids = popupNotices.map { it.id }.toSet()
+                            noticePopupSessionDismissedIds = noticePopupSessionDismissedIds + ids
+                            showNoticePopup = null
+                            scope.launch {
+                                container.settingsStore.markNoticePopupsDismissed(ids)
+                            }
+                        },
+                        onOpenNotices = {
+                            val ids = popupNotices.map { it.id }.toSet()
+                            noticePopupSessionDismissedIds = noticePopupSessionDismissedIds + ids
+                            showNoticePopup = null
+                            selectedItem = DrawerItem.Notice
+                            scope.launch {
+                                container.settingsStore.markNoticePopupsDismissed(ids)
+                                container.settingsStore.markNoticesRead(currentNoticeIds)
+                            }
+                        }
                     )
                 }
 
@@ -704,6 +758,105 @@ private fun SettingsPage(
             }
         }
     }
+}
+
+// ---- Notice Popup Dialog ----
+
+@Composable
+private fun NoticePopupDialog(
+    notices: List<NoticeInfo>,
+    onDismiss: () -> Unit,
+    onOpenNotices: () -> Unit
+) {
+    val primaryNotice = notices.firstOrNull() ?: return
+    val remainingCount = notices.size - 1
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("新通知") },
+        text = {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text(
+                        text = primaryNotice.title,
+                        color = Color(0xFF141821),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    NoticePopupLevelBadge(level = primaryNotice.level)
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = primaryNotice.publishedAt.toString(),
+                    color = Color(0xFF9CA3AF),
+                    fontSize = 12.sp
+                )
+                if (primaryNotice.content.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = primaryNotice.content.take(160),
+                        color = Color(0xFF4A5568),
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        maxLines = 5,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (remainingCount > 0) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "还有 ${remainingCount} 条新通知，可在通知页查看",
+                        color = Color(0xFF667085),
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onOpenNotices) {
+                Text("查看通知")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("知道了")
+            }
+        }
+    )
+}
+
+@Composable
+private fun NoticePopupLevelBadge(level: String) {
+    val (container, content) = when (level.lowercase()) {
+        "important" -> Color(0xFFFEE2E2) to Color(0xFFDC2626)
+        "warning" -> Color(0xFFFFF3D8) to Color(0xFFD97706)
+        "update" -> Color(0xFFEAF1FF) to Color(0xFF3F7DF6)
+        else -> Color(0xFFEEF2F7) to Color(0xFF667085)
+    }
+    val label = when (level.lowercase()) {
+        "important" -> "重要"
+        "warning" -> "提醒"
+        "update" -> "更新"
+        else -> "通知"
+    }
+
+    Text(
+        text = label,
+        color = content,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+        modifier = Modifier
+            .background(container, RoundedCornerShape(999.dp))
+            .padding(horizontal = 9.dp, vertical = 4.dp)
+    )
 }
 
 // ---- Update Dialog ----

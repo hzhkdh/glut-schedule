@@ -96,33 +96,33 @@ fun SemesterOverviewScreen(
                 item { HolidaysCard(uiState.holidays) }
             }
 
-            if (uiState.adjustmentsByWeek.isNotEmpty()) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "调课一览",
+                        color = TextSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = viewModel::refreshAdjustments,
+                        enabled = !uiState.isRefreshing,
+                        modifier = Modifier.size(32.dp)
                     ) {
-                        Text(
-                            "调课一览",
-                            color = TextSecondary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.weight(1f)
+                        Icon(
+                            Icons.Outlined.Refresh,
+                            contentDescription = "刷新调课",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp)
                         )
-                        IconButton(
-                            onClick = viewModel::refreshAdjustments,
-                            enabled = !uiState.isRefreshing,
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                Icons.Outlined.Refresh,
-                                contentDescription = "刷新调课",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
                     }
                 }
+            }
+            if (uiState.adjustmentsByWeek.isNotEmpty()) {
                 val sortedWeeks = uiState.adjustmentsByWeek.keys.sorted()
                 items(sortedWeeks) { week ->
                     AdjustmentWeekCard(
@@ -169,7 +169,8 @@ private fun SemesterInfoCard(state: SemesterOverviewUiState) {
 
 @Composable
 private fun ProgressPieCard(state: SemesterOverviewUiState) {
-    val pct = (state.progressPercent * 100).roundToInt()
+    val remainingPercent = 1f - state.progressPercent
+    val pct = (remainingPercent * 100).roundToInt()
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = CardBg,
@@ -192,7 +193,7 @@ private fun ProgressPieCard(state: SemesterOverviewUiState) {
                     drawArc(
                         color = ProgressGray,
                         startAngle = -90f,
-                        sweepAngle = 360f * (1f - state.progressPercent),
+                        sweepAngle = 360f * state.progressPercent,
                         useCenter = false,
                         topLeft = tl,
                         size = arcSize,
@@ -200,8 +201,8 @@ private fun ProgressPieCard(state: SemesterOverviewUiState) {
                     )
                     drawArc(
                         color = AccentBlue,
-                        startAngle = -90f + 360f * (1f - state.progressPercent),
-                        sweepAngle = 360f * state.progressPercent,
+                        startAngle = -90f + 360f * state.progressPercent,
+                        sweepAngle = 360f * remainingPercent,
                         useCenter = false,
                         topLeft = tl,
                         size = arcSize,
@@ -210,7 +211,7 @@ private fun ProgressPieCard(state: SemesterOverviewUiState) {
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("${pct}%", color = AccentBlue, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    Text("已过", color = TextSecondary, fontSize = 12.sp)
+                    Text("剩余", color = TextSecondary, fontSize = 12.sp)
                 }
             }
 
