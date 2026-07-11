@@ -13,7 +13,8 @@ data class UpdateInfo(
     val downloadUrl: String,
     val apkDownloadUrl: String,
     val releaseNotes: String,
-    val isNewer: Boolean
+    val isNewer: Boolean,
+    val isForceUpdate: Boolean = false
 )
 
 class UpdateChecker(
@@ -76,7 +77,8 @@ class UpdateChecker(
                 downloadUrl = downloadUrl,
                 apkDownloadUrl = downloadUrl,
                 releaseNotes = updateDesc,
-                isNewer = compareVersions(versionName, currentVersion) > 0
+                isNewer = compareVersions(versionName, currentVersion) > 0,
+                isForceUpdate = forceUpdate
             )
         }.getOrNull()
     }

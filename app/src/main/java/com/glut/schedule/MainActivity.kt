@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -130,7 +131,7 @@ class MainActivity : ComponentActivity() {
                 var selectedItem by remember { mutableStateOf(DrawerItem.Schedule) }
                 var showUpdateDialog by remember { mutableStateOf<UpdateDialogState?>(null) }
                 var autoPopupUpdateVersion by remember { mutableStateOf<String?>(null) }
-                var showNoticePopup by remember { mutableStateOf<List<NoticeInfo>?>(null) }
+                var showNoticePopup by remember { mutableStateOf<NoticeInfo?>(null) }
                 var noticePopupSessionDismissedIds by remember { mutableStateOf(emptySet<String>()) }
                 var initialNoticeCheckFinished by remember { mutableStateOf(false) }
                 var showResetConfirm by remember { mutableStateOf(false) }
@@ -298,9 +299,9 @@ class MainActivity : ComponentActivity() {
                 ) {
                     if (initialNoticeCheckFinished && showUpdateDialog == null && showNoticePopup == null) {
                         val alreadyShownIds = dismissedNoticePopupIds + noticePopupSessionDismissedIds
-                        val popupNotices = notices.filter { it.id !in alreadyShownIds }
-                        if (popupNotices.isNotEmpty()) {
-                            showNoticePopup = popupNotices
+                        val latestNotice = notices.firstOrNull()
+                        if (latestNotice != null && latestNotice.id !in alreadyShownIds) {
+                            showNoticePopup = latestNotice
                         }
                     }
                 }
@@ -505,11 +506,11 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                showNoticePopup?.let { popupNotices ->
+                showNoticePopup?.let { popupNotice ->
                     NoticePopupDialog(
-                        notices = popupNotices,
+                        notice = popupNotice,
                         onDismiss = {
-                            val ids = popupNotices.map { it.id }.toSet()
+                            val ids = setOf(popupNotice.id)
                             noticePopupSessionDismissedIds = noticePopupSessionDismissedIds + ids
                             showNoticePopup = null
                             scope.launch {
@@ -517,7 +518,7 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onOpenNotices = {
-                            val ids = popupNotices.map { it.id }.toSet()
+                            val ids = setOf(popupNotice.id)
                             noticePopupSessionDismissedIds = noticePopupSessionDismissedIds + ids
                             showNoticePopup = null
                             selectedItem = DrawerItem.Notice
@@ -538,6 +539,7 @@ class MainActivity : ComponentActivity() {
                             Text("确认重置", color = Color(0xFFDC2626),
                                 modifier = Modifier.clickable {
                                     showResetConfirm = false
+                                    directLoginViewModel.clearLoginState()
                                     scope.launch {
                                         container.scheduleRepository.clearAllData()
                                         container.settingsStore.clearAll()
@@ -764,58 +766,24 @@ private fun SettingsPage(
 
 @Composable
 private fun NoticePopupDialog(
-    notices: List<NoticeInfo>,
+    notice: NoticeInfo,
     onDismiss: () -> Unit,
     onOpenNotices: () -> Unit
 ) {
-    val primaryNotice = notices.firstOrNull() ?: return
-    val remainingCount = notices.size - 1
-
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("新通知") },
+        containerColor = Color(0xFFFFFBFE),
+        titleContentColor = Color(0xFF1D1B20),
+        textContentColor = Color(0xFF49454F),
+        title = { Text("新通知", fontWeight = FontWeight.Bold) },
         text = {
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Text(
-                        text = primaryNotice.title,
-                        color = Color(0xFF141821),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    NoticePopupLevelBadge(level = primaryNotice.level)
-                }
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = primaryNotice.publishedAt.toString(),
-                    color = Color(0xFF9CA3AF),
-                    fontSize = 12.sp
-                )
-                if (primaryNotice.content.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = primaryNotice.content.take(160),
-                        color = Color(0xFF4A5568),
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        maxLines = 5,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                if (remainingCount > 0) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "还有 ${remainingCount} 条新通知，可在通知页查看",
-                        color = Color(0xFF667085),
-                        fontSize = 13.sp
-                    )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp)
+            ) {
+                item {
+                    NoticePopupContent(notice = notice)
                 }
             }
         },
@@ -833,11 +801,52 @@ private fun NoticePopupDialog(
 }
 
 @Composable
+private fun NoticePopupContent(
+    notice: NoticeInfo
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Text(
+                text = notice.title,
+                color = Color(0xFF1D1B20),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            NoticePopupLevelBadge(level = notice.level)
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = notice.publishedAt.toString(),
+            color = Color(0xFF6F6A72),
+            fontSize = 12.sp
+        )
+        if (notice.content.isNotBlank()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = notice.content,
+                color = Color(0xFF3D3940),
+                fontSize = 14.sp,
+                lineHeight = 20.sp
+            )
+        }
+    }
+}
+
+@Composable
 private fun NoticePopupLevelBadge(level: String) {
     val (container, content) = when (level.lowercase()) {
         "important" -> Color(0xFFFEE2E2) to Color(0xFFDC2626)
         "warning" -> Color(0xFFFFF3D8) to Color(0xFFD97706)
-        "update" -> Color(0xFFEAF1FF) to Color(0xFF3F7DF6)
+        "update" -> Color(0xFFE8F0FE) to Color(0xFF245CA6)
         else -> Color(0xFFEEF2F7) to Color(0xFF667085)
     }
     val label = when (level.lowercase()) {
@@ -869,6 +878,7 @@ private sealed class UpdateDialogState {
         val downloadedMB: String,
         val totalMB: String
     ) : UpdateDialogState()
+    data class DownloadFailed(val info: UpdateInfo, val message: String) : UpdateDialogState()
     data class Done(val info: UpdateInfo, val apkFile: java.io.File) : UpdateDialogState()
 }
 
@@ -881,10 +891,49 @@ private fun UpdateDialog(
 ) {
     val scope = rememberCoroutineScope()
 
+    fun startDownload(info: UpdateInfo) {
+        scope.launch {
+            onStateChange(
+                UpdateDialogState.Downloading(
+                    info = info,
+                    progress = 0f,
+                    downloadedMB = "0",
+                    totalMB = "..."
+                )
+            )
+            try {
+                val apkFile = appUpdater.downloadApk(info.apkDownloadUrl) { downloaded, total ->
+                    val progress = if (total > 0) downloaded.toFloat() / total else 0f
+                    val dMB = "%.1f".format(downloaded / 1_000_000.0)
+                    val tMB = if (total > 0) "%.1f".format(total / 1_000_000.0) else "?"
+                    onStateChange(
+                        UpdateDialogState.Downloading(
+                            info = info,
+                            progress = progress,
+                            downloadedMB = dMB,
+                            totalMB = tMB
+                        )
+                    )
+                }
+                onStateChange(UpdateDialogState.Done(info, apkFile))
+            } catch (e: Exception) {
+                onStateChange(
+                    UpdateDialogState.DownloadFailed(
+                        info = info,
+                        message = e.message ?: "下载失败，请检查网络后重试"
+                    )
+                )
+            }
+        }
+    }
+
     when (state) {
         is UpdateDialogState.Idle -> {
             AlertDialog(
-                onDismissRequest = onDismiss,
+                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                containerColor = Color(0xFFFFFBFE),
+                titleContentColor = Color(0xFF1D1B20),
+                textContentColor = Color(0xFF49454F),
                 title = {
                     Text(
                         if (state.info.isNewer) "发现新版本 v${state.info.latestVersion}"
@@ -897,11 +946,16 @@ private fun UpdateDialog(
                             Text("当前版本: v${BuildConfig.VERSION_NAME}")
                             Spacer(modifier = Modifier.height(8.dp))
                             if (state.info.releaseNotes.isNotBlank()) {
-                                Text(
-                                    state.info.releaseNotes.take(500),
-                                    fontSize = 13.sp,
-                                    color = Color.Gray
-                                )
+                                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                                    item {
+                                        Text(
+                                            state.info.releaseNotes,
+                                            fontSize = 14.sp,
+                                            lineHeight = 20.sp,
+                                            color = Color(0xFF3D3940)
+                                        )
+                                    }
+                                }
                             }
                         } else {
                             Text("当前已是最新版本 v${BuildConfig.VERSION_NAME}")
@@ -910,47 +964,30 @@ private fun UpdateDialog(
                 },
                 confirmButton = {
                     if (state.info.isNewer && state.info.apkDownloadUrl.isNotBlank()) {
-                        TextButton(onClick = {
-                            scope.launch {
-                                onStateChange(
-                                    UpdateDialogState.Downloading(
-                                        info = state.info,
-                                        progress = 0f,
-                                        downloadedMB = "0",
-                                        totalMB = "..."
-                                    )
-                                )
-                                try {
-                                    val apkFile = appUpdater.downloadApk(state.info.apkDownloadUrl) { downloaded, total ->
-                                        val progress = if (total > 0) downloaded.toFloat() / total else 0f
-                                        val dMB = "%.1f".format(downloaded / 1_000_000.0)
-                                        val tMB = if (total > 0) "%.1f".format(total / 1_000_000.0) else "?"
-                                        onStateChange(
-                                            UpdateDialogState.Downloading(
-                                                info = state.info,
-                                                progress = progress,
-                                                downloadedMB = dMB,
-                                                totalMB = tMB
-                                            )
-                                        )
-                                    }
-                                    onStateChange(UpdateDialogState.Done(state.info, apkFile))
-                                } catch (e: Exception) {
-                                    onDismiss()
-                                }
-                            }
-                        }) {
+                        TextButton(onClick = { startDownload(state.info) }) {
                             Text("立即更新")
                         }
                     }
                 },
-                dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+                dismissButton = {
+                    if (!state.info.isForceUpdate) {
+                        TextButton(onClick = onDismiss) { Text("取消") }
+                    }
+                }
             )
         }
 
         is UpdateDialogState.Downloading -> {
             AlertDialog(
-                onDismissRequest = { onDismiss(); onStateChange(null) },
+                onDismissRequest = {
+                    if (!state.info.isForceUpdate) {
+                        onDismiss()
+                        onStateChange(null)
+                    }
+                },
+                containerColor = Color(0xFFFFFBFE),
+                titleContentColor = Color(0xFF1D1B20),
+                textContentColor = Color(0xFF49454F),
                 title = { Text("正在下载 v${state.info.latestVersion}") },
                 text = {
                     Column {
@@ -970,8 +1007,31 @@ private fun UpdateDialog(
                 },
                 confirmButton = {},
                 dismissButton = {
-                    TextButton(onClick = { onDismiss(); onStateChange(null) }) {
-                        Text("取消下载")
+                    if (!state.info.isForceUpdate) {
+                        TextButton(onClick = { onDismiss(); onStateChange(null) }) {
+                            Text("取消下载")
+                        }
+                    }
+                }
+            )
+        }
+
+        is UpdateDialogState.DownloadFailed -> {
+            AlertDialog(
+                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                containerColor = Color(0xFFFFFBFE),
+                titleContentColor = Color(0xFF1D1B20),
+                textContentColor = Color(0xFF49454F),
+                title = { Text("下载失败") },
+                text = { Text(state.message, color = Color(0xFF3D3940)) },
+                confirmButton = {
+                    TextButton(onClick = { startDownload(state.info) }) {
+                        Text("重试")
+                    }
+                },
+                dismissButton = {
+                    if (!state.info.isForceUpdate) {
+                        TextButton(onClick = onDismiss) { Text("取消") }
                     }
                 }
             )
@@ -979,7 +1039,10 @@ private fun UpdateDialog(
 
         is UpdateDialogState.Done -> {
             AlertDialog(
-                onDismissRequest = onDismiss,
+                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                containerColor = Color(0xFFFFFBFE),
+                titleContentColor = Color(0xFF1D1B20),
+                textContentColor = Color(0xFF49454F),
                 title = { Text("下载完成") },
                 text = { Text("v${state.info.latestVersion} 已下载，是否立即安装？") },
                 confirmButton = {
@@ -990,7 +1053,11 @@ private fun UpdateDialog(
                         Text("立即安装")
                     }
                 },
-                dismissButton = { TextButton(onClick = onDismiss) { Text("稍后") } }
+                dismissButton = {
+                    if (!state.info.isForceUpdate) {
+                        TextButton(onClick = onDismiss) { Text("稍后") }
+                    }
+                }
             )
         }
     }

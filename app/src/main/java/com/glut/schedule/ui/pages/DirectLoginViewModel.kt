@@ -75,6 +75,7 @@ class DirectLoginViewModel(
 
     private var loginHttpClient = AcademicLoginHttpClient()
     private val oaLoginClient = AcademicOALoginClient()
+    private var credentialsCleared = false
 
     // Nanning login session state (lives outside uiState to avoid data class issues)
     private var nanningCaptchaBytes: ByteArray? = null
@@ -94,11 +95,13 @@ class DirectLoginViewModel(
         viewModelScope.launch {
             val savedUsername = credentialStore.getUsername()
             val savedPassword = credentialStore.getPassword()
-            _uiState.value = _uiState.value.copy(
-                username = savedUsername,
-                password = savedPassword,
-                rememberPassword = savedUsername.isNotBlank()
-            )
+            if (!credentialsCleared) {
+                _uiState.value = _uiState.value.copy(
+                    username = savedUsername,
+                    password = savedPassword,
+                    rememberPassword = savedUsername.isNotBlank()
+                )
+            }
         }
     }
 
@@ -111,6 +114,14 @@ class DirectLoginViewModel(
     fun updateRememberPassword(remember: Boolean) { _uiState.value = _uiState.value.copy(rememberPassword = remember) }
     fun toggleNanning() { _uiState.value = _uiState.value.copy(isNanning = !_uiState.value.isNanning) }
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
+
+    fun clearLoginState() {
+        credentialsCleared = true
+        loginHttpClient = AcademicLoginHttpClient()
+        nanningCaptchaBytes = null
+        nanningCookieJar = null
+        _uiState.value = DirectLoginUiState(rememberPassword = false)
+    }
 
     fun loginAndImport() {
         val state = _uiState.value
