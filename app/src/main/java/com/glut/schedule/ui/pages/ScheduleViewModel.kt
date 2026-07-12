@@ -50,6 +50,7 @@ data class ScheduleUiState(
     val showWeekend: Boolean = false,
     val showNoon: Boolean = false,
     val customBackgroundUri: String = "",
+    val courseColorOverrides: Map<String, String> = emptyMap(),
     val isRefreshing: Boolean = false,
     val message: String = "",
     val needsInteractiveLogin: Boolean = false
@@ -61,7 +62,8 @@ private data class ScheduleSettingsUiState(
     val showNoon: Boolean,
     val semesterStartMonday: LocalDate,
     val semesterEndDate: LocalDate,
-    val customBackgroundUri: String
+    val customBackgroundUri: String,
+    val courseColorOverrides: Map<String, String>
 )
 
 class ScheduleViewModel(
@@ -88,8 +90,11 @@ class ScheduleViewModel(
         val coldShowNoon = runBlocking(Dispatchers.IO) {
             settingsStore.showNoon.first()
         }
+        val coldOverrides = runBlocking(Dispatchers.IO) {
+            settingsStore.courseColorOverrides.first()
+        }
         val coldCourses = runBlocking(Dispatchers.IO) {
-            CourseColorMapper.assignColors(repository.courses.first())
+            CourseColorMapper.assignColors(repository.courses.first(), coldOverrides)
         }
         val coldPeriods = runBlocking(Dispatchers.IO) {
             repository.classPeriods.first()
@@ -118,15 +123,17 @@ class ScheduleViewModel(
             ) { weekNumber, showWeekend, showNoon, semesterStartMonday, semesterEndDate ->
                 arrayOf(weekNumber, showWeekend, showNoon, semesterStartMonday, semesterEndDate)
             },
-            settingsStore.customBackgroundUri
-        ) { base, customBackgroundUri ->
+            settingsStore.customBackgroundUri,
+            settingsStore.courseColorOverrides
+        ) { base, customBackgroundUri, courseColorOverrides ->
             ScheduleSettingsUiState(
                 weekNumber = base[0] as Int,
                 showWeekend = base[1] as Boolean,
                 showNoon = base[2] as Boolean,
                 semesterStartMonday = base[3] as LocalDate,
                 semesterEndDate = base[4] as LocalDate,
-                customBackgroundUri = customBackgroundUri
+                customBackgroundUri = customBackgroundUri,
+                courseColorOverrides = courseColorOverrides
             )
         }
 
@@ -148,7 +155,7 @@ class ScheduleViewModel(
                 correctedWeek
             }
             val today = LocalDate.now()
-            val coloredCourses = CourseColorMapper.assignColors(courses)
+            val coloredCourses = CourseColorMapper.assignColors(courses, settings.courseColorOverrides)
             ScheduleUiState(
                 week = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek),
                 today = today,
@@ -165,7 +172,8 @@ class ScheduleViewModel(
                 },
                 showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
-                customBackgroundUri = settings.customBackgroundUri
+                customBackgroundUri = settings.customBackgroundUri,
+                courseColorOverrides = settings.courseColorOverrides
             )
         }
 
@@ -186,6 +194,7 @@ class ScheduleViewModel(
             initialValue = ScheduleUiState(
                 week = initialWeek,
                 customBackgroundUri = coldBgUri,
+                courseColorOverrides = coldOverrides,
                 showWeekend = coldShowWeekend,
                 showNoon = coldShowNoon,
                 courses = coldCourses,
@@ -235,6 +244,18 @@ class ScheduleViewModel(
 
     fun clearCustomBackground() {
         viewModelScope.launch { settingsStore.setCustomBackgroundUri("") }
+    }
+
+    fun setCourseColorOverride(courseKey: String, colorHex: String) {
+        viewModelScope.launch { settingsStore.setCourseColorOverride(courseKey, colorHex) }
+    }
+
+    fun removeCourseColorOverride(courseKey: String) {
+        viewModelScope.launch { settingsStore.removeCourseColorOverride(courseKey) }
+    }
+
+    fun clearCourseColorOverrides() {
+        viewModelScope.launch { settingsStore.clearCourseColorOverrides() }
     }
 
     fun refreshSchedule() {

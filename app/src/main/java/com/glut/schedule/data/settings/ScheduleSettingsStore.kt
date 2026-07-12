@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
+import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import kotlinx.coroutines.flow.Flow
@@ -28,6 +29,7 @@ class ScheduleSettingsStore(
     private val semesterStartMondayKey = stringPreferencesKey("semester_start_monday")
     private val semesterEndDateKey = stringPreferencesKey("semester_end_date")
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
+    private val courseColorOverridesKey = stringSetPreferencesKey("course_color_overrides")
     private val campusTypeKey = stringPreferencesKey("campus_type")
     private val updateAvailableVersionKey = stringPreferencesKey("update_available_version")
     private val dismissedUpdatePopupVersionKey = stringPreferencesKey("dismissed_update_popup_version")
@@ -60,6 +62,10 @@ class ScheduleSettingsStore(
 
     val customBackgroundUri: Flow<String> = context.scheduleSettings.data.map { preferences ->
         preferences[customBackgroundUriKey].orEmpty()
+    }
+
+    val courseColorOverrides: Flow<Map<String, String>> = context.scheduleSettings.data.map { preferences ->
+        decodeCourseColorOverrides(preferences[courseColorOverridesKey].orEmpty())
     }
 
     val campusType: Flow<CampusType> = context.scheduleSettings.data.map { preferences ->
@@ -131,6 +137,31 @@ class ScheduleSettingsStore(
         }
     }
 
+    suspend fun setCourseColorOverride(courseKey: String, colorHex: String): Boolean {
+        val normalizedKey = courseKey.trim()
+        val normalizedColor = CourseColorMapper.normalizeHexColor(colorHex) ?: return false
+        if (normalizedKey.isBlank()) return false
+        context.scheduleSettings.edit { preferences ->
+            val overrides = decodeCourseColorOverrides(preferences[courseColorOverridesKey].orEmpty()).toMutableMap()
+            overrides[normalizedKey] = normalizedColor
+            preferences[courseColorOverridesKey] = encodeCourseColorOverrides(overrides)
+        }
+        return true
+    }
+
+    suspend fun removeCourseColorOverride(courseKey: String) {
+        context.scheduleSettings.edit { preferences ->
+            val overrides = decodeCourseColorOverrides(preferences[courseColorOverridesKey].orEmpty()).toMutableMap()
+            if (overrides.remove(courseKey) == null) return@edit
+            if (overrides.isEmpty()) preferences.remove(courseColorOverridesKey)
+            else preferences[courseColorOverridesKey] = encodeCourseColorOverrides(overrides)
+        }
+    }
+
+    suspend fun clearCourseColorOverrides() {
+        context.scheduleSettings.edit { preferences -> preferences.remove(courseColorOverridesKey) }
+    }
+
     /** Latest update version that has already been shown as an automatic startup popup. */
     val dismissedUpdatePopupVersion: Flow<String> = context.scheduleSettings.data.map { preferences ->
         preferences[dismissedUpdatePopupVersionKey].orEmpty()
@@ -199,5 +230,21 @@ class ScheduleSettingsStore(
 
     suspend fun clearAll() {
         context.scheduleSettings.edit { it.clear() }
+    }
+
+    private fun decodeCourseColorOverrides(entries: Set<String>): Map<String, String> {
+        return entries.mapNotNull { entry ->
+            val separator = entry.indexOf('\u0000')
+            if (separator <= 0) return@mapNotNull null
+            val key = entry.substring(0, separator)
+            val color = CourseColorMapper.normalizeHexColor(entry.substring(separator + 1)) ?: return@mapNotNull null
+            key to color
+        }.toMap()
+    }
+
+    private fun encodeCourseColorOverrides(overrides: Map<String, String>): Set<String> {
+        return overrides.mapNotNull { (key, color) ->
+            CourseColorMapper.normalizeHexColor(color)?.let { "$key\u0000$it" }
+        }.toSet()
     }
 }

@@ -19,12 +19,23 @@ object CourseColorMapper {
         "#BE185D" // raspberry
     )
 
+    // 用户手动选择的预设色：与自动配色独立，和微信端保持一致。
+    val presetPalette: List<String> = listOf(
+        "#1265D9", "#D95412", "#5412D9", "#24A87C", "#D91212",
+        "#7CA00D", "#CD1D75", "#7D3E12", "#0FA0BD", "#62206F",
+        "#0B3D84", "#B68B35", "#32A00D", "#A00D3E", "#0F0FBD",
+        "#2E6F9E", "#546F20", "#C812D9", "#206F47", "#9224A8"
+    )
+
     fun colorForCourse(courseId: String, title: String): String {
         val key = colorKey(courseId = courseId, title = title)
         return palette[paletteIndexForKey(key)]
     }
 
-    fun assignColors(courses: List<ScheduleCourse>): List<ScheduleCourse> {
+    fun assignColors(
+        courses: List<ScheduleCourse>,
+        overrides: Map<String, String> = emptyMap()
+    ): List<ScheduleCourse> {
         val assignedIndexes = mutableMapOf<String, Int>()
         val occupiedIndexes = mutableSetOf<Int>()
 
@@ -42,8 +53,17 @@ object CourseColorMapper {
 
         return courses.map { course ->
             val key = colorKey(course.id, course.title)
-            course.copy(colorHex = palette[assignedIndexes.getValue(key)])
+            course.copy(
+                colorHex = normalizeHexColor(overrides[key])
+                    ?: palette[assignedIndexes.getValue(key)]
+            )
         }
+    }
+
+    fun normalizeHexColor(value: String?): String? {
+        val raw = value.orEmpty().trim()
+        val withHash = if (raw.startsWith("#")) raw else "#$raw"
+        return withHash.takeIf { it.matches(Regex("^#[0-9a-fA-F]{6}$")) }?.uppercase()
     }
 
     private fun avoidCloseAdjacentColors(
@@ -109,8 +129,11 @@ object CourseColorMapper {
         return stableHash(key).floorMod(palette.size)
     }
 
-    private fun colorKey(courseId: String, title: String): String {
-        return title.trim().lowercase().ifBlank { courseId.trim().lowercase() }
+    fun colorKey(courseId: String, title: String): String {
+        return title.trim()
+            .replace(Regex("\\s*@\\S+$"), "")
+            .lowercase()
+            .ifBlank { courseId.trim().lowercase() }
     }
 
     private fun stableHash(value: String): Int {
