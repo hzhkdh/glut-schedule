@@ -9,7 +9,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,18 +25,23 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
@@ -41,12 +51,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -54,6 +68,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -65,14 +80,26 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.focus.onFocusEvent
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glut.schedule.data.model.NoticeInfo
+import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.hasUnreadNotices
 import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
@@ -135,11 +162,13 @@ class MainActivity : ComponentActivity() {
                 var noticePopupSessionDismissedIds by remember { mutableStateOf(emptySet<String>()) }
                 var initialNoticeCheckFinished by remember { mutableStateOf(false) }
                 var showResetConfirm by remember { mutableStateOf(false) }
+                var showCourseColors by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
                     when {
                         drawerState.isOpen -> scope.launch { drawerState.close() }
+                        showCourseColors -> showCourseColors = false
                         selectedItem != DrawerItem.Schedule -> selectedItem = DrawerItem.Schedule
                         else -> finish()
                     }
@@ -341,6 +370,7 @@ class MainActivity : ComponentActivity() {
                                             showDot = item == DrawerItem.About && showUpdateDot,
                                             onClick = {
                                                 selectedItem = item
+                                                showCourseColors = false
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -363,6 +393,7 @@ class MainActivity : ComponentActivity() {
                                                 || (item == DrawerItem.Notice && showNoticeDot),
                                             onClick = {
                                                 selectedItem = item
+                                                showCourseColors = false
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -379,16 +410,19 @@ class MainActivity : ComponentActivity() {
                                 TopAppBar(
                                     title = {
                                         Text(
-                                            selectedItem.title,
+                                            if (showCourseColors) "课程卡片颜色" else selectedItem.title,
                                             color = Color(0xFF141821),
                                             fontWeight = FontWeight.SemiBold
                                         )
                                     },
                                     navigationIcon = {
-                                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                        IconButton(onClick = {
+                                            if (showCourseColors) showCourseColors = false
+                                            else scope.launch { drawerState.open() }
+                                        }) {
                                             Icon(
-                                                imageVector = Icons.Outlined.Menu,
-                                                contentDescription = "菜单",
+                                                imageVector = if (showCourseColors) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
+                                                contentDescription = if (showCourseColors) "返回" else "菜单",
                                                 tint = Color(0xFF141821),
                                                 modifier = Modifier.size(26.dp)
                                             )
@@ -463,16 +497,27 @@ class MainActivity : ComponentActivity() {
                                     onBack = { selectedItem = DrawerItem.Schedule }
                                 )
                                 DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
-                                DrawerItem.Settings -> SettingsPage(
-                                    showWeekend = scheduleUiState.showWeekend,
-                                    onShowWeekendChange = scheduleViewModel::setShowWeekend,
-                                    showNoon = scheduleUiState.showNoon,
-                                    onShowNoonChange = scheduleViewModel::setShowNoon,
-                                    hasCustomBackground = scheduleUiState.customBackgroundUri.isNotBlank(),
-                                    onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
-                                    onClearBackground = { scheduleViewModel.clearCustomBackground() },
-                                    onReset = { showResetConfirm = true }
-                                )
+                                DrawerItem.Settings -> if (showCourseColors) {
+                                    CourseColorsPage(
+                                        courses = scheduleUiState.courses,
+                                        overrides = scheduleUiState.courseColorOverrides,
+                                        onSetColor = scheduleViewModel::setCourseColorOverride,
+                                        onRemoveColor = scheduleViewModel::removeCourseColorOverride,
+                                        onResetAll = scheduleViewModel::clearCourseColorOverrides
+                                    )
+                                } else {
+                                    SettingsPage(
+                                        showWeekend = scheduleUiState.showWeekend,
+                                        onShowWeekendChange = scheduleViewModel::setShowWeekend,
+                                        showNoon = scheduleUiState.showNoon,
+                                        onShowNoonChange = scheduleViewModel::setShowNoon,
+                                        hasCustomBackground = scheduleUiState.customBackgroundUri.isNotBlank(),
+                                        onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
+                                        onClearBackground = { scheduleViewModel.clearCustomBackground() },
+                                        onCourseColors = { showCourseColors = true },
+                                        onReset = { showResetConfirm = true }
+                                    )
+                                }
                                 DrawerItem.Notice -> NoticeScreen(notices = notices)
                                 DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
                                 DrawerItem.FAQ -> FaqScreen()
@@ -657,6 +702,7 @@ private fun SettingsPage(
     hasCustomBackground: Boolean = false,
     onPickBackground: () -> Unit = {},
     onClearBackground: () -> Unit = {},
+    onCourseColors: () -> Unit = {},
     onReset: () -> Unit = {}
 ) {
     val settingsBg = Color(0xFFF6F4EF)
@@ -699,6 +745,24 @@ private fun SettingsPage(
                 ) {
                     Text("显示中午", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Switch(checked = showNoon, onCheckedChange = onShowNoonChange)
+                }
+            }
+
+            Text("课表外观", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onCourseColors)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("课程卡片颜色", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
                 }
             }
 
@@ -760,6 +824,327 @@ private fun SettingsPage(
             }
         }
     }
+}
+
+@Composable
+private fun CourseColorsPage(
+    courses: List<ScheduleCourse>,
+    overrides: Map<String, String>,
+    onSetColor: (String, String) -> Unit,
+    onRemoveColor: (String) -> Unit,
+    onResetAll: () -> Unit
+) {
+    val background = Color(0xFFF6F4EF)
+    val card = Color(0xFFFFFEFB)
+    val entries = remember(courses, overrides) {
+        courses.distinctBy { CourseColorMapper.colorKey(it.id, it.title) }
+    }
+    var selectedCourse by remember { mutableStateOf<ScheduleCourse?>(null) }
+    var showAdvanced by remember { mutableStateOf(false) }
+
+    if (entries.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize().background(background), contentAlignment = Alignment.Center) {
+            Text("暂未导入课表", color = Color(0xFF667085), fontSize = 15.sp)
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(background),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { Text("已导入课程", color = Color(0xFF667085), fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+        items(entries, key = { it.id }) { course ->
+            val key = CourseColorMapper.colorKey(course.id, course.title)
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable {
+                    selectedCourse = course
+                    showAdvanced = false
+                },
+                color = card,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        modifier = Modifier.size(24.dp),
+                        color = Color(AndroidColor.parseColor(course.colorHex)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {}
+                    Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+                        Text(course.title, color = Color(0xFF141821), fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (overrides.containsKey(key)) "已自定义" else "自动配色", color = Color(0xFF98A2B3), fontSize = 12.sp)
+                    }
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = Color(0xFF98A2B3), modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+        item {
+            TextButton(modifier = Modifier.fillMaxWidth(), onClick = onResetAll) {
+                Text("恢复全部默认颜色", color = Color(0xFFDC2626))
+            }
+        }
+    }
+
+    selectedCourse?.let { course ->
+        if (showAdvanced) {
+            AdvancedColorSheet(
+                initialColor = course.colorHex,
+                onDismiss = {
+                    showAdvanced = false
+                    selectedCourse = null
+                },
+                onConfirm = { color ->
+                    onSetColor(CourseColorMapper.colorKey(course.id, course.title), color)
+                    selectedCourse = null
+                }
+            )
+        } else {
+            PresetColorSheet(
+                course = course,
+                onDismiss = { selectedCourse = null },
+                onSelect = { color ->
+                    onSetColor(CourseColorMapper.colorKey(course.id, course.title), color)
+                    selectedCourse = null
+                },
+                onAdvanced = { showAdvanced = true },
+                onRestore = {
+                    onRemoveColor(CourseColorMapper.colorKey(course.id, course.title))
+                    selectedCourse = null
+                }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PresetColorSheet(
+    course: ScheduleCourse,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+    onAdvanced: () -> Unit,
+    onRestore: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFFFFFEFB),
+        tonalElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp).navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Column {
+                Text(course.title, color = Color(0xFF141821), fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("选择课程卡片颜色", color = Color(0xFF667085), fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+            CourseColorMapper.presetPalette.chunked(5).forEach { row ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    row.forEach { color ->
+                        Surface(
+                            modifier = Modifier.size(52.dp).clickable { onSelect(color) },
+                            color = Color(AndroidColor.parseColor(color)),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {}
+                    }
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = onRestore) { Text("恢复自动配色", color = Color(0xFF667085), fontSize = 15.sp) }
+                TextButton(onClick = onAdvanced) { Text("高级调色", color = Color(0xFF3F7DF6), fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AdvancedColorSheet(
+    initialColor: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val initialHsv = remember(initialColor) { hexToHsv(initialColor) }
+    var hue by remember(initialColor) { mutableStateOf(initialHsv[0]) }
+    var saturation by remember(initialColor) { mutableStateOf(initialHsv[1]) }
+    var value by remember(initialColor) { mutableStateOf(initialHsv[2]) }
+    var hexField by remember(initialColor) { mutableStateOf(TextFieldValue(initialColor, TextRange(0))) }
+
+    fun updateFromHsv(nextHue: Float = hue, nextSaturation: Float = saturation, nextValue: Float = value) {
+        hue = nextHue
+        saturation = nextSaturation
+        value = nextValue
+        val nextHex = hsvToHex(hue, saturation, value)
+        hexField = TextFieldValue(nextHex, TextRange(nextHex.length))
+    }
+
+    var planeSize by remember { mutableStateOf(IntSize.Zero) }
+    var hueTrackSize by remember { mutableStateOf(IntSize.Zero) }
+    val normalizedColor = CourseColorMapper.normalizeHexColor(hexField.text)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scrollState = rememberScrollState()
+    val hexBringIntoViewRequester = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val planeThumbSizePx = with(density) { 20.dp.toPx() }
+    val hueThumbSizePx = with(density) { 22.dp.toPx() }
+
+    fun updatePlane(position: Offset) {
+        if (planeSize.width == 0 || planeSize.height == 0) return
+        updateFromHsv(
+            nextSaturation = (position.x / planeSize.width).coerceIn(0f, 1f),
+            nextValue = (1f - position.y / planeSize.height).coerceIn(0f, 1f)
+        )
+    }
+
+    fun updateHue(position: Offset) {
+        if (hueTrackSize.width == 0) return
+        updateFromHsv(nextHue = (position.x / hueTrackSize.width * 360f).coerceIn(0f, 360f))
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFFFFFEFB),
+        tonalElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp)
+                .verticalScroll(scrollState)
+                .imePadding()
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("高级调色", color = Color(0xFF141821), fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("嵌入式系统", color = Color(0xFF667085), fontSize = 13.sp)
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                color = Color(AndroidColor.parseColor(normalizedColor ?: "#3B82F6")),
+                shape = RoundedCornerShape(16.dp)
+            ) {}
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(248.dp)
+                    .background(
+                        Brush.horizontalGradient(listOf(Color.White, Color(AndroidColor.parseColor(hsvToHex(hue, 1f, 1f))))),
+                        RoundedCornerShape(16.dp)
+                    )
+                    .onSizeChanged { planeSize = it }
+                    .pointerInput(planeSize, hue) {
+                        detectDragGestures(
+                            onDragStart = ::updatePlane,
+                            onDrag = { change, _ -> updatePlane(change.position) }
+                        )
+                    }
+            ) {
+                Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)), RoundedCornerShape(16.dp)))
+                Box(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                (saturation * maxOf(0f, planeSize.width - planeThumbSizePx)).toInt(),
+                                ((1f - value) * maxOf(0f, planeSize.height - planeThumbSizePx)).toInt()
+                            )
+                        }
+                        .size(20.dp)
+                        .border(2.dp, Color.White, CircleShape)
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("色相", color = Color(0xFF344054), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("拖动切换基础颜色", color = Color(0xFF98A2B3), fontSize = 13.sp)
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(28.dp)
+                    .background(
+                        Brush.horizontalGradient(listOf(
+                            Color(0xFFF04438), Color(0xFFF79009), Color(0xFFFDE272),
+                            Color(0xFF12B76A), Color(0xFF2E90FA), Color(0xFF9E77ED),
+                            Color(0xFFEE46BC), Color(0xFFF04438)
+                        )),
+                        RoundedCornerShape(14.dp)
+                    )
+                    .onSizeChanged { hueTrackSize = it }
+                    .pointerInput(hueTrackSize) {
+                        detectDragGestures(
+                            onDragStart = ::updateHue,
+                            onDrag = { change, _ -> updateHue(change.position) }
+                        )
+                    }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                (hue / 360f * maxOf(0f, hueTrackSize.width - hueThumbSizePx)).toInt(),
+                                ((hueTrackSize.height - hueThumbSizePx) / 2f).toInt()
+                            )
+                        }
+                        .size(22.dp)
+                        .background(Color.White, CircleShape)
+                        .border(2.dp, Color(0xFF667085), CircleShape)
+                )
+            }
+            OutlinedTextField(
+                value = hexField,
+                onValueChange = { input ->
+                    hexField = input
+                    CourseColorMapper.normalizeHexColor(input.text)?.let { color ->
+                        val hsv = hexToHsv(color)
+                        hue = hsv[0]
+                        saturation = hsv[1]
+                        value = hsv[2]
+                    }
+                },
+                label = { Text("HEX 颜色") },
+                placeholder = { Text("#154173") },
+                singleLine = true,
+                isError = hexField.text.isNotBlank() && normalizedColor == null,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF141821)),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color(0xFF141821),
+                    unfocusedTextColor = Color(0xFF141821),
+                    focusedBorderColor = Color(0xFF3F7DF6),
+                    unfocusedBorderColor = Color(0xFF98A2B3),
+                    cursorColor = Color(0xFF3F7DF6)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewRequester(hexBringIntoViewRequester)
+                    .onFocusEvent { focusState ->
+                        if (focusState.isFocused) scope.launch { hexBringIntoViewRequester.bringIntoView() }
+                    }
+            )
+            Text("支持 #RRGGBB 或 RRGGBB；每组十六进制取值为 00 到 FF。", color = Color(0xFF667085), fontSize = 12.sp)
+            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) { Text("取消") }
+                TextButton(enabled = normalizedColor != null, onClick = { normalizedColor?.let(onConfirm) }) { Text("完成") }
+            }
+        }
+    }
+}
+
+private fun hexToHsv(hex: String): FloatArray {
+    val hsv = FloatArray(3)
+    AndroidColor.colorToHSV(AndroidColor.parseColor(CourseColorMapper.normalizeHexColor(hex) ?: "#3B82F6"), hsv)
+    return hsv
+}
+
+private fun hsvToHex(hue: Float, saturation: Float, value: Float): String {
+    return "#%06X".format(AndroidColor.HSVToColor(floatArrayOf(hue, saturation, value)) and 0xFFFFFF)
 }
 
 // ---- Notice Popup Dialog ----

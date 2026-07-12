@@ -42,7 +42,11 @@ class AppContainer(application: Application) {
      .build()
 
     val settingsStore = ScheduleSettingsStore(application)
-    val scheduleRepository = ScheduleRepository(database.scheduleDao(), settingsStore.campusType)
+    val scheduleRepository = ScheduleRepository(
+        database.scheduleDao(),
+        settingsStore.campusType,
+        settingsStore.courseColorOverrides
+    )
     val backgroundStore = ScheduleBackgroundStore(application)
     val academicSessionStore = AcademicSessionStore(application)
     // Nanning parser first: it checks for infolist_common and returns empty
