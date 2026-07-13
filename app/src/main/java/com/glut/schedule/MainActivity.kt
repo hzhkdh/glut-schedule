@@ -489,7 +489,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                 }
                                             }
                                             DrawerItem.ProfessionalScore -> {
-                                                val professionalScoreState by professionalScoreViewModel.uiState.collectAsState()
+                                                val professionalScoreState by professionalScoreViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
                                                     onClick = professionalScoreViewModel::refreshData,
                                                     enabled = !professionalScoreState.isRefreshing
