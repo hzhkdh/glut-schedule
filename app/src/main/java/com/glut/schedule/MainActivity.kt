@@ -42,7 +42,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
@@ -72,7 +71,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -116,9 +115,13 @@ import com.glut.schedule.ui.pages.DirectLoginViewModelFactory
 import com.glut.schedule.ui.pages.ExamScreen
 import com.glut.schedule.ui.pages.ExamViewModel
 import com.glut.schedule.ui.pages.ExamViewModelFactory
+import com.glut.schedule.ui.pages.FitnessScoreScreen
+import com.glut.schedule.ui.pages.FitnessScoreViewModel
+import com.glut.schedule.ui.pages.FitnessScoreViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
+import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
@@ -163,6 +166,7 @@ class MainActivity : ComponentActivity() {
                 var initialNoticeCheckFinished by remember { mutableStateOf(false) }
                 var showResetConfirm by remember { mutableStateOf(false) }
                 var showCourseColors by remember { mutableStateOf(false) }
+                var fitnessTableGestureActive by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
@@ -240,11 +244,13 @@ class MainActivity : ComponentActivity() {
                         studyPlanParser = container.studyPlanParser
                     )
                 )
-
-                val scheduleUiState by scheduleViewModel.uiState.collectAsState()
-                val scheduleBgBitmap = if (scheduleUiState.customBackgroundUri.isNotBlank()) {
-                    container.backgroundStore.get(scheduleUiState.customBackgroundUri)
-                } else null
+                val fitnessScoreViewModel: FitnessScoreViewModel = viewModel(
+                    factory = FitnessScoreViewModelFactory(
+                        service = container.fitnessApiService,
+                        store = container.fitnessStore,
+                        parser = container.fitnessParser
+                    )
+                )
 
                 val context = androidx.compose.ui.platform.LocalContext.current
                 val backgroundPicker = rememberLauncherForActivityResult(
@@ -279,12 +285,12 @@ class MainActivity : ComponentActivity() {
                 }
 
                 // Red dot persists until user actually updates to the latest version
-                val updateAvailableVersion by container.settingsStore.updateAvailableVersion.collectAsState(initial = "")
+                val updateAvailableVersion by container.settingsStore.updateAvailableVersion.collectAsStateWithLifecycle(initialValue = "")
                 val showUpdateDot = updateAvailableVersion.isNotBlank()
                     && UpdateChecker.compareVersions(updateAvailableVersion, BuildConfig.VERSION_NAME) > 0
-                val cachedNoticesJson by container.settingsStore.cachedNoticesJson.collectAsState(initial = "")
-                val readNoticeIds by container.settingsStore.readNoticeIds.collectAsState(initial = emptySet())
-                val dismissedNoticePopupIds by container.settingsStore.dismissedNoticePopupIds.collectAsState(initial = emptySet())
+                val cachedNoticesJson by container.settingsStore.cachedNoticesJson.collectAsStateWithLifecycle(initialValue = "")
+                val readNoticeIds by container.settingsStore.readNoticeIds.collectAsStateWithLifecycle(initialValue = emptySet())
+                val dismissedNoticePopupIds by container.settingsStore.dismissedNoticePopupIds.collectAsStateWithLifecycle(initialValue = emptySet())
                 var notices by remember { mutableStateOf(NoticeChecker.parseNotices(cachedNoticesJson)) }
                 val currentNoticeIds = notices.map { it.id }.toSet()
                 val showNoticeDot = hasUnreadNotices(currentNoticeIds, readNoticeIds)
@@ -337,13 +343,14 @@ class MainActivity : ComponentActivity() {
 
                 ModalNavigationDrawer(
                     drawerState = drawerState,
+                    gesturesEnabled = !fitnessTableGestureActive,
                     drawerContent = {
                         ModalDrawerSheet(
-                            modifier = Modifier.fillMaxWidth(0.75f),
+                            modifier = Modifier.fillMaxWidth(0.60f),
                             drawerContainerColor = Color(0xFFE8E4D6),
                             drawerContentColor = Color(0xFF141821)
                         ) {
-                            DrawerHeader(onClose = { scope.launch { drawerState.close() } })
+                            DrawerHeader()
                             HorizontalDivider(color = Color(0xFFDDE2EA))
                             Column(
                                 modifier = Modifier
@@ -363,11 +370,32 @@ class MainActivity : ComponentActivity() {
                                             modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 4.dp)
                                         )
                                     }
-                                    items(listOf(DrawerItem.Schedule, DrawerItem.Score, DrawerItem.Exam, DrawerItem.GradeExam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import)) { item ->
+                                    items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
                                             showDot = item == DrawerItem.About && showUpdateDot,
+                                            onClick = {
+                                                selectedItem = item
+                                                showCourseColors = false
+                                                scope.launch { drawerState.close() }
+                                            }
+                                        )
+                                    }
+                                    // 成绩
+                                    item {
+                                        Text(
+                                            "成绩",
+                                            color = Color(0xFF3F7DF6),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
+                                        )
+                                    }
+                                    items(listOf(DrawerItem.Score, DrawerItem.GradeExam, DrawerItem.FitnessScore)) { item ->
+                                        DrawerMenuItem(
+                                            item = item,
+                                            isSelected = selectedItem == item,
                                             onClick = {
                                                 selectedItem = item
                                                 showCourseColors = false
@@ -431,7 +459,7 @@ class MainActivity : ComponentActivity() {
                                     actions = {
                                         when (selectedItem) {
                                             DrawerItem.Exam -> {
-                                                val examState by examViewModel.uiState.collectAsState()
+                                                val examState by examViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
                                                     onClick = examViewModel::refreshExams,
                                                     enabled = !examState.isRefreshing
@@ -440,7 +468,7 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                             DrawerItem.Score -> {
-                                                val scoreState by scoreViewModel.uiState.collectAsState()
+                                                val scoreState by scoreViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
                                                     onClick = scoreViewModel::refreshScores,
                                                     enabled = !scoreState.isRefreshing
@@ -449,7 +477,7 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                             DrawerItem.GradeExam -> {
-                                                val gradeExamState by gradeExamViewModel.uiState.collectAsState()
+                                                val gradeExamState by gradeExamViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
                                                     onClick = gradeExamViewModel::refresh,
                                                     enabled = !gradeExamState.isRefreshing
@@ -457,8 +485,17 @@ class MainActivity : ComponentActivity() {
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
+                                            DrawerItem.FitnessScore -> {
+                                                val fitnessState by fitnessScoreViewModel.uiState.collectAsStateWithLifecycle()
+                                                IconButton(
+                                                    onClick = fitnessScoreViewModel::refresh,
+                                                    enabled = !fitnessState.isRefreshing
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                                                }
+                                            }
                                             DrawerItem.StudyPlan -> {
-                                                val studyPlanState by studyPlanViewModel.uiState.collectAsState()
+                                                val studyPlanState by studyPlanViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
                                                     onClick = studyPlanViewModel::refresh,
                                                     enabled = !studyPlanState.isRefreshing
@@ -481,43 +518,32 @@ class MainActivity : ComponentActivity() {
                     ) { padding ->
                         Box(modifier = Modifier.padding(padding)) {
                             when (selectedItem) {
-                                DrawerItem.Schedule -> ScheduleScreen(
+                                DrawerItem.Schedule -> ScheduleDestination(
                                     viewModel = scheduleViewModel,
                                     backgroundStore = container.backgroundStore,
-                                    customBackgroundBitmap = scheduleBgBitmap,
                                     onImportClick = { selectedItem = DrawerItem.Import },
                                     onExamClick = { selectedItem = DrawerItem.Exam },
                                     onDrawerOpen = { scope.launch { drawerState.open() } }
                                 )
                                 DrawerItem.Score -> ScoreScreen(viewModel = scoreViewModel)
                                 DrawerItem.GradeExam -> GradeExamScreen(viewModel = gradeExamViewModel)
+                                DrawerItem.FitnessScore -> FitnessScoreScreen(
+                                    viewModel = fitnessScoreViewModel,
+                                    onTableGestureActive = { fitnessTableGestureActive = it }
+                                )
                                 DrawerItem.StudyPlan -> StudyPlanScreen(viewModel = studyPlanViewModel)
                                 DrawerItem.Exam -> ExamScreen(
                                     viewModel = examViewModel,
                                     onBack = { selectedItem = DrawerItem.Schedule }
                                 )
                                 DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
-                                DrawerItem.Settings -> if (showCourseColors) {
-                                    CourseColorsPage(
-                                        courses = scheduleUiState.courses,
-                                        overrides = scheduleUiState.courseColorOverrides,
-                                        onSetColor = scheduleViewModel::setCourseColorOverride,
-                                        onRemoveColor = scheduleViewModel::removeCourseColorOverride,
-                                        onResetAll = scheduleViewModel::clearCourseColorOverrides
-                                    )
-                                } else {
-                                    SettingsPage(
-                                        showWeekend = scheduleUiState.showWeekend,
-                                        onShowWeekendChange = scheduleViewModel::setShowWeekend,
-                                        showNoon = scheduleUiState.showNoon,
-                                        onShowNoonChange = scheduleViewModel::setShowNoon,
-                                        hasCustomBackground = scheduleUiState.customBackgroundUri.isNotBlank(),
-                                        onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
-                                        onClearBackground = { scheduleViewModel.clearCustomBackground() },
-                                        onCourseColors = { showCourseColors = true },
-                                        onReset = { showResetConfirm = true }
-                                    )
-                                }
+                                DrawerItem.Settings -> ScheduleSettingsDestination(
+                                    viewModel = scheduleViewModel,
+                                    showCourseColors = showCourseColors,
+                                    onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
+                                    onShowCourseColors = { showCourseColors = true },
+                                    onReset = { showResetConfirm = true }
+                                )
                                 DrawerItem.Notice -> NoticeScreen(notices = notices)
                                 DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
                                 DrawerItem.FAQ -> FaqScreen()
@@ -585,6 +611,7 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.clickable {
                                     showResetConfirm = false
                                     directLoginViewModel.clearLoginState()
+                                    fitnessScoreViewModel.clearData()
                                     scope.launch {
                                         container.scheduleRepository.clearAllData()
                                         container.settingsStore.clearAll()
@@ -627,7 +654,64 @@ class MainActivity : ComponentActivity() {
 // ---- Drawer Components ----
 
 @Composable
-private fun DrawerHeader(onClose: () -> Unit) {
+private fun ScheduleDestination(
+    viewModel: ScheduleViewModel,
+    backgroundStore: ScheduleBackgroundStore,
+    onImportClick: () -> Unit,
+    onExamClick: () -> Unit,
+    onDrawerOpen: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val backgroundBitmap = if (uiState.customBackgroundUri.isNotBlank()) {
+        backgroundStore.get(uiState.customBackgroundUri)
+    } else {
+        null
+    }
+    ScheduleScreen(
+        viewModel = viewModel,
+        uiState = uiState,
+        backgroundStore = backgroundStore,
+        customBackgroundBitmap = backgroundBitmap,
+        onImportClick = onImportClick,
+        onExamClick = onExamClick,
+        onDrawerOpen = onDrawerOpen
+    )
+}
+
+@Composable
+private fun ScheduleSettingsDestination(
+    viewModel: ScheduleViewModel,
+    showCourseColors: Boolean,
+    onPickBackground: () -> Unit,
+    onShowCourseColors: () -> Unit,
+    onReset: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    if (showCourseColors) {
+        CourseColorsPage(
+            courses = uiState.courses,
+            overrides = uiState.courseColorOverrides,
+            onSetColor = viewModel::setCourseColorOverride,
+            onRemoveColor = viewModel::removeCourseColorOverride,
+            onResetAll = viewModel::clearCourseColorOverrides
+        )
+    } else {
+        SettingsPage(
+            showWeekend = uiState.showWeekend,
+            onShowWeekendChange = viewModel::setShowWeekend,
+            showNoon = uiState.showNoon,
+            onShowNoonChange = viewModel::setShowNoon,
+            hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
+            onPickBackground = onPickBackground,
+            onClearBackground = viewModel::clearCustomBackground,
+            onCourseColors = onShowCourseColors,
+            onReset = onReset
+        )
+    }
+}
+
+@Composable
+private fun DrawerHeader() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -636,24 +720,20 @@ private fun DrawerHeader(onClose: () -> Unit) {
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(
-                    painter = painterResource(R.drawable.glut_logo),
-                    contentDescription = "校徽",
+                    painter = painterResource(R.drawable.brand_menu_logo),
+                    contentDescription = "桂系一站式标志",
                     modifier = Modifier.size(38.dp)
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
-                    Text("桂工课表", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("桂系一站式", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("简单 高效 纯粹", color = Color(0xFF667085), fontSize = 13.sp)
                 }
-            }
-            IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Outlined.Close, contentDescription = "关闭", tint = Color(0xFF667085), modifier = Modifier.size(22.dp))
             }
         }
     }

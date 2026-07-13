@@ -4,6 +4,9 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 
 object CourseColorMapper {
+    private val hexColorPattern = Regex("^#[0-9a-fA-F]{6}$")
+    private val roomSuffixPattern = Regex("\\s*@\\S+$")
+
     val palette: List<String> = listOf(
         "#3B82F6", // blue
         "#D97706", // amber
@@ -63,7 +66,7 @@ object CourseColorMapper {
     fun normalizeHexColor(value: String?): String? {
         val raw = value.orEmpty().trim()
         val withHash = if (raw.startsWith("#")) raw else "#$raw"
-        return withHash.takeIf { it.matches(Regex("^#[0-9a-fA-F]{6}$")) }?.uppercase()
+        return withHash.takeIf { it.matches(hexColorPattern) }?.uppercase()
     }
 
     private fun avoidCloseAdjacentColors(
@@ -131,7 +134,7 @@ object CourseColorMapper {
 
     fun colorKey(courseId: String, title: String): String {
         return title.trim()
-            .replace(Regex("\\s*@\\S+$"), "")
+            .replace(roomSuffixPattern, "")
             .lowercase()
             .ifBlank { courseId.trim().lowercase() }
     }
