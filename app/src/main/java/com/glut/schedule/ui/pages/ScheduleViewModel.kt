@@ -62,8 +62,20 @@ private data class ScheduleSettingsUiState(
     val showNoon: Boolean,
     val semesterStartMonday: LocalDate,
     val semesterEndDate: LocalDate,
-    val customBackgroundUri: String,
-    val courseColorOverrides: Map<String, String>
+    val customBackgroundUri: String
+)
+
+private data class ScheduleCalendarSettings(
+    val weekNumber: Int,
+    val showWeekend: Boolean,
+    val showNoon: Boolean,
+    val semesterStartMonday: LocalDate,
+    val semesterEndDate: LocalDate
+)
+
+private data class ColoredCoursesState(
+    val courses: List<ScheduleCourse>,
+    val overrides: Map<String, String>
 )
 
 class ScheduleViewModel(
@@ -121,27 +133,43 @@ class ScheduleViewModel(
                 settingsStore.semesterStartMonday,
                 settingsStore.semesterEndDate
             ) { weekNumber, showWeekend, showNoon, semesterStartMonday, semesterEndDate ->
-                arrayOf(weekNumber, showWeekend, showNoon, semesterStartMonday, semesterEndDate)
+                ScheduleCalendarSettings(
+                    weekNumber = weekNumber,
+                    showWeekend = showWeekend,
+                    showNoon = showNoon,
+                    semesterStartMonday = semesterStartMonday,
+                    semesterEndDate = semesterEndDate
+                )
             },
-            settingsStore.customBackgroundUri,
-            settingsStore.courseColorOverrides
-        ) { base, customBackgroundUri, courseColorOverrides ->
+            settingsStore.customBackgroundUri
+        ) { base, customBackgroundUri ->
             ScheduleSettingsUiState(
-                weekNumber = base[0] as Int,
-                showWeekend = base[1] as Boolean,
-                showNoon = base[2] as Boolean,
-                semesterStartMonday = base[3] as LocalDate,
-                semesterEndDate = base[4] as LocalDate,
-                customBackgroundUri = customBackgroundUri,
-                courseColorOverrides = courseColorOverrides
+                weekNumber = base.weekNumber,
+                showWeekend = base.showWeekend,
+                showNoon = base.showNoon,
+                semesterStartMonday = base.semesterStartMonday,
+                semesterEndDate = base.semesterEndDate,
+                customBackgroundUri = customBackgroundUri
+            )
+        }
+
+        val coloredCoursesState = combine(
+            repository.courses,
+            settingsStore.courseColorOverrides
+        ) { courses, overrides ->
+            ColoredCoursesState(
+                courses = kotlinx.coroutines.withContext(Dispatchers.Default) {
+                    CourseColorMapper.assignColors(courses, overrides)
+                },
+                overrides = overrides
             )
         }
 
         val scheduleState = combine(
             settingsState,
             repository.classPeriods,
-            repository.courses
-        ) { settings, periods, courses ->
+            coloredCoursesState
+        ) { settings, periods, coloredState ->
             val normalizedStart = normalizeSemesterStartMonday(settings.semesterStartMonday)
             val maxAcademicWeek = academicMaxWeekForCalendar(normalizedStart, settings.semesterEndDate)
             val clampedWeekNumber = if (initialWeekSet) {
@@ -155,7 +183,7 @@ class ScheduleViewModel(
                 correctedWeek
             }
             val today = LocalDate.now()
-            val coloredCourses = CourseColorMapper.assignColors(courses, settings.courseColorOverrides)
+            val coloredCourses = coloredState.courses
             ScheduleUiState(
                 week = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek),
                 today = today,
@@ -173,7 +201,7 @@ class ScheduleViewModel(
                 showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
                 customBackgroundUri = settings.customBackgroundUri,
-                courseColorOverrides = settings.courseColorOverrides
+                courseColorOverrides = coloredState.overrides
             )
         }
 

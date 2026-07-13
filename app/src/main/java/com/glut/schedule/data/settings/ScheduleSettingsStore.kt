@@ -13,6 +13,7 @@ import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 
@@ -41,32 +42,32 @@ class ScheduleSettingsStore(
 
     val currentWeekNumber: Flow<Int> = context.scheduleSettings.data.map { preferences ->
         clampAcademicWeek(preferences[currentWeekKey] ?: 9)
-    }
+    }.distinctUntilChanged()
 
     val showWeekend: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
         preferences[showWeekendKey] ?: false
-    }
+    }.distinctUntilChanged()
 
     val semesterStartMonday: Flow<LocalDate> = context.scheduleSettings.data.map { preferences ->
         preferences[semesterStartMondayKey]
             ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
             ?.let(::normalizeSemesterStartMonday)
             ?: DEFAULT_SEMESTER_START_MONDAY
-    }
+    }.distinctUntilChanged()
 
     val semesterEndDate: Flow<LocalDate> = context.scheduleSettings.data.map { preferences ->
         preferences[semesterEndDateKey]
             ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
             ?: DEFAULT_SEMESTER_END_DATE
-    }
+    }.distinctUntilChanged()
 
     val customBackgroundUri: Flow<String> = context.scheduleSettings.data.map { preferences ->
         preferences[customBackgroundUriKey].orEmpty()
-    }
+    }.distinctUntilChanged()
 
     val courseColorOverrides: Flow<Map<String, String>> = context.scheduleSettings.data.map { preferences ->
         decodeCourseColorOverrides(preferences[courseColorOverridesKey].orEmpty())
-    }
+    }.distinctUntilChanged()
 
     val campusType: Flow<CampusType> = context.scheduleSettings.data.map { preferences ->
         val name = preferences[campusTypeKey] ?: CampusType.GUILIN.name
@@ -93,7 +94,7 @@ class ScheduleSettingsStore(
 
     val showNoon: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
         preferences[showNoonKey] ?: false
-    }
+    }.distinctUntilChanged()
 
     suspend fun setShowNoon(showNoon: Boolean) {
         context.scheduleSettings.edit { preferences ->

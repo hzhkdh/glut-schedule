@@ -10,12 +10,15 @@ import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.CredentialStore
+import com.glut.schedule.service.fitness.FitnessApiService
+import com.glut.schedule.service.fitness.FitnessStore
 import com.glut.schedule.service.parser.CompositeScheduleParser
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
 import com.glut.schedule.service.parser.GlutExamParser
 import com.glut.schedule.service.parser.NanningCurrcourseParser
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.GradeExamParser
+import com.glut.schedule.service.parser.FitnessParser
 import com.glut.schedule.service.parser.StudyPlanParser
 import com.glut.schedule.service.AppUpdater
 import com.glut.schedule.service.NoticeChecker
@@ -58,6 +61,9 @@ class AppContainer(application: Application) {
     val examParser = GlutExamParser()
     val academicExamService = AcademicExamService(examParser)
     val credentialStore = CredentialStore(application)
+    val fitnessStore = FitnessStore(application)
+    val fitnessApiService = FitnessApiService()
+    val fitnessParser = FitnessParser()
     val academicLoginService = AcademicLoginService(academicSessionStore, credentialStore)
     val scoreParser = ScoreParser()
     val gradeExamParser = GradeExamParser()

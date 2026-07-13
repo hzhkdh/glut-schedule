@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.BuildConfig
@@ -157,11 +158,14 @@ fun AboutScreen(
             Spacer(modifier = Modifier.weight(1f))
 
             Text(
-                text = "本应用图标及导航栏校徽为桂林理工大学标识，\n仅供校内学生个人使用，与学校官方无关。",
+                text = "本应用为独立开发的非官方工具\n与任何学校官方机构无隶属或授权关系",
                 color = Color(0xFF9CA3AF),
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
-                modifier = Modifier.padding(bottom = 24.dp)
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp)
             )
         }
     }
