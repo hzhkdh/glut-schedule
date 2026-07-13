@@ -10,6 +10,7 @@ import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.EventNote
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Settings
@@ -23,7 +24,8 @@ enum class DrawerItem(
     Score("考试成绩", Icons.Outlined.Assessment),
     ProfessionalScore("专业成绩", Icons.Outlined.Calculate),
     Exam("考试安排", Icons.Outlined.EventNote),
-    GradeExam("等级考级", Icons.Outlined.EmojiEvents),
+    GradeExam("考级成绩", Icons.Outlined.EmojiEvents),
+    FitnessScore("体测成绩", Icons.Outlined.FitnessCenter),
     StudyPlan("教学计划", Icons.Outlined.MenuBook),
     Import("导入课表", Icons.Outlined.Download),
     Settings("设置", Icons.Outlined.Settings),

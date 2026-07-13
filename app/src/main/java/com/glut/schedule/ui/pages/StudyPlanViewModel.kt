@@ -166,79 +166,117 @@ class StudyPlanViewModel(
             .followRedirects(true)
             .build()
 
-        // Step 1: Fetch studentSelfSchedule.jsdo (GBK-encoded) to get studentId and classId
+        // Step 1: selfHtml (GBK)
         val selfScheduleUrl = "$campusBaseUrl/academic/manager/studyschedule/studentSelfSchedule.jsdo"
-        Log.d(TAG, "Fetching student self schedule from: $selfScheduleUrl")
-
-        val selfRequest = Request.Builder()
-            .url(selfScheduleUrl)
-            .header("Cookie", cookie)
-            .header("User-Agent", UA)
-            .get()
-            .build()
+        val selfRequest = Request.Builder().url(selfScheduleUrl)
+            .header("Cookie", cookie).header("User-Agent", UA).get().build()
 
         val (selfBody, selfContentType) = withContext(Dispatchers.IO) {
             client.newCall(selfRequest).execute().use { response ->
-                val rawBytes = response.body?.bytes() ?: ByteArray(0)
-                val ct = response.header("Content-Type") ?: ""
-                Pair(rawBytes, ct)
+                Pair(response.body?.bytes() ?: ByteArray(0), response.header("Content-Type") ?: "")
             }
         }
-
-        Log.d(TAG, "Self schedule response: bodyLen=${selfBody.size}, contentType=$selfContentType")
-
-        // Use GBK charset for self schedule page
-        val gbkCharset = try {
-            Charset.forName("GBK")
-        } catch (_: Exception) {
-            Charsets.UTF_8
-        }
+        val gbkCharset = try { Charset.forName("GBK") } catch (_: Exception) { Charsets.UTF_8 }
         val selfHtml = String(selfBody, gbkCharset)
-        Log.d(TAG, "Self schedule HTML preview: ${selfHtml.take(300)}")
+        Log.d(TAG, "Self: ${selfHtml.length}B")
 
         val ids = studyPlanParser.parseStudentIds(selfHtml)
-        if (ids == null) {
-            Log.e(TAG, "Failed to parse studentId/classId from self schedule page")
-            return Pair(emptyList(), emptyList())
-        }
+        if (ids == null) { Log.e(TAG, "No student IDs"); return Pair(emptyList(), emptyList()) }
         val (studentId, classId) = ids
-        Log.d(TAG, "Parsed studentId=$studentId, classId=$classId")
 
-        // Step 2: Fetch studentScheduleLineShow.do (UTF-8) with studentId and classId
+        // Step 2: lineHtml (平铺模式)
         val lineShowUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId"
-        Log.d(TAG, "Fetching study plan groups from: $lineShowUrl")
-
-        val lineRequest = Request.Builder()
-            .url(lineShowUrl)
-            .header("Cookie", cookie)
-            .header("User-Agent", UA)
-            .get()
-            .build()
+        val lineRequest = Request.Builder().url(lineShowUrl)
+            .header("Cookie", cookie).header("User-Agent", UA).get().build()
 
         val (lineBody, lineContentType) = withContext(Dispatchers.IO) {
             client.newCall(lineRequest).execute().use { response ->
-                val rawBytes = response.body?.bytes() ?: ByteArray(0)
-                val ct = response.header("Content-Type") ?: ""
-                Pair(rawBytes, ct)
+                Pair(response.body?.bytes() ?: ByteArray(0), response.header("Content-Type") ?: "")
             }
         }
-
-        Log.d(TAG, "Line show response: bodyLen=${lineBody.size}, contentType=$lineContentType")
-
-        // Use UTF-8 for line show page, fall back to content-type charset
-        val utfCharset = if (lineContentType.contains("charset=", ignoreCase = true)) {
-            try {
-                Charset.forName(lineContentType.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\""))
-            } catch (_: Exception) {
-                Charsets.UTF_8
-            }
-        } else {
-            Charsets.UTF_8
-        }
+        val utfCharset = if (lineContentType.contains("charset=", ignoreCase = true))
+            try { Charset.forName(lineContentType.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
+            catch (_: Exception) { Charsets.UTF_8 }
+        else Charsets.UTF_8
         val lineHtml = String(lineBody, utfCharset)
-        Log.d(TAG, "Line show HTML preview: ${lineHtml.take(300)}")
+        Log.d(TAG, "LineShow: ${lineHtml.length}B")
 
-        return studyPlanParser.parseData(lineHtml)
+        val (groups, courses) = studyPlanParser.parseData(lineHtml)
+
+        // Step 3: 框架模式 — 任选课组详情（best-effort，失败不影响主流程）
+        try {
+            val frameStudentId = studyPlanParser.parseFrameStudentId(selfHtml)
+            Log.d(TAG, "Frame studentId: ${frameStudentId ?: "NOT FOUND"}")
+            if (frameStudentId != null) {
+                val frameHtml = fetchFrameHtml(cookie, campusBaseUrl, frameStudentId, classId, client)
+                if (frameHtml != null) {
+                    val freeGroupIds = studyPlanParser.extractFreeGroupIds(frameHtml)
+                    Log.d(TAG, "Free groups: ${freeGroupIds.size}")
+                    if (freeGroupIds.isNotEmpty()) {
+                        val freeResults = freeGroupIds.map { (gid, gname) ->
+                            fetchFreeGroup(cookie, campusBaseUrl, gid, gname, client)
+                        }
+                        val mg = groups.toMutableList()
+                        val mc = courses.toMutableList()
+                        for ((fg, fcs) in freeResults) {
+                            if (fg != null) {
+                                val idx = mg.indexOfFirst { it.groupName == fg.groupName }
+                                if (idx >= 0) mg[idx] = fg else mg.add(fg)
+                                mc.addAll(fcs)
+                            }
+                        }
+                        return Pair(mg.distinctBy { it.id }, mc.distinctBy { it.id })
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Frame mode fetch failed (non-fatal): ${e.message}")
+        }
+
+        return Pair(groups, courses)
+    }
+
+    private suspend fun fetchFrameHtml(
+        cookie: String, baseUrl: String, frameStudentId: String, classId: String,
+        client: OkHttpClient
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/academic/manager/studyschedule/studentScheduleShowFrame.do?z=z&studentId=$frameStudentId&classId=$classId"
+            val req = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", UA).get().build()
+            client.newCall(req).execute().use { resp ->
+                val ct = resp.header("Content-Type") ?: ""
+                val cs = if (ct.contains("charset=", ignoreCase = true))
+                    try { Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
+                    catch (_: Exception) { Charsets.UTF_8 }
+                else Charsets.UTF_8
+                String(resp.body?.bytes() ?: ByteArray(0), cs)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Frame page failed: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun fetchFreeGroup(
+        cookie: String, baseUrl: String, groupId: String, name: String,
+        client: OkHttpClient
+    ): Pair<StudyPlanGroup?, List<StudyPlanCourse>> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$baseUrl/academic/manager/studyschedule/scheduleFreeGroupCourseList.do?pojoTypeId=2&id=$groupId"
+            val req = Request.Builder().url(url).header("Cookie", cookie).header("User-Agent", UA).get().build()
+            client.newCall(req).execute().use { resp ->
+                val ct = resp.header("Content-Type") ?: ""
+                val cs = if (ct.contains("charset=", ignoreCase = true))
+                    try { Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
+                    catch (_: Exception) { Charsets.UTF_8 }
+                else Charsets.UTF_8
+                val html = String(resp.body?.bytes() ?: ByteArray(0), cs)
+                studyPlanParser.parseFreeGroupDetail(html)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Free '$name' failed: ${e.message}")
+            Pair(null, emptyList())
+        }
     }
 
     companion object {

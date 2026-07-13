@@ -7,6 +7,7 @@ import java.time.temporal.TemporalAdjusters
 
 const val MIN_ACADEMIC_WEEK = 1
 const val MAX_ACADEMIC_WEEK = 22
+private val weekSpanPattern = Regex("""\d{1,2}(?:-\d{1,2})?""")
 val DEFAULT_SEMESTER_START_MONDAY: LocalDate = LocalDate.of(2026, 3, 9)
 
 /** Estimate semester end date when教务 system doesn't provide it.
@@ -132,7 +133,7 @@ fun isWeekTextActive(weekText: String, weekNumber: Int): Boolean {
     if (requiresOdd && weekNumber % 2 == 0) return false
     if (requiresEven && weekNumber % 2 != 0) return false
 
-    val spans = Regex("""\d{1,2}(?:-\d{1,2})?""").findAll(normalized).mapNotNull { match ->
+    val spans = weekSpanPattern.findAll(normalized).mapNotNull { match ->
         val token = match.value
         if ("-" in token) {
             val parts = token.split("-")

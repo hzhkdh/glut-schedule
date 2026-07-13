@@ -50,6 +50,7 @@ data class ScheduleUiState(
     val showWeekend: Boolean = false,
     val showNoon: Boolean = false,
     val customBackgroundUri: String = "",
+    val courseColorOverrides: Map<String, String> = emptyMap(),
     val isRefreshing: Boolean = false,
     val message: String = "",
     val needsInteractiveLogin: Boolean = false
@@ -62,6 +63,19 @@ private data class ScheduleSettingsUiState(
     val semesterStartMonday: LocalDate,
     val semesterEndDate: LocalDate,
     val customBackgroundUri: String
+)
+
+private data class ScheduleCalendarSettings(
+    val weekNumber: Int,
+    val showWeekend: Boolean,
+    val showNoon: Boolean,
+    val semesterStartMonday: LocalDate,
+    val semesterEndDate: LocalDate
+)
+
+private data class ColoredCoursesState(
+    val courses: List<ScheduleCourse>,
+    val overrides: Map<String, String>
 )
 
 class ScheduleViewModel(
@@ -88,8 +102,11 @@ class ScheduleViewModel(
         val coldShowNoon = runBlocking(Dispatchers.IO) {
             settingsStore.showNoon.first()
         }
+        val coldOverrides = runBlocking(Dispatchers.IO) {
+            settingsStore.courseColorOverrides.first()
+        }
         val coldCourses = runBlocking(Dispatchers.IO) {
-            CourseColorMapper.assignColors(repository.courses.first())
+            CourseColorMapper.assignColors(repository.courses.first(), coldOverrides)
         }
         val coldPeriods = runBlocking(Dispatchers.IO) {
             repository.classPeriods.first()
@@ -116,25 +133,43 @@ class ScheduleViewModel(
                 settingsStore.semesterStartMonday,
                 settingsStore.semesterEndDate
             ) { weekNumber, showWeekend, showNoon, semesterStartMonday, semesterEndDate ->
-                arrayOf(weekNumber, showWeekend, showNoon, semesterStartMonday, semesterEndDate)
+                ScheduleCalendarSettings(
+                    weekNumber = weekNumber,
+                    showWeekend = showWeekend,
+                    showNoon = showNoon,
+                    semesterStartMonday = semesterStartMonday,
+                    semesterEndDate = semesterEndDate
+                )
             },
             settingsStore.customBackgroundUri
         ) { base, customBackgroundUri ->
             ScheduleSettingsUiState(
-                weekNumber = base[0] as Int,
-                showWeekend = base[1] as Boolean,
-                showNoon = base[2] as Boolean,
-                semesterStartMonday = base[3] as LocalDate,
-                semesterEndDate = base[4] as LocalDate,
+                weekNumber = base.weekNumber,
+                showWeekend = base.showWeekend,
+                showNoon = base.showNoon,
+                semesterStartMonday = base.semesterStartMonday,
+                semesterEndDate = base.semesterEndDate,
                 customBackgroundUri = customBackgroundUri
+            )
+        }
+
+        val coloredCoursesState = combine(
+            repository.courses,
+            settingsStore.courseColorOverrides
+        ) { courses, overrides ->
+            ColoredCoursesState(
+                courses = kotlinx.coroutines.withContext(Dispatchers.Default) {
+                    CourseColorMapper.assignColors(courses, overrides)
+                },
+                overrides = overrides
             )
         }
 
         val scheduleState = combine(
             settingsState,
             repository.classPeriods,
-            repository.courses
-        ) { settings, periods, courses ->
+            coloredCoursesState
+        ) { settings, periods, coloredState ->
             val normalizedStart = normalizeSemesterStartMonday(settings.semesterStartMonday)
             val maxAcademicWeek = academicMaxWeekForCalendar(normalizedStart, settings.semesterEndDate)
             val clampedWeekNumber = if (initialWeekSet) {
@@ -148,7 +183,7 @@ class ScheduleViewModel(
                 correctedWeek
             }
             val today = LocalDate.now()
-            val coloredCourses = CourseColorMapper.assignColors(courses)
+            val coloredCourses = coloredState.courses
             ScheduleUiState(
                 week = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek),
                 today = today,
@@ -165,7 +200,8 @@ class ScheduleViewModel(
                 },
                 showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
-                customBackgroundUri = settings.customBackgroundUri
+                customBackgroundUri = settings.customBackgroundUri,
+                courseColorOverrides = coloredState.overrides
             )
         }
 
@@ -186,6 +222,7 @@ class ScheduleViewModel(
             initialValue = ScheduleUiState(
                 week = initialWeek,
                 customBackgroundUri = coldBgUri,
+                courseColorOverrides = coldOverrides,
                 showWeekend = coldShowWeekend,
                 showNoon = coldShowNoon,
                 courses = coldCourses,
@@ -235,6 +272,18 @@ class ScheduleViewModel(
 
     fun clearCustomBackground() {
         viewModelScope.launch { settingsStore.setCustomBackgroundUri("") }
+    }
+
+    fun setCourseColorOverride(courseKey: String, colorHex: String) {
+        viewModelScope.launch { settingsStore.setCourseColorOverride(courseKey, colorHex) }
+    }
+
+    fun removeCourseColorOverride(courseKey: String) {
+        viewModelScope.launch { settingsStore.removeCourseColorOverride(courseKey) }
+    }
+
+    fun clearCourseColorOverrides() {
+        viewModelScope.launch { settingsStore.clearCourseColorOverrides() }
     }
 
     fun refreshSchedule() {
@@ -287,7 +336,13 @@ class ScheduleViewModel(
     }
 
     private suspend fun fetchAndSaveSchedule(cookie: String, oldCourseCount: Int): Boolean {
-        val results = apiProbeService.probeAllEndpoints(cookie = cookie)
+        val campusBaseUrl = sessionStore.campusBaseUrl.first()
+            .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
+        val results = apiProbeService.probeScheduleEndpoints(
+            cookie = cookie,
+            storedTimetableUrl = sessionStore.timetableUrl.first(),
+            baseUrl = campusBaseUrl
+        )
         val calendar = ApiProbeService.extractAcademicCalendar(results)
         if (calendar != null) {
             settingsStore.setSemesterStartMonday(calendar.semesterStartMonday)
@@ -298,6 +353,9 @@ class ScheduleViewModel(
         val courses = parseScheduleFromProbeResults(results)
         if (courses.isEmpty()) return false
 
+        apiProbeService.findTimetableHtmlResult(results)?.let { result ->
+            sessionStore.saveTimetableUrl(result.url)
+        }
         repository.replaceImportedCourses(courses)
         val newCount = courses.size
         message.value = if (newCount != oldCourseCount)

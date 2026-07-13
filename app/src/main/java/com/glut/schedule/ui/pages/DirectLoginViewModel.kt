@@ -75,6 +75,7 @@ class DirectLoginViewModel(
 
     private var loginHttpClient = AcademicLoginHttpClient()
     private val oaLoginClient = AcademicOALoginClient()
+    private var credentialsCleared = false
 
     // Nanning login session state (lives outside uiState to avoid data class issues)
     private var nanningCaptchaBytes: ByteArray? = null
@@ -94,11 +95,13 @@ class DirectLoginViewModel(
         viewModelScope.launch {
             val savedUsername = credentialStore.getUsername()
             val savedPassword = credentialStore.getPassword()
-            _uiState.value = _uiState.value.copy(
-                username = savedUsername,
-                password = savedPassword,
-                rememberPassword = savedUsername.isNotBlank()
-            )
+            if (!credentialsCleared) {
+                _uiState.value = _uiState.value.copy(
+                    username = savedUsername,
+                    password = savedPassword,
+                    rememberPassword = savedUsername.isNotBlank()
+                )
+            }
         }
     }
 
@@ -111,6 +114,14 @@ class DirectLoginViewModel(
     fun updateRememberPassword(remember: Boolean) { _uiState.value = _uiState.value.copy(rememberPassword = remember) }
     fun toggleNanning() { _uiState.value = _uiState.value.copy(isNanning = !_uiState.value.isNanning) }
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
+
+    fun clearLoginState() {
+        credentialsCleared = true
+        loginHttpClient = AcademicLoginHttpClient()
+        nanningCaptchaBytes = null
+        nanningCookieJar = null
+        _uiState.value = DirectLoginUiState(rememberPassword = false)
+    }
 
     fun loginAndImport() {
         val state = _uiState.value
@@ -518,7 +529,35 @@ class DirectLoginViewModel(
                     val planUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId"
                     val planResult = apiProbeService.probeUrl(cookie, planUrl)
                     if (planResult != null && planResult.httpCode == 200 && planResult.body.length > 500) {
-                        val (groups, courses) = studyPlanParser.parseData(planResult.body)
+                        var (groups, courses) = studyPlanParser.parseData(planResult.body)
+                        // Step 3: 框架模式 — 任选课组详情
+                        val selfBody = selfResult?.body ?: ""
+                        val frameStudentId = if (selfBody.isNotEmpty()) studyPlanParser.parseFrameStudentId(selfBody) else null
+                        if (frameStudentId != null) {
+                            val frameUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleShowFrame.do?z=z&studentId=$frameStudentId&classId=$classId"
+                            val frameResult = apiProbeService.probeUrl(cookie, frameUrl)
+                            if (frameResult != null && frameResult.httpCode == 200 && frameResult.body.length > 500) {
+                                val freeGroupIds = studyPlanParser.extractFreeGroupIds(frameResult.body)
+                                if (freeGroupIds.isNotEmpty()) {
+                                    val mg = groups.toMutableList()
+                                    val mc = courses.toMutableList()
+                                    for ((gid, gname) in freeGroupIds) {
+                                        val gUrl = "$campusBaseUrl/academic/manager/studyschedule/scheduleFreeGroupCourseList.do?pojoTypeId=2&id=$gid"
+                                        val gResult = apiProbeService.probeUrl(cookie, gUrl)
+                                        if (gResult != null && gResult.httpCode == 200) {
+                                            val (fg, fcs) = studyPlanParser.parseFreeGroupDetail(gResult.body)
+                                            if (fg != null) {
+                                                val idx = mg.indexOfFirst { it.groupName == fg.groupName }
+                                                if (idx >= 0) mg[idx] = fg else mg.add(fg)
+                                                mc.addAll(fcs)
+                                            }
+                                        }
+                                    }
+                                    groups = mg.distinctBy { it.id }
+                                    courses = mc.distinctBy { it.id }
+                                }
+                            }
+                        }
                         scheduleRepository.replaceStudyPlanData(groups, courses)
                         studyPlanCount = groups.size
                     }

@@ -2,7 +2,6 @@ package com.glut.schedule.ui.pages
 
 import android.content.Intent
 import android.net.Uri
-import android.util.Log
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,7 +31,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +65,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ScheduleScreen(
     viewModel: ScheduleViewModel,
+    uiState: ScheduleUiState,
     backgroundStore: ScheduleBackgroundStore,
     customBackgroundBitmap: ImageBitmap?,
     onImportClick: () -> Unit,
@@ -74,8 +73,6 @@ fun ScheduleScreen(
     onDrawerOpen: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    Log.d("Recompose", "ScheduleScreen compose")
-    val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var showAddActions by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -172,7 +169,7 @@ fun ScheduleScreen(
                     state = pagerState,
                     pagerSnapDistance = PagerSnapDistance.atMost(1)
                 ),
-                beyondViewportPageCount = 0,
+                beyondViewportPageCount = 1,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()

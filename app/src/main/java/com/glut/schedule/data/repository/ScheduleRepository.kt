@@ -20,11 +20,13 @@ import com.glut.schedule.data.settings.CampusType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
 class ScheduleRepository(
     private val dao: ScheduleDao,
-    private val campusType: Flow<CampusType>
+    private val campusType: Flow<CampusType>,
+    private val courseColorOverrides: Flow<Map<String, String>> = flowOf(emptyMap())
 ) {
     val courses: Flow<List<ScheduleCourse>> = combine(
         dao.observeCourses(),
@@ -131,11 +133,15 @@ class ScheduleRepository(
             CampusType.NANNING -> nanningClassPeriods()
         }
         dao.replaceClassPeriods(periods.map { it.toEntity() })
-        val coloredCourses = CourseColorMapper.assignColors(courses)
+        val coloredCourses = CourseColorMapper.assignColors(courses, courseColorOverrides.first())
         dao.replaceCourses(
             courses = coloredCourses.map { it.toEntity() },
             occurrences = coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity() } }
         )
+    }
+
+    suspend fun clearAllData() {
+        dao.clearAll()
     }
 
     private companion object {

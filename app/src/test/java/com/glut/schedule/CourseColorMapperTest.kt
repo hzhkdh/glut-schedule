@@ -22,6 +22,31 @@ class CourseColorMapperTest {
     }
 
     @Test
+    fun customColorOverrideAppliesToAllClassesWithTheSameCourseTitle() {
+        val courses = CourseColorMapper.assignColors(
+            courses = listOf(
+                course(id = "math-a", title = "高等数学 @06404D", day = 1, start = 1),
+                course(id = "math-b", title = "高等数学 @08991A", day = 3, start = 3)
+            ),
+            overrides = mapOf("高等数学" to "abcdef")
+        )
+
+        assertEquals(listOf("#ABCDEF", "#ABCDEF"), courses.map { it.colorHex })
+    }
+
+    @Test
+    fun presetPaletteIsDistinctAndIndependentFromAutomaticPalette() {
+        assertEquals(20, CourseColorMapper.presetPalette.size)
+        assertEquals(20, CourseColorMapper.presetPalette.toSet().size)
+        CourseColorMapper.presetPalette.forEachIndexed { index, color ->
+            CourseColorMapper.presetPalette.drop(index + 1).forEach { other ->
+                assertTrue(rgbDistance(color, other) >= 60.0)
+            }
+        }
+        assertEquals(12, CourseColorMapper.palette.size)
+    }
+
+    @Test
     fun differentCoursesUseAHighVarietyPalette() {
         val titles = listOf(
             "数字逻辑",
@@ -89,5 +114,10 @@ class CourseColorMapperTest {
                 )
             )
         )
+    }
+
+    private fun rgbDistance(left: String, right: String): Double {
+        fun rgb(hex: String): List<Int> = listOf(1, 3, 5).map { index -> hex.substring(index, index + 2).toInt(16) }
+        return kotlin.math.sqrt(rgb(left).zip(rgb(right)).sumOf { (a, b) -> (a - b) * (a - b) }.toDouble())
     }
 }

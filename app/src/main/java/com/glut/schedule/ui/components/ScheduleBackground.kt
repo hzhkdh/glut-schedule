@@ -120,13 +120,8 @@ fun StarryScheduleBackground(
     customBackgroundUri: String = "",
     customBackgroundBitmap: ImageBitmap? = null
 ) {
-    Log.d(RecomposeTag, "StarryScheduleBackground compose custom=${customBackgroundUri.isNotBlank()}")
     if (shouldUseCustomBackground(customBackgroundUri)) {
-        val bitmap = customBackgroundBitmap ?: run {
-            Log.d(RecomposeTag, "background not ready - blocked")
-            return
-        }
-        Log.d(RecomposeTag, "custom background image render")
+        val bitmap = customBackgroundBitmap ?: return
         Image(
             bitmap = bitmap,
             contentDescription = null,

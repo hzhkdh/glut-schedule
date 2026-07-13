@@ -9,7 +9,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,19 +24,24 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
@@ -40,12 +50,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,10 +67,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,12 +79,26 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.focus.onFocusEvent
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.glut.schedule.data.model.NoticeInfo
+import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.hasUnreadNotices
 import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
@@ -86,9 +115,13 @@ import com.glut.schedule.ui.pages.DirectLoginViewModelFactory
 import com.glut.schedule.ui.pages.ExamScreen
 import com.glut.schedule.ui.pages.ExamViewModel
 import com.glut.schedule.ui.pages.ExamViewModelFactory
+import com.glut.schedule.ui.pages.FitnessScoreScreen
+import com.glut.schedule.ui.pages.FitnessScoreViewModel
+import com.glut.schedule.ui.pages.FitnessScoreViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
+import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
@@ -130,11 +163,19 @@ class MainActivity : ComponentActivity() {
                 val scope = rememberCoroutineScope()
                 var selectedItem by remember { mutableStateOf(DrawerItem.Schedule) }
                 var showUpdateDialog by remember { mutableStateOf<UpdateDialogState?>(null) }
+                var autoPopupUpdateVersion by remember { mutableStateOf<String?>(null) }
+                var showNoticePopup by remember { mutableStateOf<NoticeInfo?>(null) }
+                var noticePopupSessionDismissedIds by remember { mutableStateOf(emptySet<String>()) }
+                var initialNoticeCheckFinished by remember { mutableStateOf(false) }
+                var showResetConfirm by remember { mutableStateOf(false) }
+                var showCourseColors by remember { mutableStateOf(false) }
+                var fitnessTableGestureActive by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
                     when {
                         drawerState.isOpen -> scope.launch { drawerState.close() }
+                        showCourseColors -> showCourseColors = false
                         selectedItem != DrawerItem.Schedule -> selectedItem = DrawerItem.Schedule
                         else -> finish()
                     }
@@ -215,11 +256,13 @@ class MainActivity : ComponentActivity() {
                         studyPlanParser = container.studyPlanParser
                     )
                 )
-
-                val scheduleUiState by scheduleViewModel.uiState.collectAsState()
-                val scheduleBgBitmap = if (scheduleUiState.customBackgroundUri.isNotBlank()) {
-                    container.backgroundStore.get(scheduleUiState.customBackgroundUri)
-                } else null
+                val fitnessScoreViewModel: FitnessScoreViewModel = viewModel(
+                    factory = FitnessScoreViewModelFactory(
+                        service = container.fitnessApiService,
+                        store = container.fitnessStore,
+                        parser = container.fitnessParser
+                    )
+                )
 
                 val context = androidx.compose.ui.platform.LocalContext.current
                 val backgroundPicker = rememberLauncherForActivityResult(
@@ -254,11 +297,12 @@ class MainActivity : ComponentActivity() {
                 }
 
                 // Red dot persists until user actually updates to the latest version
-                val updateAvailableVersion by container.settingsStore.updateAvailableVersion.collectAsState(initial = "")
+                val updateAvailableVersion by container.settingsStore.updateAvailableVersion.collectAsStateWithLifecycle(initialValue = "")
                 val showUpdateDot = updateAvailableVersion.isNotBlank()
                     && UpdateChecker.compareVersions(updateAvailableVersion, BuildConfig.VERSION_NAME) > 0
-                val cachedNoticesJson by container.settingsStore.cachedNoticesJson.collectAsState(initial = "")
-                val readNoticeIds by container.settingsStore.readNoticeIds.collectAsState(initial = emptySet())
+                val cachedNoticesJson by container.settingsStore.cachedNoticesJson.collectAsStateWithLifecycle(initialValue = "")
+                val readNoticeIds by container.settingsStore.readNoticeIds.collectAsStateWithLifecycle(initialValue = emptySet())
+                val dismissedNoticePopupIds by container.settingsStore.dismissedNoticePopupIds.collectAsStateWithLifecycle(initialValue = emptySet())
                 var notices by remember { mutableStateOf(NoticeChecker.parseNotices(cachedNoticesJson)) }
                 val currentNoticeIds = notices.map { it.id }.toSet()
                 val showNoticeDot = hasUnreadNotices(currentNoticeIds, readNoticeIds)
@@ -267,25 +311,23 @@ class MainActivity : ComponentActivity() {
                     notices = NoticeChecker.parseNotices(cachedNoticesJson)
                 }
 
-                DisposableEffect(Unit) {
-                    scope.launch {
-                        val info = container.updateChecker.check(BuildConfig.VERSION_NAME)
-                        if (info != null && info.isNewer) {
-                            container.settingsStore.setUpdateAvailable(info.latestVersion)
+                LaunchedEffect(Unit) {
+                    val info = container.updateChecker.check(BuildConfig.VERSION_NAME)
+                    if (info != null && info.isNewer) {
+                        container.settingsStore.setUpdateAvailable(info.latestVersion)
+                        val dismissedVersion = container.settingsStore.dismissedUpdatePopupVersion.first()
+                        if (dismissedVersion != info.latestVersion) {
+                            autoPopupUpdateVersion = info.latestVersion
+                            showUpdateDialog = UpdateDialogState.Idle(info)
                         }
                     }
-                    onDispose { }
-                }
 
-                DisposableEffect(Unit) {
-                    scope.launch {
-                        val result = container.noticeChecker.check()
-                        if (result != null) {
-                            notices = result.notices
-                            container.settingsStore.setCachedNoticesJson(result.rawJson)
-                        }
+                    val result = container.noticeChecker.check()
+                    if (result != null) {
+                        notices = result.notices
+                        container.settingsStore.setCachedNoticesJson(result.rawJson)
                     }
-                    onDispose { }
+                    initialNoticeCheckFinished = true
                 }
 
                 LaunchedEffect(selectedItem, currentNoticeIds) {
@@ -294,15 +336,33 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                LaunchedEffect(
+                    initialNoticeCheckFinished,
+                    notices,
+                    dismissedNoticePopupIds,
+                    noticePopupSessionDismissedIds,
+                    showUpdateDialog,
+                    showNoticePopup
+                ) {
+                    if (initialNoticeCheckFinished && showUpdateDialog == null && showNoticePopup == null) {
+                        val alreadyShownIds = dismissedNoticePopupIds + noticePopupSessionDismissedIds
+                        val latestNotice = notices.firstOrNull()
+                        if (latestNotice != null && latestNotice.id !in alreadyShownIds) {
+                            showNoticePopup = latestNotice
+                        }
+                    }
+                }
+
                 ModalNavigationDrawer(
                     drawerState = drawerState,
+                    gesturesEnabled = !fitnessTableGestureActive,
                     drawerContent = {
                         ModalDrawerSheet(
-                            modifier = Modifier.fillMaxWidth(0.75f),
+                            modifier = Modifier.fillMaxWidth(0.60f),
                             drawerContainerColor = Color(0xFFE8E4D6),
                             drawerContentColor = Color(0xFF141821)
                         ) {
-                            DrawerHeader(onClose = { scope.launch { drawerState.close() } })
+                            DrawerHeader()
                             HorizontalDivider(color = Color(0xFFDDE2EA))
                             Column(
                                 modifier = Modifier
@@ -322,13 +382,35 @@ class MainActivity : ComponentActivity() {
                                             modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 4.dp)
                                         )
                                     }
-                                    items(listOf(DrawerItem.Schedule, DrawerItem.Score, DrawerItem.ProfessionalScore, DrawerItem.Exam, DrawerItem.GradeExam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import)) { item ->
+items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
                                             showDot = item == DrawerItem.About && showUpdateDot,
                                             onClick = {
                                                 selectedItem = item
+                                                showCourseColors = false
+                                                scope.launch { drawerState.close() }
+                                            }
+                                        )
+                                    }
+                                    // 成绩
+                                    item {
+                                        Text(
+                                            "成绩",
+                                            color = Color(0xFF3F7DF6),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
+                                        )
+                                    }
+                                    items(listOf(DrawerItem.Score, DrawerItem.ProfessionalScore, DrawerItem.GradeExam, DrawerItem.FitnessScore)) { item ->
+                                        DrawerMenuItem(
+                                            item = item,
+                                            isSelected = selectedItem == item,
+                                            onClick = {
+                                                selectedItem = item
+                                                showCourseColors = false
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -351,6 +433,7 @@ class MainActivity : ComponentActivity() {
                                                 || (item == DrawerItem.Notice && showNoticeDot),
                                             onClick = {
                                                 selectedItem = item
+                                                showCourseColors = false
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -367,16 +450,19 @@ class MainActivity : ComponentActivity() {
                                 TopAppBar(
                                     title = {
                                         Text(
-                                            selectedItem.title,
+                                            if (showCourseColors) "课程卡片颜色" else selectedItem.title,
                                             color = Color(0xFF141821),
                                             fontWeight = FontWeight.SemiBold
                                         )
                                     },
                                     navigationIcon = {
-                                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                        IconButton(onClick = {
+                                            if (showCourseColors) showCourseColors = false
+                                            else scope.launch { drawerState.open() }
+                                        }) {
                                             Icon(
-                                                imageVector = Icons.Outlined.Menu,
-                                                contentDescription = "菜单",
+                                                imageVector = if (showCourseColors) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
+                                                contentDescription = if (showCourseColors) "返回" else "菜单",
                                                 tint = Color(0xFF141821),
                                                 modifier = Modifier.size(26.dp)
                                             )
@@ -385,7 +471,7 @@ class MainActivity : ComponentActivity() {
                                     actions = {
                                         when (selectedItem) {
                                             DrawerItem.Exam -> {
-                                                val examState by examViewModel.uiState.collectAsState()
+                                                val examState by examViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
                                                     onClick = examViewModel::refreshExams,
                                                     enabled = !examState.isRefreshing
@@ -394,7 +480,7 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                             DrawerItem.Score -> {
-                                                val scoreState by scoreViewModel.uiState.collectAsState()
+                                                val scoreState by scoreViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
                                                     onClick = scoreViewModel::refreshScores,
                                                     enabled = !scoreState.isRefreshing
@@ -412,7 +498,7 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                             DrawerItem.GradeExam -> {
-                                                val gradeExamState by gradeExamViewModel.uiState.collectAsState()
+                                                val gradeExamState by gradeExamViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
                                                     onClick = gradeExamViewModel::refresh,
                                                     enabled = !gradeExamState.isRefreshing
@@ -420,8 +506,17 @@ class MainActivity : ComponentActivity() {
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
+                                            DrawerItem.FitnessScore -> {
+                                                val fitnessState by fitnessScoreViewModel.uiState.collectAsStateWithLifecycle()
+                                                IconButton(
+                                                    onClick = fitnessScoreViewModel::refresh,
+                                                    enabled = !fitnessState.isRefreshing
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                                                }
+                                            }
                                             DrawerItem.StudyPlan -> {
-                                                val studyPlanState by studyPlanViewModel.uiState.collectAsState()
+                                                val studyPlanState by studyPlanViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
                                                     onClick = studyPlanViewModel::refresh,
                                                     enabled = !studyPlanState.isRefreshing
@@ -444,10 +539,9 @@ class MainActivity : ComponentActivity() {
                     ) { padding ->
                         Box(modifier = Modifier.padding(padding)) {
                             when (selectedItem) {
-                                DrawerItem.Schedule -> ScheduleScreen(
+                                DrawerItem.Schedule -> ScheduleDestination(
                                     viewModel = scheduleViewModel,
                                     backgroundStore = container.backgroundStore,
-                                    customBackgroundBitmap = scheduleBgBitmap,
                                     onImportClick = { selectedItem = DrawerItem.Import },
                                     onExamClick = { selectedItem = DrawerItem.Exam },
                                     onDrawerOpen = { scope.launch { drawerState.open() } }
@@ -455,20 +549,22 @@ class MainActivity : ComponentActivity() {
                                 DrawerItem.Score -> ScoreScreen(viewModel = scoreViewModel)
                                 DrawerItem.ProfessionalScore -> ProfessionalScoreScreen(viewModel = professionalScoreViewModel)
                                 DrawerItem.GradeExam -> GradeExamScreen(viewModel = gradeExamViewModel)
+                                DrawerItem.FitnessScore -> FitnessScoreScreen(
+                                    viewModel = fitnessScoreViewModel,
+                                    onTableGestureActive = { fitnessTableGestureActive = it }
+                                )
                                 DrawerItem.StudyPlan -> StudyPlanScreen(viewModel = studyPlanViewModel)
                                 DrawerItem.Exam -> ExamScreen(
                                     viewModel = examViewModel,
                                     onBack = { selectedItem = DrawerItem.Schedule }
                                 )
                                 DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
-                                DrawerItem.Settings -> SettingsPage(
-                                    showWeekend = scheduleUiState.showWeekend,
-                                    onShowWeekendChange = scheduleViewModel::setShowWeekend,
-                                    showNoon = scheduleUiState.showNoon,
-                                    onShowNoonChange = scheduleViewModel::setShowNoon,
-                                    hasCustomBackground = scheduleUiState.customBackgroundUri.isNotBlank(),
+                                DrawerItem.Settings -> ScheduleSettingsDestination(
+                                    viewModel = scheduleViewModel,
+                                    showCourseColors = showCourseColors,
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
-                                    onClearBackground = { scheduleViewModel.clearCustomBackground() }
+                                    onShowCourseColors = { showCourseColors = true },
+                                    onReset = { showResetConfirm = true }
                                 )
                                 DrawerItem.Notice -> NoticeScreen(notices = notices)
                                 DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
@@ -490,8 +586,65 @@ class MainActivity : ComponentActivity() {
                     UpdateDialog(
                         state = state,
                         appUpdater = container.appUpdater,
-                        onDismiss = { showUpdateDialog = null },
+                        onDismiss = {
+                            autoPopupUpdateVersion?.let { version ->
+                                scope.launch {
+                                    container.settingsStore.markUpdatePopupDismissed(version)
+                                }
+                            }
+                            autoPopupUpdateVersion = null
+                            showUpdateDialog = null
+                        },
                         onStateChange = { showUpdateDialog = it }
+                    )
+                }
+
+                showNoticePopup?.let { popupNotice ->
+                    NoticePopupDialog(
+                        notice = popupNotice,
+                        onDismiss = {
+                            val ids = setOf(popupNotice.id)
+                            noticePopupSessionDismissedIds = noticePopupSessionDismissedIds + ids
+                            showNoticePopup = null
+                            scope.launch {
+                                container.settingsStore.markNoticePopupsDismissed(ids)
+                            }
+                        },
+                        onOpenNotices = {
+                            val ids = setOf(popupNotice.id)
+                            noticePopupSessionDismissedIds = noticePopupSessionDismissedIds + ids
+                            showNoticePopup = null
+                            selectedItem = DrawerItem.Notice
+                            scope.launch {
+                                container.settingsStore.markNoticePopupsDismissed(ids)
+                                container.settingsStore.markNoticesRead(currentNoticeIds)
+                            }
+                        }
+                    )
+                }
+
+                if (showResetConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showResetConfirm = false },
+                        title = { Text("重置应用") },
+                        text = { Text("将清除所有数据（课表、成绩、考试、教学计划、设置、登录凭证），恢复到初次使用状态。此操作不可撤销，确定继续吗？") },
+                        confirmButton = {
+                            Text("确认重置", color = Color(0xFFDC2626),
+                                modifier = Modifier.clickable {
+                                    showResetConfirm = false
+                                    directLoginViewModel.clearLoginState()
+                                    fitnessScoreViewModel.clearData()
+                                    scope.launch {
+                                        container.scheduleRepository.clearAllData()
+                                        container.settingsStore.clearAll()
+                                        container.academicSessionStore.clearAll()
+                                        container.credentialStore.clearCredentials()
+                                    }
+                                }.padding(8.dp))
+                        },
+                        dismissButton = {
+                            Text("取消", modifier = Modifier.clickable { showResetConfirm = false }.padding(8.dp))
+                        }
                     )
                 }
             }
@@ -523,7 +676,64 @@ class MainActivity : ComponentActivity() {
 // ---- Drawer Components ----
 
 @Composable
-private fun DrawerHeader(onClose: () -> Unit) {
+private fun ScheduleDestination(
+    viewModel: ScheduleViewModel,
+    backgroundStore: ScheduleBackgroundStore,
+    onImportClick: () -> Unit,
+    onExamClick: () -> Unit,
+    onDrawerOpen: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val backgroundBitmap = if (uiState.customBackgroundUri.isNotBlank()) {
+        backgroundStore.get(uiState.customBackgroundUri)
+    } else {
+        null
+    }
+    ScheduleScreen(
+        viewModel = viewModel,
+        uiState = uiState,
+        backgroundStore = backgroundStore,
+        customBackgroundBitmap = backgroundBitmap,
+        onImportClick = onImportClick,
+        onExamClick = onExamClick,
+        onDrawerOpen = onDrawerOpen
+    )
+}
+
+@Composable
+private fun ScheduleSettingsDestination(
+    viewModel: ScheduleViewModel,
+    showCourseColors: Boolean,
+    onPickBackground: () -> Unit,
+    onShowCourseColors: () -> Unit,
+    onReset: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    if (showCourseColors) {
+        CourseColorsPage(
+            courses = uiState.courses,
+            overrides = uiState.courseColorOverrides,
+            onSetColor = viewModel::setCourseColorOverride,
+            onRemoveColor = viewModel::removeCourseColorOverride,
+            onResetAll = viewModel::clearCourseColorOverrides
+        )
+    } else {
+        SettingsPage(
+            showWeekend = uiState.showWeekend,
+            onShowWeekendChange = viewModel::setShowWeekend,
+            showNoon = uiState.showNoon,
+            onShowNoonChange = viewModel::setShowNoon,
+            hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
+            onPickBackground = onPickBackground,
+            onClearBackground = viewModel::clearCustomBackground,
+            onCourseColors = onShowCourseColors,
+            onReset = onReset
+        )
+    }
+}
+
+@Composable
+private fun DrawerHeader() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -532,24 +742,20 @@ private fun DrawerHeader(onClose: () -> Unit) {
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(
-                    painter = painterResource(R.drawable.glut_logo),
-                    contentDescription = "校徽",
+                    painter = painterResource(R.drawable.brand_menu_logo),
+                    contentDescription = "桂系一站式标志",
                     modifier = Modifier.size(38.dp)
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
-                    Text("桂工课表", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("桂系一站式", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("简单 高效 纯粹", color = Color(0xFF667085), fontSize = 13.sp)
                 }
-            }
-            IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Outlined.Close, contentDescription = "关闭", tint = Color(0xFF667085), modifier = Modifier.size(22.dp))
             }
         }
     }
@@ -597,7 +803,9 @@ private fun SettingsPage(
     onShowNoonChange: (Boolean) -> Unit = {},
     hasCustomBackground: Boolean = false,
     onPickBackground: () -> Unit = {},
-    onClearBackground: () -> Unit = {}
+    onClearBackground: () -> Unit = {},
+    onCourseColors: () -> Unit = {},
+    onReset: () -> Unit = {}
 ) {
     val settingsBg = Color(0xFFF6F4EF)
     val settingsPrimary = Color(0xFF141821)
@@ -642,6 +850,24 @@ private fun SettingsPage(
                 }
             }
 
+            Text("课表外观", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onCourseColors)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("课程卡片颜色", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
+                }
+            }
+
             // Background section
             Text("背景", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Surface(
@@ -679,8 +905,454 @@ private fun SettingsPage(
                     }
                 }
             }
+
+            // Data management section
+            Text("数据管理", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onReset)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("重置应用", color = Color(0xFFDC2626), fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Text("恢复初次使用状态", color = settingsSecondary, fontSize = 12.sp)
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun CourseColorsPage(
+    courses: List<ScheduleCourse>,
+    overrides: Map<String, String>,
+    onSetColor: (String, String) -> Unit,
+    onRemoveColor: (String) -> Unit,
+    onResetAll: () -> Unit
+) {
+    val background = Color(0xFFF6F4EF)
+    val card = Color(0xFFFFFEFB)
+    val entries = remember(courses, overrides) {
+        courses.distinctBy { CourseColorMapper.colorKey(it.id, it.title) }
+    }
+    var selectedCourse by remember { mutableStateOf<ScheduleCourse?>(null) }
+    var showAdvanced by remember { mutableStateOf(false) }
+
+    if (entries.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize().background(background), contentAlignment = Alignment.Center) {
+            Text("暂未导入课表", color = Color(0xFF667085), fontSize = 15.sp)
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(background),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { Text("已导入课程", color = Color(0xFF667085), fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+        items(entries, key = { it.id }) { course ->
+            val key = CourseColorMapper.colorKey(course.id, course.title)
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable {
+                    selectedCourse = course
+                    showAdvanced = false
+                },
+                color = card,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        modifier = Modifier.size(24.dp),
+                        color = Color(AndroidColor.parseColor(course.colorHex)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {}
+                    Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+                        Text(course.title, color = Color(0xFF141821), fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (overrides.containsKey(key)) "已自定义" else "自动配色", color = Color(0xFF98A2B3), fontSize = 12.sp)
+                    }
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = Color(0xFF98A2B3), modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+        item {
+            TextButton(modifier = Modifier.fillMaxWidth(), onClick = onResetAll) {
+                Text("恢复全部默认颜色", color = Color(0xFFDC2626))
+            }
+        }
+    }
+
+    selectedCourse?.let { course ->
+        if (showAdvanced) {
+            AdvancedColorSheet(
+                initialColor = course.colorHex,
+                onDismiss = {
+                    showAdvanced = false
+                    selectedCourse = null
+                },
+                onConfirm = { color ->
+                    onSetColor(CourseColorMapper.colorKey(course.id, course.title), color)
+                    selectedCourse = null
+                }
+            )
+        } else {
+            PresetColorSheet(
+                course = course,
+                onDismiss = { selectedCourse = null },
+                onSelect = { color ->
+                    onSetColor(CourseColorMapper.colorKey(course.id, course.title), color)
+                    selectedCourse = null
+                },
+                onAdvanced = { showAdvanced = true },
+                onRestore = {
+                    onRemoveColor(CourseColorMapper.colorKey(course.id, course.title))
+                    selectedCourse = null
+                }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PresetColorSheet(
+    course: ScheduleCourse,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+    onAdvanced: () -> Unit,
+    onRestore: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFFFFFEFB),
+        tonalElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp).navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Column {
+                Text(course.title, color = Color(0xFF141821), fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("选择课程卡片颜色", color = Color(0xFF667085), fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+            CourseColorMapper.presetPalette.chunked(5).forEach { row ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    row.forEach { color ->
+                        Surface(
+                            modifier = Modifier.size(52.dp).clickable { onSelect(color) },
+                            color = Color(AndroidColor.parseColor(color)),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {}
+                    }
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = onRestore) { Text("恢复自动配色", color = Color(0xFF667085), fontSize = 15.sp) }
+                TextButton(onClick = onAdvanced) { Text("高级调色", color = Color(0xFF3F7DF6), fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AdvancedColorSheet(
+    initialColor: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val initialHsv = remember(initialColor) { hexToHsv(initialColor) }
+    var hue by remember(initialColor) { mutableStateOf(initialHsv[0]) }
+    var saturation by remember(initialColor) { mutableStateOf(initialHsv[1]) }
+    var value by remember(initialColor) { mutableStateOf(initialHsv[2]) }
+    var hexField by remember(initialColor) { mutableStateOf(TextFieldValue(initialColor, TextRange(0))) }
+
+    fun updateFromHsv(nextHue: Float = hue, nextSaturation: Float = saturation, nextValue: Float = value) {
+        hue = nextHue
+        saturation = nextSaturation
+        value = nextValue
+        val nextHex = hsvToHex(hue, saturation, value)
+        hexField = TextFieldValue(nextHex, TextRange(nextHex.length))
+    }
+
+    var planeSize by remember { mutableStateOf(IntSize.Zero) }
+    var hueTrackSize by remember { mutableStateOf(IntSize.Zero) }
+    val normalizedColor = CourseColorMapper.normalizeHexColor(hexField.text)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scrollState = rememberScrollState()
+    val hexBringIntoViewRequester = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val planeThumbSizePx = with(density) { 20.dp.toPx() }
+    val hueThumbSizePx = with(density) { 22.dp.toPx() }
+
+    fun updatePlane(position: Offset) {
+        if (planeSize.width == 0 || planeSize.height == 0) return
+        updateFromHsv(
+            nextSaturation = (position.x / planeSize.width).coerceIn(0f, 1f),
+            nextValue = (1f - position.y / planeSize.height).coerceIn(0f, 1f)
+        )
+    }
+
+    fun updateHue(position: Offset) {
+        if (hueTrackSize.width == 0) return
+        updateFromHsv(nextHue = (position.x / hueTrackSize.width * 360f).coerceIn(0f, 360f))
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFFFFFEFB),
+        tonalElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp)
+                .verticalScroll(scrollState)
+                .imePadding()
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("高级调色", color = Color(0xFF141821), fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("嵌入式系统", color = Color(0xFF667085), fontSize = 13.sp)
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                color = Color(AndroidColor.parseColor(normalizedColor ?: "#3B82F6")),
+                shape = RoundedCornerShape(16.dp)
+            ) {}
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(248.dp)
+                    .background(
+                        Brush.horizontalGradient(listOf(Color.White, Color(AndroidColor.parseColor(hsvToHex(hue, 1f, 1f))))),
+                        RoundedCornerShape(16.dp)
+                    )
+                    .onSizeChanged { planeSize = it }
+                    .pointerInput(planeSize, hue) {
+                        detectDragGestures(
+                            onDragStart = ::updatePlane,
+                            onDrag = { change, _ -> updatePlane(change.position) }
+                        )
+                    }
+            ) {
+                Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)), RoundedCornerShape(16.dp)))
+                Box(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                (saturation * maxOf(0f, planeSize.width - planeThumbSizePx)).toInt(),
+                                ((1f - value) * maxOf(0f, planeSize.height - planeThumbSizePx)).toInt()
+                            )
+                        }
+                        .size(20.dp)
+                        .border(2.dp, Color.White, CircleShape)
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("色相", color = Color(0xFF344054), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("拖动切换基础颜色", color = Color(0xFF98A2B3), fontSize = 13.sp)
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(28.dp)
+                    .background(
+                        Brush.horizontalGradient(listOf(
+                            Color(0xFFF04438), Color(0xFFF79009), Color(0xFFFDE272),
+                            Color(0xFF12B76A), Color(0xFF2E90FA), Color(0xFF9E77ED),
+                            Color(0xFFEE46BC), Color(0xFFF04438)
+                        )),
+                        RoundedCornerShape(14.dp)
+                    )
+                    .onSizeChanged { hueTrackSize = it }
+                    .pointerInput(hueTrackSize) {
+                        detectDragGestures(
+                            onDragStart = ::updateHue,
+                            onDrag = { change, _ -> updateHue(change.position) }
+                        )
+                    }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                (hue / 360f * maxOf(0f, hueTrackSize.width - hueThumbSizePx)).toInt(),
+                                ((hueTrackSize.height - hueThumbSizePx) / 2f).toInt()
+                            )
+                        }
+                        .size(22.dp)
+                        .background(Color.White, CircleShape)
+                        .border(2.dp, Color(0xFF667085), CircleShape)
+                )
+            }
+            OutlinedTextField(
+                value = hexField,
+                onValueChange = { input ->
+                    hexField = input
+                    CourseColorMapper.normalizeHexColor(input.text)?.let { color ->
+                        val hsv = hexToHsv(color)
+                        hue = hsv[0]
+                        saturation = hsv[1]
+                        value = hsv[2]
+                    }
+                },
+                label = { Text("HEX 颜色") },
+                placeholder = { Text("#154173") },
+                singleLine = true,
+                isError = hexField.text.isNotBlank() && normalizedColor == null,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF141821)),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color(0xFF141821),
+                    unfocusedTextColor = Color(0xFF141821),
+                    focusedBorderColor = Color(0xFF3F7DF6),
+                    unfocusedBorderColor = Color(0xFF98A2B3),
+                    cursorColor = Color(0xFF3F7DF6)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewRequester(hexBringIntoViewRequester)
+                    .onFocusEvent { focusState ->
+                        if (focusState.isFocused) scope.launch { hexBringIntoViewRequester.bringIntoView() }
+                    }
+            )
+            Text("支持 #RRGGBB 或 RRGGBB；每组十六进制取值为 00 到 FF。", color = Color(0xFF667085), fontSize = 12.sp)
+            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) { Text("取消") }
+                TextButton(enabled = normalizedColor != null, onClick = { normalizedColor?.let(onConfirm) }) { Text("完成") }
+            }
+        }
+    }
+}
+
+private fun hexToHsv(hex: String): FloatArray {
+    val hsv = FloatArray(3)
+    AndroidColor.colorToHSV(AndroidColor.parseColor(CourseColorMapper.normalizeHexColor(hex) ?: "#3B82F6"), hsv)
+    return hsv
+}
+
+private fun hsvToHex(hue: Float, saturation: Float, value: Float): String {
+    return "#%06X".format(AndroidColor.HSVToColor(floatArrayOf(hue, saturation, value)) and 0xFFFFFF)
+}
+
+// ---- Notice Popup Dialog ----
+
+@Composable
+private fun NoticePopupDialog(
+    notice: NoticeInfo,
+    onDismiss: () -> Unit,
+    onOpenNotices: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFFFFFBFE),
+        titleContentColor = Color(0xFF1D1B20),
+        textContentColor = Color(0xFF49454F),
+        title = { Text("新通知", fontWeight = FontWeight.Bold) },
+        text = {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp)
+            ) {
+                item {
+                    NoticePopupContent(notice = notice)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onOpenNotices) {
+                Text("查看通知")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("知道了")
+            }
+        }
+    )
+}
+
+@Composable
+private fun NoticePopupContent(
+    notice: NoticeInfo
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Text(
+                text = notice.title,
+                color = Color(0xFF1D1B20),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            NoticePopupLevelBadge(level = notice.level)
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = notice.publishedAt.toString(),
+            color = Color(0xFF6F6A72),
+            fontSize = 12.sp
+        )
+        if (notice.content.isNotBlank()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = notice.content,
+                color = Color(0xFF3D3940),
+                fontSize = 14.sp,
+                lineHeight = 20.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun NoticePopupLevelBadge(level: String) {
+    val (container, content) = when (level.lowercase()) {
+        "important" -> Color(0xFFFEE2E2) to Color(0xFFDC2626)
+        "warning" -> Color(0xFFFFF3D8) to Color(0xFFD97706)
+        "update" -> Color(0xFFE8F0FE) to Color(0xFF245CA6)
+        else -> Color(0xFFEEF2F7) to Color(0xFF667085)
+    }
+    val label = when (level.lowercase()) {
+        "important" -> "重要"
+        "warning" -> "提醒"
+        "update" -> "更新"
+        else -> "通知"
+    }
+
+    Text(
+        text = label,
+        color = content,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+        modifier = Modifier
+            .background(container, RoundedCornerShape(999.dp))
+            .padding(horizontal = 9.dp, vertical = 4.dp)
+    )
 }
 
 // ---- Update Dialog ----
@@ -693,6 +1365,7 @@ private sealed class UpdateDialogState {
         val downloadedMB: String,
         val totalMB: String
     ) : UpdateDialogState()
+    data class DownloadFailed(val info: UpdateInfo, val message: String) : UpdateDialogState()
     data class Done(val info: UpdateInfo, val apkFile: java.io.File) : UpdateDialogState()
 }
 
@@ -705,10 +1378,49 @@ private fun UpdateDialog(
 ) {
     val scope = rememberCoroutineScope()
 
+    fun startDownload(info: UpdateInfo) {
+        scope.launch {
+            onStateChange(
+                UpdateDialogState.Downloading(
+                    info = info,
+                    progress = 0f,
+                    downloadedMB = "0",
+                    totalMB = "..."
+                )
+            )
+            try {
+                val apkFile = appUpdater.downloadApk(info.apkDownloadUrl) { downloaded, total ->
+                    val progress = if (total > 0) downloaded.toFloat() / total else 0f
+                    val dMB = "%.1f".format(downloaded / 1_000_000.0)
+                    val tMB = if (total > 0) "%.1f".format(total / 1_000_000.0) else "?"
+                    onStateChange(
+                        UpdateDialogState.Downloading(
+                            info = info,
+                            progress = progress,
+                            downloadedMB = dMB,
+                            totalMB = tMB
+                        )
+                    )
+                }
+                onStateChange(UpdateDialogState.Done(info, apkFile))
+            } catch (e: Exception) {
+                onStateChange(
+                    UpdateDialogState.DownloadFailed(
+                        info = info,
+                        message = e.message ?: "下载失败，请检查网络后重试"
+                    )
+                )
+            }
+        }
+    }
+
     when (state) {
         is UpdateDialogState.Idle -> {
             AlertDialog(
-                onDismissRequest = onDismiss,
+                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                containerColor = Color(0xFFFFFBFE),
+                titleContentColor = Color(0xFF1D1B20),
+                textContentColor = Color(0xFF49454F),
                 title = {
                     Text(
                         if (state.info.isNewer) "发现新版本 v${state.info.latestVersion}"
@@ -721,11 +1433,16 @@ private fun UpdateDialog(
                             Text("当前版本: v${BuildConfig.VERSION_NAME}")
                             Spacer(modifier = Modifier.height(8.dp))
                             if (state.info.releaseNotes.isNotBlank()) {
-                                Text(
-                                    state.info.releaseNotes.take(500),
-                                    fontSize = 13.sp,
-                                    color = Color.Gray
-                                )
+                                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                                    item {
+                                        Text(
+                                            state.info.releaseNotes,
+                                            fontSize = 14.sp,
+                                            lineHeight = 20.sp,
+                                            color = Color(0xFF3D3940)
+                                        )
+                                    }
+                                }
                             }
                         } else {
                             Text("当前已是最新版本 v${BuildConfig.VERSION_NAME}")
@@ -734,47 +1451,30 @@ private fun UpdateDialog(
                 },
                 confirmButton = {
                     if (state.info.isNewer && state.info.apkDownloadUrl.isNotBlank()) {
-                        TextButton(onClick = {
-                            scope.launch {
-                                onStateChange(
-                                    UpdateDialogState.Downloading(
-                                        info = state.info,
-                                        progress = 0f,
-                                        downloadedMB = "0",
-                                        totalMB = "..."
-                                    )
-                                )
-                                try {
-                                    val apkFile = appUpdater.downloadApk(state.info.apkDownloadUrl) { downloaded, total ->
-                                        val progress = if (total > 0) downloaded.toFloat() / total else 0f
-                                        val dMB = "%.1f".format(downloaded / 1_000_000.0)
-                                        val tMB = if (total > 0) "%.1f".format(total / 1_000_000.0) else "?"
-                                        onStateChange(
-                                            UpdateDialogState.Downloading(
-                                                info = state.info,
-                                                progress = progress,
-                                                downloadedMB = dMB,
-                                                totalMB = tMB
-                                            )
-                                        )
-                                    }
-                                    onStateChange(UpdateDialogState.Done(state.info, apkFile))
-                                } catch (e: Exception) {
-                                    onDismiss()
-                                }
-                            }
-                        }) {
+                        TextButton(onClick = { startDownload(state.info) }) {
                             Text("立即更新")
                         }
                     }
                 },
-                dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+                dismissButton = {
+                    if (!state.info.isForceUpdate) {
+                        TextButton(onClick = onDismiss) { Text("取消") }
+                    }
+                }
             )
         }
 
         is UpdateDialogState.Downloading -> {
             AlertDialog(
-                onDismissRequest = { onDismiss(); onStateChange(null) },
+                onDismissRequest = {
+                    if (!state.info.isForceUpdate) {
+                        onDismiss()
+                        onStateChange(null)
+                    }
+                },
+                containerColor = Color(0xFFFFFBFE),
+                titleContentColor = Color(0xFF1D1B20),
+                textContentColor = Color(0xFF49454F),
                 title = { Text("正在下载 v${state.info.latestVersion}") },
                 text = {
                     Column {
@@ -794,8 +1494,31 @@ private fun UpdateDialog(
                 },
                 confirmButton = {},
                 dismissButton = {
-                    TextButton(onClick = { onDismiss(); onStateChange(null) }) {
-                        Text("取消下载")
+                    if (!state.info.isForceUpdate) {
+                        TextButton(onClick = { onDismiss(); onStateChange(null) }) {
+                            Text("取消下载")
+                        }
+                    }
+                }
+            )
+        }
+
+        is UpdateDialogState.DownloadFailed -> {
+            AlertDialog(
+                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                containerColor = Color(0xFFFFFBFE),
+                titleContentColor = Color(0xFF1D1B20),
+                textContentColor = Color(0xFF49454F),
+                title = { Text("下载失败") },
+                text = { Text(state.message, color = Color(0xFF3D3940)) },
+                confirmButton = {
+                    TextButton(onClick = { startDownload(state.info) }) {
+                        Text("重试")
+                    }
+                },
+                dismissButton = {
+                    if (!state.info.isForceUpdate) {
+                        TextButton(onClick = onDismiss) { Text("取消") }
                     }
                 }
             )
@@ -803,7 +1526,10 @@ private fun UpdateDialog(
 
         is UpdateDialogState.Done -> {
             AlertDialog(
-                onDismissRequest = onDismiss,
+                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                containerColor = Color(0xFFFFFBFE),
+                titleContentColor = Color(0xFF1D1B20),
+                textContentColor = Color(0xFF49454F),
                 title = { Text("下载完成") },
                 text = { Text("v${state.info.latestVersion} 已下载，是否立即安装？") },
                 confirmButton = {
@@ -814,7 +1540,11 @@ private fun UpdateDialog(
                         Text("立即安装")
                     }
                 },
-                dismissButton = { TextButton(onClick = onDismiss) { Text("稍后") } }
+                dismissButton = {
+                    if (!state.info.isForceUpdate) {
+                        TextButton(onClick = onDismiss) { Text("稍后") }
+                    }
+                }
             )
         }
     }

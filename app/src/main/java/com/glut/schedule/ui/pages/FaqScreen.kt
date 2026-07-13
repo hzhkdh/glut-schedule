@@ -49,10 +49,6 @@ private val faqList = listOf(
         "可能的原因：1) 尚未导入课表，请先到「导入课表」登录教务系统；2) 登录会话已过期（Cookie 失效），需重新登录；3) 当前周次暂无课程安排。"
     )),
     FaqListItem.Entry(FaqItem(
-        "如何切换桂林 / 南宁校区？",
-        "在「导入课表」页面顶部可以切换校区。不同校区的课时安排略有不同，系统会根据所选校区自动适配。"
-    )),
-    FaqListItem.Entry(FaqItem(
         "应用需要联网吗？离线能用吗？",
         "已导入的课表、成绩等数据支持离线查看。但刷新数据、导入课表、登录教务系统等操作需要连接网络。"
     )),
@@ -66,7 +62,7 @@ private val faqList = listOf(
     )),
     FaqListItem.Entry(FaqItem(
         "刷新成绩/教学计划等失败怎么办？",
-        "最常见的原因是教务系统会话已过期（Cookie 失效）。请到「导入课表」重新登录教务系统，完成后再试。如果仍失败，可能是网络异常或教务服务器繁忙，可稍后重试。\n\n终极方案：清除应用数据（系统设置 → 应用 → 桂工课表 → 清除数据），重新导入并登录教务。"
+        "最常见的原因是教务系统会话已过期（Cookie 失效）。请到「导入课表」重新登录教务系统，完成后再试。如果仍失败，可能是网络异常或教务服务器繁忙，可稍后重试。\n\n终极方案：清除应用数据（系统设置 → 应用 → 桂系一站式 → 清除数据），重新导入并登录教务。"
     )),
     FaqListItem.Entry(FaqItem(
         "更新逻辑",
@@ -118,15 +114,11 @@ private val faqList = listOf(
     FaqListItem.Header("关于项目"),
     FaqListItem.Entry(FaqItem(
         "应用收费吗？",
-        "完全免费，无广告。本应用仅为桂工同学提供便利，不会以任何形式收费。"
+        "完全免费，无广告。本应用旨在为用户提供便利，不会以任何形式收费。"
     )),
     FaqListItem.Entry(FaqItem(
         "参考了什么项目？",
         "参考了三个项目：\nhttps://github.com/nano71/GlutAssistantN\nhttps://github.com/flylai/GlutAssistant\nhttps://github.com/Jacknic/glut\n\n感谢前辈大佬，致敬开源！"
-    )),
-    FaqListItem.Entry(FaqItem(
-        "这个app是自己手搓的吗？",
-        "并非，本人无任何代码能力、开发经验以及工程能力，全部的分析、构建、编译、推送等均由 ClaudeCode 完成。利用 Subagents 能力并行分析三个项目的获取教务逻辑，取长补短融合进该项目。"
     ))
 )
 
