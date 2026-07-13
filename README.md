@@ -1,6 +1,6 @@
-# 桂工课表
+# 桂系一站式
 
-面向桂林理工大学（含南宁分校）学生的本地 Android 课表 App。支持直接输入学号密码导入教务数据，无需手动操作 WebView。所有数据加密存储在本地，不经过任何第三方服务器。
+面向桂林理工大学学生的本地 Android 校园信息工具。支持直接输入学号密码导入教务数据，并可独立登录体测平台查询最新成绩、历年成绩和评分标准。账号密码使用系统加密存储，业务数据保存在本机。
 
 ## 功能
 
@@ -11,7 +11,7 @@
 - 彩色课程卡片展示课程名、教室、教师，选课属性徽章（必修蓝/限选橙/任选绿）
 - 同一时段多门冲突课程自动分组，点击轮换显示
 - 调课自动处理：原课消失，补课出现在对应的周次/节次
-- 支持自定义背景图片
+- 支持自定义背景图片和课程卡片颜色
 
 ### 数据导入
 - 直接输入学号密码登录教务系统，自动检测桂林/南宁校区
@@ -19,6 +19,7 @@
 - 登录后自动拉取：课表、考试安排、考试成绩、等级考试、教学计划、调课信息
 - 凭据加密存储（EncryptedSharedPreferences），支持静默登录刷新
 - 记住密码：勾选后加密保存，不勾选自动清除已存密码
+- 体测平台使用独立登录与验证码流程，凭据和会话同样加密保存在本机
 
 ### 菜单功能
 | 菜单 | 功能 | 数据来源 |
@@ -27,12 +28,13 @@
 | 考试成绩 | 历年课程成绩，学年分组 + GPA 汇总 | studentOwnScore.do (POST) |
 | 考试安排 | 考试时间、地点、座位号，时间线 UI，按科目显示图标 | 多端点探测 (JSON/HTML) |
 | 等级考级 | 英语四六级、普通话等国家考试 | skilltest.jsdo (moduleId=2090) |
+| 体测成绩 | 最新与历年体测明细、总评、评分标准 | 体测管理平台 |
 | 教学计划 | 课组学分/门数要求与完成情况 | studentSelfSchedule.jsdo → studentScheduleLineShow.do |
 | 学期概览 | 学期日期、进度、节假日、调课一览 | 教务日历 + timor.tech 节假日 API |
 | 导入课表 | 学号密码登录，一键导入全部数据 | 多端点并行探测 |
 | 通知 | App 内公告、维护提醒、更新提示，支持未读红点 | Cloudflare Pages notices.json |
 | 常见问题 | FAQ 分类展开/收起（常见问题/数据解读/隐私安全/关于项目） | — |
-| 设置 | 显示周末、自定义背景 | — |
+| 设置 | 显示周末、自定义背景、课程卡片颜色 | — |
 | 关于 | 版本信息、维护者、检测更新、App 内下载安装 | Cloudflare Pages + GitHub Releases API |
 
 ### 学期概览
@@ -46,6 +48,13 @@
 - 学期区块彩色左边框（秋=橙 春=绿）+ 季节徽章
 - 必修课学分加权 GPA 汇总（底部深色卡片）
 - 课程选课属性徽章、绩点颜色分段（优秀绿/良好蓝/及格橙/不及格红）
+
+### 体测成绩
+- 独立登录体测平台，支持验证码刷新、密码显隐和密码重置地址复制
+- 展示最新体测总评及各项目分数、结论和测试成绩
+- 历年成绩按学年学期切换，完整展示体重、耐力加分等项目
+- 提供男生、女生、BMI、加分四张评分标准表
+- 长表支持固定表头与前两列，横纵向滚动互不冲突
 
 ### App 内更新
 - 启动时优先检测 Cloudflare Pages `update.json`，失败后回退 GitHub Releases / GitHub Pages
@@ -123,6 +132,7 @@ app/src/main/java/com/glut/schedule/
       SemesterOverviewModels.kt     调课（SemesterAdjustment）、节假日（HolidayInfo）
       NoticeModels.kt               App 内通知（NoticeInfo）
       CourseColorMapper.kt          课程颜色分配
+      FitnessModels.kt              体测成绩与评分标准模型
     local/
       ScheduleEntities.kt           Room 实体
       ScheduleDao.kt                Room DAO
@@ -136,6 +146,9 @@ app/src/main/java/com/glut/schedule/
     AppUpdater.kt                    App 内更新：OkHttp 流式下载 APK + FileProvider 安装
     UpdateChecker.kt                 版本更新检测（Cloudflare Pages + GitHub API + GitHub Pages）
     NoticeChecker.kt                 App 内通知拉取与 JSON 解析
+    fitness/
+      FitnessApiService.kt           体测平台登录与数据请求
+      FitnessStore.kt                体测凭据、会话和页面缓存
     academic/
       AcademicSessionStore.kt       Cookie / campus URL 持久化
       AcademicExamService.kt        考试数据获取 + 多端点探针
@@ -152,6 +165,7 @@ app/src/main/java/com/glut/schedule/
       ScoreParser.kt                成绩 HTML 解析（桂林/南宁列映射）
       GradeExamParser.kt            等级考试 HTML 解析
       StudyPlanParser.kt            教学计划 HTML 解析
+      FitnessParser.kt              体测成绩、历史明细与评分标准解析
 
   ui/
     components/
@@ -170,6 +184,7 @@ app/src/main/java/com/glut/schedule/
       SemesterOverviewScreen.kt / SemesterOverviewViewModel.kt
       DirectLoginScreen.kt / DirectLoginViewModel.kt
       NoticeScreen.kt
+      FitnessScoreScreen.kt / FitnessScoreViewModel.kt
       FaqScreen.kt
       AboutScreen.kt
     theme/
@@ -183,6 +198,7 @@ app/src/main/java/com/glut/schedule/
 - 导入时 `ApiProbeService.probeAllEndpoints()` 并行探测多个教务端点 → 挑选最佳结果 → 解析保存
 - 更新时 `UpdateChecker` 查询 Cloudflare Pages / GitHub API → `AppUpdater` 下载 APK → FileProvider 触发系统安装
 - 通知时 `NoticeChecker` 拉取 `notices.json` → DataStore 缓存与已读 ID → 侧边栏红点与通知页
+- 体测查询时 `FitnessApiService` 登录体测平台 → `FitnessParser` 解析当前/历年/评分标准 → 加密会话与本地缓存 → Compose UI
 
 ## 教务端点
 
@@ -193,6 +209,7 @@ app/src/main/java/com/glut/schedule/
 | 考试 | studentQueryAllExam.do, queryExam.do 等 | JSON/HTML |
 | 等级考试 | skilltest.jsdo?moduleId=2090 | GBK |
 | 教学计划 | studentSelfSchedule.jsdo → studentScheduleLineShow.do | GBK/UTF-8 |
+| 体测成绩 | tzcs.glut.edu.cn 学生体测平台 | GBK/UTF-8 |
 | 节假日 | timor.tech API | JSON |
 
 ## 测试
