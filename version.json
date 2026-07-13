@@ -1,7 +1,7 @@
 {
-  "version": "v0.16.0",
-  "versionCode": 29,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.16.0",
-  "releaseNotes": "v0.16.0 - 任选课组下拉 + 设置重置 + 导入时自动获取框架数据",
-  "publishedAt": "2026-07-06T14:27:31Z"
+  "version": "v0.17.0",
+  "versionCode": 30,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.17.0",
+  "releaseNotes": "- 设置菜单新增卡片自定义调色\r\n- 新增体测成绩菜单\r\n- 优化菜单刷新速度",
+  "publishedAt": "2026-07-13T11:21:41Z"
 }
