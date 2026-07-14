@@ -89,6 +89,20 @@ class FinanceViewModelTest {
         assertTrue(gateway.fetches.isEmpty())
     }
 
+    @Test
+    fun clearDataRemovesCredentialsSessionAndVisibleCache() = runTest {
+        val store = FakeStore(cookie = "session").apply {
+            saveModule(FinanceModule.OVERVIEW, CachedFinancePayload(FinancePayload.Items(emptyList()), 1L))
+        }
+        val vm = FinanceViewModel(FakeGateway(), store, CampusType.GUILIN)
+
+        vm.clearData()
+
+        assertEquals(FinanceCredentials(), store.credentials())
+        assertEquals("", store.sessionCookie())
+        assertTrue(vm.uiState.value.payloads.isEmpty())
+    }
+
     private class FakeGateway(private var expireFirstFetch: Boolean = false) : FinanceGateway {
         val fetches = mutableListOf<FinanceModule>()
         override suspend fun captcha() = FinanceCaptcha("data:image/jpeg;base64,abc", "captcha-session")

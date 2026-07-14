@@ -16,6 +16,20 @@ class FinanceUiContractTest {
         assertTrue(source.contains("fun FinanceScreen("))
     }
 
+    @Test
+    fun financeIsRegisteredInContainerDrawerAndMainDestination() {
+        val container = source("ScheduleApplication.kt")
+        val drawer = source("ui/navigation/DrawerItem.kt")
+        val main = source("MainActivity.kt")
+
+        assertTrue(container.contains("financeApiService") && container.contains("financeStore"))
+        assertTrue(drawer.contains("Finance(\"财务\""))
+        assertTrue(main.contains("DrawerItem.Finance"))
+        assertTrue(main.contains("FinanceViewModelFactory"))
+        assertTrue(main.contains("FinanceScreen("))
+        assertTrue(main.contains("financeViewModel.clearData()"))
+    }
+
     private fun source(path: String): String {
         val module = File("src/main/java/com/glut/schedule/$path")
         return (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/$path")).readText()

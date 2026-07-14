@@ -64,6 +64,12 @@ class FinanceViewModel(
 
     private var pendingRefresh: FinanceModule? = null
 
+    fun clearData() {
+        pendingRefresh = null
+        store.clearAll()
+        _uiState.value = FinanceUiState(campusUnsupported = _uiState.value.campusUnsupported)
+    }
+
     fun selectGroup(group: FinanceGroup) = selectModule(FinanceModule.defaultFor(group))
 
     fun selectModule(module: FinanceModule) {

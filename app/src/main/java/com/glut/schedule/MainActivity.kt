@@ -118,6 +118,9 @@ import com.glut.schedule.ui.pages.ExamViewModelFactory
 import com.glut.schedule.ui.pages.FitnessScoreScreen
 import com.glut.schedule.ui.pages.FitnessScoreViewModel
 import com.glut.schedule.ui.pages.FitnessScoreViewModelFactory
+import com.glut.schedule.ui.pages.FinanceScreen
+import com.glut.schedule.ui.pages.FinanceViewModel
+import com.glut.schedule.ui.pages.FinanceViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
@@ -136,6 +139,7 @@ import com.glut.schedule.ui.pages.StudyPlanScreen
 import com.glut.schedule.ui.pages.StudyPlanViewModel
 import com.glut.schedule.ui.pages.StudyPlanViewModelFactory
 import com.glut.schedule.ui.theme.GlutScheduleTheme
+import com.glut.schedule.data.settings.CampusType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -169,7 +173,7 @@ class MainActivity : ComponentActivity() {
                 var initialNoticeCheckFinished by remember { mutableStateOf(false) }
                 var showResetConfirm by remember { mutableStateOf(false) }
                 var showCourseColors by remember { mutableStateOf(false) }
-                var fitnessTableGestureActive by remember { mutableStateOf(false) }
+                var drawerGestureBlocked by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
@@ -261,6 +265,15 @@ class MainActivity : ComponentActivity() {
                         service = container.fitnessApiService,
                         store = container.fitnessStore,
                         parser = container.fitnessParser
+                    )
+                )
+                val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
+                val financeViewModel: FinanceViewModel = viewModel(
+                    key = "finance-${campusType.name}",
+                    factory = FinanceViewModelFactory(
+                        gateway = container.financeApiService,
+                        store = container.financeStore,
+                        campus = campusType
                     )
                 )
 
@@ -355,7 +368,7 @@ class MainActivity : ComponentActivity() {
 
                 ModalNavigationDrawer(
                     drawerState = drawerState,
-                    gesturesEnabled = !fitnessTableGestureActive,
+                    gesturesEnabled = !drawerGestureBlocked,
                     drawerContent = {
                         ModalDrawerSheet(
                             modifier = Modifier.fillMaxWidth(0.60f),
@@ -404,7 +417,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
                                         )
                                     }
-                                    items(listOf(DrawerItem.Score, DrawerItem.ProfessionalScore, DrawerItem.GradeExam, DrawerItem.FitnessScore)) { item ->
+                                    items(listOf(DrawerItem.Score, DrawerItem.ProfessionalScore, DrawerItem.GradeExam, DrawerItem.FitnessScore, DrawerItem.Finance)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
@@ -515,6 +528,15 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
+                                            DrawerItem.Finance -> {
+                                                val financeState by financeViewModel.uiState.collectAsStateWithLifecycle()
+                                                IconButton(
+                                                    onClick = financeViewModel::refresh,
+                                                    enabled = !financeState.isRefreshing && !financeState.campusUnsupported
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                                                }
+                                            }
                                             DrawerItem.StudyPlan -> {
                                                 val studyPlanState by studyPlanViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
@@ -551,7 +573,11 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.GradeExam -> GradeExamScreen(viewModel = gradeExamViewModel)
                                 DrawerItem.FitnessScore -> FitnessScoreScreen(
                                     viewModel = fitnessScoreViewModel,
-                                    onTableGestureActive = { fitnessTableGestureActive = it }
+                                    onTableGestureActive = { drawerGestureBlocked = it }
+                                )
+                                DrawerItem.Finance -> FinanceScreen(
+                                    viewModel = financeViewModel,
+                                    onTableGestureActive = { drawerGestureBlocked = it }
                                 )
                                 DrawerItem.StudyPlan -> StudyPlanScreen(viewModel = studyPlanViewModel)
                                 DrawerItem.Exam -> ExamScreen(
@@ -634,6 +660,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     showResetConfirm = false
                                     directLoginViewModel.clearLoginState()
                                     fitnessScoreViewModel.clearData()
+                                    financeViewModel.clearData()
                                     scope.launch {
                                         container.scheduleRepository.clearAllData()
                                         container.settingsStore.clearAll()
