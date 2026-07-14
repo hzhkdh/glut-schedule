@@ -28,7 +28,7 @@ class FinanceUiContractTest {
         assertTrue(main.contains("FinanceViewModelFactory"))
         assertTrue(main.contains("FinanceScreen("))
         assertTrue(main.contains("FinanceViewModelRegistry"))
-        assertTrue(main.contains("listOf(DrawerItem.Score, DrawerItem.GradeExam, DrawerItem.FitnessScore)"))
+        assertTrue(main.contains("listOf(DrawerItem.Score, DrawerItem.ProfessionalScore, DrawerItem.GradeExam, DrawerItem.FitnessScore)"))
         assertTrue(main.contains("listOf(DrawerItem.Finance, DrawerItem.Settings, DrawerItem.Notice, DrawerItem.FAQ, DrawerItem.About)"))
     }
 
