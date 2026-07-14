@@ -1,14 +1,11 @@
 package com.glut.schedule.ui.pages
 
 import android.app.Activity
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.view.WindowManager
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -113,7 +110,6 @@ fun FinanceScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val uriHandler = LocalUriHandler.current
-    val context = LocalContext.current
     DisposableEffect(viewModel) { onDispose(viewModel::hideMoney) }
 
     Column(modifier.fillMaxSize().background(FinancePageBg)) {
@@ -163,11 +159,7 @@ fun FinanceScreen(
             onCaptcha = viewModel::updateCaptcha,
             onTogglePassword = viewModel::togglePasswordVisibility,
             onRefreshCaptcha = viewModel::refreshCaptcha,
-            onResetPassword = {
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("财务密码重置链接", FINANCE_RESET_URL))
-                Toast.makeText(context, "密码重置链接已复制", Toast.LENGTH_SHORT).show()
-            },
+            onResetPassword = { uriHandler.openUri(FINANCE_RESET_URL) },
             onDismiss = viewModel::dismissLogin,
             onLogin = viewModel::login
         )
@@ -490,7 +482,7 @@ private fun FinanceLoginDialog(
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("忘记财务密码？", color = FinanceMuted, fontSize = 12.sp)
-                    Text("复制密码重置链接", color = FinancePrimary, fontSize = 12.sp, modifier = Modifier.clickable(onClick = onResetPassword))
+                    Text("前往财务官网重置密码", color = FinancePrimary, fontSize = 12.sp, modifier = Modifier.clickable(onClick = onResetPassword))
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(

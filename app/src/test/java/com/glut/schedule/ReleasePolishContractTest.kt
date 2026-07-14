@@ -30,6 +30,27 @@ class ReleasePolishContractTest {
     }
 
     @Test
+    fun fitnessLoginActionOnlyAppearsOnTheLatestTab() {
+        val screen = source("FitnessScoreScreen.kt")
+        val latestBranch = screen.substringAfter("FitnessTab.LATEST ->").substringBefore("FitnessTab.HISTORY ->")
+        val historyBranch = screen.substringAfter("FitnessTab.HISTORY ->").substringBefore("FitnessTab.STANDARD ->")
+        val standardBranch = screen.substringAfter("FitnessTab.STANDARD ->").substringBefore("if (state.showLoginDialog)")
+        val historyContent = screen.substringAfter("private fun HistoryContent").substringBefore("private fun OverallCard")
+        val standardContent = screen.substringAfter("private fun StandardContent").substringBefore("private fun StandardTable")
+
+        assertTrue(latestBranch.contains("onLogin = viewModel::showLogin"))
+        assertFalse(historyBranch.contains("onLogin"))
+        assertFalse(standardBranch.contains("onLogin"))
+        assertFalse(historyContent.substringBefore(") {").contains("onLogin"))
+        assertFalse(standardContent.substringBefore(") {").contains("onLogin"))
+        assertTrue(screen.contains("请先在“最新成绩”页登录"))
+        assertTrue(screen.contains("正在加载历年体测详情"))
+        assertTrue(screen.contains("该学期详情暂时无法加载，可点击顶部刷新重试"))
+        assertTrue(screen.contains("正在加载评分标准"))
+        assertTrue(screen.contains("暂无评分标准，可点击顶部刷新重试"))
+    }
+
+    @Test
     fun aboutUsesTheApprovedContributorCopy() {
         val screen = source("AboutScreen.kt")
 
@@ -55,13 +76,24 @@ class ReleasePolishContractTest {
 
         listOf(
             "维护者能看到吗",
-            "glut-api.999314.xyz",
+            "直接连接学校体测系统",
+            "不会经过项目维护者的服务器",
             "HTTP",
             "无法获得与 HTTPS 相同的传输保护",
             "重置全部数据",
-            "GitHub Issues 属于公开页面"
+            "公开的问题反馈页面"
         ).forEach { phrase -> assertTrue("Missing privacy FAQ phrase: $phrase", faq.contains(phrase)) }
         assertFalse(faq.contains("我们无法访问你的数据"))
+        listOf(
+            "glut-api.999314.xyz",
+            "Firebase",
+            "Crashlytics",
+            "Sentry",
+            "Cookie",
+            "Root",
+            "GitHub Issues",
+            "FaqListItem.Header(\"新功能\")"
+        ).forEach { phrase -> assertFalse("FAQ should not contain: $phrase", faq.contains(phrase)) }
     }
 
     @Test
@@ -73,6 +105,17 @@ class ReleasePolishContractTest {
             "“财务”菜单能做什么？可以直接缴费吗？",
             "“体测成绩”菜单包含哪些功能？"
         ).forEach { question -> assertTrue("Missing FAQ question: $question", faq.contains(question)) }
+    }
+
+    @Test
+    fun financeResetOpensTheOfficialPageInsteadOfCopyingTheUrl() {
+        val screen = source("FinanceScreen.kt")
+
+        assertTrue(screen.contains("uriHandler.openUri(FINANCE_RESET_URL)"))
+        assertTrue(screen.contains("前往财务官网重置密码"))
+        assertFalse(screen.contains("ClipboardManager"))
+        assertFalse(screen.contains("ClipData"))
+        assertFalse(screen.contains("密码重置链接已复制"))
     }
 
     private fun source(name: String): String {

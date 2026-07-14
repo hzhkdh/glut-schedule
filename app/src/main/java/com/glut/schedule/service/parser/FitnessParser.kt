@@ -1,6 +1,7 @@
 package com.glut.schedule.service.parser
 
 import com.glut.schedule.data.model.FitnessHistoryRecord
+import com.glut.schedule.data.model.FitnessHistoryRequest
 import com.glut.schedule.data.model.FitnessResult
 import com.glut.schedule.data.model.FitnessScoreItem
 import com.glut.schedule.data.model.FitnessSnapshot
@@ -9,7 +10,11 @@ import com.glut.schedule.data.model.FitnessStandardTable
 import com.glut.schedule.data.model.FitnessStandardType
 
 class FitnessParser {
-    private data class HtmlTable(val text: String, val rows: List<List<String>>)
+    private data class HtmlTable(
+        val text: String,
+        val rows: List<List<String>>,
+        val rawRows: List<String> = emptyList()
+    )
     private data class StandardTitle(val key: String, val title: String)
     private data class CompositeCandidate(val table: FitnessStandardTable, val sourceRowCount: Int)
 
@@ -69,23 +74,67 @@ class FitnessParser {
     fun parseHistoryDetail(html: String): FitnessResult = parseCurrent(html)
 
     fun parseHistory(html: String): List<FitnessHistoryRecord> {
+        val requests = FORM_REGEX.findAll(html)
+            .map { it.value }
+            .filter { DETAIL_ACTION.containsMatchIn(it) }
+            .mapNotNull(::historyRequest)
+            .toList()
+        val records = parseHistoryTable(html, requests)
+        return records.sortedWith(
+            compareByDescending<FitnessHistoryRecord> { it.year }
+                .thenByDescending { it.term.toIntOrNull() ?: 0 }
+        )
+    }
+
+    private fun parseHistoryTable(
+        html: String,
+        fallbackRequests: List<FitnessHistoryRequest>
+    ): List<FitnessHistoryRecord> {
         val table = tableWithHeader(html, listOf("学年", "体测成绩", "体测等级"))
         val headerIndex = table.rows.indexOfFirst { "学年" in it && "体测成绩" in it }
         if (headerIndex < 0) return emptyList()
         val headers = table.rows[headerIndex]
         return table.rows.drop(headerIndex + 1)
-            .map { rowObject(headers, it) }
-            .filter { it["学年"].orEmpty().isNotBlank() && it["体测成绩"].orEmpty().isNotBlank() }
-            .map {
+            .mapIndexedNotNull { offset, row ->
+                val item = rowObject(headers, row)
+                val year = item["学年"].orEmpty()
+                val term = item["学期"].orEmpty()
+                if (year.isBlank() || item["体测成绩"].orEmpty().isBlank()) return@mapIndexedNotNull null
+                val rawRow = table.rawRows.getOrNull(headerIndex + 1 + offset).orEmpty()
+                val request = historyRequest(rawRow)
+                    ?: fallbackRequests.firstOrNull { it.academicYear == year && it.term == term }
                 FitnessHistoryRecord(
-                    year = it["学年"].orEmpty(),
-                    term = it["学期"].orEmpty(),
-                    grade = it["年级"].orEmpty(),
-                    totalScore = it["体测成绩"].orEmpty(),
-                    totalLevel = it["体测等级"].orEmpty()
+                    year = year,
+                    term = term,
+                    grade = item["年级"].orEmpty(),
+                    totalScore = item["体测成绩"].orEmpty(),
+                    totalLevel = item["体测等级"].orEmpty(),
+                    detailRequest = request?.takeIf { value ->
+                        value.academicYear == year && value.term == term
+                    }
                 )
             }
-            .sortedWith(compareByDescending<FitnessHistoryRecord> { it.year }.thenByDescending { it.term.toIntOrNull() ?: 0 })
+    }
+
+    private fun historyRequest(form: String): FitnessHistoryRequest? {
+        val values = INPUT_REGEX.findAll(form).mapNotNull { match ->
+            val attributes = ATTRIBUTE_REGEX.findAll(match.value).associate { attribute ->
+                attribute.groupValues[1].lowercase() to
+                    attribute.groupValues.drop(2).firstOrNull { it.isNotEmpty() }.orEmpty()
+            }
+            val name = attributes["name"].orEmpty()
+            name.takeIf { it.isNotBlank() }?.let { it to decodeEntities(attributes["value"].orEmpty()) }
+        }.toMap()
+        return FitnessHistoryRequest(
+            studentNo = values["studentNo"].orEmpty(),
+            academicYear = values["academicYear"].orEmpty(),
+            term = values["term"].orEmpty(),
+            gradeNo = values["gradeNo"].orEmpty(),
+            sex = values["sex"].orEmpty()
+        ).takeIf {
+            it.studentNo.isNotBlank() && it.academicYear.isNotBlank() && it.term.isNotBlank() &&
+                it.gradeNo.isNotBlank() && it.sex.isNotBlank()
+        }
     }
 
     fun parseStandard(html: String): List<FitnessStandardTable> {
@@ -239,11 +288,16 @@ class FitnessParser {
 
     private fun tables(html: String): List<HtmlTable> = TABLE_REGEX.findAll(html).map { match ->
         val raw = match.value
-        val rows = ROW_REGEX.findAll(raw).mapNotNull { rowMatch ->
-            val cells = CELL_REGEX.findAll(rowMatch.value).map { decode(it.value) }.toList()
-            cells.takeIf { it.isNotEmpty() }
-        }.toList()
-        HtmlTable(decode(raw), rows)
+        val rowMatches = ROW_REGEX.findAll(raw).map { it.value }.toList()
+        val parsedRows = rowMatches.map { row ->
+            CELL_REGEX.findAll(row).map { decode(it.value) }.toList()
+        }
+        val populatedIndexes = parsedRows.indices.filter { parsedRows[it].isNotEmpty() }
+        HtmlTable(
+            text = decode(raw),
+            rows = populatedIndexes.map(parsedRows::get),
+            rawRows = populatedIndexes.map(rowMatches::get)
+        )
     }.toList()
 
     private fun tableWithHeader(html: String, required: List<String>): HtmlTable =
@@ -316,6 +370,10 @@ class FitnessParser {
     companion object {
         private val TOTAL_LABELS = setOf("总分", "总计")
         private val TABLE_REGEX = Regex("<table[\\s\\S]*?</table>", RegexOption.IGNORE_CASE)
+        private val FORM_REGEX = Regex("<form[\\s\\S]*?</form>", RegexOption.IGNORE_CASE)
+        private val DETAIL_ACTION = Regex("listdetalhistroyScore\\.jsp", RegexOption.IGNORE_CASE)
+        private val INPUT_REGEX = Regex("<input\\b[^>]*>", RegexOption.IGNORE_CASE)
+        private val ATTRIBUTE_REGEX = Regex("""([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", RegexOption.IGNORE_CASE)
         private val ROW_REGEX = Regex("<tr[\\s\\S]*?</tr>", RegexOption.IGNORE_CASE)
         private val CELL_REGEX = Regex("<t[dh][\\s\\S]*?</t[dh]>", RegexOption.IGNORE_CASE)
         private val TAG_REGEX = Regex("<[^>]+>")

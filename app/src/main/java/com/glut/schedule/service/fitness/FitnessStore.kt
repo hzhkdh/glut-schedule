@@ -5,7 +5,25 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
-class FitnessStore(context: Context) {
+interface FitnessStorage {
+    fun saveCredentials(username: String, password: String)
+    fun getUsername(): String
+    fun getPassword(): String
+    fun saveSession(cookie: String)
+    fun getSession(): String
+    fun clearSession()
+    fun saveSnapshot(currentHtml: String, historyHtml: String)
+    fun getCurrentHtml(): String
+    fun getHistoryHtml(): String
+    fun saveHistoryDetail(year: String, term: String, html: String)
+    fun getHistoryDetail(year: String, term: String): String
+    fun saveStandard(html: String)
+    fun getStandardHtml(): String
+    fun clearAccountCache()
+    fun clearAll()
+}
+
+class FitnessStore(context: Context) : FitnessStorage {
     private val securePrefs: SharedPreferences
     private val cachePrefs: SharedPreferences =
         context.getSharedPreferences("fitness_cache", Context.MODE_PRIVATE)
@@ -24,52 +42,62 @@ class FitnessStore(context: Context) {
         migrateCacheIfNeeded()
     }
 
-    fun saveCredentials(username: String, password: String) {
+    override fun saveCredentials(username: String, password: String) {
         securePrefs.edit()
             .putString(KEY_USERNAME, username.trim())
             .putString(KEY_PASSWORD, password)
             .apply()
     }
 
-    fun getUsername(): String = securePrefs.getString(KEY_USERNAME, "").orEmpty()
+    override fun getUsername(): String = securePrefs.getString(KEY_USERNAME, "").orEmpty()
 
-    fun getPassword(): String = securePrefs.getString(KEY_PASSWORD, "").orEmpty()
+    override fun getPassword(): String = securePrefs.getString(KEY_PASSWORD, "").orEmpty()
 
-    fun saveSession(cookie: String) {
+    override fun saveSession(cookie: String) {
         securePrefs.edit().putString(KEY_COOKIE, cookie).apply()
     }
 
-    fun getSession(): String = securePrefs.getString(KEY_COOKIE, "").orEmpty()
+    override fun getSession(): String = securePrefs.getString(KEY_COOKIE, "").orEmpty()
 
-    fun clearSession() {
+    override fun clearSession() {
         securePrefs.edit().remove(KEY_COOKIE).commit()
     }
 
-    fun saveSnapshot(currentHtml: String, historyHtml: String) {
+    override fun saveSnapshot(currentHtml: String, historyHtml: String) {
         cachePrefs.edit()
             .putString(KEY_CURRENT_HTML, currentHtml)
             .putString(KEY_HISTORY_HTML, historyHtml)
             .apply()
     }
 
-    fun getCurrentHtml(): String = cachePrefs.getString(KEY_CURRENT_HTML, "").orEmpty()
+    override fun getCurrentHtml(): String = cachePrefs.getString(KEY_CURRENT_HTML, "").orEmpty()
 
-    fun getHistoryHtml(): String = cachePrefs.getString(KEY_HISTORY_HTML, "").orEmpty()
+    override fun getHistoryHtml(): String = cachePrefs.getString(KEY_HISTORY_HTML, "").orEmpty()
 
-    fun saveHistoryDetail(year: String, term: String, html: String) {
+    override fun saveHistoryDetail(year: String, term: String, html: String) {
         cachePrefs.edit().putString(historyDetailKey(year, term), html).apply()
     }
 
-    fun getHistoryDetail(year: String, term: String): String =
+    override fun getHistoryDetail(year: String, term: String): String =
         cachePrefs.getString(historyDetailKey(year, term), "").orEmpty()
 
-    fun saveStandard(html: String) {
+    override fun saveStandard(html: String) {
         cachePrefs.edit().putString(KEY_STANDARD_HTML, html).apply()
     }
 
-    fun getStandardHtml(): String = cachePrefs.getString(KEY_STANDARD_HTML, "").orEmpty()
+    override fun getStandardHtml(): String = cachePrefs.getString(KEY_STANDARD_HTML, "").orEmpty()
 
-    fun clearAll() {
+    override fun clearAccountCache() {
+        securePrefs.edit().remove(KEY_COOKIE).commit()
+        val editor = cachePrefs.edit()
+            .remove(KEY_CURRENT_HTML)
+            .remove(KEY_HISTORY_HTML)
+        cachePrefs.all.keys.filter { it.startsWith(KEY_HISTORY_DETAIL_PREFIX) }
+            .forEach(editor::remove)
+        editor.commit()
+    }
+
+    override fun clearAll() {
         securePrefs.edit().clear().commit()
         cachePrefs.edit().clear()
             .putInt(KEY_HISTORY_CACHE_VERSION, HISTORY_CACHE_VERSION)

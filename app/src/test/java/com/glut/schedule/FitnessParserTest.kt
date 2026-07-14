@@ -1,5 +1,6 @@
 package com.glut.schedule
 
+import com.glut.schedule.data.model.FitnessHistoryRequest
 import com.glut.schedule.service.parser.FitnessParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -7,6 +8,94 @@ import org.junit.Test
 
 class FitnessParserTest {
     private val parser = FitnessParser()
+
+    @Test
+    fun historyRecordsKeepTheirOfficialDetailRequestFields() {
+        val html = """
+            <form method="post" action="/SportWeb/health_info/listdetalhistroyScore.jsp">
+              <input value="student-a" type="hidden" name="studentNo">
+              <input type="hidden" name="academicYear" value="2024-2025">
+              <input name="term" value="1" type="hidden">
+              <input type="hidden" value="2024" name="gradeNo">
+              <input type="hidden" name="sex" value="1">
+              <table>
+                <tr><td>学年</td><td>学期</td><td>年级</td><td>体测成绩</td><td>体测等级</td></tr>
+                <tr><td>2024-2025</td><td>1</td><td>2024</td><td>88</td><td>良好</td></tr>
+              </table>
+            </form>
+        """.trimIndent()
+
+        val record = parser.parseHistory(html).single()
+
+        assertEquals(
+            FitnessHistoryRequest("student-a", "2024-2025", "1", "2024", "1"),
+            record.detailRequest
+        )
+    }
+
+    @Test
+    fun historyRecordsReadDetailFieldsFromFormsInsideEachTableRow() {
+        val html = """
+            <table>
+              <tr>
+                <td>序号</td><td>学号</td><td>姓名</td><td>性别</td><td>学年</td>
+                <td>学期</td><td>年级</td><td>体测成绩</td><td>体测等级</td><td>详细</td>
+              </tr>
+              <tr>
+                <td>1</td><td>student-a</td><td>测试用户</td><td>男</td><td>2024-2025</td>
+                <td>1</td><td>1</td><td>88</td><td>良好</td>
+                <td><form method="post" action="/SportWeb/health_info/listdetalhistroyScore.jsp">
+                  <input name="studentNo" value="student-a"><input name="academicYear" value="2024-2025">
+                  <input name="term" value="1"><input name="gradeNo" value="1"><input name="sex" value="1">
+                </form></td>
+              </tr>
+              <tr>
+                <td>2</td><td>student-a</td><td>测试用户</td><td>男</td><td>2023-2024</td>
+                <td>2</td><td>1</td><td>80</td><td>及格</td>
+                <td><form method="post" action="/SportWeb/health_info/listdetalhistroyScore.jsp">
+                  <input name="studentNo" value="student-a"><input name="academicYear" value="2023-2024">
+                  <input name="term" value="2"><input name="gradeNo" value="1"><input name="sex" value="1">
+                </form></td>
+              </tr>
+            </table>
+        """.trimIndent()
+
+        val records = parser.parseHistory(html)
+
+        assertEquals(listOf("2024-2025", "2023-2024"), records.map { it.year })
+        assertEquals(
+            FitnessHistoryRequest("student-a", "2024-2025", "1", "1", "1"),
+            records[0].detailRequest
+        )
+        assertEquals(
+            FitnessHistoryRequest("student-a", "2023-2024", "2", "1", "1"),
+            records[1].detailRequest
+        )
+    }
+
+    @Test
+    fun historyParserFindsTheScoreTableInsideLayoutTables() {
+        val html = """
+            <table class="layout">
+              <tr><td>当前位置：学生历年成绩查询</td></tr>
+              <tr><td><table class="content">
+                <tr><td>序号</td><td>学年</td><td>学期</td><td>年级</td><td>体测成绩</td><td>体测等级</td><td>详细</td></tr>
+                <tr><td>1</td><td>2024-2025</td><td>1</td><td>1</td><td>88</td><td>良好</td><td>
+                  <form action="/SportWeb/health_info/listdetalhistroyScore.jsp">
+                    <input name="studentNo" value="student-a"><input name="academicYear" value="2024-2025">
+                    <input name="term" value="1"><input name="gradeNo" value="1"><input name="sex" value="1">
+                  </form>
+                </td></tr>
+              </table></td></tr>
+            </table>
+        """.trimIndent()
+
+        val record = parser.parseHistory(html).single()
+
+        assertEquals("2024-2025", record.year)
+        assertEquals("88", record.totalScore)
+        assertEquals("student-a", record.detailRequest?.studentNo)
+    }
 
     @Test
     fun currentResultKeepsWeightAndAllBonusRows() {

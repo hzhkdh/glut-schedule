@@ -139,14 +139,13 @@ fun FitnessScoreScreen(
             FitnessTab.HISTORY -> HistoryContent(
                 state = state,
                 onSelect = viewModel::selectHistory,
-                onLogin = viewModel::showLogin,
                 modifier = Modifier.weight(1f)
             )
             FitnessTab.STANDARD -> StandardContent(
                 standards = state.standards,
                 selectedKey = state.selectedStandardKey,
+                isRefreshing = state.isRefreshing,
                 onSelect = viewModel::selectStandard,
-                onLogin = viewModel::showLogin,
                 onTableGestureActive = onTableGestureActive,
                 modifier = Modifier.weight(1f)
             )
@@ -232,11 +231,12 @@ private fun ResultContent(
     result: FitnessResult?,
     summaryLabel: String,
     emptyText: String,
-    onLogin: () -> Unit,
+    onLogin: (() -> Unit)? = null,
+    emptyHint: String = if (onLogin == null) "请先在“最新成绩”页登录" else "登录后即可查看体测数据",
     modifier: Modifier = Modifier
 ) {
     if (result == null || result.items.isEmpty()) {
-        EmptyFitnessState(emptyText, onLogin, modifier)
+        EmptyFitnessState(emptyText, emptyHint, onLogin, modifier)
         return
     }
     LazyColumn(
@@ -265,7 +265,6 @@ private fun ResultContent(
 private fun HistoryContent(
     state: FitnessScoreUiState,
     onSelect: (String) -> Unit,
-    onLogin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -297,8 +296,12 @@ private fun HistoryContent(
         ResultContent(
             result = result,
             summaryLabel = selected?.let { "${it.year} 第${it.term}学期总评" } ?: "历年体测总评",
-            emptyText = if (state.history.isEmpty()) "暂无历年体测成绩" else "正在等待历年体测详情",
-            onLogin = onLogin,
+            emptyText = if (state.history.isEmpty()) "暂无历年体测成绩" else "暂无历年体测详情",
+            emptyHint = when {
+                state.isRefreshing -> "正在加载历年体测详情"
+                state.history.isNotEmpty() -> "该学期详情暂时无法加载，可点击顶部刷新重试"
+                else -> "请先在“最新成绩”页登录"
+            },
             modifier = Modifier.weight(1f)
         )
     }
@@ -371,17 +374,28 @@ private fun FitnessItemCard(item: FitnessScoreItem) {
 }
 
 @Composable
-private fun EmptyFitnessState(text: String, onLogin: () -> Unit, modifier: Modifier = Modifier) {
+private fun EmptyFitnessState(
+    text: String,
+    hint: String,
+    onLogin: (() -> Unit)?,
+    modifier: Modifier = Modifier
+) {
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(text, color = FitnessPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Text("登录后即可查看体测数据", color = FitnessSecondary, fontSize = 14.sp)
-            Spacer(Modifier.height(18.dp))
-            Button(
-                onClick = onLogin,
-                colors = ButtonDefaults.buttonColors(containerColor = FitnessAccent)
-            ) { Text("登录体测平台") }
+            Text(
+                hint,
+                color = FitnessSecondary,
+                fontSize = 14.sp
+            )
+            if (onLogin != null) {
+                Spacer(Modifier.height(18.dp))
+                Button(
+                    onClick = onLogin,
+                    colors = ButtonDefaults.buttonColors(containerColor = FitnessAccent)
+                ) { Text("登录体测平台") }
+            }
         }
     }
 }
@@ -390,13 +404,22 @@ private fun EmptyFitnessState(text: String, onLogin: () -> Unit, modifier: Modif
 private fun StandardContent(
     standards: List<FitnessStandardTable>,
     selectedKey: String,
+    isRefreshing: Boolean,
     onSelect: (String) -> Unit,
-    onLogin: () -> Unit,
     onTableGestureActive: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (standards.isEmpty()) {
-        EmptyFitnessState("正在等待评分标准", onLogin, modifier)
+        EmptyFitnessState(
+            text = "暂无评分标准",
+            hint = if (isRefreshing) {
+                "正在加载评分标准"
+            } else {
+                "暂无评分标准，可点击顶部刷新重试；未登录请先在“最新成绩”页登录"
+            },
+            onLogin = null,
+            modifier = modifier
+        )
         return
     }
     val selected = standards.firstOrNull { it.key == selectedKey } ?: standards.first()

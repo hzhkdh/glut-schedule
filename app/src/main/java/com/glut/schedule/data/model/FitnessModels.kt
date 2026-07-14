@@ -15,12 +15,21 @@ data class FitnessResult(
     val totalLevel: String = ""
 )
 
+data class FitnessHistoryRequest(
+    val studentNo: String,
+    val academicYear: String,
+    val term: String,
+    val gradeNo: String,
+    val sex: String
+)
+
 data class FitnessHistoryRecord(
     val year: String,
     val term: String,
     val grade: String = "",
     val totalScore: String = "",
-    val totalLevel: String = ""
+    val totalLevel: String = "",
+    val detailRequest: FitnessHistoryRequest? = null
 ) {
     val key: String get() = "$year-$term"
 }
