@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
@@ -60,149 +63,143 @@ fun AboutScreen(
         modifier = modifier,
         containerColor = Color(0xFFF6F4EF)
     ) { padding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Spacer(modifier = Modifier.height(24.dp))
 
-            // Info card
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFFFFFEFB),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(4.dp)) {
-                    AboutInfoRow(
-                        icon = Icons.Outlined.Info,
-                        label = "当前版本",
-                        value = "v$currentVersion",
-                        trailing = {
-                            if (hasUpdate) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "v$updateAvailableVersion",
-                                        color = Color(0xFFDC2626),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .background(Color(0xFFDC2626), CircleShape)
-                                    )
+                    // Info card
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color(0xFFFFFEFB),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(4.dp)) {
+                            AboutInfoRow(
+                                icon = Icons.Outlined.Info,
+                                label = "当前版本",
+                                value = "v$currentVersion",
+                                trailing = {
+                                    if (hasUpdate) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                "v$updateAvailableVersion",
+                                                color = Color(0xFFDC2626),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .background(Color(0xFFDC2626), CircleShape)
+                                            )
+                                        }
+                                    } else {
+                                        Spacer(modifier = Modifier.width(1.dp))
+                                    }
+                                },
+                                onClick = {
+                                    scope.launch {
+                                        val info = updateChecker.check(currentVersion)
+                                        if (info != null && info.isNewer) {
+                                            onShowUpdateDialog(info)
+                                        } else {
+                                            onShowUpdateDialog(
+                                                UpdateInfo(
+                                                    latestVersion = currentVersion,
+                                                    downloadUrl = "",
+                                                    apkDownloadUrl = "",
+                                                    releaseNotes = "已是最新版本",
+                                                    isNewer = false
+                                                )
+                                            )
+                                        }
+                                    }
                                 }
-                            } else {
-                                Spacer(modifier = Modifier.width(1.dp))
-                            }
-                        },
-                        onClick = {
-                            scope.launch {
-                                val info = updateChecker.check(currentVersion)
-                                if (info != null && info.isNewer) {
-                                    onShowUpdateDialog(info)
-                                } else {
-                                    onShowUpdateDialog(
-                                        UpdateInfo(
-                                            latestVersion = currentVersion,
-                                            downloadUrl = "",
-                                            apkDownloadUrl = "",
-                                            releaseNotes = "已是最新版本",
-                                            isNewer = false
-                                        )
-                                    )
+                            )
+                            HorizontalDivider(color = Color(0xFFEDE8DE))
+                            AboutInfoRow(
+                                icon = Icons.Outlined.Person,
+                                label = "维护者",
+                                value = "24人工智能 hezh",
+                                onClick = {
+                                    uriHandler.openUri("https://github.com/hzhkdh")
                                 }
-                            }
+                            )
+                            HorizontalDivider(color = Color(0xFFEDE8DE))
+                            AboutInfoRow(
+                                icon = Icons.Outlined.Groups,
+                                label = "核心贡献者",
+                                value = "24人工智能 m-z-jia",
+                                onClick = {
+                                    uriHandler.openUri("https://github.com/m-z-jia")
+                                }
+                            )
+                            HorizontalDivider(color = Color(0xFFEDE8DE))
+                            AboutInfoRow(
+                                icon = Icons.Outlined.Lock,
+                                label = "开源许可",
+                                value = "MIT License",
+                                onClick = {
+                                    uriHandler.openUri("https://github.com/hzhkdh/glut-schedule/blob/main/LICENSE")
+                                }
+                            )
+                            HorizontalDivider(color = Color(0xFFEDE8DE))
+                            AboutInfoRow(
+                                icon = Icons.Outlined.Language,
+                                label = "项目地址",
+                                value = "GitHub",
+                                onClick = {
+                                    uriHandler.openUri("https://github.com/hzhkdh/glut-schedule")
+                                }
+                            )
+                            HorizontalDivider(color = Color(0xFFEDE8DE))
+                            AboutInfoRow(
+                                icon = Icons.Outlined.BugReport,
+                                label = "提交问题",
+                                value = "GitHub Issues",
+                                onClick = {
+                                    uriHandler.openUri("https://github.com/hzhkdh/glut-schedule/issues/new")
+                                }
+                            )
+                            HorizontalDivider(color = Color(0xFFEDE8DE))
+                            AboutInfoRow(
+                                icon = Icons.Outlined.Email,
+                                label = "反馈建议",
+                                value = "hezh0425@qq.com",
+                                onClick = {
+                                    uriHandler.openUri("mailto:hezh0425@qq.com")
+                                }
+                            )
                         }
-                    )
-                    HorizontalDivider(color = Color(0xFFEDE8DE))
-                    AboutStaticInfoRow(
-                        icon = Icons.Outlined.Person,
-                        label = "维护者",
-                        value = "24人工智能 hezh"
-                    )
-                    HorizontalDivider(color = Color(0xFFEDE8DE))
-                    AboutInfoRow(
-                        icon = Icons.Outlined.Lock,
-                        label = "开源许可",
-                        value = "MIT License",
-                        onClick = {
-                            uriHandler.openUri("https://github.com/hzhkdh/glut-schedule/blob/main/LICENSE")
-                        }
-                    )
-                    HorizontalDivider(color = Color(0xFFEDE8DE))
-                    AboutInfoRow(
-                        icon = Icons.Outlined.Language,
-                        label = "项目地址",
-                        value = "GitHub",
-                        onClick = {
-                            uriHandler.openUri("https://github.com/hzhkdh/glut-schedule")
-                        }
-                    )
-                    HorizontalDivider(color = Color(0xFFEDE8DE))
-                    AboutInfoRow(
-                        icon = Icons.Outlined.Email,
-                        label = "反馈建议",
-                        value = "hezh0425@qq.com",
-                        onClick = {
-                            uriHandler.openUri("mailto:hezh0425@qq.com")
-                        }
-                    )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
-
-            Text(
-                text = "本应用为独立开发的非官方工具\n与任何学校官方机构无隶属或授权关系",
-                color = Color(0xFF9CA3AF),
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 24.dp)
-            )
+            item {
+                Text(
+                    text = "本应用为独立开发的非官方工具\n与任何学校官方机构无隶属或授权关系",
+                    color = Color(0xFF9CA3AF),
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 24.dp, bottom = 24.dp)
+                )
+            }
         }
-    }
-}
-
-@Composable
-private fun AboutStaticInfoRow(
-    icon: ImageVector,
-    label: String,
-    value: String
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = Color(0xFF3F7DF6),
-            modifier = Modifier.size(22.dp)
-        )
-        Text(
-            text = label,
-            color = Color(0xFF141821),
-            fontSize = 15.sp,
-            maxLines = 1,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = value,
-            color = Color(0xFF667085),
-            fontSize = 13.sp,
-            maxLines = 1
-        )
     }
 }
 

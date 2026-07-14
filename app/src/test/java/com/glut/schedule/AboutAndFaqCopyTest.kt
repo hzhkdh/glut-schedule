@@ -7,12 +7,27 @@ import org.junit.Test
 
 class AboutAndFaqCopyTest {
     @Test
-    fun aboutPageShowsMaintainerInCardAndRemovesFooterAuthorLine() {
+    fun aboutPageLinksMaintainerAndCoreContributorProfiles() {
         val source = readSource("AboutScreen.kt")
 
         assertTrue(source.contains("维护者"))
         assertTrue(source.contains("24人工智能 hezh"))
+        assertTrue(source.contains("uriHandler.openUri(\"https://github.com/hzhkdh\")"))
+        assertTrue(source.contains("核心贡献者"))
+        assertTrue(source.contains("24人工智能 m-z-jia"))
+        assertTrue(source.contains("uriHandler.openUri(\"https://github.com/m-z-jia\")"))
         assertFalse(source.contains("Made with"))
+    }
+
+    @Test
+    fun aboutPageLinksNewGithubIssueAndKeepsEmailFeedback() {
+        val source = readSource("AboutScreen.kt")
+
+        assertTrue(source.contains("LazyColumn("))
+        assertTrue(source.contains("提交问题"))
+        assertTrue(source.contains("GitHub Issues"))
+        assertTrue(source.contains("uriHandler.openUri(\"https://github.com/hzhkdh/glut-schedule/issues/new\")"))
+        assertTrue(source.contains("mailto:hezh0425@qq.com"))
     }
 
     @Test
