@@ -47,6 +47,23 @@ class FinanceViewModelTest {
     }
 
     @Test
+    fun pendingModuleReusesPendingItemsAlreadyStoredInOverview() = runTest {
+        val gateway = FakeGateway()
+        val overview = com.glut.schedule.data.model.FinanceOverview(
+            pendingItems = listOf(FinanceItem("p1", "住宿费", amount = "1200"))
+        )
+        val store = FakeStore().apply {
+            saveModule(FinanceModule.OVERVIEW, CachedFinancePayload(FinancePayload.Overview(overview), 10L))
+        }
+        val vm = FinanceViewModel(gateway, store, CampusType.GUILIN)
+
+        vm.selectModule(FinanceModule.PENDING)
+
+        assertEquals("住宿费", (vm.uiState.value.activePayload as FinancePayload.Items).values.single().name)
+        assertTrue(gateway.fetches.isEmpty())
+    }
+
+    @Test
     fun refreshRequestsOnlyActiveModule() = runTest {
         val gateway = FakeGateway()
         val store = FakeStore(cookie = "session")

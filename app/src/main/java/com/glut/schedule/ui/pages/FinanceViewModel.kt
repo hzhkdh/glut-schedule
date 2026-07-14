@@ -42,8 +42,14 @@ data class FinanceUiState(
     val selectedItem: FinanceItem? = null,
     val ticketImage: String = ""
 ) {
-    val activePayload: FinancePayload? get() = payloads[module]?.payload
-    val activeSavedAt: Long get() = payloads[module]?.savedAt ?: 0L
+    val activePayload: FinancePayload?
+        get() = payloads[module]?.payload ?: if (module == FinanceModule.PENDING) {
+            val overview = payloads[FinanceModule.OVERVIEW]?.payload as? FinancePayload.Overview
+            overview?.let { FinancePayload.Items(it.value.pendingItems) }
+        } else null
+    val activeSavedAt: Long
+        get() = payloads[module]?.savedAt
+            ?: if (module == FinanceModule.PENDING) payloads[FinanceModule.OVERVIEW]?.savedAt ?: 0L else 0L
 }
 
 class FinanceViewModel(
