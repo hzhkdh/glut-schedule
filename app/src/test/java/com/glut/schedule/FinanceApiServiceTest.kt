@@ -39,4 +39,11 @@ class FinanceApiServiceTest {
 
         assertEquals("ASP.NET_SessionId=new; route=a; token=t1", merged)
     }
+
+    @Test
+    fun redirectsRequireOfficialHostAndHttps() {
+        assertTrue(FinanceResponses.isSafeRedirect("https://cwjf.glut.edu.cn/home/index"))
+        assertFalse(FinanceResponses.isSafeRedirect("http://cwjf.glut.edu.cn/home/index"))
+        assertFalse(FinanceResponses.isSafeRedirect("https://evil.example/home/index"))
+    }
 }

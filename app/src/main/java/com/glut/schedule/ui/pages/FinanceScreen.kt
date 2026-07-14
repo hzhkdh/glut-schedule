@@ -49,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,6 +77,8 @@ import com.glut.schedule.data.model.FinanceTableSection
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private val FinancePrimary = Color(0xFF244F46)
 private val FinancePrimaryLight = Color(0xFF397267)
@@ -327,7 +330,7 @@ private fun DetailSheet(item: FinanceItem, ticketImage: String, onTicket: (Strin
         if (item.secondary.isNotBlank()) Text(item.secondary, color = FinanceMuted, modifier = Modifier.padding(top = 5.dp, bottom = 14.dp))
         item.details.forEach { field -> Row(Modifier.fillMaxWidth().padding(vertical = 7.dp)) { Text(field.label, color = FinanceMuted, modifier = Modifier.weight(1f)); Text(field.value, color = if (field.highlight) FinanceAmount else Color(0xFF202523), fontWeight = FontWeight.Medium) } }
         if (item.canPreview && ticketImage.isBlank()) Button(onClick = { onTicket(item.receiptNumbers.first()) }, colors = ButtonDefaults.buttonColors(containerColor = FinancePrimary), modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("查看电子票据") }
-        dataBitmap(ticketImage)?.let { bitmap -> androidx.compose.foundation.Image(bitmap.asImageBitmap(), null, Modifier.fillMaxWidth().padding(top = 12.dp)) }
+        rememberDataBitmap(ticketImage)?.let { bitmap -> androidx.compose.foundation.Image(bitmap.asImageBitmap(), null, Modifier.fillMaxWidth().padding(top = 12.dp)) }
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -359,7 +362,7 @@ private fun FinanceLoginDialog(
                 Text("忘记密码？在浏览器中重置", color = FinancePrimary, fontSize = 12.sp, modifier = Modifier.clickable(onClick = onResetPassword))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(login.captcha, onCaptcha, label = { Text("验证码") }, singleLine = true, modifier = Modifier.weight(1f))
-                    dataBitmap(login.captchaImage)?.let { bitmap -> androidx.compose.foundation.Image(bitmap.asImageBitmap(), "刷新验证码", Modifier.size(108.dp, 52.dp).clickable(onClick = onRefreshCaptcha)) }
+                    rememberDataBitmap(login.captchaImage)?.let { bitmap -> androidx.compose.foundation.Image(bitmap.asImageBitmap(), "刷新验证码", Modifier.size(108.dp, 52.dp).clickable(onClick = onRefreshCaptcha)) }
                 }
                 if (login.error.isNotBlank()) Text(login.error, color = FinanceAmount, fontSize = 12.sp)
                 Text("账号和密码使用系统密钥加密，仅保存在本机。", color = FinanceMuted, fontSize = 10.sp)
@@ -389,3 +392,11 @@ private fun money(value: String): String = value.trim().ifBlank { "0.00" }
 private fun cacheTime(value: Long): String = if (value <= 0) "暂无缓存" else "${SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(value))} 更新"
 private fun tableWidth(sections: List<FinanceTableSection>) = ((sections.maxOfOrNull { it.columns.size } ?: 1) * 120).dp
 private fun dataBitmap(value: String) = runCatching { val encoded = value.substringAfter("base64,", ""); if (encoded.isBlank()) null else Base64.decode(encoded, Base64.DEFAULT).let { BitmapFactory.decodeByteArray(it, 0, it.size) } }.getOrNull()
+
+@Composable
+private fun rememberDataBitmap(source: String): android.graphics.Bitmap? {
+    val bitmap by produceState<android.graphics.Bitmap?>(null, source) {
+        value = withContext(Dispatchers.Default) { dataBitmap(source) }
+    }
+    return bitmap
+}

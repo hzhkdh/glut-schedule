@@ -27,7 +27,7 @@ class FinanceUiContractTest {
         assertTrue(main.contains("DrawerItem.Finance"))
         assertTrue(main.contains("FinanceViewModelFactory"))
         assertTrue(main.contains("FinanceScreen("))
-        assertTrue(main.contains("financeViewModel.clearData()"))
+        assertTrue(main.contains("financeViewModel?.clearData()"))
     }
 
     private fun source(path: String): String {

@@ -56,4 +56,13 @@ class FinanceParserTest {
         assertEquals(listOf("类别", "要求"), payload.sections.single().columns)
         assertEquals(listOf("必修", "42"), payload.sections.single().rows.first())
     }
+
+    @Test
+    fun courseRecordsKeepCurrentTotalsAndSummary() {
+        val value = JSONObject("""{"takeCourseList":[{"kcmc":"高数","xf":"4"}],"totalList":[{"kcmc":"已修合计","xf":"80"}],"totalMoney":"1200","totalCredit":"84"}""")
+        val payload = parser.parse(FinanceModule.COURSE_RECORDS, value) as FinancePayload.Items
+
+        assertEquals(listOf("高数", "已修合计", "选课汇总"), payload.values.map { it.name })
+        assertEquals("84", payload.values.last().details.first { it.label == "总学分" }.value)
+    }
 }

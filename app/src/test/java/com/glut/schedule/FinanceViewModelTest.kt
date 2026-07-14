@@ -13,6 +13,7 @@ import com.glut.schedule.service.finance.FinanceResponse
 import com.glut.schedule.service.finance.FinanceStorage
 import com.glut.schedule.ui.pages.FinanceViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -120,12 +121,81 @@ class FinanceViewModelTest {
         assertTrue(vm.uiState.value.payloads.isEmpty())
     }
 
+    @Test
+    fun clearDataInvalidatesAnInFlightResponse() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<FinanceResponse>()
+        val gateway = object : FinanceGateway {
+            override suspend fun captcha() = FinanceCaptcha("image", "captcha")
+            override suspend fun login(username: String, password: String, captcha: String, cookie: String) = FinanceResponse(cookie = "login")
+            override suspend fun fetch(module: FinanceModule, cookie: String, page: Int, pageSize: Int): FinanceResponse {
+                started.complete(Unit)
+                return response.await()
+            }
+            override suspend fun ticketImage(cookie: String, chargeId: String, receiptNo: String) = FinanceResponse(cookie = cookie)
+        }
+        val store = FakeStore(cookie = "session")
+        val vm = FinanceViewModel(gateway, store, CampusType.GUILIN)
+
+        vm.refresh()
+        started.await()
+        vm.clearData()
+        response.complete(FinanceResponse(FinancePayload.Items(listOf(FinanceItem("late", "旧响应"))), "late-session"))
+
+        assertEquals("", store.sessionCookie())
+        assertEquals(null, store.module(FinanceModule.OVERVIEW))
+        assertTrue(vm.uiState.value.payloads.isEmpty())
+    }
+
+    @Test
+    fun expiredLoadMoreResumesTheSamePageAfterLogin() = runTest {
+        val gateway = FakeGateway(expireFirstFetch = true)
+        val store = FakeStore(cookie = "expired").apply {
+            saveModule(
+                FinanceModule.TRANSACTIONS,
+                CachedFinancePayload(FinancePayload.Items(emptyList(), page = 1, total = 40, hasMore = true), 1L)
+            )
+        }
+        val vm = FinanceViewModel(gateway, store, CampusType.GUILIN)
+        vm.selectModule(FinanceModule.TRANSACTIONS)
+
+        vm.loadMore()
+        vm.updateCaptcha("1234")
+        vm.login()
+
+        assertEquals(listOf(2, 2), gateway.fetchPages)
+    }
+
+    @Test
+    fun newestCaptchaKeepsItsMatchingCookieWhenRequestsFinishOutOfOrder() = runTest {
+        val first = CompletableDeferred<FinanceCaptcha>()
+        val second = CompletableDeferred<FinanceCaptcha>()
+        val replies = ArrayDeque(listOf(first, second))
+        val gateway = object : FinanceGateway {
+            override suspend fun captcha() = replies.removeFirst().await()
+            override suspend fun login(username: String, password: String, captcha: String, cookie: String) = FinanceResponse(cookie = cookie)
+            override suspend fun fetch(module: FinanceModule, cookie: String, page: Int, pageSize: Int) = FinanceResponse(cookie = cookie)
+            override suspend fun ticketImage(cookie: String, chargeId: String, receiptNo: String) = FinanceResponse(cookie = cookie)
+        }
+        val vm = FinanceViewModel(gateway, FakeStore(), CampusType.GUILIN)
+
+        vm.showLogin()
+        vm.refreshCaptcha()
+        second.complete(FinanceCaptcha("new-image", "new-cookie"))
+        first.complete(FinanceCaptcha("old-image", "old-cookie"))
+
+        assertEquals("new-image", vm.uiState.value.login.captchaImage)
+        assertEquals("new-cookie", vm.uiState.value.login.cookie)
+    }
+
     private class FakeGateway(private var expireFirstFetch: Boolean = false) : FinanceGateway {
         val fetches = mutableListOf<FinanceModule>()
+        val fetchPages = mutableListOf<Int>()
         override suspend fun captcha() = FinanceCaptcha("data:image/jpeg;base64,abc", "captcha-session")
         override suspend fun login(username: String, password: String, captcha: String, cookie: String) = FinanceResponse(cookie = "new-session")
         override suspend fun fetch(module: FinanceModule, cookie: String, page: Int, pageSize: Int): FinanceResponse {
             fetches += module
+            fetchPages += page
             if (expireFirstFetch) {
                 expireFirstFetch = false
                 throw FinanceFailure.SessionExpired()

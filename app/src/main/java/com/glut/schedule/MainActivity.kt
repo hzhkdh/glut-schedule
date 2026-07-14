@@ -268,14 +268,16 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
-                val financeViewModel: FinanceViewModel = viewModel(
-                    key = "finance-${campusType.name}",
-                    factory = FinanceViewModelFactory(
-                        gateway = container.financeApiService,
-                        store = container.financeStore,
-                        campus = campusType
+                val financeViewModel: FinanceViewModel? = if (selectedItem == DrawerItem.Finance) {
+                    viewModel(
+                        key = "finance-${campusType.name}",
+                        factory = FinanceViewModelFactory(
+                            gateway = container.financeApiService,
+                            store = container.financeStore,
+                            campus = campusType
+                        )
                     )
-                )
+                } else null
 
                 val context = androidx.compose.ui.platform.LocalContext.current
                 val backgroundPicker = rememberLauncherForActivityResult(
@@ -529,12 +531,14 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                 }
                                             }
                                             DrawerItem.Finance -> {
-                                                val financeState by financeViewModel.uiState.collectAsStateWithLifecycle()
-                                                IconButton(
-                                                    onClick = financeViewModel::refresh,
-                                                    enabled = !financeState.isRefreshing && !financeState.campusUnsupported
-                                                ) {
-                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                                                financeViewModel?.let { viewModel ->
+                                                    val financeState by viewModel.uiState.collectAsStateWithLifecycle()
+                                                    IconButton(
+                                                        onClick = viewModel::refresh,
+                                                        enabled = !financeState.isRefreshing && !financeState.campusUnsupported
+                                                    ) {
+                                                        Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                                                    }
                                                 }
                                             }
                                             DrawerItem.StudyPlan -> {
@@ -575,10 +579,12 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     viewModel = fitnessScoreViewModel,
                                     onTableGestureActive = { drawerGestureBlocked = it }
                                 )
-                                DrawerItem.Finance -> FinanceScreen(
-                                    viewModel = financeViewModel,
-                                    onTableGestureActive = { drawerGestureBlocked = it }
-                                )
+                                DrawerItem.Finance -> financeViewModel?.let {
+                                    FinanceScreen(
+                                        viewModel = it,
+                                        onTableGestureActive = { drawerGestureBlocked = it }
+                                    )
+                                }
                                 DrawerItem.StudyPlan -> StudyPlanScreen(viewModel = studyPlanViewModel)
                                 DrawerItem.Exam -> ExamScreen(
                                     viewModel = examViewModel,
@@ -660,7 +666,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     showResetConfirm = false
                                     directLoginViewModel.clearLoginState()
                                     fitnessScoreViewModel.clearData()
-                                    financeViewModel.clearData()
+                                    financeViewModel?.clearData() ?: container.financeStore.clearAll()
                                     scope.launch {
                                         container.scheduleRepository.clearAllData()
                                         container.settingsStore.clearAll()

@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -57,6 +58,11 @@ object FinanceRequests {
 }
 
 object FinanceResponses {
+    fun isSafeRedirect(url: String): Boolean {
+        val parsed = url.toHttpUrlOrNull() ?: return false
+        return parsed.scheme == "https" && parsed.host == "cwjf.glut.edu.cn" && parsed.port == 443
+    }
+
     fun isSessionExpired(value: Any?): Boolean {
         val message = value?.toString().orEmpty().trim()
         val normalized = message.replace(Regex("[\\s_-]+"), "").lowercase()
@@ -209,12 +215,17 @@ class FinanceApiService(
                 if (response.code in REDIRECT_CODES) {
                     val location = response.header("Location") ?: throw FinanceFailure.Upstream("财务系统跳转地址为空")
                     val next = response.request.url.resolve(location) ?: throw FinanceFailure.Upstream("财务系统跳转地址无效")
-                    if (next.host != "cwjf.glut.edu.cn") throw FinanceFailure.Upstream("财务系统返回了不安全的跳转地址")
+                    if (!FinanceResponses.isSafeRedirect(next.toString())) throw FinanceFailure.Upstream("财务系统返回了不安全的跳转地址")
                     url = next.toString()
                     if (response.code == 303) methodFields = null
                     return@use
                 }
-                val body = response.body?.bytes() ?: ByteArray(0)
+                val responseBody = response.body
+                val maxBytes = if (accept.startsWith("image/")) MAX_IMAGE_BYTES else MAX_JSON_BYTES
+                val contentLength = responseBody?.contentLength() ?: 0L
+                if (contentLength > maxBytes) throw FinanceFailure.Upstream("财务系统响应数据过大")
+                val body = responseBody?.source()?.readByteArray(maxBytes + 1L) ?: ByteArray(0)
+                if (body.size > maxBytes) throw FinanceFailure.Upstream("财务系统响应数据过大")
                 return HttpResult(body.toString(Charsets.UTF_8), body, response.header("Content-Type").orEmpty(), cookie, response.request.url.toString())
             }
         }
@@ -230,6 +241,8 @@ class FinanceApiService(
         private const val INDEX_URL = "$BASE_URL/home/index"
         private const val INTERFACE_URL = "$BASE_URL/interface/index"
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
+        private const val MAX_JSON_BYTES = 2 * 1024 * 1024
+        private const val MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
         private fun defaultClient() = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)

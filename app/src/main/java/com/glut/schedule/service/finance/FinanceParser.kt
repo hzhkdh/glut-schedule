@@ -118,8 +118,9 @@ class FinanceParser {
 
     private fun parseCourseRecords(value: Any?): List<FinanceItem> {
         val root = value.asObject()
-        val source = if (root.length() == 0) value else root.opt("takeCourseList") ?: root.opt("currentList") ?: root
-        return source.asList().mapIndexed { index, item ->
+        val current = if (root.length() == 0) value.asList() else (root.opt("takeCourseList") ?: root.opt("currentList")).asList()
+        val totals = root.opt("totalList").asList()
+        val records = (current + totals).mapIndexed { index, item ->
             FinanceItem(
                 id = item.id(index, "CourseID"),
                 name = item.text("kechengmingcheng", "kcmc", "CourseName", "name"),
@@ -128,6 +129,17 @@ class FinanceParser {
                 details = fields("课程代码" to item.text("kechengbianma", "kcdm", "CourseCode"), "学分" to item.text("xuefen", "xf", "Credit"), "单价" to item.text("danjia", "UnitPrice"))
             )
         }
+        val totalMoney = root.text("totalMoney", "TotalMoney")
+        val totalCredit = root.text("totalCredit", "TotalCredit")
+        val summary = if (totalMoney.isBlank() && totalCredit.isBlank()) emptyList() else listOf(
+            FinanceItem(
+                id = "summary",
+                name = "选课汇总",
+                amount = totalMoney,
+                details = fields("总金额" to totalMoney, "总学分" to totalCredit)
+            )
+        )
+        return records + summary
     }
 
     private fun parseTickets(value: Any?): List<FinanceItem> = value.asList().mapIndexed { index, item ->

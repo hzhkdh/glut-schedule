@@ -68,10 +68,19 @@ class FinanceViewModel(
     )
     val uiState: StateFlow<FinanceUiState> = _uiState.asStateFlow()
 
-    private var pendingRefresh: FinanceModule? = null
+    private sealed interface PendingAction {
+        data class Fetch(val module: FinanceModule, val page: Int, val append: Boolean) : PendingAction
+        data class Ticket(val item: FinanceItem, val receiptNo: String) : PendingAction
+    }
+
+    private var pendingAction: PendingAction? = null
+    private var generation = 0
+    private var captchaRequestId = 0
 
     fun clearData() {
-        pendingRefresh = null
+        generation++
+        captchaRequestId++
+        pendingAction = null
         store.clearAll()
         _uiState.value = FinanceUiState(campusUnsupported = _uiState.value.campusUnsupported)
     }
@@ -85,26 +94,28 @@ class FinanceViewModel(
     fun refresh() {
         if (_uiState.value.campusUnsupported || _uiState.value.isRefreshing) return
         val module = _uiState.value.module
-        pendingRefresh = module
+        val action = PendingAction.Fetch(module, 1, false)
+        pendingAction = action
         val cookie = store.sessionCookie()
         if (cookie.isBlank()) requestCaptcha("请先登录财务平台")
-        else viewModelScope.launch { fetch(module, cookie, 1, append = false) }
+        else viewModelScope.launch { fetch(action, cookie) }
     }
 
     fun loadMore() {
         val payload = _uiState.value.activePayload as? FinancePayload.Items ?: return
         if (!payload.hasMore || _uiState.value.isRefreshing) return
         val cookie = store.sessionCookie()
+        val action = PendingAction.Fetch(_uiState.value.module, payload.page + 1, true)
+        pendingAction = action
         if (cookie.isBlank()) {
-            pendingRefresh = _uiState.value.module
             requestCaptcha("登录态已失效，请重新登录")
             return
         }
-        viewModelScope.launch { fetch(_uiState.value.module, cookie, payload.page + 1, append = true) }
+        viewModelScope.launch { fetch(action, cookie) }
     }
 
     fun showLogin() {
-        pendingRefresh = _uiState.value.module
+        pendingAction = PendingAction.Fetch(_uiState.value.module, 1, false)
         requestCaptcha()
     }
 
@@ -129,20 +140,27 @@ class FinanceViewModel(
             return
         }
         viewModelScope.launch {
+            val requestGeneration = generation
             _uiState.update { it.copy(isRefreshing = true, login = it.login.copy(error = "")) }
             try {
                 val result = gateway.login(login.username, login.password, login.captcha, login.cookie)
+                if (requestGeneration != generation) return@launch
                 store.saveCredentials(FinanceCredentials(login.username, login.password))
                 store.saveSessionCookie(result.cookie)
                 _uiState.update { it.copy(isRefreshing = false, login = it.login.copy(visible = false, captcha = "", captchaImage = "", error = "")) }
-                val resume = pendingRefresh
-                if (resume != null) fetch(resume, result.cookie, 1, append = false)
+                when (val resume = pendingAction) {
+                    is PendingAction.Fetch -> fetch(resume, result.cookie)
+                    is PendingAction.Ticket -> fetchTicket(resume, result.cookie)
+                    null -> Unit
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: FinanceFailure.CaptchaInvalid) {
+                if (requestGeneration != generation) return@launch
                 _uiState.update { it.copy(isRefreshing = false, login = it.login.copy(error = error.message.orEmpty(), captcha = "")) }
                 requestCaptcha(preserveError = true)
             } catch (error: Exception) {
+                if (requestGeneration != generation) return@launch
                 _uiState.update { it.copy(isRefreshing = false, login = it.login.copy(error = errorMessage(error), captcha = "")) }
             }
         }
@@ -152,27 +170,40 @@ class FinanceViewModel(
 
     fun loadTicketImage(item: FinanceItem, receiptNo: String) {
         if (_uiState.value.isRefreshing || !item.canPreview) return
+        val action = PendingAction.Ticket(item, receiptNo)
+        pendingAction = action
         val cookie = store.sessionCookie()
         if (cookie.isBlank()) return requestCaptcha("登录态已失效，请重新登录")
-        viewModelScope.launch {
-            _uiState.update { it.copy(isRefreshing = true, message = "正在获取电子票据...") }
-            try {
-                val result = gateway.ticketImage(cookie, item.chargeId, receiptNo)
+        viewModelScope.launch { fetchTicket(action, cookie) }
+    }
+
+    private suspend fun fetchTicket(action: PendingAction.Ticket, cookie: String) {
+        val requestGeneration = generation
+        var handedOffToLogin = false
+        _uiState.update { it.copy(isRefreshing = true, message = "正在获取电子票据...") }
+        try {
+                val result = gateway.ticketImage(cookie, action.item.chargeId, action.receiptNo)
+                if (requestGeneration != generation) return
                 if (result.cookie.isNotBlank()) store.saveSessionCookie(result.cookie)
                 val image = (result.payload as? FinancePayload.TicketImage)?.dataUrl.orEmpty()
                 _uiState.update { it.copy(ticketImage = image, message = if (image.isBlank()) "未获取到票据图片" else "") }
+                if (pendingAction == action) pendingAction = null
             } catch (error: Exception) {
-                handleFailure(error)
+                if (requestGeneration != generation) return
+                handedOffToLogin = handleFailure(error)
             } finally {
-                _uiState.update { it.copy(isRefreshing = false) }
+                if (requestGeneration == generation && !handedOffToLogin) _uiState.update { it.copy(isRefreshing = false) }
             }
-        }
     }
 
-    private suspend fun fetch(module: FinanceModule, cookie: String, page: Int, append: Boolean) {
+    private suspend fun fetch(action: PendingAction.Fetch, cookie: String) {
+        val (module, page, append) = action
+        val requestGeneration = generation
+        var handedOffToLogin = false
         _uiState.update { it.copy(isRefreshing = true, message = if (page > 1) "正在加载更多..." else "正在刷新${module.label}...") }
         try {
             val result = gateway.fetch(module, cookie, page, PAGE_SIZE)
+            if (requestGeneration != generation) return
             if (result.cookie.isNotBlank()) store.saveSessionCookie(result.cookie)
             val incoming = result.payload ?: return
             val payload = if (append && incoming is FinancePayload.Items) {
@@ -182,44 +213,51 @@ class FinanceViewModel(
             val cached = CachedFinancePayload(payload, System.currentTimeMillis())
             store.saveModule(module, cached)
             _uiState.update { it.copy(payloads = it.payloads + (module to cached), message = "${module.label}已更新") }
-            pendingRefresh = null
+            if (pendingAction == action) pendingAction = null
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            handleFailure(error)
+            if (requestGeneration != generation) return
+            handedOffToLogin = handleFailure(error)
         } finally {
-            _uiState.update { it.copy(isRefreshing = false) }
+            if (requestGeneration == generation && !handedOffToLogin) _uiState.update { it.copy(isRefreshing = false) }
         }
     }
 
-    private fun handleFailure(error: Exception) {
+    private fun handleFailure(error: Exception): Boolean {
         if (error is FinanceFailure.SessionExpired) {
             store.clearSession()
             requestCaptcha("财务登录已失效，请重新登录")
+            return true
         } else {
             _uiState.update { it.copy(message = errorMessage(error)) }
         }
+        return false
     }
 
     private fun requestCaptcha(message: String = "", preserveError: Boolean = false) {
         if (_uiState.value.campusUnsupported) return
+        val requestGeneration = generation
+        val requestId = ++captchaRequestId
         _uiState.update {
             it.copy(
                 isRefreshing = true,
                 message = message,
-                login = it.login.copy(visible = true, error = if (preserveError) it.login.error else "", captcha = "")
+                login = it.login.copy(visible = true, error = if (preserveError) it.login.error else "", captcha = "", captchaImage = "", cookie = "")
             )
         }
         viewModelScope.launch {
             try {
                 val result = gateway.captcha()
+                if (requestGeneration != generation || requestId != captchaRequestId) return@launch
                 _uiState.update { it.copy(login = it.login.copy(captchaImage = result.imageDataUrl, cookie = result.cookie)) }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
+                if (requestGeneration != generation || requestId != captchaRequestId) return@launch
                 _uiState.update { it.copy(login = it.login.copy(error = errorMessage(error))) }
             } finally {
-                _uiState.update { it.copy(isRefreshing = false) }
+                if (requestGeneration == generation && requestId == captchaRequestId) _uiState.update { it.copy(isRefreshing = false) }
             }
         }
     }

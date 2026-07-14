@@ -67,9 +67,9 @@ class AppContainer(application: Application) {
     val fitnessStore = FitnessStore(application)
     val fitnessApiService = FitnessApiService()
     val fitnessParser = FitnessParser()
-    val financeStore = FinanceStore(application)
-    val financeParser = FinanceParser()
-    val financeApiService = FinanceApiService(financeParser)
+    val financeStore by lazy { FinanceStore(application) }
+    private val financeParser by lazy { FinanceParser() }
+    val financeApiService by lazy { FinanceApiService(financeParser) }
     val academicLoginService = AcademicLoginService(academicSessionStore, credentialStore)
     val scoreParser = ScoreParser()
     val gradeExamParser = GradeExamParser()
