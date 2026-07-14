@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -711,7 +713,26 @@ private fun FitnessLoginDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消", color = FitnessSecondary) } },
         confirmButton = {
             TextButton(onClick = onLogin, enabled = !state.isRefreshing) {
-                Text("登录并查询", color = FitnessAccent, fontWeight = FontWeight.SemiBold)
+                val actionColor = if (state.isRefreshing) {
+                    FitnessAccent.copy(alpha = 0.38f)
+                } else {
+                    FitnessAccent
+                }
+                if (state.isRefreshing) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = actionColor,
+                            strokeWidth = 2.dp
+                        )
+                        Text("登录中…", color = actionColor, fontWeight = FontWeight.SemiBold)
+                    }
+                } else {
+                    Text("登录并查询", color = actionColor, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
     )

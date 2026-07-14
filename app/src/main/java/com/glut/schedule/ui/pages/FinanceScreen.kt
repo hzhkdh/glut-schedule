@@ -73,6 +73,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -98,8 +99,7 @@ private val FinanceMuted = Color(0xFF737B78)
 private val FinanceBorder = Color(0xFFE7E1D7)
 private val CreditHeaderBg = Color(0xFFE7EEF8)
 private val CreditSectionBg = Color(0xFFE5ECE8)
-private val CREDIT_INDEX_WIDTH = 52.dp
-private val CREDIT_CELL_WIDTH = 148.dp
+private val CREDIT_INDEX_WIDTH = 48.dp
 private val CREDIT_SECTION_GAP = 18.dp
 private const val FINANCE_HOME_URL = "https://cwjf.glut.edu.cn/home/login"
 private const val FINANCE_RESET_URL = "https://cwjf.glut.edu.cn/home/mmcz"
@@ -373,7 +373,11 @@ private fun CreditTableRow(values: List<String>, columns: List<String>, header: 
                 val columnIndex = if (fixedIndex) index + 1 else index
                 val column = columns.getOrNull(columnIndex).orEmpty()
                 val value = scrollingValues.getOrNull(index).orEmpty()
-                CreditCell(if (!header && !moneyVisible && isFinanceMoneyLabel(column)) "****" else value, header)
+                CreditCell(
+                    value = if (!header && !moneyVisible && isFinanceMoneyLabel(column)) "****" else value,
+                    column = column,
+                    header = header
+                )
             }
         }
     }
@@ -391,13 +395,22 @@ private fun CreditIndexCell(value: String, header: Boolean) {
 }
 
 @Composable
-private fun CreditCell(value: String, header: Boolean) {
+private fun CreditCell(value: String, column: String, header: Boolean) {
     Box(
-        Modifier.width(CREDIT_CELL_WIDTH).fillMaxHeight().heightIn(min = 52.dp)
+        Modifier.width(creditColumnWidth(column)).fillMaxHeight().heightIn(min = 52.dp)
             .background(if (header) CreditHeaderBg else FinanceCard).border(.5.dp, FinanceBorder).padding(horizontal = 10.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(value.ifBlank { "—" }, fontSize = 11.sp, fontWeight = if (header) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center)
+    }
+}
+
+internal fun creditColumnWidth(column: String): Dp {
+    val displayUnits = column.sumOf { character -> if (character.code > 0x7F) 2 else 1 }
+    return when {
+        displayUnits <= 12 -> 96.dp
+        displayUnits <= 20 -> 112.dp
+        else -> 124.dp
     }
 }
 

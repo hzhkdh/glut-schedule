@@ -173,6 +173,31 @@ class ProfessionalScoreCalculatorTest {
     }
 
     @Test
+    fun sameNamedCoursesInAutumnAndSpringAreBothIncluded() {
+        val groups = listOf(
+            groupWithCourses(
+                "思想政治课",
+                "必修",
+                arrayOf(
+                    course("2025秋", "形势与政策" to 1.0),
+                    course("2026春", "形势与政策" to 1.0)
+                )
+            )
+        )
+        val scores = listOf(
+            score("形势与政策", "80", year = "2025", term = 2),
+            score("形势与政策", "90", year = "2026", term = 1)
+        )
+
+        val result = ProfessionalScoreCalculator.calculate("2025学年", groups, scores)
+
+        assertEquals(2, result.courses.size)
+        assertEquals(listOf("2025秋", "2026春"), result.courses.map { it.semester })
+        assertEquals(2.0, result.totalCredit, 0.01)
+        assertEquals(85.0, result.professionalScore!!, 0.01)
+    }
+
+    @Test
     fun emptyOverridesDoNotChangeResultAndManualIncludeCanExtendBeforeAggregation() {
         val groups = listOf(groupWithCourses("专业核心课", "必修", arrayOf(course("2025秋", "数据库系统" to 3.0))))
         val scores = listOf(score("数据库系统", "90", year = "2025", term = 2))

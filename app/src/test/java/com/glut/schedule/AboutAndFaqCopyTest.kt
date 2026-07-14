@@ -7,14 +7,14 @@ import org.junit.Test
 
 class AboutAndFaqCopyTest {
     @Test
-    fun aboutPageLinksMaintainerAndCoreContributorProfiles() {
+    fun aboutPageLinksMaintainerAndContributorProfiles() {
         val source = readSource("AboutScreen.kt")
 
         assertTrue(source.contains("维护者"))
         assertTrue(source.contains("24人工智能 hezh"))
         assertTrue(source.contains("uriHandler.openUri(\"https://github.com/hzhkdh\")"))
-        assertTrue(source.contains("核心贡献者"))
-        assertTrue(source.contains("24人工智能 m-z-jia"))
+        assertTrue(source.contains("label = \"贡献者\""))
+        assertTrue(source.contains("24人工智能 mzjia"))
         assertTrue(source.contains("uriHandler.openUri(\"https://github.com/m-z-jia\")"))
         assertFalse(source.contains("Made with"))
     }

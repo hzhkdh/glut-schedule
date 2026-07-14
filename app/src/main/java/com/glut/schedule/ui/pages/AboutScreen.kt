@@ -140,8 +140,8 @@ fun AboutScreen(
                             HorizontalDivider(color = Color(0xFFEDE8DE))
                             AboutInfoRow(
                                 icon = Icons.Outlined.Groups,
-                                label = "核心贡献者",
-                                value = "24人工智能 m-z-jia",
+                                label = "贡献者",
+                                value = "24人工智能 mzjia",
                                 onClick = {
                                     uriHandler.openUri("https://github.com/m-z-jia")
                                 }

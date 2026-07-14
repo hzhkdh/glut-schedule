@@ -216,6 +216,8 @@ class FinanceViewModel(
                 val image = (result.payload as? FinancePayload.TicketImage)?.dataUrl.orEmpty()
                 _uiState.update { it.copy(ticketImage = image, message = if (image.isBlank()) "未获取到票据图片" else "") }
                 if (pendingAction == action) pendingAction = null
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
                 if (requestGeneration != generation) return
                 handedOffToLogin = handleFailure(error)

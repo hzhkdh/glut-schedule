@@ -93,7 +93,9 @@ object ProfessionalScoreCalculator {
                     .filterNot { course -> course.id in options.overrides.excludedCourseIds }
                     .map { course -> EligibleCourse(group.groupName, group.attribute, course) }
             }
-            .distinctBy { normalizeCourseName(it.course.courseName) }
+            .distinctBy {
+                normalizeCourseName(it.course.courseName) to it.course.semester.trim()
+            }
             .sortedWith { left, right ->
                 chineseCollator.compare(left.course.courseName, right.course.courseName)
             }

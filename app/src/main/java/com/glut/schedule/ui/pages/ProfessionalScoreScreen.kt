@@ -11,10 +11,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
@@ -154,16 +154,16 @@ private fun AcademicYearSelector(
     selectedAcademicYear: String?,
     onSelect: (String) -> Unit
 ) {
-    LazyRow(
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(horizontal = 2.dp)
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        items(academicYears, key = { it }) { academicYear ->
+        academicYears.forEach { academicYear ->
             val selected = academicYear == selectedAcademicYear
             Surface(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
+                    .weight(1f)
+                    .heightIn(min = 44.dp)
                     .clickable { onSelect(academicYear) },
                 color = if (selected) PSDark else PSChipBg,
                 shape = RoundedCornerShape(18.dp)
@@ -173,7 +173,11 @@ private fun AcademicYearSelector(
                     color = if (selected) Color.White else PSPrimary,
                     fontSize = 13.sp,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                    maxLines = 1,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 11.dp)
                 )
             }
         }

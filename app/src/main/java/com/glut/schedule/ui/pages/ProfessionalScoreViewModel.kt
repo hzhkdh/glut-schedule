@@ -15,7 +15,9 @@ import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.StudyPlanParser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -63,6 +65,7 @@ class ProfessionalScoreViewModel(
     private val _message = MutableStateFlow("")
     private val _scoreUnavailableReason = MutableStateFlow("")
     private val _selectedAcademicYear = MutableStateFlow<String?>(null)
+    private var messageJob: Job? = null
 
     val uiState: StateFlow<ProfessionalScoreUiState> = combine(
         combine(
@@ -113,6 +116,7 @@ class ProfessionalScoreViewModel(
     fun refreshData() {
         viewModelScope.launch {
             if (_isRefreshing.value) return@launch
+            messageJob?.cancel()
             _isRefreshing.value = true
             _message.value = "正在获取成绩和培养计划..."
             try {
@@ -132,11 +136,15 @@ class ProfessionalScoreViewModel(
                         "已更新：${remoteData.scores.size} 条成绩，${remoteData.courses.size} 门计划课程"
                     else -> "未获取到可用于计算的数据"
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Professional score data refresh failed", e)
-                _message.value = "获取失败：${e.message}"
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Professional score data refresh failed", error)
+                _message.value = "获取失败：${error.message}"
             } finally {
                 _isRefreshing.value = false
+            }
+            messageJob = viewModelScope.launch {
                 delay(4000)
                 _message.value = ""
             }
@@ -335,8 +343,10 @@ class ProfessionalScoreViewModel(
             }
             val lineHtml = String(lineBody, Charsets.UTF_8)
             studyPlanParser.parseCourseAttributeMap(lineHtml)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch Nanning attribute map", e)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Log.e(TAG, "Failed to fetch Nanning attribute map", error)
             emptyMap()
         }
     }
