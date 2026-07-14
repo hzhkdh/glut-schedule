@@ -65,4 +65,13 @@ class FinanceParserTest {
         assertEquals(listOf("高数", "已修合计", "选课汇总"), payload.values.map { it.name })
         assertEquals("84", payload.values.last().details.first { it.label == "总学分" }.value)
     }
+
+    @Test
+    fun feeProjectDisplayNameDropsServerSuffixAndSeparator() {
+        val value = JSONObject("""{"items":[{"xiangmu":"住宿费--学年/重复","qianfei":"1200"}]}""")
+
+        val payload = parser.parse(FinanceModule.FEE_PROJECTS, value) as FinancePayload.Items
+
+        assertEquals("住宿费", payload.values.single().name)
+    }
 }

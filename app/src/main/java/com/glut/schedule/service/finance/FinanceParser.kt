@@ -88,7 +88,7 @@ class FinanceParser {
         val outstanding = item.text("qianfei", "ArrearsMoney")
         FinanceItem(
             id = item.id(index, "ChargeID"),
-            name = item.text("xiangmu", "itemname", "ItemName"),
+            name = cleanFeeProjectName(item.text("xiangmu", "itemname", "ItemName")),
             secondary = item.text("xueqi", "xq", "TermName"),
             amount = outstanding,
             term = item.text("xueqi", "xq", "TermName"),
@@ -185,6 +185,9 @@ class FinanceParser {
         name.contains("类别") || name.contains("名称") || name.contains("项目") -> 1
         else -> 2
     }
+
+    private fun cleanFeeProjectName(value: String): String =
+        value.substringBefore("--").trim().ifBlank { value.trim() }
 
     private fun JSONObject.id(index: Int, vararg extra: String): String =
         text("id", "ID", *extra).ifBlank { (index + 1).toString() }

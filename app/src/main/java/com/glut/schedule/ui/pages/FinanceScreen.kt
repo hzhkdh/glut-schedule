@@ -12,9 +12,11 @@ import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,13 +27,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -50,6 +54,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,7 +83,6 @@ import com.glut.schedule.data.model.FinanceItem
 import com.glut.schedule.data.model.FinanceModule
 import com.glut.schedule.data.model.FinanceOverview
 import com.glut.schedule.data.model.FinancePayload
-import com.glut.schedule.data.model.FinanceTableSection
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -92,6 +96,11 @@ private val FinancePageBg = Color(0xFFF5F1E9)
 private val FinanceCard = Color(0xFFFFFEFB)
 private val FinanceMuted = Color(0xFF737B78)
 private val FinanceBorder = Color(0xFFE7E1D7)
+private val CreditHeaderBg = Color(0xFFE7EEF8)
+private val CreditSectionBg = Color(0xFFE5ECE8)
+private val CREDIT_INDEX_WIDTH = 52.dp
+private val CREDIT_CELL_WIDTH = 148.dp
+private val CREDIT_SECTION_GAP = 18.dp
 private const val FINANCE_HOME_URL = "https://cwjf.glut.edu.cn/home/login"
 private const val FINANCE_RESET_URL = "https://cwjf.glut.edu.cn/home/mmcz"
 
@@ -170,15 +179,15 @@ fun FinanceScreen(
 
 @Composable
 private fun FinanceTabs(selected: FinanceGroup, onSelect: (FinanceGroup) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(52.dp).background(FinanceCard).padding(horizontal = 8.dp)) {
+    Row(Modifier.fillMaxWidth().height(48.dp).background(FinanceCard).padding(horizontal = 8.dp)) {
         FinanceGroup.entries.forEach { group ->
             Column(
                 Modifier.weight(1f).fillMaxHeight().clickable { onSelect(group) },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Text(group.label, fontSize = 16.sp, color = if (selected == group) FinancePrimary else Color(0xFF303432), fontWeight = if (selected == group) FontWeight.Bold else FontWeight.Normal)
-                Spacer(Modifier.height(3.dp))
+                Text(group.label, fontSize = 15.sp, color = if (selected == group) FinancePrimary else Color(0xFF303432), fontWeight = if (selected == group) FontWeight.Bold else FontWeight.Normal)
+                Spacer(Modifier.height(1.dp))
                 Box(Modifier.height(2.dp).width(32.dp).background(if (selected == group) FinancePrimary else Color.Transparent))
             }
         }
@@ -285,7 +294,7 @@ private fun ModuleContent(
                 items(values, key = { "${state.module.key}-${it.id}" }) { item ->
                     Surface(Modifier.fillMaxWidth().clickable { onSelectItem(item) }, shape = RoundedCornerShape(17.dp), color = FinanceCard, border = androidx.compose.foundation.BorderStroke(1.dp, FinanceBorder)) {
                         Column(Modifier.padding(16.dp)) {
-                            Row { Text(item.name.ifBlank { state.module.label }, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); if (item.amount.isNotBlank()) Text("¥${money(item.amount)}", color = FinanceAmount, fontWeight = FontWeight.Bold) }
+                            Row { Text(displayFinanceItemName(state.module, item.name).ifBlank { state.module.label }, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); if (item.amount.isNotBlank()) Text("¥${money(item.amount)}", color = FinanceAmount, fontWeight = FontWeight.Bold) }
                             val secondary = listOf(item.secondary, item.status).filter(String::isNotBlank).joinToString(" · ")
                             if (secondary.isNotBlank()) Text(secondary, color = FinanceMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
                             if (state.module == FinanceModule.FEE_PROJECTS && item.details.isNotEmpty()) FieldGrid(item.details, Modifier.padding(top = 10.dp))
@@ -298,41 +307,95 @@ private fun ModuleContent(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CreditContent(payload: FinancePayload.Tables?, savedAt: Long, onGesture: (Boolean) -> Unit, modifier: Modifier) {
     val sections = payload?.sections.orEmpty()
     if (sections.isEmpty()) return EmptyFinance("暂无学分结算数据", "点击右上角刷新查询。", null, modifier)
-    Column(modifier.padding(14.dp)) {
-        Row(Modifier.fillMaxWidth()) { Text("学分结算", fontWeight = FontWeight.Bold, fontSize = 18.sp); Text(cacheTime(savedAt), color = FinanceMuted, fontSize = 11.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1f)) }
-        val horizontal = rememberScrollState()
-        val vertical = rememberScrollState()
-        Box(
-            Modifier.fillMaxSize().padding(top = 12.dp).clip(RoundedCornerShape(16.dp)).border(1.dp, FinanceBorder, RoundedCornerShape(16.dp))
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                        onGesture(true)
-                        do { val event = awaitPointerEvent(PointerEventPass.Initial) } while (event.changes.any { it.pressed })
-                        onGesture(false)
-                    }
-                }.horizontalScroll(horizontal).verticalScroll(vertical)
+    val sectionSchemas = sections.map { it.title to it.columns }
+    val horizontalStates = remember(sectionSchemas) { sections.indices.associateWith { ScrollState(0) } }
+    Column(modifier.padding(horizontal = 14.dp)) {
+        Text(cacheTime(savedAt), color = FinanceMuted, fontSize = 11.sp, textAlign = TextAlign.End, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+        LazyColumn(
+            Modifier.fillMaxSize().pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    onGesture(true)
+                    do { val event = awaitPointerEvent(PointerEventPass.Initial) } while (event.changes.any { it.pressed })
+                    onGesture(false)
+                }
+            }
         ) {
-            Column(Modifier.requiredWidth(tableWidth(sections))) { sections.forEach { CreditSection(it) } }
+            sections.forEachIndexed { sectionIndex, section ->
+                if (sectionIndex > 0) item(key = "gap-$sectionIndex") { Spacer(Modifier.height(CREDIT_SECTION_GAP)) }
+                stickyHeader(key = "header-$sectionIndex") {
+                    Column {
+                        CreditSectionTitle(section.title)
+                        CreditTableRow(section.columns, section.columns, header = true, horizontal = horizontalStates.getValue(sectionIndex))
+                    }
+                }
+                itemsIndexed(section.rows, key = { rowIndex, _ -> "row-$sectionIndex-$rowIndex" }) { _, row ->
+                    CreditTableRow(row, section.columns, header = false, horizontal = horizontalStates.getValue(sectionIndex))
+                }
+                item(key = "bottom-$sectionIndex") { Spacer(Modifier.height(8.dp)) }
+            }
         }
         DisposableEffect(Unit) { onDispose { onGesture(false) } }
     }
 }
 
 @Composable
-private fun CreditSection(section: FinanceTableSection) {
-    Text(section.title, fontWeight = FontWeight.Bold, color = FinancePrimary, modifier = Modifier.fillMaxWidth().background(Color(0xFFE5ECE8)).padding(13.dp))
-    TableRow(section.columns, header = true)
-    section.rows.forEach { TableRow(it, header = false) }
+private fun CreditSectionTitle(title: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = CreditSectionBg,
+        shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)
+    ) {
+        Text(title.ifBlank { "学分明细" }, fontWeight = FontWeight.Bold, color = FinancePrimary, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
+    }
 }
 
-@Composable private fun TableRow(values: List<String>, header: Boolean) = Row(Modifier.background(if (header) Color(0xFFF0EEE8) else FinanceCard)) {
-    values.forEach { value -> Box(Modifier.width(120.dp).border(.5.dp, FinanceBorder).padding(10.dp)) { Text(value.ifBlank { "—" }, fontSize = 11.sp, fontWeight = if (header) FontWeight.Bold else FontWeight.Normal) } }
+@Composable
+private fun CreditTableRow(values: List<String>, columns: List<String>, header: Boolean, horizontal: androidx.compose.foundation.ScrollState) {
+    val fixedIndex = isIndexColumn(columns.firstOrNull().orEmpty())
+    val background = if (header) CreditHeaderBg else FinanceCard
+    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).background(background)) {
+        if (fixedIndex) CreditIndexCell(values.firstOrNull().orEmpty(), header)
+        Row(
+            Modifier.weight(1f).fillMaxHeight().horizontalScroll(horizontal)
+        ) {
+            val scrollingValues = if (fixedIndex) values.drop(1) else values
+            val expectedCells = if (fixedIndex) (columns.size - 1).coerceAtLeast(0) else columns.size
+            repeat(expectedCells) { index -> CreditCell(scrollingValues.getOrNull(index).orEmpty(), header) }
+        }
+    }
 }
+
+@Composable
+private fun CreditIndexCell(value: String, header: Boolean) {
+    Box(
+        Modifier.width(CREDIT_INDEX_WIDTH).fillMaxHeight().heightIn(min = 52.dp)
+            .background(if (header) CreditHeaderBg else FinanceCard).border(.5.dp, FinanceBorder).padding(horizontal = 5.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(value.ifBlank { "—" }, fontSize = 11.sp, fontWeight = if (header) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun CreditCell(value: String, header: Boolean) {
+    Box(
+        Modifier.width(CREDIT_CELL_WIDTH).fillMaxHeight().heightIn(min = 52.dp)
+            .background(if (header) CreditHeaderBg else FinanceCard).border(.5.dp, FinanceBorder).padding(horizontal = 10.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(value.ifBlank { "—" }, fontSize = 11.sp, fontWeight = if (header) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center)
+    }
+}
+
+private fun isIndexColumn(value: String): Boolean = value.contains("序号") || value.equals("id", ignoreCase = true)
+private fun displayFinanceItemName(module: FinanceModule, value: String): String =
+    if (module == FinanceModule.FEE_PROJECTS) value.substringBefore("--").trim().ifBlank { value.trim() } else value
 
 @Composable
 private fun DetailSheet(item: FinanceItem, ticketImage: String, onTicket: (String) -> Unit) {
@@ -473,7 +536,6 @@ private fun financeTextFieldColors() = OutlinedTextFieldDefaults.colors(
 private tailrec fun Context.findActivity(): Activity? = when (this) { is Activity -> this; is ContextWrapper -> baseContext.findActivity(); else -> null }
 private fun money(value: String): String = value.trim().ifBlank { "0.00" }
 private fun cacheTime(value: Long): String = if (value <= 0) "暂无缓存" else "${SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(value))} 更新"
-private fun tableWidth(sections: List<FinanceTableSection>) = ((sections.maxOfOrNull { it.columns.size } ?: 1) * 120).dp
 private fun dataBitmap(value: String) = runCatching { val encoded = value.substringAfter("base64,", ""); if (encoded.isBlank()) null else Base64.decode(encoded, Base64.DEFAULT).let { BitmapFactory.decodeByteArray(it, 0, it.size) } }.getOrNull()
 
 @Composable

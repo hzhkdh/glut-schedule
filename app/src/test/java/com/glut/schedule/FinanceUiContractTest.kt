@@ -40,8 +40,30 @@ class FinanceUiContractTest {
         assertTrue(screen.contains("financeTextFieldColors()"))
         assertTrue(screen.contains("if (login.passwordVisible) \"隐藏\" else \"显示\""))
         assertTrue(screen.contains("点击重试"))
-        assertTrue(screen.contains("height(52.dp)"))
+        assertTrue(screen.contains("height(48.dp)"))
         assertTrue(screen.contains("if (state.isRefreshing) FinanceMuted else FinancePrimary"))
+    }
+
+    @Test
+    fun creditTableKeepsHeaderAndCompactIndexVisibleWhileScrolling() {
+        val screen = source("ui/pages/FinanceScreen.kt")
+
+        assertTrue(screen.contains("stickyHeader"))
+        assertTrue(screen.contains("isIndexColumn"))
+        assertTrue(screen.contains("CreditIndexCell"))
+        assertTrue(screen.contains("CREDIT_INDEX_WIDTH"))
+        assertTrue(screen.contains("height(IntrinsicSize.Min)"))
+        assertTrue(screen.contains("Spacer(Modifier.height(CREDIT_SECTION_GAP))"))
+        assertTrue(screen.contains("horizontalStates.getValue(sectionIndex)"))
+        assertTrue(!screen.contains("val horizontal = rememberScrollState()"))
+        assertTrue(!screen.contains("Text(\"学分结算\", fontWeight = FontWeight.Bold, fontSize = 18.sp)"))
+    }
+
+    @Test
+    fun cachedFeeProjectNamesAreSanitizedAtRenderTime() {
+        val screen = source("ui/pages/FinanceScreen.kt")
+
+        assertTrue(screen.contains("displayFinanceItemName(state.module, item.name)"))
     }
 
     private fun source(path: String): String {

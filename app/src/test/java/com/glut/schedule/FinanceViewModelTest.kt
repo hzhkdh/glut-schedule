@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -91,9 +92,25 @@ class FinanceViewModelTest {
         vm.updateCaptcha("1234")
         vm.login()
 
-        assertEquals(listOf(FinanceModule.PENDING, FinanceModule.PENDING), gateway.fetches)
+        assertEquals(FinanceModule.PENDING, gateway.fetches.first())
+        assertEquals(FinanceModule.entries.filterNot { it == FinanceModule.PENDING }.toSet(), gateway.fetches.drop(2).toSet())
         assertEquals("new-session", store.cookie)
         assertFalse(vm.uiState.value.login.visible)
+    }
+
+    @Test
+    fun successfulLoginPreloadsEveryIndependentFinanceModule() = runTest {
+        val gateway = FakeGateway()
+        val vm = FinanceViewModel(gateway, FakeStore(), CampusType.GUILIN)
+
+        vm.showLogin()
+        vm.updateCaptcha("1234")
+        vm.login()
+
+        assertEquals(FinanceModule.entries.filterNot { it == FinanceModule.PENDING }.toSet(), gateway.fetches.toSet())
+        assertEquals(FinanceModule.entries.filterNot { it == FinanceModule.PENDING }.size, gateway.fetches.size)
+        assertTrue(vm.uiState.value.payloads.keys.containsAll(FinanceModule.entries.filterNot { it == FinanceModule.PENDING }))
+        assertEquals("登录成功，财务数据已全部更新", vm.uiState.value.message)
     }
 
     @Test
@@ -148,6 +165,187 @@ class FinanceViewModelTest {
     }
 
     @Test
+    fun clearDataInvalidatesInFlightLoginPreloadResponses() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val delayed = CompletableDeferred<FinanceResponse>()
+        val gateway = object : FinanceGateway {
+            override suspend fun captcha() = FinanceCaptcha("image", "captcha")
+            override suspend fun login(username: String, password: String, captcha: String, cookie: String) = FinanceResponse(cookie = "login")
+            override suspend fun fetch(module: FinanceModule, cookie: String, page: Int, pageSize: Int): FinanceResponse {
+                if (module == FinanceModule.OTHER_PAYMENTS) {
+                    started.complete(Unit)
+                    return delayed.await()
+                }
+                return FinanceResponse(FinancePayload.Items(emptyList()), cookie)
+            }
+            override suspend fun ticketImage(cookie: String, chargeId: String, receiptNo: String) = FinanceResponse(cookie = cookie)
+        }
+        val store = FakeStore()
+        val vm = FinanceViewModel(gateway, store, CampusType.GUILIN)
+
+        vm.showLogin()
+        vm.updateCaptcha("1234")
+        vm.login()
+        started.await()
+        vm.clearData()
+        delayed.complete(FinanceResponse(FinancePayload.Items(listOf(FinanceItem("late", "旧预取"))), "late-session"))
+        advanceUntilIdle()
+
+        assertEquals("", store.sessionCookie())
+        assertTrue(vm.uiState.value.payloads.isEmpty())
+    }
+
+    @Test
+    fun clearDataDuringResumedFetchPreventsLoginPreloadFromRestarting() = runTest {
+        val resumed = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val fetches = mutableListOf<FinanceModule>()
+        val gateway = object : FinanceGateway {
+            override suspend fun captcha() = FinanceCaptcha("image", "captcha")
+            override suspend fun login(username: String, password: String, captcha: String, cookie: String) = FinanceResponse(cookie = "login")
+            override suspend fun fetch(module: FinanceModule, cookie: String, page: Int, pageSize: Int): FinanceResponse {
+                fetches += module
+                if (module == FinanceModule.OVERVIEW) {
+                    resumed.complete(Unit)
+                    release.await()
+                }
+                return FinanceResponse(FinancePayload.Items(emptyList()), cookie)
+            }
+            override suspend fun ticketImage(cookie: String, chargeId: String, receiptNo: String) = FinanceResponse(cookie = cookie)
+        }
+        val store = FakeStore()
+        val vm = FinanceViewModel(gateway, store, CampusType.GUILIN)
+
+        vm.showLogin()
+        vm.updateCaptcha("1234")
+        vm.login()
+        resumed.await()
+        vm.clearData()
+        release.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(listOf(FinanceModule.OVERVIEW), fetches)
+        assertEquals("", store.sessionCookie())
+        assertTrue(vm.uiState.value.payloads.isEmpty())
+    }
+
+    @Test
+    fun failedResumedModuleIsRetriedByLoginPreloadBeforeReportingComplete() = runTest {
+        var overviewAttempts = 0
+        val gateway = object : FinanceGateway {
+            override suspend fun captcha() = FinanceCaptcha("image", "captcha")
+            override suspend fun login(username: String, password: String, captcha: String, cookie: String) = FinanceResponse(cookie = "login")
+            override suspend fun fetch(module: FinanceModule, cookie: String, page: Int, pageSize: Int): FinanceResponse {
+                if (module == FinanceModule.OVERVIEW && ++overviewAttempts == 1) throw java.io.IOException("first overview failed")
+                return FinanceResponse(FinancePayload.Items(emptyList()), cookie)
+            }
+            override suspend fun ticketImage(cookie: String, chargeId: String, receiptNo: String) = FinanceResponse(cookie = cookie)
+        }
+        val vm = FinanceViewModel(gateway, FakeStore(), CampusType.GUILIN)
+
+        vm.showLogin()
+        vm.updateCaptcha("1234")
+        vm.login()
+
+        assertEquals(2, overviewAttempts)
+        assertTrue(vm.uiState.value.payloads.containsKey(FinanceModule.OVERVIEW))
+        assertEquals("登录成功，财务数据已全部更新", vm.uiState.value.message)
+    }
+
+    @Test
+    fun sessionExpiryWhileResumingStopsLoginPreload() = runTest {
+        val gateway = FakeGateway(expireFirstFetch = true)
+        val store = FakeStore()
+        val vm = FinanceViewModel(gateway, store, CampusType.GUILIN)
+
+        vm.showLogin()
+        vm.updateCaptcha("1234")
+        vm.login()
+
+        assertEquals(listOf(FinanceModule.OVERVIEW), gateway.fetches)
+        assertEquals("", store.sessionCookie())
+        assertTrue(vm.uiState.value.login.visible)
+    }
+
+    @Test
+    fun sessionExpiryFromAnyPreloadedModuleReturnsToLogin() = runTest {
+        val gateway = object : FinanceGateway {
+            override suspend fun captcha() = FinanceCaptcha("image", "captcha")
+            override suspend fun login(username: String, password: String, captcha: String, cookie: String) = FinanceResponse(cookie = "sid=login")
+            override suspend fun fetch(module: FinanceModule, cookie: String, page: Int, pageSize: Int): FinanceResponse {
+                if (module == FinanceModule.OTHER_PAYMENTS) throw FinanceFailure.SessionExpired()
+                return FinanceResponse(FinancePayload.Items(emptyList()), "sid=overview")
+            }
+            override suspend fun ticketImage(cookie: String, chargeId: String, receiptNo: String) = FinanceResponse(cookie = cookie)
+        }
+        val store = FakeStore()
+        val vm = FinanceViewModel(gateway, store, CampusType.GUILIN)
+
+        vm.showLogin()
+        vm.updateCaptcha("1234")
+        vm.login()
+
+        assertEquals("", store.sessionCookie())
+        assertTrue(vm.uiState.value.login.visible)
+        assertEquals("财务登录已失效，请重新登录", vm.uiState.value.message)
+    }
+
+    @Test
+    fun overviewCookieRemainsAuthoritativeAfterParallelPreload() = runTest {
+        val gateway = object : FinanceGateway {
+            override suspend fun captcha() = FinanceCaptcha("image", "captcha")
+            override suspend fun login(username: String, password: String, captcha: String, cookie: String) = FinanceResponse(cookie = "sid=login")
+            override suspend fun fetch(module: FinanceModule, cookie: String, page: Int, pageSize: Int) = FinanceResponse(
+                FinancePayload.Items(emptyList()),
+                if (module == FinanceModule.OVERVIEW) "sid=overview" else "sid=stale-${module.key}"
+            )
+            override suspend fun ticketImage(cookie: String, chargeId: String, receiptNo: String) = FinanceResponse(cookie = cookie)
+        }
+        val store = FakeStore()
+        val vm = FinanceViewModel(gateway, store, CampusType.GUILIN)
+
+        vm.showLogin()
+        vm.updateCaptcha("1234")
+        vm.login()
+
+        assertEquals("sid=overview", store.sessionCookie())
+    }
+
+    @Test
+    fun failedLoadMoreResumeNeverFallsBackToRefreshingPageOne() = runTest {
+        val pages = mutableListOf<Int>()
+        var firstExpired = true
+        val gateway = object : FinanceGateway {
+            override suspend fun captcha() = FinanceCaptcha("image", "captcha")
+            override suspend fun login(username: String, password: String, captcha: String, cookie: String) = FinanceResponse(cookie = "sid=login")
+            override suspend fun fetch(module: FinanceModule, cookie: String, page: Int, pageSize: Int): FinanceResponse {
+                if (module == FinanceModule.TRANSACTIONS) {
+                    pages += page
+                    if (firstExpired) {
+                        firstExpired = false
+                        throw FinanceFailure.SessionExpired()
+                    }
+                    throw java.io.IOException("page two unavailable")
+                }
+                return FinanceResponse(FinancePayload.Items(emptyList()), cookie)
+            }
+            override suspend fun ticketImage(cookie: String, chargeId: String, receiptNo: String) = FinanceResponse(cookie = cookie)
+        }
+        val store = FakeStore(cookie = "expired").apply {
+            saveModule(FinanceModule.TRANSACTIONS, CachedFinancePayload(FinancePayload.Items(emptyList(), page = 1, total = 40, hasMore = true), 1L))
+        }
+        val vm = FinanceViewModel(gateway, store, CampusType.GUILIN)
+        vm.selectModule(FinanceModule.TRANSACTIONS)
+
+        vm.loadMore()
+        vm.updateCaptcha("1234")
+        vm.login()
+
+        assertEquals(listOf(2, 2, 2), pages)
+        assertEquals("登录成功，部分财务数据暂未同步", vm.uiState.value.message)
+    }
+
+    @Test
     fun expiredLoadMoreResumesTheSamePageAfterLogin() = runTest {
         val gateway = FakeGateway(expireFirstFetch = true)
         val store = FakeStore(cookie = "expired").apply {
@@ -163,7 +361,9 @@ class FinanceViewModelTest {
         vm.updateCaptcha("1234")
         vm.login()
 
-        assertEquals(listOf(2, 2), gateway.fetchPages)
+        assertEquals(2, gateway.fetchPages.first())
+        assertEquals(2, gateway.fetchPages[1])
+        assertTrue(gateway.fetchPages.drop(2).all { it == 1 })
     }
 
     @Test

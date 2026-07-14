@@ -12,8 +12,12 @@ import com.glut.schedule.data.model.FinancePayload
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.service.finance.FinanceFailure
 import com.glut.schedule.service.finance.FinanceGateway
+import com.glut.schedule.service.finance.FinanceResponse
 import com.glut.schedule.service.finance.FinanceStorage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -148,11 +152,32 @@ class FinanceViewModel(
                 store.saveCredentials(FinanceCredentials(login.username, login.password))
                 store.saveSessionCookie(result.cookie)
                 _uiState.update { it.copy(isRefreshing = false, login = it.login.copy(visible = false, captcha = "", captchaImage = "", error = "")) }
-                when (val resume = pendingAction) {
-                    is PendingAction.Fetch -> fetch(resume, result.cookie)
-                    is PendingAction.Ticket -> fetchTicket(resume, result.cookie)
+                val resume = pendingAction
+                var resumedModule: FinanceModule? = null
+                var resumeFailures = 0
+                when (resume) {
+                    is PendingAction.Fetch -> {
+                        var outcome = fetch(resume, result.cookie)
+                        if (outcome == FetchOutcome.Failure) {
+                            outcome = fetch(resume, store.sessionCookie().ifBlank { result.cookie })
+                        }
+                        when (outcome) {
+                        FetchOutcome.Success -> resumedModule = resume.module
+                        FetchOutcome.LoginRequired, FetchOutcome.Stale -> return@launch
+                            FetchOutcome.Failure -> {
+                                resumedModule = resume.module
+                                resumeFailures = 1
+                            }
+                        }
+                    }
+                    is PendingAction.Ticket -> {
+                        fetchTicket(resume, result.cookie)
+                        if (_uiState.value.login.visible) return@launch
+                    }
                     null -> Unit
                 }
+                if (requestGeneration != generation) return@launch
+                preloadAfterLogin(store.sessionCookie().ifBlank { result.cookie }, resumedModule, resumeFailures, requestGeneration)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: FinanceFailure.CaptchaInvalid) {
@@ -196,33 +221,120 @@ class FinanceViewModel(
             }
     }
 
-    private suspend fun fetch(action: PendingAction.Fetch, cookie: String) {
+    private suspend fun fetch(action: PendingAction.Fetch, cookie: String): FetchOutcome {
         val (module, page, append) = action
         val requestGeneration = generation
         var handedOffToLogin = false
+        var outcome = FetchOutcome.Failure
         _uiState.update { it.copy(isRefreshing = true, message = if (page > 1) "正在加载更多..." else "正在刷新${module.label}...") }
         try {
             val result = gateway.fetch(module, cookie, page, PAGE_SIZE)
-            if (requestGeneration != generation) return
+            if (requestGeneration != generation) return FetchOutcome.Stale
             if (result.cookie.isNotBlank()) store.saveSessionCookie(result.cookie)
-            val incoming = result.payload ?: return
-            val payload = if (append && incoming is FinancePayload.Items) {
-                val previous = _uiState.value.payloads[module]?.payload as? FinancePayload.Items
-                incoming.copy(values = previous.orEmptyItems() + incoming.values)
-            } else incoming
-            val cached = CachedFinancePayload(payload, System.currentTimeMillis())
-            store.saveModule(module, cached)
-            _uiState.update { it.copy(payloads = it.payloads + (module to cached), message = "${module.label}已更新") }
-            if (pendingAction == action) pendingAction = null
+            result.payload?.let { incoming ->
+                val payload = if (append && incoming is FinancePayload.Items) {
+                    val previous = _uiState.value.payloads[module]?.payload as? FinancePayload.Items
+                    incoming.copy(values = previous.orEmptyItems() + incoming.values)
+                } else incoming
+                val cached = CachedFinancePayload(payload, System.currentTimeMillis())
+                store.saveModule(module, cached)
+                _uiState.update { it.copy(payloads = it.payloads + (module to cached), message = "${module.label}已更新") }
+                if (pendingAction == action) pendingAction = null
+                outcome = FetchOutcome.Success
+            }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            if (requestGeneration != generation) return
+            if (requestGeneration != generation) return FetchOutcome.Stale
             handedOffToLogin = handleFailure(error)
+            outcome = if (handedOffToLogin) FetchOutcome.LoginRequired else FetchOutcome.Failure
         } finally {
             if (requestGeneration == generation && !handedOffToLogin) _uiState.update { it.copy(isRefreshing = false) }
         }
+        return outcome
     }
+
+    private suspend fun preloadAfterLogin(cookie: String, resumedModule: FinanceModule?, initialFailures: Int, requestGeneration: Int) {
+        if (requestGeneration != generation) return
+        val modules = FinanceModule.entries.filter { it != FinanceModule.PENDING && it != resumedModule }.toMutableList()
+        var authoritativeCookie = cookie
+        var failures = initialFailures
+        _uiState.update { it.copy(isRefreshing = true, message = "登录成功，正在同步财务数据...") }
+        if (FinanceModule.OVERVIEW in modules) {
+            modules.remove(FinanceModule.OVERVIEW)
+            try {
+                val overview = gateway.fetch(FinanceModule.OVERVIEW, authoritativeCookie, 1, PAGE_SIZE)
+                if (requestGeneration != generation) return
+                if (overview.cookie.isNotBlank()) {
+                    authoritativeCookie = overview.cookie
+                    store.saveSessionCookie(authoritativeCookie)
+                }
+                overview.payload?.let { payload ->
+                    val cached = CachedFinancePayload(payload, System.currentTimeMillis())
+                    store.saveModule(FinanceModule.OVERVIEW, cached)
+                    _uiState.update { it.copy(payloads = it.payloads + (FinanceModule.OVERVIEW to cached)) }
+                } ?: run { failures++ }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: FinanceFailure.SessionExpired) {
+                if (requestGeneration != generation) return
+                handlePreloadSessionExpired()
+                return
+            } catch (error: Exception) {
+                if (requestGeneration != generation) return
+                failures++
+            }
+        }
+        if (requestGeneration != generation) return
+        if (modules.isEmpty()) {
+            _uiState.update { it.copy(message = preloadMessage(failures), isRefreshing = false) }
+            return
+        }
+        val results = coroutineScope {
+            modules.map { module ->
+                async {
+                    try {
+                        PreloadResult.Success(module, gateway.fetch(module, authoritativeCookie, 1, PAGE_SIZE))
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        PreloadResult.Failure(module, error)
+                    }
+                }
+            }.awaitAll()
+        }
+        if (requestGeneration != generation) return
+        if (results.filterIsInstance<PreloadResult.Failure>().any { it.error is FinanceFailure.SessionExpired }) {
+            handlePreloadSessionExpired()
+            return
+        }
+        results.forEach { result ->
+            when (result) {
+                is PreloadResult.Success -> {
+                    result.response.payload?.let { payload ->
+                        val cached = CachedFinancePayload(payload, System.currentTimeMillis())
+                        store.saveModule(result.module, cached)
+                        _uiState.update { it.copy(payloads = it.payloads + (result.module to cached)) }
+                    } ?: run { failures++ }
+                }
+                is PreloadResult.Failure -> failures++
+            }
+        }
+        _uiState.update {
+            it.copy(
+                isRefreshing = false,
+                message = preloadMessage(failures)
+            )
+        }
+    }
+
+    private fun handlePreloadSessionExpired() {
+        store.clearSession()
+        requestCaptcha("财务登录已失效，请重新登录")
+    }
+
+    private fun preloadMessage(failures: Int): String =
+        if (failures == 0) "登录成功，财务数据已全部更新" else "登录成功，部分财务数据暂未同步"
 
     private fun handleFailure(error: Exception): Boolean {
         if (error is FinanceFailure.SessionExpired) {
@@ -266,6 +378,13 @@ class FinanceViewModel(
         is FinanceFailure -> error.message.orEmpty()
         else -> "财务服务暂时不可用，请稍后重试"
     }
+
+    private sealed interface PreloadResult {
+        data class Success(val module: FinanceModule, val response: FinanceResponse) : PreloadResult
+        data class Failure(val module: FinanceModule, val error: Exception) : PreloadResult
+    }
+
+    private enum class FetchOutcome { Success, Failure, LoginRequired, Stale }
 
     companion object { private const val PAGE_SIZE = 20 }
 }
