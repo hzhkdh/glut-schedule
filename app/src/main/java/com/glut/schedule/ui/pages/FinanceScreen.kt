@@ -1,11 +1,14 @@
 package com.glut.schedule.ui.pages
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,29 +22,26 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -61,12 +61,17 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.glut.schedule.data.model.FinanceField
 import com.glut.schedule.data.model.FinanceGroup
 import com.glut.schedule.data.model.FinanceItem
@@ -99,6 +104,7 @@ fun FinanceScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
 
     Column(modifier.fillMaxSize().background(FinancePageBg)) {
         if (state.isRefreshing) {
@@ -145,7 +151,11 @@ fun FinanceScreen(
             onCaptcha = viewModel::updateCaptcha,
             onTogglePassword = viewModel::togglePasswordVisibility,
             onRefreshCaptcha = viewModel::refreshCaptcha,
-            onResetPassword = { uriHandler.openUri(FINANCE_RESET_URL) },
+            onResetPassword = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("财务密码重置链接", FINANCE_RESET_URL))
+                Toast.makeText(context, "密码重置链接已复制", Toast.LENGTH_SHORT).show()
+            },
             onDismiss = viewModel::dismissLogin,
             onLogin = viewModel::login
         )
@@ -160,15 +170,16 @@ fun FinanceScreen(
 
 @Composable
 private fun FinanceTabs(selected: FinanceGroup, onSelect: (FinanceGroup) -> Unit) {
-    Row(Modifier.fillMaxWidth().background(FinanceCard).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+    Row(Modifier.fillMaxWidth().height(52.dp).background(FinanceCard).padding(horizontal = 8.dp)) {
         FinanceGroup.entries.forEach { group ->
             Column(
-                Modifier.clickable { onSelect(group) }.padding(horizontal = 10.dp, vertical = 13.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                Modifier.weight(1f).fillMaxHeight().clickable { onSelect(group) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                Text(group.label, color = if (selected == group) FinancePrimary else Color(0xFF303432), fontWeight = if (selected == group) FontWeight.Bold else FontWeight.Normal)
-                Spacer(Modifier.height(7.dp))
-                Box(Modifier.height(3.dp).width(32.dp).background(if (selected == group) FinancePrimary else Color.Transparent))
+                Text(group.label, fontSize = 16.sp, color = if (selected == group) FinancePrimary else Color(0xFF303432), fontWeight = if (selected == group) FontWeight.Bold else FontWeight.Normal)
+                Spacer(Modifier.height(3.dp))
+                Box(Modifier.height(2.dp).width(32.dp).background(if (selected == group) FinancePrimary else Color.Transparent))
             }
         }
     }
@@ -348,31 +359,103 @@ private fun FinanceLoginDialog(
     onLogin: () -> Unit
 ) {
     val login = state.login
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("登录财务平台", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                OutlinedTextField(login.username, onUsername, label = { Text("学号") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(.92f).widthIn(max = 420.dp),
+            shape = RoundedCornerShape(18.dp),
+            color = FinanceCard
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("登录财务平台", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 2.dp))
                 OutlinedTextField(
-                    login.password, onPassword, label = { Text("财务平台密码") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    visualTransformation = if (login.passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = { IconButton(onClick = onTogglePassword) { Icon(if (login.passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, null) } }
+                    value = login.username,
+                    onValueChange = onUsername,
+                    placeholder = { Text("学号") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                    colors = financeTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth()
                 )
-                Text("忘记密码？在浏览器中重置", color = FinancePrimary, fontSize = 12.sp, modifier = Modifier.clickable(onClick = onResetPassword))
+                OutlinedTextField(
+                    value = login.password,
+                    onValueChange = onPassword,
+                    placeholder = { Text("财务平台密码") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+                    visualTransformation = if (login.passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        Text(
+                            if (login.passwordVisible) "隐藏" else "显示",
+                            color = FinancePrimary,
+                            fontSize = 13.sp,
+                            modifier = Modifier.clickable(onClick = onTogglePassword).padding(10.dp)
+                        )
+                    },
+                    colors = financeTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("忘记财务密码？", color = FinanceMuted, fontSize = 12.sp)
+                    Text("复制密码重置链接", color = FinancePrimary, fontSize = 12.sp, modifier = Modifier.clickable(onClick = onResetPassword))
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(login.captcha, onCaptcha, label = { Text("验证码") }, singleLine = true, modifier = Modifier.weight(1f))
-                    rememberDataBitmap(login.captchaImage)?.let { bitmap -> androidx.compose.foundation.Image(bitmap.asImageBitmap(), "刷新验证码", Modifier.size(108.dp, 52.dp).clickable(onClick = onRefreshCaptcha)) }
+                    OutlinedTextField(
+                        value = login.captcha,
+                        onValueChange = { onCaptcha(it.take(6)) },
+                        placeholder = { Text("验证码") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        colors = financeTextFieldColors(),
+                        modifier = Modifier.weight(1f)
+                    )
+                    val captchaBitmap = rememberDataBitmap(login.captchaImage)
+                    if (captchaBitmap != null) {
+                        androidx.compose.foundation.Image(captchaBitmap.asImageBitmap(), "刷新验证码", Modifier.size(124.dp, 56.dp).clickable(onClick = onRefreshCaptcha))
+                    } else {
+                        Surface(
+                            modifier = Modifier.size(124.dp, 56.dp).clickable(enabled = !state.isRefreshing, onClick = onRefreshCaptcha),
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFF0F2F1),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, FinanceBorder)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(if (state.isRefreshing) "加载中…" else "点击重试", color = FinancePrimary, fontSize = 12.sp)
+                            }
+                        }
+                    }
                 }
                 if (login.error.isNotBlank()) Text(login.error, color = FinanceAmount, fontSize = 12.sp)
-                Text("账号和密码使用系统密钥加密，仅保存在本机。", color = FinanceMuted, fontSize = 10.sp)
+                Text("点击验证码图片可刷新；密码使用系统密钥加密，仅保存在本机。", color = FinanceMuted, fontSize = 11.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("取消", color = FinanceMuted) }
+                    TextButton(onClick = onLogin, enabled = !state.isRefreshing) {
+                        Text("登录并查询", color = if (state.isRefreshing) FinanceMuted else FinancePrimary, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
-        },
-        confirmButton = { TextButton(onClick = onLogin, enabled = !state.isRefreshing) { Text("登录并查询", color = FinancePrimary) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-        containerColor = FinanceCard
-    )
+        }
+    }
 }
+
+@Composable
+private fun financeTextFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = Color(0xFF141821),
+    unfocusedTextColor = Color(0xFF141821),
+    disabledTextColor = Color(0xFF737B78),
+    cursorColor = FinancePrimary,
+    focusedBorderColor = FinancePrimary,
+    unfocusedBorderColor = Color(0xFFD8DDE6),
+    focusedPlaceholderColor = FinanceMuted,
+    unfocusedPlaceholderColor = FinanceMuted,
+    focusedContainerColor = Color.Transparent,
+    unfocusedContainerColor = Color.Transparent
+)
 
 @Composable private fun EmptyFinance(title: String, description: String, action: (() -> Unit)?, modifier: Modifier) = Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(28.dp)) {

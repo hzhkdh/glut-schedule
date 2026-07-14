@@ -28,6 +28,20 @@ class FinanceUiContractTest {
         assertTrue(main.contains("FinanceViewModelFactory"))
         assertTrue(main.contains("FinanceScreen("))
         assertTrue(main.contains("financeViewModel?.clearData()"))
+        assertTrue(main.contains("listOf(DrawerItem.Score, DrawerItem.GradeExam, DrawerItem.FitnessScore)"))
+        assertTrue(main.contains("listOf(DrawerItem.Finance, DrawerItem.Settings, DrawerItem.Notice, DrawerItem.FAQ, DrawerItem.About)"))
+    }
+
+    @Test
+    fun loginFormUsesVisibleLightColorsAndCompactWechatLayout() {
+        val screen = source("ui/pages/FinanceScreen.kt")
+
+        assertTrue(screen.contains("Dialog("))
+        assertTrue(screen.contains("financeTextFieldColors()"))
+        assertTrue(screen.contains("if (login.passwordVisible) \"隐藏\" else \"显示\""))
+        assertTrue(screen.contains("点击重试"))
+        assertTrue(screen.contains("height(52.dp)"))
+        assertTrue(screen.contains("if (state.isRefreshing) FinanceMuted else FinancePrimary"))
     }
 
     private fun source(path: String): String {
