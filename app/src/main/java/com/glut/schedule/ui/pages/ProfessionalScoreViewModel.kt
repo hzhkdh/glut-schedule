@@ -32,8 +32,8 @@ import java.nio.charset.Charset
 import java.util.concurrent.TimeUnit
 
 data class ProfessionalScoreUiState(
-    val availableSemesters: List<String> = emptyList(),
-    val selectedSemester: String? = null,
+    val availableAcademicYears: List<String> = emptyList(),
+    val selectedAcademicYear: String? = null,
     val result: ProfessionalScoreResult? = null,
     val isRefreshing: Boolean = false,
     val message: String = "",
@@ -53,7 +53,7 @@ class ProfessionalScoreViewModel(
     private val _isRefreshing = MutableStateFlow(false)
     private val _message = MutableStateFlow("")
     private val _scoreUnavailableReason = MutableStateFlow("")
-    private val _selectedSemester = MutableStateFlow<String?>(null)
+    private val _selectedAcademicYear = MutableStateFlow<String?>(null)
 
     val uiState: StateFlow<ProfessionalScoreUiState> = combine(
         combine(
@@ -66,23 +66,23 @@ class ProfessionalScoreViewModel(
         _isRefreshing,
         _message,
         _scoreUnavailableReason,
-        _selectedSemester
-    ) { (groupsWithCourses, scores, cookie), isRefreshing, message, scoreUnavailableReason, selectedSemester ->
-        val semesters = ProfessionalScoreCalculator.availableSemesters(groupsWithCourses)
-        val effectiveSemester = selectedSemester
-            ?.takeIf { it in semesters }
-            ?: semesters.lastOrNull()
-        val result = effectiveSemester?.let {
+        _selectedAcademicYear
+    ) { (groupsWithCourses, scores, cookie), isRefreshing, message, scoreUnavailableReason, selectedAcademicYear ->
+        val academicYears = ProfessionalScoreCalculator.availableAcademicYears(groupsWithCourses)
+        val effectiveAcademicYear = selectedAcademicYear
+            ?.takeIf { it in academicYears }
+            ?: academicYears.lastOrNull()
+        val result = effectiveAcademicYear?.let {
             ProfessionalScoreCalculator.calculate(
-                semester = it,
+                academicYear = it,
                 groupsWithCourses = groupsWithCourses,
                 scores = scores
             )
         }
 
         ProfessionalScoreUiState(
-            availableSemesters = semesters,
-            selectedSemester = effectiveSemester,
+            availableAcademicYears = academicYears,
+            selectedAcademicYear = effectiveAcademicYear,
             result = result,
             isRefreshing = isRefreshing,
             message = message,
@@ -97,8 +97,8 @@ class ProfessionalScoreViewModel(
         initialValue = ProfessionalScoreUiState()
     )
 
-    fun selectSemester(semester: String) {
-        _selectedSemester.value = semester
+    fun selectAcademicYear(academicYear: String) {
+        _selectedAcademicYear.value = academicYear
     }
 
     fun refreshData() {

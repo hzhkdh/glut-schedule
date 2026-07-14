@@ -42,15 +42,15 @@ class ProfessionalScoreRemoteSmokeTest {
         val groupsWithCourses = fetchStudyPlan(success.cookie, success.campusBaseUrl)
         val groupCount = groupsWithCourses.size
         val planCourseCount = groupsWithCourses.sumOf { it.courses.size }
-        val semesters = ProfessionalScoreCalculator.availableSemesters(groupsWithCourses)
+        val academicYears = ProfessionalScoreCalculator.availableAcademicYears(groupsWithCourses)
         println(
             "studyPlanFetch(groups=" + groupCount +
                 ", courses=" + planCourseCount +
-                ", selectableSemesters=" + semesters.size + ")"
+                ", selectableAcademicYears=" + academicYears.size + ")"
         )
         assertTrue("Expected at least one parsed study-plan group.", groupCount > 0)
         assertTrue("Expected at least one parsed study-plan course.", planCourseCount > 0)
-        assertTrue("Expected at least one selectable semester from required/limited study-plan courses.", semesters.isNotEmpty())
+        assertTrue("Expected at least one selectable academic year from required/limited study-plan courses.", academicYears.isNotEmpty())
 
         val scoreFetch = fetchScores(success.cookie, success.campusBaseUrl)
         println(scoreFetch.summary())
@@ -59,7 +59,7 @@ class ProfessionalScoreRemoteSmokeTest {
                 "Remote score page is blocked by academic system after study plan was fetched: " +
                     scoreFetch.blockReason + "; groups=" + groupCount +
                     ", courses=" + planCourseCount +
-                    ", selectableSemesters=" + semesters.size
+                    ", selectableAcademicYears=" + academicYears.size
             )
         }
         val scores = scoreFetch.scores
@@ -68,17 +68,17 @@ class ProfessionalScoreRemoteSmokeTest {
             scores.isNotEmpty()
         )
 
-        val calculated = semesters.asReversed()
-            .map { semester ->
+        val calculated = academicYears.asReversed()
+            .map { academicYear ->
                 ProfessionalScoreCalculator.calculate(
-                    semester = semester,
+                    academicYear = academicYear,
                     groupsWithCourses = groupsWithCourses,
                     scores = scores
                 )
             }
             .firstOrNull { it.professionalScore != null }
 
-        assertNotNull("Expected at least one semester with matched scores and credits.", calculated)
+        assertNotNull("Expected at least one academic year with matched scores and credits.", calculated)
         val result = calculated!!
 
         println(
@@ -86,7 +86,7 @@ class ProfessionalScoreRemoteSmokeTest {
                 "scoreCount=" + scores.size +
                 ", studyPlanGroups=" + groupCount +
                 ", studyPlanCourses=" + planCourseCount +
-                ", selectedSemester=" + result.semester +
+                ", selectedAcademicYear=" + result.academicYear +
                 ", includedCourses=" + result.courses.size +
                 ", missingCourses=" + result.missingCourses.size +
                 ", totalCredit=" + format(result.totalCredit) +

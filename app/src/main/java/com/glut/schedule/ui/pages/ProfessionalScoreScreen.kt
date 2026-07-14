@@ -88,17 +88,17 @@ fun ProfessionalScoreScreen(
             !uiState.hasCookie -> {
                 EmptyProfessionalScoreState("请先在导入课表页面登录教务系统")
             }
-            uiState.availableSemesters.isEmpty() -> {
+            uiState.availableAcademicYears.isEmpty() -> {
                 EmptyProfessionalScoreState(
                     if (uiState.hasStudyPlanData) {
-                        "教学计划中暂无可计算的必修/限选课程"
+                        "教学计划中暂无可计算的本学年必修/限选课程"
                     } else {
                         "暂无教学计划和成绩数据\n请点击右上角刷新获取"
                     }
                 )
             }
             result == null -> {
-                EmptyProfessionalScoreState("请选择一个学期")
+                EmptyProfessionalScoreState("请选择一个学年")
             }
             else -> {
                 LazyColumn(
@@ -108,11 +108,11 @@ fun ProfessionalScoreScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
                 ) {
-                    item(key = "semesters") {
-                        SemesterSelector(
-                            semesters = uiState.availableSemesters,
-                            selectedSemester = uiState.selectedSemester,
-                            onSelect = viewModel::selectSemester
+                    item(key = "academic_years") {
+                        AcademicYearSelector(
+                            academicYears = uiState.availableAcademicYears,
+                            selectedAcademicYear = uiState.selectedAcademicYear,
+                            onSelect = viewModel::selectAcademicYear
                         )
                     }
                     if (uiState.scoreUnavailableReason.isNotBlank()) {
@@ -149,9 +149,9 @@ fun ProfessionalScoreScreen(
 }
 
 @Composable
-private fun SemesterSelector(
-    semesters: List<String>,
-    selectedSemester: String?,
+private fun AcademicYearSelector(
+    academicYears: List<String>,
+    selectedAcademicYear: String?,
     onSelect: (String) -> Unit
 ) {
     LazyRow(
@@ -159,17 +159,17 @@ private fun SemesterSelector(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(horizontal = 2.dp)
     ) {
-        items(semesters, key = { it }) { semester ->
-            val selected = semester == selectedSemester
+        items(academicYears, key = { it }) { academicYear ->
+            val selected = academicYear == selectedAcademicYear
             Surface(
                 modifier = Modifier
                     .clip(RoundedCornerShape(18.dp))
-                    .clickable { onSelect(semester) },
+                    .clickable { onSelect(academicYear) },
                 color = if (selected) PSDark else PSChipBg,
                 shape = RoundedCornerShape(18.dp)
             ) {
                 Text(
-                    semester,
+                    academicYear,
                     color = if (selected) Color.White else PSPrimary,
                     fontSize = 13.sp,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
@@ -206,7 +206,7 @@ private fun ProfessionalScoreSummary(result: ProfessionalScoreResult) {
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text(
-                result.semester,
+                "${result.academicYear}（${result.includedSemesters.joinToString(" + ")}）",
                 color = Color.White.copy(alpha = 0.74f),
                 fontSize = 13.sp
             )
@@ -258,7 +258,7 @@ private fun RuleNote() {
         shape = RoundedCornerShape(12.dp)
     ) {
         Text(
-            "公式：Σ(课程百分制成绩 × 教学计划学分) ÷ Σ教学计划学分。仅统计必修、限选课程，排除任选/辅修；同一课程多条成绩取最高可换算成绩。",
+            "公式：Σ(课程百分制成绩 × 教学计划学分) ÷ Σ教学计划学分。按一个学年（秋季 + 次年春季）统一计算；课程范围以本专业培养计划当学年应修读课程为准，排除补修、重学/重修、体育、公共选修/任选、辅修、双学位等。五级制按优95、良85、中75、及格65、不及格40折算；补考、缓考、作弊/旷考按测评规则处理。",
             color = PSSecondary,
             fontSize = 12.sp,
             lineHeight = 18.sp,
@@ -330,6 +330,10 @@ private fun IncludedCourseRow(course: ProfessionalScoreCourse) {
                     color = PSSecondary,
                     fontSize = 12.sp
                 )
+            }
+            if (course.scoreSourceReason.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(course.scoreSourceReason, color = PSSecondary, fontSize = 11.sp)
             }
         }
     }
