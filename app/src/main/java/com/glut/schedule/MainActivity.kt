@@ -125,6 +125,9 @@ import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
+import com.glut.schedule.ui.pages.ProfessionalScoreScreen
+import com.glut.schedule.ui.pages.ProfessionalScoreViewModel
+import com.glut.schedule.ui.pages.ProfessionalScoreViewModelFactory
 import com.glut.schedule.ui.pages.GradeExamScreen
 import com.glut.schedule.ui.pages.GradeExamViewModel
 import com.glut.schedule.ui.pages.GradeExamViewModelFactory
@@ -202,6 +205,15 @@ class MainActivity : ComponentActivity() {
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
                         scoreParser = container.scoreParser
+                    )
+                )
+                val professionalScoreViewModel: ProfessionalScoreViewModel = viewModel(
+                    factory = ProfessionalScoreViewModelFactory(
+                        repository = container.scheduleRepository,
+                        sessionStore = container.academicSessionStore,
+                        loginService = container.academicLoginService,
+                        scoreParser = container.scoreParser,
+                        studyPlanParser = container.studyPlanParser
                     )
                 )
                 val gradeExamViewModel: GradeExamViewModel = viewModel(
@@ -370,7 +382,7 @@ class MainActivity : ComponentActivity() {
                                             modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 4.dp)
                                         )
                                     }
-                                    items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import)) { item ->
+items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
@@ -392,7 +404,7 @@ class MainActivity : ComponentActivity() {
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
                                         )
                                     }
-                                    items(listOf(DrawerItem.Score, DrawerItem.GradeExam, DrawerItem.FitnessScore)) { item ->
+                                    items(listOf(DrawerItem.Score, DrawerItem.ProfessionalScore, DrawerItem.GradeExam, DrawerItem.FitnessScore)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
@@ -476,6 +488,15 @@ class MainActivity : ComponentActivity() {
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
+                                            DrawerItem.ProfessionalScore -> {
+                                                val professionalScoreState by professionalScoreViewModel.uiState.collectAsStateWithLifecycle()
+                                                IconButton(
+                                                    onClick = professionalScoreViewModel::refreshData,
+                                                    enabled = !professionalScoreState.isRefreshing
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                                                }
+                                            }
                                             DrawerItem.GradeExam -> {
                                                 val gradeExamState by gradeExamViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
@@ -526,6 +547,7 @@ class MainActivity : ComponentActivity() {
                                     onDrawerOpen = { scope.launch { drawerState.open() } }
                                 )
                                 DrawerItem.Score -> ScoreScreen(viewModel = scoreViewModel)
+                                DrawerItem.ProfessionalScore -> ProfessionalScoreScreen(viewModel = professionalScoreViewModel)
                                 DrawerItem.GradeExam -> GradeExamScreen(viewModel = gradeExamViewModel)
                                 DrawerItem.FitnessScore -> FitnessScoreScreen(
                                     viewModel = fitnessScoreViewModel,
