@@ -43,6 +43,15 @@ data class ProfessionalScoreUiState(
     val hasScoreData: Boolean = false
 )
 
+internal fun canUseProfessionalScoreRemoteDataWithoutLoginRetry(
+    hasCookie: Boolean,
+    hasScores: Boolean,
+    hasStudyPlan: Boolean,
+    scoreUnavailableReason: String
+): Boolean {
+    return hasCookie && hasScores && hasStudyPlan && scoreUnavailableReason.isBlank()
+}
+
 class ProfessionalScoreViewModel(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
@@ -152,7 +161,14 @@ class ProfessionalScoreViewModel(
         }
 
         var data = fetchIfPossible()
-        if (cookie.isNotBlank() && data.scores.isNotEmpty() && data.scoreUnavailableReason.isBlank()) {
+        if (
+            canUseProfessionalScoreRemoteDataWithoutLoginRetry(
+                hasCookie = cookie.isNotBlank(),
+                hasScores = data.scores.isNotEmpty(),
+                hasStudyPlan = data.groups.isNotEmpty() && data.courses.isNotEmpty(),
+                scoreUnavailableReason = data.scoreUnavailableReason
+            )
+        ) {
             return data
         }
 
