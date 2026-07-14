@@ -12,6 +12,7 @@ import com.glut.schedule.service.finance.FinanceGateway
 import com.glut.schedule.service.finance.FinanceResponse
 import com.glut.schedule.service.finance.FinanceStorage
 import com.glut.schedule.ui.pages.FinanceViewModel
+import com.glut.schedule.ui.pages.FinanceViewModelRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -46,6 +47,45 @@ class FinanceViewModelTest {
 
         assertTrue(gateway.fetches.isEmpty())
         assertEquals("缓存交易", (vm.uiState.value.activePayload as FinancePayload.Items).values.single().name)
+    }
+
+    @Test
+    fun moneyIsHiddenByDefaultAndOnlyToggleRevealsIt() = runTest {
+        val vm = FinanceViewModel(FakeGateway(), FakeStore(), CampusType.GUILIN)
+
+        assertFalse(vm.uiState.value.moneyVisible)
+        vm.toggleMoneyVisibility()
+        assertTrue(vm.uiState.value.moneyVisible)
+        vm.hideMoney()
+        assertFalse(vm.uiState.value.moneyVisible)
+    }
+
+    @Test
+    fun resetClearsEveryFinanceViewModelCreatedForDifferentCampusKeys() = runTest {
+        val firstStore = FakeStore(cookie = "first-session").apply {
+            saveModule(FinanceModule.OVERVIEW, CachedFinancePayload(FinancePayload.Items(listOf(FinanceItem("1", "first"))), 10L))
+        }
+        val secondStore = FakeStore(cookie = "second-session").apply {
+            saveModule(FinanceModule.TRANSACTIONS, CachedFinancePayload(FinancePayload.Items(listOf(FinanceItem("2", "second"))), 20L))
+        }
+        val first = FinanceViewModel(FakeGateway(), firstStore, CampusType.GUILIN)
+        val second = FinanceViewModel(FakeGateway(), secondStore, CampusType.NANNING)
+        val registry = FinanceViewModelRegistry()
+        registry.register(first)
+        registry.register(second)
+        first.toggleMoneyVisibility()
+        second.toggleMoneyVisibility()
+
+        registry.clearAll()
+
+        listOf(first, second).forEach {
+            assertTrue(it.uiState.value.payloads.isEmpty())
+            assertFalse(it.uiState.value.moneyVisible)
+        }
+        listOf(firstStore, secondStore).forEach {
+            assertEquals("", it.sessionCookie())
+            assertEquals(FinanceCredentials(), it.credentials())
+        }
     }
 
     @Test

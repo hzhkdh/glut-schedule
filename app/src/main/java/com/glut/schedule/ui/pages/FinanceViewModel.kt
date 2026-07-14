@@ -41,6 +41,7 @@ data class FinanceUiState(
     val module: FinanceModule = FinanceModule.OVERVIEW,
     val payloads: Map<FinanceModule, CachedFinancePayload> = emptyMap(),
     val isRefreshing: Boolean = false,
+    val moneyVisible: Boolean = false,
     val message: String = "",
     val login: FinanceLoginState = FinanceLoginState(),
     val selectedItem: FinanceItem? = null,
@@ -128,6 +129,8 @@ class FinanceViewModel(
     fun updatePassword(value: String) = _uiState.update { it.copy(login = it.login.copy(password = value, error = "")) }
     fun updateCaptcha(value: String) = _uiState.update { it.copy(login = it.login.copy(captcha = value, error = "")) }
     fun togglePasswordVisibility() = _uiState.update { it.copy(login = it.login.copy(passwordVisible = !it.login.passwordVisible)) }
+    fun toggleMoneyVisibility() = _uiState.update { it.copy(moneyVisible = !it.moneyVisible) }
+    fun hideMoney() = _uiState.update { if (it.moneyVisible) it.copy(moneyVisible = false) else it }
     fun refreshCaptcha() = requestCaptcha(preserveError = true)
 
     fun login() {
@@ -387,6 +390,16 @@ class FinanceViewModel(
     private enum class FetchOutcome { Success, Failure, LoginRequired, Stale }
 
     companion object { private const val PAGE_SIZE = 20 }
+}
+
+class FinanceViewModelRegistry {
+    private val viewModels = linkedSetOf<FinanceViewModel>()
+
+    fun register(viewModel: FinanceViewModel): FinanceViewModel = viewModel.also(viewModels::add)
+
+    fun clearAll() {
+        viewModels.forEach(FinanceViewModel::clearData)
+    }
 }
 
 private fun FinancePayload.Items?.orEmptyItems(): List<FinanceItem> = this?.values.orEmpty()

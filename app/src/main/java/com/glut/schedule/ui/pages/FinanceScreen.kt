@@ -114,6 +114,7 @@ fun FinanceScreen(
     val state by viewModel.uiState.collectAsState()
     val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
+    DisposableEffect(viewModel) { onDispose(viewModel::hideMoney) }
 
     Column(modifier.fillMaxSize().background(FinancePageBg)) {
         if (state.isRefreshing) {
@@ -130,6 +131,7 @@ fun FinanceScreen(
                 FinanceGroup.OVERVIEW -> OverviewContent(
                     state.activePayload as? FinancePayload.Overview,
                     state.activeSavedAt,
+                    state.moneyVisible,
                     viewModel::showLogin,
                     Modifier.weight(1f)
                 )
@@ -142,10 +144,11 @@ fun FinanceScreen(
                     modifier = Modifier.weight(1f)
                 )
                 FinanceGroup.CREDIT -> CreditContent(
-                    state.activePayload as? FinancePayload.Tables,
-                    state.activeSavedAt,
-                    onTableGestureActive,
-                    Modifier.weight(1f)
+                    payload = state.activePayload as? FinancePayload.Tables,
+                    savedAt = state.activeSavedAt,
+                    moneyVisible = state.moneyVisible,
+                    onGesture = onTableGestureActive,
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
@@ -172,7 +175,7 @@ fun FinanceScreen(
 
     state.selectedItem?.let { item ->
         ModalBottomSheet(onDismissRequest = { viewModel.selectItem(null) }, containerColor = FinanceCard) {
-            DetailSheet(item, state.ticketImage) { receipt -> viewModel.loadTicketImage(item, receipt) }
+            DetailSheet(item, state.ticketImage, state.moneyVisible) { receipt -> viewModel.loadTicketImage(item, receipt) }
         }
     }
 }
@@ -195,11 +198,11 @@ private fun FinanceTabs(selected: FinanceGroup, onSelect: (FinanceGroup) -> Unit
 }
 
 @Composable
-private fun OverviewContent(payload: FinancePayload.Overview?, savedAt: Long, onLogin: () -> Unit, modifier: Modifier) {
+private fun OverviewContent(payload: FinancePayload.Overview?, savedAt: Long, moneyVisible: Boolean, onLogin: () -> Unit, modifier: Modifier) {
     val overview = payload?.value
     if (overview == null) return EmptyFinance("登录后查看财务概览", "财务账号、密码和登录态与教务及体测完全独立。", onLogin, modifier)
     LazyColumn(modifier, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { SummaryCard(overview) }
+        item { SummaryCard(overview, moneyVisible) }
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("待缴项目", fontSize = 19.sp, fontWeight = FontWeight.Bold)
@@ -207,31 +210,31 @@ private fun OverviewContent(payload: FinancePayload.Overview?, savedAt: Long, on
             }
         }
         if (overview.pendingItems.isEmpty()) item { EmptyCard("暂无待缴项目") }
-        else items(overview.pendingItems, key = { it.id }) { PendingCard(it) }
+        else items(overview.pendingItems, key = { it.id }) { PendingCard(it, moneyVisible) }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard("必修费用", overview.summary.requiredFee, Modifier.weight(1f))
-                MetricCard("选修费用", overview.summary.electiveFee, Modifier.weight(1f))
+                MetricCard("必修费用", overview.summary.requiredFee, moneyVisible, Modifier.weight(1f))
+                MetricCard("选修费用", overview.summary.electiveFee, moneyVisible, Modifier.weight(1f))
             }
         }
     }
 }
 
 @Composable
-private fun SummaryCard(value: FinanceOverview) {
+private fun SummaryCard(value: FinanceOverview, moneyVisible: Boolean) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
             .background(Brush.linearGradient(listOf(FinancePrimary, FinancePrimaryLight))).padding(22.dp)
     ) {
         Text("当前欠费", color = Color.White.copy(alpha = .75f), fontSize = 14.sp)
-        Text("¥ ${money(value.summary.outstandingTotal)}", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(top = 3.dp, bottom = 20.dp))
+        Text("¥ ${financeMoneyText(value.summary.outstandingTotal, moneyVisible)}", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(top = 3.dp, bottom = 20.dp))
         Row(Modifier.fillMaxWidth()) {
-            SummaryMetric("应收合计", value.summary.receivableTotal, Modifier.weight(1f))
-            SummaryMetric("已缴合计", value.summary.paidTotal, Modifier.weight(1f))
+            SummaryMetric("应收合计", value.summary.receivableTotal, moneyVisible, Modifier.weight(1f))
+            SummaryMetric("已缴合计", value.summary.paidTotal, moneyVisible, Modifier.weight(1f))
         }
         Spacer(Modifier.height(14.dp))
         Row(Modifier.fillMaxWidth()) {
-            SummaryMetric("缓缴金额", value.summary.deferredAmount, Modifier.weight(1f))
+            SummaryMetric("缓缴金额", value.summary.deferredAmount, moneyVisible, Modifier.weight(1f))
             Column(Modifier.weight(1f)) {
                 Text("待缴项目", color = Color.White.copy(alpha = .7f), fontSize = 12.sp)
                 Text("${value.pendingItems.size} 项", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -240,21 +243,21 @@ private fun SummaryCard(value: FinanceOverview) {
     }
 }
 
-@Composable private fun SummaryMetric(label: String, value: String, modifier: Modifier) = Column(modifier) {
+@Composable private fun SummaryMetric(label: String, value: String, moneyVisible: Boolean, modifier: Modifier) = Column(modifier) {
     Text(label, color = Color.White.copy(alpha = .7f), fontSize = 12.sp)
-    Text("¥ ${money(value)}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+    Text("¥ ${financeMoneyText(value, moneyVisible)}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
 }
 
 @Composable
-private fun PendingCard(item: FinanceItem) {
+private fun PendingCard(item: FinanceItem, moneyVisible: Boolean) {
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = FinanceCard, border = androidx.compose.foundation.BorderStroke(1.dp, FinanceBorder)) {
         Column(Modifier.padding(18.dp)) {
             Row(Modifier.fillMaxWidth()) {
                 Text(item.name.ifBlank { "缴费项目" }, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text("¥${money(item.outstanding.ifBlank { item.amount })}", color = FinanceAmount, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text("¥${financeMoneyText(item.outstanding.ifBlank { item.amount }, moneyVisible)}", color = FinanceAmount, fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
             if (item.secondary.isNotBlank()) Text(item.secondary, color = FinanceMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 7.dp))
-            if (item.details.isNotEmpty()) FieldGrid(item.details, Modifier.padding(top = 12.dp))
+            if (item.details.isNotEmpty()) FieldGrid(item.details, moneyVisible, Modifier.padding(top = 12.dp))
         }
     }
 }
@@ -294,10 +297,10 @@ private fun ModuleContent(
                 items(values, key = { "${state.module.key}-${it.id}" }) { item ->
                     Surface(Modifier.fillMaxWidth().clickable { onSelectItem(item) }, shape = RoundedCornerShape(17.dp), color = FinanceCard, border = androidx.compose.foundation.BorderStroke(1.dp, FinanceBorder)) {
                         Column(Modifier.padding(16.dp)) {
-                            Row { Text(displayFinanceItemName(state.module, item.name).ifBlank { state.module.label }, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); if (item.amount.isNotBlank()) Text("¥${money(item.amount)}", color = FinanceAmount, fontWeight = FontWeight.Bold) }
+                            Row { Text(displayFinanceItemName(state.module, item.name).ifBlank { state.module.label }, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); if (item.amount.isNotBlank()) Text("¥${financeMoneyText(item.amount, state.moneyVisible)}", color = FinanceAmount, fontWeight = FontWeight.Bold) }
                             val secondary = listOf(item.secondary, item.status).filter(String::isNotBlank).joinToString(" · ")
                             if (secondary.isNotBlank()) Text(secondary, color = FinanceMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
-                            if (state.module == FinanceModule.FEE_PROJECTS && item.details.isNotEmpty()) FieldGrid(item.details, Modifier.padding(top = 10.dp))
+                            if (state.module == FinanceModule.FEE_PROJECTS && item.details.isNotEmpty()) FieldGrid(item.details, state.moneyVisible, Modifier.padding(top = 10.dp))
                         }
                     }
                 }
@@ -309,7 +312,7 @@ private fun ModuleContent(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CreditContent(payload: FinancePayload.Tables?, savedAt: Long, onGesture: (Boolean) -> Unit, modifier: Modifier) {
+private fun CreditContent(payload: FinancePayload.Tables?, savedAt: Long, moneyVisible: Boolean, onGesture: (Boolean) -> Unit, modifier: Modifier) {
     val sections = payload?.sections.orEmpty()
     if (sections.isEmpty()) return EmptyFinance("暂无学分结算数据", "点击右上角刷新查询。", null, modifier)
     val sectionSchemas = sections.map { it.title to it.columns }
@@ -329,13 +332,13 @@ private fun CreditContent(payload: FinancePayload.Tables?, savedAt: Long, onGest
             sections.forEachIndexed { sectionIndex, section ->
                 if (sectionIndex > 0) item(key = "gap-$sectionIndex") { Spacer(Modifier.height(CREDIT_SECTION_GAP)) }
                 stickyHeader(key = "header-$sectionIndex") {
-                    Column {
+                    Column(Modifier.background(FinancePageBg)) {
                         CreditSectionTitle(section.title)
-                        CreditTableRow(section.columns, section.columns, header = true, horizontal = horizontalStates.getValue(sectionIndex))
+                        CreditTableRow(section.columns, section.columns, header = true, moneyVisible = moneyVisible, horizontal = horizontalStates.getValue(sectionIndex))
                     }
                 }
                 itemsIndexed(section.rows, key = { rowIndex, _ -> "row-$sectionIndex-$rowIndex" }) { _, row ->
-                    CreditTableRow(row, section.columns, header = false, horizontal = horizontalStates.getValue(sectionIndex))
+                    CreditTableRow(row, section.columns, header = false, moneyVisible = moneyVisible, horizontal = horizontalStates.getValue(sectionIndex))
                 }
                 item(key = "bottom-$sectionIndex") { Spacer(Modifier.height(8.dp)) }
             }
@@ -356,7 +359,7 @@ private fun CreditSectionTitle(title: String) {
 }
 
 @Composable
-private fun CreditTableRow(values: List<String>, columns: List<String>, header: Boolean, horizontal: androidx.compose.foundation.ScrollState) {
+private fun CreditTableRow(values: List<String>, columns: List<String>, header: Boolean, moneyVisible: Boolean, horizontal: androidx.compose.foundation.ScrollState) {
     val fixedIndex = isIndexColumn(columns.firstOrNull().orEmpty())
     val background = if (header) CreditHeaderBg else FinanceCard
     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).background(background)) {
@@ -366,7 +369,12 @@ private fun CreditTableRow(values: List<String>, columns: List<String>, header: 
         ) {
             val scrollingValues = if (fixedIndex) values.drop(1) else values
             val expectedCells = if (fixedIndex) (columns.size - 1).coerceAtLeast(0) else columns.size
-            repeat(expectedCells) { index -> CreditCell(scrollingValues.getOrNull(index).orEmpty(), header) }
+            repeat(expectedCells) { index ->
+                val columnIndex = if (fixedIndex) index + 1 else index
+                val column = columns.getOrNull(columnIndex).orEmpty()
+                val value = scrollingValues.getOrNull(index).orEmpty()
+                CreditCell(if (!header && !moneyVisible && isFinanceMoneyLabel(column)) "****" else value, header)
+            }
         }
     }
 }
@@ -398,13 +406,17 @@ private fun displayFinanceItemName(module: FinanceModule, value: String): String
     if (module == FinanceModule.FEE_PROJECTS) value.substringBefore("--").trim().ifBlank { value.trim() } else value
 
 @Composable
-private fun DetailSheet(item: FinanceItem, ticketImage: String, onTicket: (String) -> Unit) {
+private fun DetailSheet(item: FinanceItem, ticketImage: String, moneyVisible: Boolean, onTicket: (String) -> Unit) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 10.dp)) {
         Text(item.name, fontWeight = FontWeight.Bold, fontSize = 20.sp)
         if (item.secondary.isNotBlank()) Text(item.secondary, color = FinanceMuted, modifier = Modifier.padding(top = 5.dp, bottom = 14.dp))
-        item.details.forEach { field -> Row(Modifier.fillMaxWidth().padding(vertical = 7.dp)) { Text(field.label, color = FinanceMuted, modifier = Modifier.weight(1f)); Text(field.value, color = if (field.highlight) FinanceAmount else Color(0xFF202523), fontWeight = FontWeight.Medium) } }
-        if (item.canPreview && ticketImage.isBlank()) Button(onClick = { onTicket(item.receiptNumbers.first()) }, colors = ButtonDefaults.buttonColors(containerColor = FinancePrimary), modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("查看电子票据") }
-        rememberDataBitmap(ticketImage)?.let { bitmap -> androidx.compose.foundation.Image(bitmap.asImageBitmap(), null, Modifier.fillMaxWidth().padding(top = 12.dp)) }
+        item.details.forEach { field -> Row(Modifier.fillMaxWidth().padding(vertical = 7.dp)) { Text(field.label, color = FinanceMuted, modifier = Modifier.weight(1f)); Text(if (isFinanceMoneyLabel(field.label)) financeMoneyText(field.value, moneyVisible) else field.value, color = if (field.highlight) FinanceAmount else Color(0xFF202523), fontWeight = FontWeight.Medium) } }
+        if (item.canPreview && !moneyVisible) {
+            Text("显示金额后可查看电子票据", color = FinanceMuted, modifier = Modifier.padding(top = 12.dp))
+        } else {
+            if (item.canPreview && ticketImage.isBlank()) Button(onClick = { onTicket(item.receiptNumbers.first()) }, colors = ButtonDefaults.buttonColors(containerColor = FinancePrimary), modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text("查看电子票据") }
+            rememberDataBitmap(ticketImage)?.let { bitmap -> androidx.compose.foundation.Image(bitmap.asImageBitmap(), null, Modifier.fillMaxWidth().padding(top = 12.dp)) }
+        }
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -529,12 +541,16 @@ private fun financeTextFieldColors() = OutlinedTextFieldDefaults.colors(
 
 @Composable private fun UnsupportedFinance(modifier: Modifier) = EmptyFinance("南宁校区暂未开放", "当前财务查询仅支持桂林校区。入口已保留，后续接入时无需迁移页面。", null, modifier)
 @Composable private fun EmptyCard(text: String) = Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = FinanceCard) { Text(text, color = FinanceMuted, textAlign = TextAlign.Center, modifier = Modifier.padding(28.dp)) }
-@Composable private fun MetricCard(label: String, value: String, modifier: Modifier) = Surface(modifier, shape = RoundedCornerShape(16.dp), color = FinanceCard) { Column(Modifier.padding(15.dp)) { Text(label, color = FinanceMuted, fontSize = 12.sp); Text("¥ ${money(value)}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 5.dp)) } }
-@Composable private fun FieldGrid(fields: List<FinanceField>, modifier: Modifier) = Column(modifier) { fields.chunked(2).forEach { row -> Row(Modifier.fillMaxWidth()) { row.forEach { field -> Column(Modifier.weight(1f).padding(vertical = 4.dp)) { Text(field.label, color = FinanceMuted, fontSize = 10.sp); Text("¥${money(field.value)}", color = if (field.highlight) FinanceAmount else Color(0xFF303432), fontSize = 12.sp, fontWeight = FontWeight.Medium) } }; if (row.size == 1) Spacer(Modifier.weight(1f)) } } }
+@Composable private fun MetricCard(label: String, value: String, moneyVisible: Boolean, modifier: Modifier) = Surface(modifier, shape = RoundedCornerShape(16.dp), color = FinanceCard) { Column(Modifier.padding(15.dp)) { Text(label, color = FinanceMuted, fontSize = 12.sp); Text("¥ ${financeMoneyText(value, moneyVisible)}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 5.dp)) } }
+@Composable private fun FieldGrid(fields: List<FinanceField>, moneyVisible: Boolean, modifier: Modifier) = Column(modifier) { fields.chunked(2).forEach { row -> Row(Modifier.fillMaxWidth()) { row.forEach { field -> Column(Modifier.weight(1f).padding(vertical = 4.dp)) { Text(field.label, color = FinanceMuted, fontSize = 10.sp); Text("¥${financeMoneyText(field.value, moneyVisible)}", color = if (field.highlight) FinanceAmount else Color(0xFF303432), fontSize = 12.sp, fontWeight = FontWeight.Medium) } }; if (row.size == 1) Spacer(Modifier.weight(1f)) } } }
 
 @Composable private fun SecureFinanceWindow() { val context = LocalContext.current; DisposableEffect(context) { val activity = context.findActivity(); activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE); onDispose { activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) } } }
 private tailrec fun Context.findActivity(): Activity? = when (this) { is Activity -> this; is ContextWrapper -> baseContext.findActivity(); else -> null }
-private fun money(value: String): String = value.trim().ifBlank { "0.00" }
+internal fun financeMoneyText(value: String, moneyVisible: Boolean): String =
+    if (moneyVisible) value.trim().ifBlank { "0.00" } else "****"
+internal fun isFinanceMoneyLabel(label: String): Boolean = listOf(
+    "金额", "费用", "收费标准", "单价", "应收", "已缴", "已交", "未缴", "欠费", "减免", "贷款", "余额", "合计", "额度", "元/"
+).any(label::contains)
 private fun cacheTime(value: Long): String = if (value <= 0) "暂无缓存" else "${SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(value))} 更新"
 private fun dataBitmap(value: String) = runCatching { val encoded = value.substringAfter("base64,", ""); if (encoded.isBlank()) null else Base64.decode(encoded, Base64.DEFAULT).let { BitmapFactory.decodeByteArray(it, 0, it.size) } }.getOrNull()
 

@@ -27,9 +27,20 @@ class FinanceUiContractTest {
         assertTrue(main.contains("DrawerItem.Finance"))
         assertTrue(main.contains("FinanceViewModelFactory"))
         assertTrue(main.contains("FinanceScreen("))
-        assertTrue(main.contains("financeViewModel?.clearData()"))
+        assertTrue(main.contains("FinanceViewModelRegistry"))
         assertTrue(main.contains("listOf(DrawerItem.Score, DrawerItem.GradeExam, DrawerItem.FitnessScore)"))
         assertTrue(main.contains("listOf(DrawerItem.Finance, DrawerItem.Settings, DrawerItem.Notice, DrawerItem.FAQ, DrawerItem.About)"))
+    }
+
+    @Test
+    fun financeTopBarHasPrivacyToggleAndResetKeepsLazyViewModelReachable() {
+        val main = source("MainActivity.kt")
+
+        assertTrue(main.contains("Icons.Outlined.Visibility"))
+        assertTrue(main.contains("Icons.Outlined.VisibilityOff"))
+        assertTrue(main.contains("viewModel::toggleMoneyVisibility"))
+        assertTrue(main.contains("financeViewModels.clearAll()"))
+        assertTrue(main.contains("container.financeStore.clearAll()"))
     }
 
     @Test
@@ -56,7 +67,20 @@ class FinanceUiContractTest {
         assertTrue(screen.contains("Spacer(Modifier.height(CREDIT_SECTION_GAP))"))
         assertTrue(screen.contains("horizontalStates.getValue(sectionIndex)"))
         assertTrue(!screen.contains("val horizontal = rememberScrollState()"))
+        assertTrue(screen.contains("Column(Modifier.background(FinancePageBg))"))
         assertTrue(!screen.contains("Text(\"学分结算\", fontWeight = FontWeight.Bold, fontSize = 18.sp)"))
+    }
+
+    @Test
+    fun everyFinanceMoneySurfaceUsesThePrivacyFormatter() {
+        val screen = source("ui/pages/FinanceScreen.kt")
+
+        assertTrue(screen.contains("financeMoneyText("))
+        assertTrue(screen.contains("isFinanceMoneyLabel("))
+        assertTrue(screen.contains("moneyVisible = state.moneyVisible"))
+        assertTrue(screen.contains("if (!header && !moneyVisible && isFinanceMoneyLabel(column))"))
+        assertTrue(screen.contains("onDispose(viewModel::hideMoney)"))
+        assertTrue(screen.contains("if (item.canPreview && !moneyVisible)"))
     }
 
     @Test

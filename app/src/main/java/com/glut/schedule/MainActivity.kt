@@ -44,6 +44,8 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
@@ -121,6 +123,7 @@ import com.glut.schedule.ui.pages.FitnessScoreViewModelFactory
 import com.glut.schedule.ui.pages.FinanceScreen
 import com.glut.schedule.ui.pages.FinanceViewModel
 import com.glut.schedule.ui.pages.FinanceViewModelFactory
+import com.glut.schedule.ui.pages.FinanceViewModelRegistry
 import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
@@ -268,15 +271,16 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
+                val financeViewModels = remember { FinanceViewModelRegistry() }
                 val financeViewModel: FinanceViewModel? = if (selectedItem == DrawerItem.Finance) {
-                    viewModel(
+                    financeViewModels.register(viewModel<FinanceViewModel>(
                         key = "finance-${campusType.name}",
                         factory = FinanceViewModelFactory(
                             gateway = container.financeApiService,
                             store = container.financeStore,
                             campus = campusType
                         )
-                    )
+                    ))
                 } else null
 
                 val context = androidx.compose.ui.platform.LocalContext.current
@@ -533,6 +537,12 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             DrawerItem.Finance -> {
                                                 financeViewModel?.let { viewModel ->
                                                     val financeState by viewModel.uiState.collectAsStateWithLifecycle()
+                                                    IconButton(onClick = viewModel::toggleMoneyVisibility) {
+                                                        Icon(
+                                                            if (financeState.moneyVisible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                                                            contentDescription = if (financeState.moneyVisible) "隐藏金额" else "显示金额"
+                                                        )
+                                                    }
                                                     IconButton(
                                                         onClick = viewModel::refresh,
                                                         enabled = !financeState.isRefreshing && !financeState.campusUnsupported
@@ -666,7 +676,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     showResetConfirm = false
                                     directLoginViewModel.clearLoginState()
                                     fitnessScoreViewModel.clearData()
-                                    financeViewModel?.clearData() ?: container.financeStore.clearAll()
+                                    financeViewModels.clearAll()
+                                    container.financeStore.clearAll()
                                     scope.launch {
                                         container.scheduleRepository.clearAllData()
                                         container.settingsStore.clearAll()
