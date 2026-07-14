@@ -12,6 +12,9 @@ import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.fitness.FitnessApiService
 import com.glut.schedule.service.fitness.FitnessStore
+import com.glut.schedule.service.finance.FinanceApiService
+import com.glut.schedule.service.finance.FinanceParser
+import com.glut.schedule.service.finance.FinanceStore
 import com.glut.schedule.service.parser.CompositeScheduleParser
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
 import com.glut.schedule.service.parser.GlutExamParser
@@ -64,6 +67,9 @@ class AppContainer(application: Application) {
     val fitnessStore = FitnessStore(application)
     val fitnessApiService = FitnessApiService()
     val fitnessParser = FitnessParser()
+    val financeStore by lazy { FinanceStore(application) }
+    private val financeParser by lazy { FinanceParser() }
+    val financeApiService by lazy { FinanceApiService(financeParser) }
     val academicLoginService = AcademicLoginService(academicSessionStore, credentialStore)
     val scoreParser = ScoreParser()
     val gradeExamParser = GradeExamParser()
