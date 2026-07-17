@@ -1,7 +1,7 @@
 {
-  "version": "v0.18.0",
-  "versionCode": 31,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.18.0",
-  "releaseNotes": "- 新增并优化财务、专业成绩与体测功能\n- 体测改为 HTTPS 原生直连学校系统，修复历年成绩与全量加载\n- 更新 FAQ、隐私说明及相关界面交互\n\n版本号保持 0.18.0。",
-  "publishedAt": "2026-07-14T18:49:54Z"
+  "version": "v0.18.1",
+  "versionCode": 32,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.18.1",
+  "releaseNotes": "- 修复教学计划返回菜单时意外自动刷新\r\n- 专业成绩默认定位当前学年，并修正加权成绩精度\r\n- 修复体测登录弹窗的状态提示错误\r\n- 优化相关交互与回归测试",
+  "publishedAt": "2026-07-17T09:02:57Z"
 }
