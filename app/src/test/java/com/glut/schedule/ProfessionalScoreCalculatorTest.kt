@@ -11,8 +11,57 @@ import com.glut.schedule.data.model.StudyPlanGroup
 import com.glut.schedule.data.model.StudyPlanGroupWithCourses
 import org.junit.Assert.*
 import org.junit.Test
+import java.time.LocalDate
 
 class ProfessionalScoreCalculatorTest {
+    @Test
+    fun defaultAcademicYearUsesSavedCurrentSpringSemester() {
+        val selected = ProfessionalScoreCalculator.resolveDefaultAcademicYear(
+            availableAcademicYears = listOf("2025学年", "2026学年"),
+            semesterStartDate = LocalDate.of(2026, 3, 9),
+            semesterEndDate = LocalDate.of(2026, 7, 19),
+            today = LocalDate.of(2026, 7, 17)
+        )
+
+        assertEquals("2025学年", selected)
+    }
+
+    @Test
+    fun defaultAcademicYearUsesSavedCurrentAutumnSemester() {
+        val selected = ProfessionalScoreCalculator.resolveDefaultAcademicYear(
+            availableAcademicYears = listOf("2025学年", "2026学年"),
+            semesterStartDate = LocalDate.of(2026, 9, 7),
+            semesterEndDate = LocalDate.of(2027, 1, 17),
+            today = LocalDate.of(2026, 10, 1)
+        )
+
+        assertEquals("2026学年", selected)
+    }
+
+    @Test
+    fun defaultAcademicYearFallsBackToTodayWhenSavedSemesterIsStale() {
+        val selected = ProfessionalScoreCalculator.resolveDefaultAcademicYear(
+            availableAcademicYears = listOf("2024学年", "2025学年", "2026学年"),
+            semesterStartDate = LocalDate.of(2025, 9, 1),
+            semesterEndDate = LocalDate.of(2026, 1, 18),
+            today = LocalDate.of(2026, 9, 10)
+        )
+
+        assertEquals("2026学年", selected)
+    }
+
+    @Test
+    fun defaultAcademicYearFallsBackToLatestAvailableYearWhenCurrentIsMissing() {
+        val selected = ProfessionalScoreCalculator.resolveDefaultAcademicYear(
+            availableAcademicYears = listOf("2023学年", "2024学年"),
+            semesterStartDate = null,
+            semesterEndDate = null,
+            today = LocalDate.of(2026, 7, 17)
+        )
+
+        assertEquals("2024学年", selected)
+    }
+
     @Test
     fun availableAcademicYearsAreDerivedFromStudyPlanAutumnAndNextSpring() {
         val groups = listOf(

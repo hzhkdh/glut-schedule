@@ -34,6 +34,71 @@ class FitnessScoreViewModelTest {
     @After fun tearDown() = Dispatchers.resetMain()
 
     @Test
+    fun openingLoginOnlyLoadsCaptchaInsteadOfShowingLoginInProgress() = runTest {
+        val captchaGate = CompletableDeferred<FitnessApiResponse>()
+        val vm = FitnessScoreViewModel(FakeGateway(captchaGate = captchaGate), FakeStorage())
+
+        vm.showLogin()
+
+        assertTrue(vm.uiState.value.showLoginDialog)
+        assertTrue(vm.uiState.value.isCaptchaLoading)
+        assertFalse(vm.uiState.value.isLoggingIn)
+        assertFalse(vm.uiState.value.isRefreshing)
+
+        captchaGate.complete(captchaResponse())
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.isCaptchaLoading)
+    }
+
+    @Test
+    fun blankCredentialsNeverEnterLoginState() = runTest {
+        val gateway = FakeGateway()
+        val vm = FitnessScoreViewModel(gateway, FakeStorage())
+        vm.showLogin()
+        advanceUntilIdle()
+
+        vm.login()
+
+        assertFalse(vm.uiState.value.isLoggingIn)
+        assertFalse(vm.uiState.value.isRefreshing)
+        assertTrue(gateway.loginCalls.isEmpty())
+        assertEquals("请输入学号", vm.uiState.value.loginError)
+    }
+
+    @Test
+    fun dismissingDialogClearsPendingCaptchaLoadingState() = runTest {
+        val captchaGate = CompletableDeferred<FitnessApiResponse>()
+        val vm = FitnessScoreViewModel(FakeGateway(captchaGate = captchaGate), FakeStorage())
+        vm.showLogin()
+
+        vm.dismissLogin()
+
+        assertFalse(vm.uiState.value.showLoginDialog)
+        assertFalse(vm.uiState.value.isCaptchaLoading)
+        assertFalse(vm.uiState.value.isLoggingIn)
+        assertFalse(vm.uiState.value.isRefreshing)
+
+        captchaGate.complete(captchaResponse())
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.isCaptchaLoading)
+    }
+
+    @Test
+    fun loginSubmissionRequiresAllFieldsAndLoadedCaptcha() {
+        val ready = com.glut.schedule.ui.pages.FitnessScoreUiState(
+            username = "2024001",
+            password = "password",
+            captcha = "1234",
+            captchaImage = "data:image/jpeg;base64,aW1hZ2U="
+        )
+
+        assertFalse(com.glut.schedule.ui.pages.FitnessScoreUiState().canSubmitLogin)
+        assertTrue(ready.canSubmitLogin)
+        assertFalse(ready.copy(isCaptchaLoading = true).canSubmitLogin)
+        assertFalse(ready.copy(isLoggingIn = true).canSubmitLogin)
+    }
+
+    @Test
     fun captchaKeyAndCookieArePassedToTheMatchingLogin() = runTest {
         val gateway = FakeGateway()
         val store = FakeStorage()
@@ -360,12 +425,13 @@ class FitnessScoreViewModelTest {
         vm.updateCaptcha("1234")
         vm.login()
         withContext(Dispatchers.Default) {
-            withTimeout(2_000) { vm.uiState.first { it.standards.isNotEmpty() } }
+            withTimeout(2_000) { vm.uiState.first { it.standards.isNotEmpty() && !it.isRefreshing } }
         }
         advanceUntilIdle()
 
         assertEquals(listOf("login-session", "rotated-after-failure"), gateway.detailCookies)
         assertEquals(listOf("detail-session-2"), gateway.standardCookies)
+        vm.clearData()
     }
 
     @Test
@@ -414,6 +480,7 @@ class FitnessScoreViewModelTest {
         private val loginResponse: FitnessApiResponse = FitnessApiResponse(success = true, fitnessCookie = "school-session"),
         private val refreshResponse: FitnessApiResponse = FitnessApiResponse(success = true),
         private val refreshGate: CompletableDeferred<FitnessApiResponse>? = null,
+        private val captchaGate: CompletableDeferred<FitnessApiResponse>? = null,
         private val detailResponses: ArrayDeque<FitnessApiResponse> = ArrayDeque(),
         private val detailGate: CompletableDeferred<FitnessApiResponse>? = null,
         private val standardResponse: FitnessApiResponse = FitnessApiResponse(success = true)
@@ -428,12 +495,7 @@ class FitnessScoreViewModelTest {
 
         override suspend fun getCaptcha(cookie: String): FitnessApiResponse {
             captchaCalls++
-            return FitnessApiResponse(
-                success = true,
-                fitnessCookie = "captcha-cookie",
-                captchaImage = "data:image/jpeg;base64,aW1hZ2U=",
-                loginKey = "captcha-key"
-            )
+            return captchaGate?.await() ?: captchaResponse()
         }
 
         override suspend fun login(
@@ -497,6 +559,13 @@ class FitnessScoreViewModelTest {
     }
 
     companion object {
+        private fun captchaResponse() = FitnessApiResponse(
+            success = true,
+            fitnessCookie = "captcha-cookie",
+            captchaImage = "data:image/jpeg;base64,aW1hZ2U=",
+            loginKey = "captcha-key"
+        )
+
         private fun historyHtml() = """
             <form method="post" action="/SportWeb/health_info/listdetalhistroyScore.jsp">
               <input name="studentNo" value="student-a"><input name="academicYear" value="2024-2025">

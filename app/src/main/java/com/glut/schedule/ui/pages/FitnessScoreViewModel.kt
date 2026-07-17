@@ -34,6 +34,8 @@ data class FitnessScoreUiState(
     val standards: List<FitnessStandardTable> = emptyList(),
     val selectedStandardKey: String = "male",
     val showLoginDialog: Boolean = false,
+    val isCaptchaLoading: Boolean = false,
+    val isLoggingIn: Boolean = false,
     val username: String = "",
     val password: String = "",
     val captcha: String = "",
@@ -45,6 +47,14 @@ data class FitnessScoreUiState(
 
     val visibleHistoryResult: FitnessResult?
         get() = historyDetails[selectedHistoryKey]
+
+    val canSubmitLogin: Boolean
+        get() = username.isNotBlank() &&
+            password.isNotBlank() &&
+            captcha.isNotBlank() &&
+            captchaImage.isNotBlank() &&
+            !isCaptchaLoading &&
+            !isLoggingIn
 }
 
 class FitnessScoreViewModel(
@@ -101,9 +111,20 @@ class FitnessScoreViewModel(
 
     fun dismissLogin() {
         captchaRequestId++
+        operationEpoch++
         captchaCookie = ""
         captchaLoginKey = ""
-        _uiState.update { it.copy(showLoginDialog = false, loginError = "", captcha = "", message = "") }
+        _uiState.update {
+            it.copy(
+                showLoginDialog = false,
+                isRefreshing = false,
+                isCaptchaLoading = false,
+                isLoggingIn = false,
+                loginError = "",
+                captcha = "",
+                message = ""
+            )
+        }
     }
 
     fun clearData() {
@@ -126,6 +147,7 @@ class FitnessScoreViewModel(
 
     fun login() {
         val state = _uiState.value
+        if (state.isCaptchaLoading || state.isLoggingIn) return
         val username = state.username.trim()
         val password = state.password
         val captcha = state.captcha.trim()
@@ -133,6 +155,7 @@ class FitnessScoreViewModel(
             username.isBlank() -> "请输入学号"
             password.isBlank() -> "请输入体测平台密码"
             captcha.isBlank() -> "请输入验证码"
+            state.captchaImage.isBlank() -> "请先刷新验证码"
             else -> ""
         }
         if (validation.isNotBlank()) {
@@ -141,7 +164,7 @@ class FitnessScoreViewModel(
         }
         val epoch = ++operationEpoch
         viewModelScope.launch {
-            _uiState.update { it.copy(isRefreshing = true, loginError = "") }
+            _uiState.update { it.copy(isRefreshing = true, isLoggingIn = true, loginError = "") }
             try {
                 val result = service.login(username, password, captcha, captchaCookie, captchaLoginKey)
                 if (epoch != operationEpoch) return@launch
@@ -174,7 +197,9 @@ class FitnessScoreViewModel(
                 _uiState.update { it.copy(loginError = networkError(error), captcha = "") }
                 requestCaptcha(preserveError = true)
             } finally {
-                if (epoch == operationEpoch) _uiState.update { it.copy(isRefreshing = false) }
+                if (epoch == operationEpoch) {
+                    _uiState.update { it.copy(isRefreshing = false, isLoggingIn = false) }
+                }
             }
         }
     }
@@ -372,7 +397,8 @@ class FitnessScoreViewModel(
         _uiState.update {
             it.copy(
                 showLoginDialog = true,
-                isRefreshing = true,
+                isCaptchaLoading = true,
+                captchaImage = "",
                 message = message,
                 loginError = if (preserveError) it.loginError else ""
             )
@@ -394,7 +420,9 @@ class FitnessScoreViewModel(
                     _uiState.update { it.copy(loginError = networkError(error)) }
                 }
             } finally {
-                if (requestId == captchaRequestId) _uiState.update { it.copy(isRefreshing = false) }
+                if (requestId == captchaRequestId) {
+                    _uiState.update { it.copy(isCaptchaLoading = false) }
+                }
             }
         }
     }

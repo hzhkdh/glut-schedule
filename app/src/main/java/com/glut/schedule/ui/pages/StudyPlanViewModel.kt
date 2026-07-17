@@ -33,7 +33,6 @@ data class StudyPlanUiState(
     val isRefreshing: Boolean = false,
     val message: String = "",
     val hasCookie: Boolean = false,
-    val cookieValue: String = "",
     val expandedGroupId: String? = null,
     val showLegend: Boolean = false
 )
@@ -67,7 +66,6 @@ class StudyPlanViewModel(
             isRefreshing = refreshing,
             message = msg,
             hasCookie = c.isNotBlank(),
-            cookieValue = c,
             expandedGroupId = expId,
             showLegend = legend
         )

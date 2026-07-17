@@ -1,6 +1,7 @@
 package com.glut.schedule.data.model
 
 import java.text.Collator
+import java.time.LocalDate
 import java.util.Locale
 
 data class ProfessionalScoreCourse(
@@ -72,6 +73,29 @@ object ProfessionalScoreCalculator {
             }
             .distinct()
             .sortedBy { academicYearStart(it) }
+    }
+
+    fun resolveDefaultAcademicYear(
+        availableAcademicYears: List<String>,
+        semesterStartDate: LocalDate?,
+        semesterEndDate: LocalDate?,
+        today: LocalDate
+    ): String? {
+        if (availableAcademicYears.isEmpty()) return null
+
+        val semesterAcademicYear = if (
+            semesterStartDate != null &&
+            semesterEndDate != null &&
+            !today.isBefore(semesterStartDate) &&
+            !today.isAfter(semesterEndDate)
+        ) {
+            academicYearOfDate(semesterStartDate)
+        } else {
+            null
+        }
+        val currentAcademicYear = semesterAcademicYear ?: academicYearOfDate(today)
+        return currentAcademicYear.takeIf { it in availableAcademicYears }
+            ?: availableAcademicYears.lastOrNull()
     }
 
     fun calculate(
@@ -200,6 +224,11 @@ object ProfessionalScoreCalculator {
             semester.contains("春") -> "${year - 1}学年"
             else -> null
         }
+    }
+
+    private fun academicYearOfDate(date: LocalDate): String {
+        val startYear = if (date.monthValue <= 7) date.year - 1 else date.year
+        return "${startYear}学年"
     }
 
     private fun semestersOfAcademicYear(academicYear: String): List<String> {

@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.ProfessionalScoreCourse
 import com.glut.schedule.data.model.ProfessionalScoreMissingCourse
 import com.glut.schedule.data.model.ProfessionalScoreResult
+import java.util.Locale
 
 private val PSPrimary = Color(0xFF141821)
 private val PSSecondary = Color(0xFF667085)
@@ -330,7 +331,7 @@ private fun IncludedCourseRow(course: ProfessionalScoreCourse) {
             ) {
                 Text("原始成绩：${course.scoreText}", color = PSSecondary, fontSize = 12.sp)
                 Text(
-                    "加权 ${String.format("%.1f", course.weightedScore)}",
+                    "加权 ${formatProfessionalScoreNumber(course.weightedScore)}",
                     color = PSSecondary,
                     fontSize = 12.sp
                 )
@@ -434,6 +435,9 @@ private fun scoreColor(score: Double): Color = when {
 }
 
 private fun formatNum(value: Double): String {
-    if (value == value.toLong().toDouble()) return value.toLong().toString()
-    return String.format("%.2f", value).trimEnd('0').trimEnd('.')
+    return formatProfessionalScoreNumber(value)
+}
+
+internal fun formatProfessionalScoreNumber(value: Double): String {
+    return String.format(Locale.ROOT, "%.2f", value).trimEnd('0').trimEnd('.')
 }

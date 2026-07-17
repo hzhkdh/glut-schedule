@@ -36,3 +36,14 @@ enum class DrawerItem(
     FAQ("常见问题", Icons.Outlined.HelpOutline),
     About("关于", Icons.Outlined.Info);
 }
+
+internal fun prepareDrawerSelection(
+    current: DrawerItem,
+    target: DrawerItem,
+    onProfessionalScoreEntered: () -> Unit
+): DrawerItem {
+    if (target == DrawerItem.ProfessionalScore && current != target) {
+        onProfessionalScoreEntered()
+    }
+    return target
+}

@@ -664,6 +664,7 @@ private fun FitnessLoginDialog(
                 OutlinedTextField(
                     value = state.username,
                     onValueChange = onUsernameChange,
+                    enabled = !state.isLoggingIn,
                     label = { Text("学号") },
                     singleLine = true,
                     colors = fitnessTextFieldColors(),
@@ -672,11 +673,15 @@ private fun FitnessLoginDialog(
                 OutlinedTextField(
                     value = state.password,
                     onValueChange = onPasswordChange,
+                    enabled = !state.isLoggingIn,
                     label = { Text("体测平台密码") },
                     singleLine = true,
                     visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
-                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        IconButton(
+                            onClick = { passwordVisible = !passwordVisible },
+                            enabled = !state.isLoggingIn
+                        ) {
                             Icon(
                                 if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
                                 contentDescription = if (passwordVisible) "隐藏密码" else "显示密码",
@@ -703,6 +708,7 @@ private fun FitnessLoginDialog(
                     OutlinedTextField(
                         value = state.captcha,
                         onValueChange = onCaptchaChange,
+                        enabled = !state.isLoggingIn,
                         label = { Text("验证码") },
                         singleLine = true,
                         colors = fitnessTextFieldColors(),
@@ -713,7 +719,10 @@ private fun FitnessLoginDialog(
                             .width(126.dp)
                             .height(56.dp)
                             .background(Color.White)
-                            .clickable(onClick = onCaptchaClick),
+                            .clickable(
+                                enabled = !state.isCaptchaLoading && !state.isLoggingIn,
+                                onClick = onCaptchaClick
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         if (captchaBitmap != null) {
@@ -722,6 +731,18 @@ private fun FitnessLoginDialog(
                                 contentDescription = "点击刷新验证码",
                                 modifier = Modifier.fillMaxSize()
                             )
+                        } else if (state.isCaptchaLoading) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = FitnessAccent,
+                                    strokeWidth = 2.dp
+                                )
+                                Text("加载中…", color = FitnessSecondary, fontSize = 12.sp)
+                            }
                         } else {
                             Text("点击刷新", color = FitnessSecondary, fontSize = 12.sp)
                         }
@@ -735,13 +756,9 @@ private fun FitnessLoginDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消", color = FitnessSecondary) } },
         confirmButton = {
-            TextButton(onClick = onLogin, enabled = !state.isRefreshing) {
-                val actionColor = if (state.isRefreshing) {
-                    FitnessAccent.copy(alpha = 0.38f)
-                } else {
-                    FitnessAccent
-                }
-                if (state.isRefreshing) {
+            TextButton(onClick = onLogin, enabled = state.canSubmitLogin) {
+                val actionColor = if (state.canSubmitLogin) FitnessAccent else FitnessAccent.copy(alpha = 0.38f)
+                if (state.isLoggingIn) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)

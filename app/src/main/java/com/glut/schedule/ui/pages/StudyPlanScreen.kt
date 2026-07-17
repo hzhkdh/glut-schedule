@@ -30,12 +30,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,18 +78,6 @@ fun StudyPlanScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
-
-    var prevCookie by remember { mutableStateOf("") }
-    LaunchedEffect(uiState.cookieValue) {
-        if (uiState.hasCookie && !uiState.isRefreshing && uiState.cookieValue != prevCookie) {
-            val isFirstLogin = prevCookie.isEmpty()
-            val dataMissing = uiState.groups.isEmpty()
-            if (!isFirstLogin || dataMissing) {
-                viewModel.refresh()
-            }
-        }
-        prevCookie = uiState.cookieValue
-    }
 
     val screenW = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
     val fs = if (screenW >= 420) 13.sp else 12.sp

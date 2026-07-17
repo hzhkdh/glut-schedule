@@ -6,10 +6,18 @@ import org.junit.Test
 
 class ReleaseVersionTest {
     @Test
-    fun releaseVersionIs0180() {
+    fun releaseVersionIs0181() {
         val module = File("build.gradle.kts")
         val source = (if (module.exists()) module else File("app/build.gradle.kts")).readText()
-        assertTrue(source.contains("versionCode = 114"))
-        assertTrue(source.contains("versionName = \"0.18.0\""))
+        assertTrue(source.contains("versionCode = 115"))
+        assertTrue(source.contains("versionName = \"0.18.1\""))
+    }
+
+    @Test
+    fun financeUserAgentUsesBuildVersionInsteadOfHardcodedRelease() {
+        val module = File("src/main/java/com/glut/schedule/service/finance/FinanceApiService.kt")
+        val source = (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/service/finance/FinanceApiService.kt")).readText()
+
+        assertTrue(source.contains("BuildConfig.VERSION_NAME"))
     }
 }

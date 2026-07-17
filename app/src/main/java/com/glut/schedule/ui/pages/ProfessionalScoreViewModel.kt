@@ -9,7 +9,9 @@ import com.glut.schedule.data.model.ProfessionalScoreResult
 import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.StudyPlanCourse
 import com.glut.schedule.data.model.StudyPlanGroup
+import com.glut.schedule.data.model.StudyPlanGroupWithCourses
 import com.glut.schedule.data.repository.ScheduleRepository
+import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
@@ -31,6 +33,7 @@ import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.nio.charset.Charset
+import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 data class ProfessionalScoreUiState(
@@ -45,6 +48,14 @@ data class ProfessionalScoreUiState(
     val hasScoreData: Boolean = false
 )
 
+private data class ProfessionalScoreBase(
+    val groupsWithCourses: List<StudyPlanGroupWithCourses>,
+    val scores: List<ScoreInfo>,
+    val cookie: String,
+    val semesterStartDate: LocalDate,
+    val semesterEndDate: LocalDate
+)
+
 internal fun canUseProfessionalScoreRemoteDataWithoutLoginRetry(
     hasCookie: Boolean,
     hasScores: Boolean,
@@ -56,6 +67,7 @@ internal fun canUseProfessionalScoreRemoteDataWithoutLoginRetry(
 
 class ProfessionalScoreViewModel(
     private val repository: ScheduleRepository,
+    private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
     private val scoreParser: ScoreParser = ScoreParser(),
@@ -71,24 +83,37 @@ class ProfessionalScoreViewModel(
         combine(
             repository.studyPlanGroupsWithCourses,
             repository.scores,
-            sessionStore.academicCookie
-        ) { groupsWithCourses, scores, cookie ->
-            Triple(groupsWithCourses, scores, cookie)
+            sessionStore.academicCookie,
+            settingsStore.semesterStartMonday,
+            settingsStore.semesterEndDate
+        ) { groupsWithCourses, scores, cookie, semesterStartDate, semesterEndDate ->
+            ProfessionalScoreBase(
+                groupsWithCourses = groupsWithCourses,
+                scores = scores,
+                cookie = cookie,
+                semesterStartDate = semesterStartDate,
+                semesterEndDate = semesterEndDate
+            )
         },
         _isRefreshing,
         _message,
         _scoreUnavailableReason,
         _selectedAcademicYear
-    ) { (groupsWithCourses, scores, cookie), isRefreshing, message, scoreUnavailableReason, selectedAcademicYear ->
-        val academicYears = ProfessionalScoreCalculator.availableAcademicYears(groupsWithCourses)
+    ) { base, isRefreshing, message, scoreUnavailableReason, selectedAcademicYear ->
+        val academicYears = ProfessionalScoreCalculator.availableAcademicYears(base.groupsWithCourses)
         val effectiveAcademicYear = selectedAcademicYear
             ?.takeIf { it in academicYears }
-            ?: academicYears.lastOrNull()
+            ?: ProfessionalScoreCalculator.resolveDefaultAcademicYear(
+                availableAcademicYears = academicYears,
+                semesterStartDate = base.semesterStartDate,
+                semesterEndDate = base.semesterEndDate,
+                today = LocalDate.now()
+            )
         val result = effectiveAcademicYear?.let {
             ProfessionalScoreCalculator.calculate(
                 academicYear = it,
-                groupsWithCourses = groupsWithCourses,
-                scores = scores
+                groupsWithCourses = base.groupsWithCourses,
+                scores = base.scores
             )
         }
 
@@ -99,9 +124,9 @@ class ProfessionalScoreViewModel(
             isRefreshing = isRefreshing,
             message = message,
             scoreUnavailableReason = scoreUnavailableReason,
-            hasCookie = cookie.isNotBlank(),
-            hasStudyPlanData = groupsWithCourses.any { it.courses.isNotEmpty() },
-            hasScoreData = scores.isNotEmpty()
+            hasCookie = base.cookie.isNotBlank(),
+            hasStudyPlanData = base.groupsWithCourses.any { it.courses.isNotEmpty() },
+            hasScoreData = base.scores.isNotEmpty()
         )
     }.stateIn(
         scope = viewModelScope,
@@ -111,6 +136,10 @@ class ProfessionalScoreViewModel(
 
     fun selectAcademicYear(academicYear: String) {
         _selectedAcademicYear.value = academicYear
+    }
+
+    fun resetAcademicYearSelection() {
+        _selectedAcademicYear.value = null
     }
 
     fun refreshData() {
@@ -398,6 +427,7 @@ class ProfessionalScoreViewModel(
 
 class ProfessionalScoreViewModelFactory(
     private val repository: ScheduleRepository,
+    private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
     private val scoreParser: ScoreParser = ScoreParser(),
@@ -407,6 +437,7 @@ class ProfessionalScoreViewModelFactory(
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return ProfessionalScoreViewModel(
             repository = repository,
+            settingsStore = settingsStore,
             sessionStore = sessionStore,
             loginService = loginService,
             scoreParser = scoreParser,

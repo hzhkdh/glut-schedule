@@ -26,7 +26,8 @@ class ReleasePolishContractTest {
         assertTrue(screen.contains("登录中…"))
         assertTrue(screen.contains("CircularProgressIndicator"))
         assertTrue(screen.contains("FitnessAccent.copy(alpha = 0.38f)"))
-        assertTrue(screen.contains("enabled = !state.isRefreshing"))
+        assertTrue(screen.contains("if (state.isLoggingIn)"))
+        assertTrue(screen.contains("enabled = state.canSubmitLogin"))
     }
 
     @Test

@@ -106,6 +106,7 @@ import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.UpdateInfo
 import com.glut.schedule.ui.navigation.DrawerItem
+import com.glut.schedule.ui.navigation.prepareDrawerSelection
 import com.glut.schedule.ui.pages.AboutScreen
 import com.glut.schedule.ui.pages.FaqScreen
 import com.glut.schedule.ui.pages.SemesterOverviewScreen
@@ -217,6 +218,7 @@ class MainActivity : ComponentActivity() {
                 val professionalScoreViewModel: ProfessionalScoreViewModel = viewModel(
                     factory = ProfessionalScoreViewModelFactory(
                         repository = container.scheduleRepository,
+                        settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
                         scoreParser = container.scoreParser,
@@ -428,7 +430,11 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             item = item,
                                             isSelected = selectedItem == item,
                                             onClick = {
-                                                selectedItem = item
+                                                selectedItem = prepareDrawerSelection(
+                                                    current = selectedItem,
+                                                    target = item,
+                                                    onProfessionalScoreEntered = professionalScoreViewModel::resetAcademicYearSelection
+                                                )
                                                 showCourseColors = false
                                                 scope.launch { drawerState.close() }
                                             }

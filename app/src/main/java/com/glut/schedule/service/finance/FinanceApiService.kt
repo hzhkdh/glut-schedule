@@ -1,6 +1,7 @@
 package com.glut.schedule.service.finance
 
 import android.util.Log
+import com.glut.schedule.BuildConfig
 import com.glut.schedule.data.model.FinanceModule
 import com.glut.schedule.data.model.FinancePayload
 import java.io.IOException
@@ -302,7 +303,7 @@ class FinanceApiService(
             val builder = Request.Builder().url(url)
                 .header("Accept", accept)
                 .header("Accept-Language", "zh-CN,zh;q=0.9")
-                .header("User-Agent", "GLUT-Schedule/0.18.0 (Android)")
+                .header("User-Agent", "GLUT-Schedule/${BuildConfig.VERSION_NAME} (Android)")
             if (cookie.isNotBlank()) builder.header("Cookie", cookie)
             if (referer.isNotBlank()) builder.header("Referer", referer)
             if (methodFields != null) {
