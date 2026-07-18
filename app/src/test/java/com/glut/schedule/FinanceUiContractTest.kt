@@ -30,7 +30,7 @@ class FinanceUiContractTest {
         assertTrue(main.contains("FinanceViewModelRegistry"))
         assertTrue(main.contains("listOf(DrawerItem.Score, DrawerItem.ProfessionalScore, DrawerItem.GradeExam, DrawerItem.FitnessScore)"))
         assertTrue(main.contains("items(campusDrawerItems(campusType))"))
-        assertTrue(drawer.contains("DrawerItem.ShuttleBus,\n        DrawerItem.Finance"))
+        assertTrue(Regex("""DrawerItem\.ShuttleBus,\s*DrawerItem\.Finance""").containsMatchIn(drawer))
         assertTrue(!drawer.substringAfter("internal val otherDrawerItems").contains("DrawerItem.Finance"))
     }
 
