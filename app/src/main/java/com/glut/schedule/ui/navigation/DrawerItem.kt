@@ -6,6 +6,7 @@ import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.DateRange
+import androidx.compose.material.icons.outlined.DirectionsBus
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.EventNote
@@ -15,7 +16,9 @@ import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Today
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.glut.schedule.data.settings.CampusType
 
 enum class DrawerItem(
     val title: String,
@@ -27,6 +30,8 @@ enum class DrawerItem(
     Exam("考试安排", Icons.Outlined.EventNote),
     GradeExam("考级成绩", Icons.Outlined.EmojiEvents),
     FitnessScore("体测成绩", Icons.Outlined.FitnessCenter),
+    AcademicCalendar("校历", Icons.Outlined.Today),
+    ShuttleBus("校车路线", Icons.Outlined.DirectionsBus),
     Finance("财务", Icons.Outlined.AccountBalanceWallet),
     StudyPlan("教学计划", Icons.Outlined.MenuBook),
     Import("导入课表", Icons.Outlined.Download),
@@ -36,6 +41,22 @@ enum class DrawerItem(
     FAQ("常见问题", Icons.Outlined.HelpOutline),
     About("关于", Icons.Outlined.Info);
 }
+
+internal fun campusDrawerItems(campus: CampusType): List<DrawerItem> = when (campus) {
+    CampusType.GUILIN -> listOf(
+        DrawerItem.AcademicCalendar,
+        DrawerItem.ShuttleBus,
+        DrawerItem.Finance
+    )
+    CampusType.NANNING -> listOf(DrawerItem.Finance)
+}
+
+internal val otherDrawerItems = listOf(
+    DrawerItem.Settings,
+    DrawerItem.Notice,
+    DrawerItem.FAQ,
+    DrawerItem.About
+)
 
 internal fun prepareDrawerSelection(
     current: DrawerItem,
