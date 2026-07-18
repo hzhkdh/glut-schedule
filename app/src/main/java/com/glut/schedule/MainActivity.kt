@@ -97,6 +97,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glut.schedule.data.model.NoticeInfo
 import com.glut.schedule.data.model.CourseColorMapper
@@ -1389,6 +1390,11 @@ private fun hsvToHex(hue: Float, saturation: Float, value: Float): String {
 
 // ---- Notice Popup Dialog ----
 
+private val EXPLICIT_ACTION_DIALOG_PROPERTIES = DialogProperties(
+    dismissOnBackPress = false,
+    dismissOnClickOutside = false
+)
+
 @Composable
 private fun NoticePopupDialog(
     notice: NoticeInfo,
@@ -1396,7 +1402,8 @@ private fun NoticePopupDialog(
     onOpenNotices: () -> Unit
 ) {
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { },
+        properties = EXPLICIT_ACTION_DIALOG_PROPERTIES,
         containerColor = Color(0xFFFFFBFE),
         titleContentColor = Color(0xFF1D1B20),
         textContentColor = Color(0xFF49454F),
@@ -1555,7 +1562,8 @@ private fun UpdateDialog(
     when (state) {
         is UpdateDialogState.Idle -> {
             AlertDialog(
-                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                onDismissRequest = { },
+                properties = EXPLICIT_ACTION_DIALOG_PROPERTIES,
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
@@ -1604,12 +1612,8 @@ private fun UpdateDialog(
 
         is UpdateDialogState.Downloading -> {
             AlertDialog(
-                onDismissRequest = {
-                    if (!state.info.isForceUpdate) {
-                        onDismiss()
-                        onStateChange(null)
-                    }
-                },
+                onDismissRequest = { },
+                properties = EXPLICIT_ACTION_DIALOG_PROPERTIES,
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
@@ -1643,7 +1647,8 @@ private fun UpdateDialog(
 
         is UpdateDialogState.DownloadFailed -> {
             AlertDialog(
-                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                onDismissRequest = { },
+                properties = EXPLICIT_ACTION_DIALOG_PROPERTIES,
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
@@ -1664,7 +1669,8 @@ private fun UpdateDialog(
 
         is UpdateDialogState.Done -> {
             AlertDialog(
-                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                onDismissRequest = { },
+                properties = EXPLICIT_ACTION_DIALOG_PROPERTIES,
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
