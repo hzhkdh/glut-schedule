@@ -5,6 +5,9 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
@@ -62,6 +65,27 @@ internal suspend fun downloadFile(
     url: String,
     target: File,
     onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit
+): File = coroutineScope {
+    val progressEvents = Channel<Pair<Long, Long>>(Channel.CONFLATED)
+    launch {
+        for ((downloaded, total) in progressEvents) {
+            onProgress(downloaded, total)
+        }
+    }
+    try {
+        downloadFileWithProgressEvents(client, url, target) { downloaded, total ->
+            progressEvents.trySend(downloaded to total)
+        }
+    } finally {
+        progressEvents.close()
+    }
+}
+
+private suspend fun downloadFileWithProgressEvents(
+    client: OkHttpClient,
+    url: String,
+    target: File,
+    onProgressEvent: (downloadedBytes: Long, totalBytes: Long) -> Unit
 ): File = suspendCancellableCoroutine { continuation ->
     val request = Request.Builder()
         .url(url)
@@ -101,7 +125,7 @@ internal suspend fun downloadFile(
                                 if (bytesRead < 0) break
                                 output.write(buffer, 0, bytesRead)
                                 downloaded += bytesRead
-                                onProgress(downloaded, total)
+                                if (continuation.isActive) onProgressEvent(downloaded, total)
                             }
                         }
                     }

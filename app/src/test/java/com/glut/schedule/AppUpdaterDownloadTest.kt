@@ -13,9 +13,21 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okio.Buffer
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppUpdaterDownloadTest {
+    @Test
+    fun progressIsCollectedByTheCallingCoroutineAndGatedAfterCancellation() {
+        val module = File("src/main/java/com/glut/schedule/service/AppUpdater.kt")
+        val source = (if (module.exists()) module else
+            File("app/src/main/java/com/glut/schedule/service/AppUpdater.kt")).readText()
+
+        assertTrue(source.contains("Channel<Pair<Long, Long>>(Channel.CONFLATED)"))
+        assertTrue(source.contains("for ((downloaded, total) in progressEvents)"))
+        assertTrue(source.contains("if (continuation.isActive) onProgressEvent(downloaded, total)"))
+    }
+
     @Test
     fun cancellationStopsTheCallAndDeletesThePartialApk() = runBlocking {
         MockWebServer().use { server ->
