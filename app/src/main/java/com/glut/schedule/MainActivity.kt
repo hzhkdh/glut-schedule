@@ -152,6 +152,8 @@ import com.glut.schedule.ui.pages.StudyPlanViewModelFactory
 import com.glut.schedule.ui.theme.GlutScheduleTheme
 import com.glut.schedule.data.settings.CampusType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -1522,9 +1524,11 @@ private fun UpdateDialog(
     onStateChange: (UpdateDialogState?) -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
 
     fun startDownload(info: UpdateInfo) {
-        scope.launch {
+        downloadJob?.cancel()
+        downloadJob = scope.launch {
             onStateChange(
                 UpdateDialogState.Downloading(
                     info = info,
@@ -1548,6 +1552,8 @@ private fun UpdateDialog(
                     )
                 }
                 onStateChange(UpdateDialogState.Done(info, apkFile))
+            } catch (error: CancellationException) {
+                throw error
             } catch (e: Exception) {
                 onStateChange(
                     UpdateDialogState.DownloadFailed(
@@ -1555,6 +1561,8 @@ private fun UpdateDialog(
                         message = e.message ?: "下载失败，请检查网络后重试"
                     )
                 )
+            } finally {
+                if (downloadJob === coroutineContext[Job]) downloadJob = null
             }
         }
     }
@@ -1637,7 +1645,12 @@ private fun UpdateDialog(
                 confirmButton = {},
                 dismissButton = {
                     if (!state.info.isForceUpdate) {
-                        TextButton(onClick = { onDismiss(); onStateChange(null) }) {
+                        TextButton(onClick = {
+                            downloadJob?.cancel()
+                            downloadJob = null
+                            onDismiss()
+                            onStateChange(null)
+                        }) {
                             Text("取消下载")
                         }
                     }

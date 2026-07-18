@@ -27,8 +27,18 @@ class ExplicitModalActionsTest {
         assertTrue(source.contains("TextButton(onClick = onOpenNotices)"))
         assertTrue(source.contains("TextButton(onClick = onDismiss)"))
         assertTrue(source.contains("TextButton(onClick = { startDownload(state.info) })"))
-        assertTrue(source.contains("TextButton(onClick = { onDismiss(); onStateChange(null) })"))
+        assertTrue(source.contains("Text(\"取消下载\")"))
         assertTrue(source.contains("appUpdater.installApk(state.apkFile)"))
+    }
+
+    @Test
+    fun cancelDownloadStopsTheTrackedJobWithoutShowingFailure() {
+        val source = mainActivitySource()
+
+        assertTrue(source.contains("var downloadJob by remember { mutableStateOf<Job?>(null) }"))
+        assertTrue(source.contains("downloadJob?.cancel()"))
+        assertTrue(source.contains("catch (error: CancellationException)"))
+        assertTrue(source.contains("throw error"))
     }
 
     private fun mainActivitySource(): String {
