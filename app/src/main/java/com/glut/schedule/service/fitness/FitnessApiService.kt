@@ -243,10 +243,10 @@ class FitnessApiService(
                 if (response.isRedirect) {
                     if (redirectCount == MAX_REDIRECTS) throw IOException("学校体测系统跳转次数过多")
                     val location = response.header("Location") ?: throw IOException("学校体测系统跳转地址为空")
-                    val next = response.request.url.resolve(location) ?: throw IOException("学校体测系统跳转地址无效")
-                    if (!FitnessResponses.isSafeRedirect(next, baseUrl)) {
-                        throw IOException("学校体测系统返回了不安全的跳转地址")
-                    }
+                    val candidate = response.request.url.resolve(location)
+                        ?: throw IOException("学校体测系统跳转地址无效")
+                    val next = FitnessResponses.safeRedirect(candidate, baseUrl)
+                        ?: throw IOException("学校体测系统返回了不安全的跳转地址")
                     request = if (response.code == 307 || response.code == 308) {
                         request.newBuilder().url(next).build()
                     } else {

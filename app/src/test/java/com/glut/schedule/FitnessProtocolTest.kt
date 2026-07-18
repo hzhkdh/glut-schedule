@@ -51,16 +51,28 @@ class FitnessProtocolTest {
     fun sessionDetectionRequiresFitnessLoginPageEvidence() {
         assertTrue(FitnessResponses.isSessionExpired("<input name=\"passwd\"><img src=\"/servlet/UpdateDate?method=validateCode\">"))
         assertTrue(FitnessResponses.isSessionExpired("<script>var secretKey='YWJjZA=='</script>"))
+        assertTrue(FitnessResponses.isSessionExpired("<b>页面已过期或者遇到错误!</b>"))
+        assertTrue(FitnessResponses.isSessionExpired("<b>请重新登录!</b>"))
         assertFalse(FitnessResponses.isSessionExpired("<table><td>项目名称</td><td>测试成绩</td></table>"))
     }
 
     @Test
-    fun redirectsCannotChangeHostSchemeOrPort() {
+    fun redirectsOnlyUpgradeTheFitnessSitesSameHostHttpErrorPage() {
         val base = "https://tzcs.glut.edu.cn/".toHttpUrl()
 
-        assertTrue(FitnessResponses.isSafeRedirect("https://tzcs.glut.edu.cn/student/index.jsp".toHttpUrl(), base))
-        assertFalse(FitnessResponses.isSafeRedirect("http://tzcs.glut.edu.cn/student/index.jsp".toHttpUrl(), base))
-        assertFalse(FitnessResponses.isSafeRedirect("https://tzcs.glut.edu.cn:8443/student/index.jsp".toHttpUrl(), base))
-        assertFalse(FitnessResponses.isSafeRedirect("https://example.com/".toHttpUrl(), base))
+        assertEquals(
+            "https://tzcs.glut.edu.cn/student/index.jsp".toHttpUrl(),
+            FitnessResponses.safeRedirect("https://tzcs.glut.edu.cn/student/index.jsp".toHttpUrl(), base)
+        )
+        assertEquals(
+            "https://tzcs.glut.edu.cn/SportWeb/common/error.jsp?from=score".toHttpUrl(),
+            FitnessResponses.safeRedirect(
+                "http://tzcs.glut.edu.cn:80/SportWeb/common/error.jsp?from=score".toHttpUrl(),
+                base
+            )
+        )
+        assertEquals(null, FitnessResponses.safeRedirect("http://tzcs.glut.edu.cn:8080/error.jsp".toHttpUrl(), base))
+        assertEquals(null, FitnessResponses.safeRedirect("https://tzcs.glut.edu.cn:8443/student/index.jsp".toHttpUrl(), base))
+        assertEquals(null, FitnessResponses.safeRedirect("https://example.com/".toHttpUrl(), base))
     }
 }

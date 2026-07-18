@@ -52,8 +52,19 @@ object FitnessResponses {
     fun isSessionExpired(html: String): Boolean =
         html.contains("/servlet/UpdateDate?method=validateCode", ignoreCase = true) ||
             html.contains("secretKey", ignoreCase = true) ||
+            html.contains("页面已过期") ||
+            html.contains("请重新登录") ||
             PASSWORD_INPUT.containsMatchIn(html)
 
-    fun isSafeRedirect(candidate: HttpUrl, base: HttpUrl): Boolean =
-        candidate.scheme == base.scheme && candidate.host == base.host && candidate.port == base.port
+    fun safeRedirect(candidate: HttpUrl, base: HttpUrl): HttpUrl? = when {
+        candidate.scheme == base.scheme && candidate.host == base.host && candidate.port == base.port -> candidate
+        base.scheme == "https" &&
+            candidate.scheme == "http" &&
+            candidate.host == base.host &&
+            candidate.port == 80 -> candidate.newBuilder()
+            .scheme("https")
+            .port(base.port)
+            .build()
+        else -> null
+    }
 }
