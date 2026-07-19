@@ -49,3 +49,5 @@ docs
 # ===== Kotlin / generated =====
 .kotlin/
 .dart_tool/
+
+.worktrees/
