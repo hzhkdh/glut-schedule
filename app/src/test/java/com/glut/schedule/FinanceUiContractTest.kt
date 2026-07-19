@@ -29,7 +29,9 @@ class FinanceUiContractTest {
         assertTrue(main.contains("FinanceScreen("))
         assertTrue(main.contains("FinanceViewModelRegistry"))
         assertTrue(main.contains("listOf(DrawerItem.Score, DrawerItem.ProfessionalScore, DrawerItem.GradeExam, DrawerItem.FitnessScore)"))
-        assertTrue(main.contains("listOf(DrawerItem.Finance, DrawerItem.Settings, DrawerItem.Notice, DrawerItem.FAQ, DrawerItem.About)"))
+        assertTrue(main.contains("items(campusDrawerItems(campusType))"))
+        assertTrue(drawer.contains("CampusInfo(\"校园信息\""))
+        assertTrue(!drawer.substringAfter("internal val otherDrawerItems").contains("DrawerItem.Finance"))
     }
 
     @Test

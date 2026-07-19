@@ -15,6 +15,8 @@ import com.glut.schedule.service.fitness.FitnessStore
 import com.glut.schedule.service.finance.FinanceApiService
 import com.glut.schedule.service.finance.FinanceParser
 import com.glut.schedule.service.finance.FinanceStore
+import com.glut.schedule.service.campus.CampusImageFileCache
+import com.glut.schedule.service.campus.CampusImageService
 import com.glut.schedule.service.parser.CompositeScheduleParser
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
 import com.glut.schedule.service.parser.GlutExamParser
@@ -70,6 +72,8 @@ class AppContainer(application: Application) {
     val financeStore by lazy { FinanceStore(application) }
     private val financeParser by lazy { FinanceParser() }
     val financeApiService by lazy { FinanceApiService(financeParser) }
+    private val campusImageCache = CampusImageFileCache(application.filesDir.resolve("campus_images"))
+    val campusImageService = CampusImageService(cache = campusImageCache)
     val academicLoginService = AcademicLoginService(academicSessionStore, credentialStore)
     val scoreParser = ScoreParser()
     val gradeExamParser = GradeExamParser()

@@ -106,6 +106,8 @@ import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.UpdateInfo
 import com.glut.schedule.ui.navigation.DrawerItem
+import com.glut.schedule.ui.navigation.campusDrawerItems
+import com.glut.schedule.ui.navigation.otherDrawerItems
 import com.glut.schedule.ui.navigation.prepareDrawerSelection
 import com.glut.schedule.ui.pages.AboutScreen
 import com.glut.schedule.ui.pages.FaqScreen
@@ -125,6 +127,9 @@ import com.glut.schedule.ui.pages.FinanceScreen
 import com.glut.schedule.ui.pages.FinanceViewModel
 import com.glut.schedule.ui.pages.FinanceViewModelFactory
 import com.glut.schedule.ui.pages.FinanceViewModelRegistry
+import com.glut.schedule.ui.pages.CampusImageScreen
+import com.glut.schedule.ui.pages.CampusImageViewModel
+import com.glut.schedule.ui.pages.CampusImageViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
@@ -273,6 +278,13 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
+                val campusInfoViewModel: CampusImageViewModel? =
+                    if (selectedItem == DrawerItem.CampusInfo) {
+                        viewModel(
+                            key = "campus-info",
+                            factory = CampusImageViewModelFactory(container.campusImageService)
+                        )
+                    } else null
                 val financeViewModels = remember { FinanceViewModelRegistry() }
                 val financeViewModel: FinanceViewModel? = if (selectedItem == DrawerItem.Finance) {
                     financeViewModels.register(viewModel<FinanceViewModel>(
@@ -284,6 +296,15 @@ class MainActivity : ComponentActivity() {
                         )
                     ))
                 } else null
+
+                LaunchedEffect(campusType) {
+                    if (
+                        campusType != CampusType.GUILIN &&
+                        selectedItem == DrawerItem.CampusInfo
+                    ) {
+                        selectedItem = DrawerItem.Schedule
+                    }
+                }
 
                 val context = androidx.compose.ui.platform.LocalContext.current
                 val backgroundPicker = rememberLauncherForActivityResult(
@@ -440,6 +461,27 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             }
                                         )
                                     }
+                                    // 校园
+                                    item {
+                                        Text(
+                                            "校园",
+                                            color = Color(0xFF3F7DF6),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
+                                        )
+                                    }
+                                    items(campusDrawerItems(campusType)) { item ->
+                                        DrawerMenuItem(
+                                            item = item,
+                                            isSelected = selectedItem == item,
+                                            onClick = {
+                                                selectedItem = item
+                                                showCourseColors = false
+                                                scope.launch { drawerState.close() }
+                                            }
+                                        )
+                                    }
                                     // 其他
                                     item {
                                         Text(
@@ -450,7 +492,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
                                         )
                                     }
-                                    items(listOf(DrawerItem.Finance, DrawerItem.Settings, DrawerItem.Notice, DrawerItem.FAQ, DrawerItem.About)) { item ->
+                                    items(otherDrawerItems) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
@@ -540,6 +582,15 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
+                                            DrawerItem.CampusInfo -> campusInfoViewModel?.let { viewModel ->
+                                                val campusImageState by viewModel.uiState.collectAsStateWithLifecycle()
+                                                IconButton(
+                                                    onClick = viewModel::refreshCurrent,
+                                                    enabled = !campusImageState.isLoading
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新校园信息")
+                                                }
+                                            }
                                             DrawerItem.Finance -> {
                                                 financeViewModel?.let { viewModel ->
                                                     val financeState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -595,6 +646,12 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     viewModel = fitnessScoreViewModel,
                                     onTableGestureActive = { drawerGestureBlocked = it }
                                 )
+                                DrawerItem.CampusInfo -> campusInfoViewModel?.let {
+                                    CampusImageScreen(
+                                        viewModel = it,
+                                        onImageGestureActive = { active -> drawerGestureBlocked = active }
+                                    )
+                                }
                                 DrawerItem.Finance -> financeViewModel?.let {
                                     FinanceScreen(
                                         viewModel = it,
