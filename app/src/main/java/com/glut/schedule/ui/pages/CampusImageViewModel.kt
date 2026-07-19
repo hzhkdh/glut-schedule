@@ -13,6 +13,21 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class CampusImageUiState(
+    val selectedType: CampusImageType = CampusImageType.ACADEMIC_CALENDAR,
+    val tabs: Map<CampusImageType, CampusImageTabState> = emptyMap()
+) {
+    private val current: CampusImageTabState
+        get() = tabs[selectedType] ?: CampusImageTabState()
+
+    val document: CampusImageDocument?
+        get() = current.document
+    val isLoading: Boolean
+        get() = current.isLoading
+    val message: String
+        get() = current.message
+}
+
+data class CampusImageTabState(
     val document: CampusImageDocument? = null,
     val isLoading: Boolean = false,
     val message: String = ""
@@ -20,42 +35,64 @@ data class CampusImageUiState(
 
 class CampusImageViewModel(
     private val gateway: CampusImageGateway,
-    private val type: CampusImageType
+    initialType: CampusImageType = CampusImageType.ACADEMIC_CALENDAR
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(CampusImageUiState())
+    private val _uiState = MutableStateFlow(CampusImageUiState(selectedType = initialType))
     val uiState: StateFlow<CampusImageUiState> = _uiState.asStateFlow()
 
     init {
-        load(forceRefresh = false)
+        load(initialType, forceRefresh = false)
     }
 
-    fun refresh() = load(forceRefresh = true)
+    fun selectType(type: CampusImageType) {
+        _uiState.update { it.copy(selectedType = type) }
+        val tab = _uiState.value.tabs[type]
+        if (tab?.document == null && tab?.isLoading != true) {
+            load(type, forceRefresh = false)
+        }
+    }
 
-    private fun load(forceRefresh: Boolean) {
-        if (_uiState.value.isLoading) return
+    fun refreshCurrent() = load(_uiState.value.selectedType, forceRefresh = true)
+
+    fun refresh() = refreshCurrent()
+
+    private fun load(type: CampusImageType, forceRefresh: Boolean) {
+        if (_uiState.value.tabs[type]?.isLoading == true) return
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, message = "") }
+            updateTab(type) { it.copy(isLoading = true, message = "") }
             runCatching { gateway.fetch(type, forceRefresh) }
                 .onSuccess { document ->
-                    _uiState.value = CampusImageUiState(
-                        document = document,
-                        message = if (document.fromCache) "网络不可用，已显示上次缓存" else ""
-                    )
-                }
-                .onFailure {
-                    _uiState.update {
-                        it.copy(isLoading = false, message = "校园信息暂时无法加载，请点击重试")
+                    updateTab(type) {
+                        CampusImageTabState(
+                            document = document,
+                            message = if (document.fromCache) "网络不可用，已显示上次缓存" else ""
+                        )
                     }
                 }
+                .onFailure {
+                    updateTab(type) { tab ->
+                        tab.copy(isLoading = false, message = "校园信息暂时无法加载，请点击重试")
+                    }
+                }
+        }
+    }
+
+    private fun updateTab(
+        type: CampusImageType,
+        transform: (CampusImageTabState) -> CampusImageTabState
+    ) {
+        _uiState.update { state ->
+            val current = state.tabs[type] ?: CampusImageTabState()
+            state.copy(tabs = state.tabs + (type to transform(current)))
         }
     }
 }
 
 class CampusImageViewModelFactory(
     private val gateway: CampusImageGateway,
-    private val type: CampusImageType
+    private val initialType: CampusImageType = CampusImageType.ACADEMIC_CALENDAR
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        CampusImageViewModel(gateway, type) as T
+        CampusImageViewModel(gateway, initialType) as T
 }

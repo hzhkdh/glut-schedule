@@ -105,7 +105,6 @@ import com.glut.schedule.data.model.hasUnreadNotices
 import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.UpdateInfo
-import com.glut.schedule.service.campus.CampusImageType
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.navigation.campusDrawerItems
 import com.glut.schedule.ui.navigation.otherDrawerItems
@@ -279,24 +278,11 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
-                val calendarViewModel: CampusImageViewModel? =
-                    if (selectedItem == DrawerItem.AcademicCalendar) {
+                val campusInfoViewModel: CampusImageViewModel? =
+                    if (selectedItem == DrawerItem.CampusInfo) {
                         viewModel(
-                            key = "campus-calendar",
-                            factory = CampusImageViewModelFactory(
-                                container.campusImageService,
-                                CampusImageType.ACADEMIC_CALENDAR
-                            )
-                        )
-                    } else null
-                val shuttleViewModel: CampusImageViewModel? =
-                    if (selectedItem == DrawerItem.ShuttleBus) {
-                        viewModel(
-                            key = "campus-shuttle",
-                            factory = CampusImageViewModelFactory(
-                                container.campusImageService,
-                                CampusImageType.SHUTTLE_BUS
-                            )
+                            key = "campus-info",
+                            factory = CampusImageViewModelFactory(container.campusImageService)
                         )
                     } else null
                 val financeViewModels = remember { FinanceViewModelRegistry() }
@@ -314,7 +300,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(campusType) {
                     if (
                         campusType != CampusType.GUILIN &&
-                        selectedItem in listOf(DrawerItem.AcademicCalendar, DrawerItem.ShuttleBus)
+                        selectedItem == DrawerItem.CampusInfo
                     ) {
                         selectedItem = DrawerItem.Schedule
                     }
@@ -596,22 +582,13 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
-                                            DrawerItem.AcademicCalendar -> calendarViewModel?.let { viewModel ->
+                                            DrawerItem.CampusInfo -> campusInfoViewModel?.let { viewModel ->
                                                 val campusImageState by viewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
-                                                    onClick = viewModel::refresh,
+                                                    onClick = viewModel::refreshCurrent,
                                                     enabled = !campusImageState.isLoading
                                                 ) {
-                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新校历")
-                                                }
-                                            }
-                                            DrawerItem.ShuttleBus -> shuttleViewModel?.let { viewModel ->
-                                                val campusImageState by viewModel.uiState.collectAsStateWithLifecycle()
-                                                IconButton(
-                                                    onClick = viewModel::refresh,
-                                                    enabled = !campusImageState.isLoading
-                                                ) {
-                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新校车路线")
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新校园信息")
                                                 }
                                             }
                                             DrawerItem.Finance -> {
@@ -669,16 +646,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     viewModel = fitnessScoreViewModel,
                                     onTableGestureActive = { drawerGestureBlocked = it }
                                 )
-                                DrawerItem.AcademicCalendar -> calendarViewModel?.let {
+                                DrawerItem.CampusInfo -> campusInfoViewModel?.let {
                                     CampusImageScreen(
-                                        title = DrawerItem.AcademicCalendar.title,
-                                        viewModel = it,
-                                        onImageGestureActive = { active -> drawerGestureBlocked = active }
-                                    )
-                                }
-                                DrawerItem.ShuttleBus -> shuttleViewModel?.let {
-                                    CampusImageScreen(
-                                        title = DrawerItem.ShuttleBus.title,
                                         viewModel = it,
                                         onImageGestureActive = { active -> drawerGestureBlocked = active }
                                     )

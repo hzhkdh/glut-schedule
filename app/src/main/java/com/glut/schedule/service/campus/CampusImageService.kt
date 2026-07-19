@@ -16,6 +16,7 @@ import okhttp3.Response
 
 enum class CampusImageType {
     ACADEMIC_CALENDAR,
+    CLASS_TIME,
     SHUTTLE_BUS
 }
 
@@ -43,6 +44,7 @@ class CampusImageFileCache(private val directory: File) : CampusImageCache {
         val metadata = Properties().apply {
             metadataFile.inputStream().use(::load)
         }
+        if (metadata.getProperty("parserVersion") != PARSER_VERSION) return null
         CampusImageDocument(
             imageUrl = metadata.getProperty("imageUrl") ?: return null,
             bytes = imageFile.readBytes(),
@@ -59,6 +61,7 @@ class CampusImageFileCache(private val directory: File) : CampusImageCache {
         val metadataTemp = File(directory, "${metadataFile.name}.tmp")
         imageTemp.writeBytes(document.bytes)
         Properties().apply {
+            setProperty("parserVersion", PARSER_VERSION)
             setProperty("imageUrl", document.imageUrl)
             setProperty("fetchedAt", document.fetchedAt.toString())
             metadataTemp.outputStream().use { store(it, null) }
@@ -71,6 +74,10 @@ class CampusImageFileCache(private val directory: File) : CampusImageCache {
 
     private fun imageFile(type: CampusImageType) = File(directory, "${type.name.lowercase()}.img")
     private fun metadataFile(type: CampusImageType) = File(directory, "${type.name.lowercase()}.properties")
+
+    private companion object {
+        const val PARSER_VERSION = "2"
+    }
 }
 
 class CampusImageService(
@@ -112,9 +119,7 @@ class CampusImageService(
             val charset = response.body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
             String(readLimitedBody(response, MAX_HTML_BYTES, "校园信息页面"), charset)
         }
-        val rawSource = IMAGE_SOURCE.find(html)?.groupValues?.get(1)
-            ?.replace("&amp;", "&")
-            ?: throw IOException("校园信息页面中未找到图片地址")
+        val rawSource = findImageSource(html, type)
         val imageUrl = finalPageUrl.resolve(rawSource)
             ?: throw IOException("校园信息图片地址无效")
         if (imageUrl.scheme != pageUrl.scheme || imageUrl.host !in allowedImageHosts) {
@@ -137,6 +142,24 @@ class CampusImageService(
             bodyBytes
         }
         return CampusImageDocument(finalImageUrl.toString(), bytes, now())
+    }
+
+    private fun findImageSource(html: String, type: CampusImageType): String {
+        val visibleHtml = HTML_COMMENT.replace(html, "")
+        val sectionIndex = CONTENT_SECTION_INDEX.getValue(type)
+        val sectionStarts = CONTENT_SECTION_START.findAll(visibleHtml).toList()
+        val searchArea = when {
+            sectionStarts.size > sectionIndex -> {
+                val start = sectionStarts[sectionIndex].range.first
+                val end = sectionStarts.getOrNull(sectionIndex + 1)?.range?.first ?: visibleHtml.length
+                visibleHtml.substring(start, end)
+            }
+            sectionIndex == 0 && sectionStarts.isEmpty() -> visibleHtml
+            else -> throw IOException("校园信息页面中未找到对应内容")
+        }
+        return IMAGE_SOURCE.find(searchArea)?.groupValues?.get(1)
+            ?.replace("&amp;", "&")
+            ?: throw IOException("校园信息页面中未找到图片地址")
     }
 
     private fun executeFollowingTrustedRedirects(
@@ -207,6 +230,11 @@ class CampusImageService(
         this as? IOException ?: IOException(message ?: "校园信息加载失败", this)
 
     companion object {
+        private val HTML_COMMENT = Regex("""<!--[\s\S]*?-->""")
+        private val CONTENT_SECTION_START = Regex(
+            """<div\b(?=[^>]*\bclass\s*=\s*[\"'][^\"']*\bxiangxi\b[^\"']*[\"'])[^>]*>""",
+            RegexOption.IGNORE_CASE
+        )
         private val IMAGE_SOURCE = Regex(
             """<img\b[^>]*\bsrc\s*=\s*[\"']([^\"']+)[\"']""",
             RegexOption.IGNORE_CASE
@@ -214,8 +242,15 @@ class CampusImageService(
         private val DEFAULT_PAGE_URLS = mapOf(
             CampusImageType.ACADEMIC_CALENDAR to
                 "https://xxfw.glut.edu.cn/GlutInfoService/jiaoxue-jxrl.html".toHttpUrl(),
+            CampusImageType.CLASS_TIME to
+                "https://xxfw.glut.edu.cn/GlutInfoService/jiaoxue-jxrl.html".toHttpUrl(),
             CampusImageType.SHUTTLE_BUS to
                 "https://xxfw.glut.edu.cn/GlutInfoService/bus-line.html".toHttpUrl()
+        )
+        private val CONTENT_SECTION_INDEX = mapOf(
+            CampusImageType.ACADEMIC_CALENDAR to 0,
+            CampusImageType.CLASS_TIME to 1,
+            CampusImageType.SHUTTLE_BUS to 0
         )
         private val DEFAULT_IMAGE_HOSTS = setOf("xxfw.glut.edu.cn", "jwc.glut.edu.cn")
         private const val MAX_REDIRECTS = 4

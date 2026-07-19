@@ -2,9 +2,11 @@ package com.glut.schedule
 
 import com.glut.schedule.service.campus.CampusImageCache
 import com.glut.schedule.service.campus.CampusImageDocument
+import com.glut.schedule.service.campus.CampusImageFileCache
 import com.glut.schedule.service.campus.CampusImageService
 import com.glut.schedule.service.campus.CampusImageType
 import java.io.IOException
+import java.util.Properties
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -15,13 +17,19 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class CampusImageServiceTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
     @Test
-    fun calendarUsesTheFirstOfficialImageWithoutReconstructingItsContents() = runTest {
+    fun calendarIgnoresCommentedLegacyImageAndUsesTheFirstVisibleOfficialImage() = runTest {
         MockWebServer().use { server ->
             server.enqueue(html("""
+                <!-- <img src="/2024-calendar.png"> -->
                 <div class="xiangxi"><img src="/calendar.png"></div>
                 <div class="xiangxi"><img src="/class-time.png"></div>
             """.trimIndent()))
@@ -33,8 +41,30 @@ class CampusImageServiceTest {
             assertEquals(server.url("/calendar.png").toString(), document.imageUrl)
             assertArrayEquals(PNG_BYTES, document.bytes)
             assertFalse(document.fromCache)
+            val pageRequest = server.takeRequest()
+            val imageRequest = server.takeRequest()
+            assertEquals("/calendar-page", pageRequest.path)
+            assertEquals("/calendar.png", imageRequest.path)
+            assertEquals(null, pageRequest.getHeader("Cookie"))
+            assertEquals(null, imageRequest.getHeader("Cookie"))
+        }
+    }
+
+    @Test
+    fun classTimeUsesTheSecondVisibleContentSection() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(html("""
+                <!-- <img src="/2024-calendar.png"> -->
+                <div class="xiangxi"><img src="/calendar.png"></div>
+                <div class="xiangxi" style="display:none"><img src="/class-time.png"></div>
+            """.trimIndent()))
+            server.enqueue(image(PNG_BYTES))
+
+            val document = service(server).fetch(CampusImageType.CLASS_TIME)
+
+            assertEquals(server.url("/class-time.png").toString(), document.imageUrl)
             assertEquals("/calendar-page", server.takeRequest().path)
-            assertEquals("/calendar.png", server.takeRequest().path)
+            assertEquals("/class-time.png", server.takeRequest().path)
         }
     }
 
@@ -113,6 +143,44 @@ class CampusImageServiceTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun fileCacheRejectsDocumentsWrittenBeforeTheParserRevision() {
+        val directory = temporaryFolder.newFolder("legacy-campus-cache")
+        directory.resolve("academic_calendar.img").writeBytes(PNG_BYTES)
+        Properties().apply {
+            setProperty("imageUrl", "https://xxfw.glut.edu.cn/GlutInfoService/2024.png")
+            setProperty("fetchedAt", "1234")
+            directory.resolve("academic_calendar.properties").outputStream().use { store(it, null) }
+        }
+
+        val document = CampusImageFileCache(directory).load(CampusImageType.ACADEMIC_CALENDAR)
+
+        assertEquals(null, document)
+    }
+
+    @Test
+    fun fileCacheWritesTheCurrentParserRevision() {
+        val directory = temporaryFolder.newFolder("current-campus-cache")
+        val cache = CampusImageFileCache(directory)
+        cache.save(
+            CampusImageType.CLASS_TIME,
+            CampusImageDocument(
+                imageUrl = "https://jwc.glut.edu.cn/class-time.png",
+                bytes = PNG_BYTES,
+                fetchedAt = 5678L
+            )
+        )
+
+        val metadata = Properties().apply {
+            directory.resolve("class_time.properties").inputStream().use(::load)
+        }
+        val document = cache.load(CampusImageType.CLASS_TIME)
+
+        assertEquals("2", metadata.getProperty("parserVersion"))
+        assertEquals("https://jwc.glut.edu.cn/class-time.png", document?.imageUrl)
+        assertTrue(document?.fromCache == true)
     }
 
     @Test
@@ -204,6 +272,7 @@ class CampusImageServiceTest {
         cache = cache,
         pageUrls = mapOf(
             CampusImageType.ACADEMIC_CALENDAR to server.url("/calendar-page"),
+            CampusImageType.CLASS_TIME to server.url("/calendar-page"),
             CampusImageType.SHUTTLE_BUS to server.url("/shuttle-page")
         ),
         allowedImageHosts = setOf(server.hostName),

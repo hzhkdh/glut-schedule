@@ -10,9 +10,9 @@ import org.junit.Test
 
 class CampusDrawerItemsTest {
     @Test
-    fun guilinCampusItemsAreSeparateAndFinanceIsLast() {
+    fun guilinCampusItemsCombinePublicImagesAndKeepFinanceSeparate() {
         assertEquals(
-            listOf(DrawerItem.AcademicCalendar, DrawerItem.ShuttleBus, DrawerItem.Finance),
+            listOf(DrawerItem.CampusInfo, DrawerItem.Finance),
             campusDrawerItems(CampusType.GUILIN)
         )
     }
