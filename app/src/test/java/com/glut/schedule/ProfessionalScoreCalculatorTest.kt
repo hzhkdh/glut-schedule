@@ -108,6 +108,19 @@ class ProfessionalScoreCalculatorTest {
     }
 
     @Test
+    fun normalScoreDoesNotExposeRedundantSourceReason() {
+        val groups = listOf(
+            groupWithCourses("专业核心课", "必修", arrayOf(course("2025秋", "程序设计实践" to 3.0)))
+        )
+        val scores = listOf(score("程序设计实践", "良", year = "2025", term = 2))
+
+        val result = ProfessionalScoreCalculator.calculate("2025学年", groups, scores)
+
+        assertEquals("良", result.courses.single().scoreText)
+        assertEquals("", result.courses.single().scoreSourceReason)
+    }
+
+    @Test
     fun excludesCoursesThatDoNotParticipateInProfessionalScore() {
         val groups = listOf(
             groupWithCourses("专业核心课", "必修", arrayOf(course("2025秋", "数据库系统" to 3.0))),
@@ -180,6 +193,7 @@ class ProfessionalScoreCalculatorTest {
 
         assertEquals(60.0, result.courses.single().scoreValue, 0.01)
         assertEquals(60.0, result.professionalScore!!, 0.01)
+        assertEquals("补考通过按 60 分计", result.courses.single().scoreSourceReason)
     }
 
     @Test

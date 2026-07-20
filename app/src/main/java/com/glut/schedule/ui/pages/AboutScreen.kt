@@ -1,5 +1,8 @@
 package com.glut.schedule.ui.pages
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Email
@@ -28,14 +32,18 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -53,15 +61,18 @@ fun AboutScreen(
     onShowUpdateDialog: (UpdateInfo) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     val currentVersion = BuildConfig.VERSION_NAME
     val hasUpdate = updateAvailableVersion.isNotBlank()
         && UpdateChecker.compareVersions(updateAvailableVersion, currentVersion) > 0
 
     Scaffold(
         modifier = modifier,
-        containerColor = Color(0xFFF6F4EF)
+        containerColor = Color(0xFFF6F4EF),
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -166,6 +177,20 @@ fun AboutScreen(
                             )
                             HorizontalDivider(color = Color(0xFFEDE8DE))
                             AboutInfoRow(
+                                icon = Icons.Outlined.Apps,
+                                label = "小程序",
+                                value = MINI_PROGRAM_SEARCH_TEXT,
+                                onClick = {
+                                    val message = if (copyMiniProgramSearchText(context)) {
+                                        MINI_PROGRAM_COPY_SUCCESS
+                                    } else {
+                                        MINI_PROGRAM_COPY_FAILURE
+                                    }
+                                    scope.launch { snackbarHostState.showSnackbar(message) }
+                                }
+                            )
+                            HorizontalDivider(color = Color(0xFFEDE8DE))
+                            AboutInfoRow(
                                 icon = Icons.Outlined.BugReport,
                                 label = "提交问题",
                                 value = "GitHub Issues",
@@ -201,6 +226,18 @@ fun AboutScreen(
             }
         }
     }
+}
+
+private const val MINI_PROGRAM_SEARCH_TEXT = "桂系一站式"
+private const val MINI_PROGRAM_COPY_SUCCESS = "已复制“桂系一站式”，请前往微信搜索"
+private const val MINI_PROGRAM_COPY_FAILURE = "复制失败，请手动在微信搜索“桂系一站式”"
+
+private fun copyMiniProgramSearchText(context: Context): Boolean {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        ?: return false
+    return runCatching {
+        clipboard.setPrimaryClip(ClipData.newPlainText("小程序名称", MINI_PROGRAM_SEARCH_TEXT))
+    }.isSuccess
 }
 
 @Composable

@@ -299,7 +299,7 @@ object ProfessionalScoreCalculator {
             .maxByOrNull { it.value }
             ?: withValues.maxByOrNull { it.value }
             ?: return null
-        return ResolvedScore(normal.score, normal.value, "成绩单原始成绩")
+        return ResolvedScore(normal.score, normal.value, "")
     }
 
     private fun ScoreInfo.factText(): String = listOf(

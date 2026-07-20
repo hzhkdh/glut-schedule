@@ -31,6 +31,19 @@ class AboutAndFaqCopyTest {
     }
 
     @Test
+    fun aboutPageCopiesMiniProgramNameAndShowsWechatSearchFeedback() {
+        val source = readSource("AboutScreen.kt")
+
+        assertTrue(source.contains("label = \"小程序\""))
+        assertTrue(source.contains("value = MINI_PROGRAM_SEARCH_TEXT"))
+        assertTrue(source.contains("MINI_PROGRAM_SEARCH_TEXT = \"桂系一站式\""))
+        assertTrue(source.contains("clipboard.setPrimaryClip"))
+        assertTrue(source.contains("SnackbarHost("))
+        assertTrue(source.contains("已复制“桂系一站式”，请前往微信搜索"))
+        assertTrue(source.contains("复制失败，请手动在微信搜索“桂系一站式”"))
+    }
+
+    @Test
     fun faqCopyMatchesAcceptedTextChanges() {
         val source = readSource("FaqScreen.kt")
 

@@ -26,16 +26,19 @@
 |------|------|---------|
 | 课程表 | 当前学期课表，周次导航 | currcourse.jsdo / showTimetable.do |
 | 考试成绩 | 历年课程成绩，学年分组 + GPA 汇总 | studentOwnScore.do (POST) |
+| 专业成绩 | 按培养计划筛选课程并计算学年加权成绩 | 本地考试成绩 + 教学计划 |
 | 考试安排 | 考试时间、地点、座位号，时间线 UI，按科目显示图标 | 多端点探测 (JSON/HTML) |
-| 等级考级 | 英语四六级、普通话等国家考试 | skilltest.jsdo (moduleId=2090) |
+| 考级成绩 | 英语四六级、普通话等国家考试 | skilltest.jsdo (moduleId=2090) |
 | 体测成绩 | 最新与历年体测明细、总评、评分标准 | 体测管理平台 |
+| 校园信息 | 校历、作息时间、校车路线和校园地图 | 内置校园地图 + 校园信息图片服务 |
+| 财务 | 财务概览、缴费项目、交易记录和电子票据 | 桂林理工大学财务平台 |
 | 教学计划 | 课组学分/门数要求与完成情况 | studentSelfSchedule.jsdo → studentScheduleLineShow.do |
 | 学期概览 | 学期日期、进度、节假日、调课一览 | 教务日历 + timor.tech 节假日 API |
 | 导入课表 | 学号密码登录，一键导入全部数据 | 多端点并行探测 |
 | 通知 | App 内公告、维护提醒、更新提示，支持未读红点 | Cloudflare Pages notices.json |
 | 常见问题 | FAQ 分类展开/收起（常见问题/数据解读/隐私安全/关于项目） | — |
 | 设置 | 显示周末、自定义背景、课程卡片颜色 | — |
-| 关于 | 版本信息、维护者、检测更新、App 内下载安装 | Cloudflare Pages + GitHub Releases API |
+| 关于 | 版本信息、维护者、检测更新、小程序名称复制、App 内下载安装 | Cloudflare Pages + GitHub Releases API |
 
 ### 学期概览
 - **学期进度**：圆形进度环 + 已过/剩余天数精确计算
