@@ -62,6 +62,16 @@ class ReleasePolishContractTest {
     }
 
     @Test
+    fun aboutUsesTheDedicatedMiniProgramIcon() {
+        val screen = source("AboutScreen.kt")
+
+        assertTrue(screen.contains("icon = MiniProgramIcon"))
+        assertTrue(screen.contains("private val MiniProgramIcon"))
+        assertFalse(screen.contains("import androidx.compose.material.icons.outlined.Apps"))
+        assertFalse(screen.contains("icon = Icons.Outlined.Apps"))
+    }
+
+    @Test
     fun financeCreditColumnsUseCompactAdaptiveWidths() {
         val screen = source("FinanceScreen.kt")
 

@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Email
@@ -42,7 +41,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -177,7 +180,7 @@ fun AboutScreen(
                             )
                             HorizontalDivider(color = Color(0xFFEDE8DE))
                             AboutInfoRow(
-                                icon = Icons.Outlined.Apps,
+                                icon = MiniProgramIcon,
                                 label = "小程序",
                                 value = MINI_PROGRAM_SEARCH_TEXT,
                                 onClick = {
@@ -231,6 +234,55 @@ fun AboutScreen(
 private const val MINI_PROGRAM_SEARCH_TEXT = "桂系一站式"
 private const val MINI_PROGRAM_COPY_SUCCESS = "已复制“桂系一站式”，请前往微信搜索"
 private const val MINI_PROGRAM_COPY_FAILURE = "复制失败，请手动在微信搜索“桂系一站式”"
+
+private val MiniProgramIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "MiniProgram",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        path(
+            fill = null,
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.8f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(12f, 3f)
+            curveTo(16.97f, 3f, 21f, 7.03f, 21f, 12f)
+            curveTo(21f, 16.97f, 16.97f, 21f, 12f, 21f)
+            curveTo(7.03f, 21f, 3f, 16.97f, 3f, 12f)
+            curveTo(3f, 7.03f, 7.03f, 3f, 12f, 3f)
+            close()
+        }
+        path(
+            fill = null,
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.8f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(14.8f, 7.8f)
+            curveTo(13.7f, 6.5f, 11.5f, 6.5f, 10.1f, 7.8f)
+            curveTo(8.8f, 9.1f, 8.8f, 10.6f, 10.1f, 11.4f)
+            curveTo(11.3f, 12.2f, 12.7f, 11.8f, 13.5f, 10.7f)
+        }
+        path(
+            fill = null,
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.8f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round
+        ) {
+            moveTo(9.2f, 16.2f)
+            curveTo(10.3f, 17.5f, 12.5f, 17.5f, 13.9f, 16.2f)
+            curveTo(15.2f, 14.9f, 15.2f, 13.4f, 13.9f, 12.6f)
+            curveTo(12.7f, 11.8f, 11.3f, 12.2f, 10.5f, 13.3f)
+        }
+    }.build()
+}
 
 private fun copyMiniProgramSearchText(context: Context): Boolean {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
