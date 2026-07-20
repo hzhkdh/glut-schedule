@@ -9,9 +9,12 @@ import androidx.compose.ui.unit.sp
 import androidx.core.graphics.toColorInt
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
+import androidx.glance.action.ActionParameters
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionStartActivity
+import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
@@ -62,6 +65,16 @@ class ColorTimelineWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val snapshot = ScheduleWidgetDataSource(context).load()
         provideContent { WidgetSurface(context) { ColorTimelineContent(snapshot) } }
+    }
+}
+
+class RefreshScheduleWidgetsAction : ActionCallback {
+    override suspend fun onAction(
+        context: Context,
+        glanceId: GlanceId,
+        parameters: ActionParameters
+    ) {
+        ScheduleWidgetUpdater.updateAll(context)
     }
 }
 
@@ -138,6 +151,13 @@ private fun WidgetHeader(snapshot: WidgetScheduleSnapshot, label: String) {
             Text(snapshot.today.format(DateTimeFormatter.ofPattern("M月d日")), style = SmallStyle, maxLines = 1)
         }
         Text("第 ${snapshot.currentWeek} 周 · ${snapshot.today.chineseDayOfWeek()}", style = BodyStyle, maxLines = 1)
+        Spacer(GlanceModifier.width(8.dp))
+        Text(
+            "刷新",
+            modifier = GlanceModifier.clickable(actionRunCallback<RefreshScheduleWidgetsAction>()),
+            style = TextStyle(color = WidgetAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold),
+            maxLines = 1
+        )
     }
 }
 

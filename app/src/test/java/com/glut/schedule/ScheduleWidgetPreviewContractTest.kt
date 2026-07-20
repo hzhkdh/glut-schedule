@@ -1,6 +1,7 @@
 package com.glut.schedule
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -63,6 +64,50 @@ class ScheduleWidgetPreviewContractTest {
         assertTrue(cancellationCatch >= 0)
         assertTrue(genericCatch > cancellationCatch)
         assertTrue(dataSource.contains("throw error"))
+    }
+
+    @Test
+    fun eventDrivenRefreshUsesUniqueOneTimeWorkAndSchedulesTheNextBoundary() {
+        val gradle = appFile("build.gradle.kts").readText()
+        val worker = appFile(
+            "src/main/java/com/glut/schedule/widget/ScheduleWidgetRefreshWorker.kt"
+        )
+        val updater = appFile(
+            "src/main/java/com/glut/schedule/widget/ScheduleWidgetUpdater.kt"
+        ).readText()
+
+        assertTrue(gradle.contains("androidx.work:work-runtime-ktx:2.7.1"))
+        assertTrue(worker.isFile)
+        val workerSource = worker.readText()
+        assertTrue(workerSource.contains("enqueueUniqueWork"))
+        assertTrue(workerSource.contains("ExistingWorkPolicy.REPLACE"))
+        assertTrue(workerSource.contains("setInitialDelay"))
+        assertTrue(workerSource.contains("ScheduleWidgetRefreshPlanner.nextRefreshAt"))
+        assertTrue(workerSource.contains("runAttemptCount + 1 < MAX_RETRY_ATTEMPTS"))
+        assertTrue(workerSource.contains("if (policy == ExistingWorkPolicy.REPLACE)"))
+        assertTrue(updater.contains("ScheduleWidgetRefreshScheduler.scheduleNext"))
+    }
+
+    @Test
+    fun everyWidgetRequestsAnImmediateRefreshWhenFirstEnabled() {
+        val receivers = appFile(
+            "src/main/java/com/glut/schedule/widget/ScheduleWidgetReceivers.kt"
+        ).readText()
+
+        assertEquals(3, "override fun onEnabled".toRegex().findAll(receivers).count())
+        assertEquals(3, "ScheduleWidgetRefreshScheduler.requestImmediate".toRegex().findAll(receivers).count())
+    }
+
+    @Test
+    fun widgetHeaderOffersARealManualRefreshAction() {
+        val widgets = appFile(
+            "src/main/java/com/glut/schedule/widget/ScheduleWidgets.kt"
+        ).readText()
+
+        assertTrue(widgets.contains("class RefreshScheduleWidgetsAction : ActionCallback"))
+        assertTrue(widgets.contains("actionRunCallback<RefreshScheduleWidgetsAction>()"))
+        assertTrue(widgets.contains("ScheduleWidgetUpdater.updateAll(context)"))
+        assertTrue(widgets.contains("\"刷新\""))
     }
 
     private fun appFile(relativePath: String): File {
