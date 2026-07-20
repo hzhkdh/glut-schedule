@@ -46,13 +46,17 @@ class CampusImageViewModel(
 
     fun selectType(type: CampusImageType) {
         _uiState.update { it.copy(selectedType = type) }
+        if (!type.isRemote) return
         val tab = _uiState.value.tabs[type]
         if (tab?.document == null && tab?.isLoading != true) {
             load(type, forceRefresh = false)
         }
     }
 
-    fun refreshCurrent() = load(_uiState.value.selectedType, forceRefresh = true)
+    fun refreshCurrent() {
+        val type = _uiState.value.selectedType
+        if (type.isRemote) load(type, forceRefresh = true)
+    }
 
     fun refresh() = refreshCurrent()
 

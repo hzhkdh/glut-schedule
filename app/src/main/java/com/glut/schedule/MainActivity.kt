@@ -584,11 +584,13 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             }
                                             DrawerItem.CampusInfo -> campusInfoViewModel?.let { viewModel ->
                                                 val campusImageState by viewModel.uiState.collectAsStateWithLifecycle()
-                                                IconButton(
-                                                    onClick = viewModel::refreshCurrent,
-                                                    enabled = !campusImageState.isLoading
-                                                ) {
-                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新校园信息")
+                                                if (campusImageState.selectedType.isRemote) {
+                                                    IconButton(
+                                                        onClick = viewModel::refreshCurrent,
+                                                        enabled = !campusImageState.isLoading
+                                                    ) {
+                                                        Icon(Icons.Outlined.Refresh, contentDescription = "刷新校园信息")
+                                                    }
                                                 }
                                             }
                                             DrawerItem.Finance -> {

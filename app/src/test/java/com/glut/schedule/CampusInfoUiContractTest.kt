@@ -7,10 +7,10 @@ import org.junit.Test
 
 class CampusInfoUiContractTest {
     @Test
-    fun campusInfoUsesThreeTabsAndTheApprovedCreamImageBackground() {
+    fun campusInfoUsesFourTabsAndKeepsGesturesInsideTheImageViewport() {
         val screen = source("ui/pages/CampusImageScreen.kt")
 
-        listOf("教学日历", "上课时间", "校车路线").forEach {
+        listOf("教学日历", "上课时间", "校车路线", "校园地图").forEach {
             assertTrue(screen.contains(it))
         }
         assertTrue(screen.contains("PrimaryTabRow"))
@@ -18,6 +18,9 @@ class CampusInfoUiContractTest {
         assertTrue(screen.contains("Color(0xFFF6F4EF)"))
         assertTrue(screen.contains("ContentScale.Fit"))
         assertTrue(screen.contains("contentAlignment = Alignment.Center"))
+        assertTrue(screen.contains("clipToBounds()"))
+        assertTrue(screen.indexOf("clipToBounds()") < screen.indexOf("transformable(transformState)"))
+        assertTrue(screen.contains("R.drawable.yanshan_campus_map"))
     }
 
     @Test

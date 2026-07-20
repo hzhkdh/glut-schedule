@@ -67,6 +67,22 @@ class CampusImageViewModelTest {
     }
 
     @Test
+    fun selectingTheBundledCampusMapNeverUsesTheNetworkGateway() = runTest {
+        val gateway = FakeGateway().apply {
+            results[CampusImageType.ACADEMIC_CALENDAR] = Result.success(document(CampusImageType.ACADEMIC_CALENDAR))
+        }
+        val viewModel = CampusImageViewModel(gateway)
+        gateway.calls.clear()
+
+        viewModel.selectType(CampusImageType.CAMPUS_MAP)
+        viewModel.refreshCurrent()
+
+        assertEquals(CampusImageType.CAMPUS_MAP, viewModel.uiState.value.selectedType)
+        assertEquals(emptyList<FetchCall>(), gateway.calls)
+        assertFalse(viewModel.uiState.value.isLoading)
+    }
+
+    @Test
     fun refreshOnlyBypassesCachesForTheSelectedTab() = runTest {
         val cached = document(CampusImageType.SHUTTLE_BUS).copy(fromCache = true)
         val gateway = FakeGateway().apply {

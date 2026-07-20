@@ -14,10 +14,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 
-enum class CampusImageType {
+enum class CampusImageType(val isRemote: Boolean = true) {
     ACADEMIC_CALENDAR,
     CLASS_TIME,
-    SHUTTLE_BUS
+    SHUTTLE_BUS,
+    CAMPUS_MAP(isRemote = false)
 }
 
 data class CampusImageDocument(

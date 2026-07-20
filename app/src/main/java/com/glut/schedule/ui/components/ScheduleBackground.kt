@@ -3,7 +3,9 @@ package com.glut.schedule.ui.components
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
 import android.graphics.ImageDecoder
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.util.Log
@@ -19,6 +21,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import com.glut.schedule.R
+import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -67,13 +70,16 @@ class ScheduleBackgroundStore(
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val source = ImageDecoder.createSource(context.contentResolver, parsed)
             ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
-                val (width, height) = calculateDecodeTargetSize(
+                val plan = calculateBackgroundDecodePlan(
                     sourceWidth = info.size.width,
                     sourceHeight = info.size.height,
                     targetWidth = targetWidth,
                     targetHeight = targetHeight
                 )
-                decoder.setTargetSize(width, height)
+                if (plan.scaledWidth != info.size.width || plan.scaledHeight != info.size.height) {
+                    decoder.setTargetSize(plan.scaledWidth, plan.scaledHeight)
+                }
+                decoder.setCrop(plan.crop.toRect())
             }
         } else {
             decodeSampledBitmapLegacy(parsed, targetWidth, targetHeight)
@@ -86,33 +92,42 @@ class ScheduleBackgroundStore(
             BitmapFactory.decodeStream(input, null, bounds)
         }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = calculateBitmapSampleSize(
-                sourceWidth = bounds.outWidth,
-                sourceHeight = bounds.outHeight,
-                targetWidth = targetWidth,
-                targetHeight = targetHeight
-            )
-        }
-        val sampled = context.contentResolver.openInputStream(uri)?.use { input ->
-            BitmapFactory.decodeStream(input, null, options)
-        } ?: return null
-        val (targetBitmapWidth, targetBitmapHeight) = calculateDecodeTargetSize(
-            sourceWidth = sampled.width,
-            sourceHeight = sampled.height,
+        val plan = calculateBackgroundDecodePlan(
+            sourceWidth = bounds.outWidth,
+            sourceHeight = bounds.outHeight,
             targetWidth = targetWidth,
             targetHeight = targetHeight
         )
-        return if (sampled.width == targetBitmapWidth && sampled.height == targetBitmapHeight) {
+
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = calculateBitmapSampleSize(
+                sourceWidth = plan.sourceCrop.width,
+                sourceHeight = plan.sourceCrop.height,
+                targetWidth = plan.outputWidth,
+                targetHeight = plan.outputHeight
+            )
+        }
+        val sampled = context.contentResolver.openInputStream(uri)?.use { input ->
+            val decoder = newBitmapRegionDecoder(input) ?: return@use null
+            try {
+                decoder.decodeRegion(plan.sourceCrop.toRect(), options)
+            } finally {
+                decoder.recycle()
+            }
+        } ?: return null
+        return if (sampled.width == plan.outputWidth && sampled.height == plan.outputHeight) {
             sampled
         } else {
-            Bitmap.createScaledBitmap(sampled, targetBitmapWidth, targetBitmapHeight, true).also {
+            Bitmap.createScaledBitmap(sampled, plan.outputWidth, plan.outputHeight, true).also {
                 sampled.recycle()
             }
         }
     }
 }
+
+@Suppress("DEPRECATION")
+private fun newBitmapRegionDecoder(input: InputStream): BitmapRegionDecoder? =
+    BitmapRegionDecoder.newInstance(input, false)
 
 @Composable
 fun StarryScheduleBackground(
@@ -165,6 +180,84 @@ fun shouldCommitCustomBackgroundUri(uri: String, preloadSucceeded: Boolean): Bac
         uri.isBlank() -> BackgroundSwitchResult.Clear
         preloadSucceeded -> BackgroundSwitchResult.Commit
         else -> BackgroundSwitchResult.KeepCurrent
+    }
+}
+
+data class ImageCropRegion(
+    val left: Int,
+    val top: Int,
+    val right: Int,
+    val bottom: Int
+) {
+    val width: Int get() = right - left
+    val height: Int get() = bottom - top
+
+    internal fun toRect() = Rect(left, top, right, bottom)
+}
+
+data class BackgroundDecodePlan(
+    val sourceCrop: ImageCropRegion,
+    val scaledWidth: Int,
+    val scaledHeight: Int,
+    val crop: ImageCropRegion
+) {
+    val outputWidth: Int get() = crop.width
+    val outputHeight: Int get() = crop.height
+}
+
+fun calculateBackgroundDecodePlan(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    targetWidth: Int,
+    targetHeight: Int
+): BackgroundDecodePlan {
+    val safeSourceWidth = max(1, sourceWidth)
+    val safeSourceHeight = max(1, sourceHeight)
+    val safeTargetWidth = max(1, targetWidth)
+    val safeTargetHeight = max(1, targetHeight)
+    val sourceCrop = calculateCenterCropRegion(
+        safeSourceWidth,
+        safeSourceHeight,
+        safeTargetWidth,
+        safeTargetHeight
+    )
+    val (outputWidth, outputHeight) = calculateDecodeTargetSize(
+        sourceCrop.width,
+        sourceCrop.height,
+        safeTargetWidth,
+        safeTargetHeight
+    )
+    val scale = min(
+        outputWidth.toFloat() / sourceCrop.width,
+        outputHeight.toFloat() / sourceCrop.height
+    ).coerceAtMost(1f)
+    val scaledWidth = max(1, (safeSourceWidth * scale).roundToInt())
+    val scaledHeight = max(1, (safeSourceHeight * scale).roundToInt())
+    val crop = calculateCenterCropRegion(
+        scaledWidth,
+        scaledHeight,
+        outputWidth,
+        outputHeight
+    )
+    return BackgroundDecodePlan(sourceCrop, scaledWidth, scaledHeight, crop)
+}
+
+private fun calculateCenterCropRegion(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    targetWidth: Int,
+    targetHeight: Int
+): ImageCropRegion {
+    val sourceAspect = sourceWidth.toDouble() / sourceHeight
+    val targetAspect = targetWidth.toDouble() / targetHeight
+    return if (sourceAspect > targetAspect) {
+        val width = (sourceHeight * targetAspect).roundToInt().coerceIn(1, sourceWidth)
+        val left = (sourceWidth - width) / 2
+        ImageCropRegion(left, 0, left + width, sourceHeight)
+    } else {
+        val height = (sourceWidth / targetAspect).roundToInt().coerceIn(1, sourceHeight)
+        val top = (sourceHeight - height) / 2
+        ImageCropRegion(0, top, sourceWidth, top + height)
     }
 }
 

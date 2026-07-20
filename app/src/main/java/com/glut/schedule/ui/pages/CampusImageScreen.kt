@@ -26,13 +26,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.glut.schedule.R
 import com.glut.schedule.service.campus.CampusImageType
 
 private val CampusPageBackground = Color(0xFFF6F4EF)
@@ -42,7 +46,8 @@ private val CampusText = Color(0xFF141821)
 private val CampusImageTabs = listOf(
     CampusImageType.ACADEMIC_CALENDAR to "教学日历",
     CampusImageType.CLASS_TIME to "上课时间",
-    CampusImageType.SHUTTLE_BUS to "校车路线"
+    CampusImageType.SHUTTLE_BUS to "校车路线",
+    CampusImageType.CAMPUS_MAP to "校园地图"
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,6 +60,11 @@ fun CampusImageScreen(
     val onSelectType = viewModel::selectType
     val bitmap = remember(state.selectedType, state.document?.fetchedAt) {
         state.document?.bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+    }
+    val painter = if (state.selectedType == CampusImageType.CAMPUS_MAP) {
+        painterResource(R.drawable.yanshan_campus_map)
+    } else {
+        remember(bitmap) { bitmap?.asImageBitmap()?.let(::BitmapPainter) }
     }
     var scale by remember(state.selectedType, state.document?.fetchedAt) { mutableFloatStateOf(1f) }
     var offset by remember(state.selectedType, state.document?.fetchedAt) { mutableStateOf(Offset.Zero) }
@@ -94,12 +104,14 @@ fun CampusImageScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .weight(1f)
-                .background(CampusPageBackground),
+                .background(CampusPageBackground)
+                .clipToBounds()
+                .transformable(transformState),
             contentAlignment = Alignment.Center
         ) {
-            if (bitmap != null) {
+            if (painter != null) {
                 Image(
-                    bitmap = bitmap.asImageBitmap(),
+                    painter = painter,
                     contentDescription = CampusImageTabs.first { it.first == state.selectedType }.second,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
@@ -110,7 +122,6 @@ fun CampusImageScreen(
                             translationX = offset.x
                             translationY = offset.y
                         }
-                        .transformable(transformState)
                 )
             } else if (!state.isLoading) {
                 Column(
@@ -129,7 +140,7 @@ fun CampusImageScreen(
             if (state.isLoading) {
                 CircularProgressIndicator()
             }
-            if (bitmap != null && state.message.isNotBlank()) {
+            if (painter != null && state.message.isNotBlank()) {
                 Text(
                     text = state.message,
                     color = CampusText,
