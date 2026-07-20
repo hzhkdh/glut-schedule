@@ -29,14 +29,41 @@ import com.glut.schedule.service.AppUpdater
 import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
+import com.glut.schedule.widget.ScheduleWidgetUpdater
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 
 class ScheduleApplication : Application() {
     lateinit var appContainer: AppContainer
         private set
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
         appContainer = AppContainer(this)
+        observeWidgetDataChanges()
+    }
+
+    @OptIn(FlowPreview::class)
+    private fun observeWidgetDataChanges() {
+        applicationScope.launch {
+            combine(
+                appContainer.scheduleRepository.courses,
+                appContainer.scheduleRepository.classPeriods,
+                appContainer.settingsStore.semesterStartMonday,
+                appContainer.settingsStore.semesterEndDate
+            ) { courses, periods, semesterStart, semesterEnd ->
+                listOf(courses, periods, semesterStart, semesterEnd)
+            }.drop(1)
+                .debounce(500)
+                .collect { ScheduleWidgetUpdater.updateAll(this@ScheduleApplication) }
+        }
     }
 }
 

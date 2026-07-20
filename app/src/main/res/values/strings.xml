@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">桂系一站式</string>
+    <string name="widget_compact_today_name">课表 · 紧凑今日</string>
+    <string name="widget_compact_today_description">紧凑显示今天的课程和下一节课</string>
+    <string name="widget_today_tomorrow_name">课表 · 今明两日</string>
+    <string name="widget_today_tomorrow_description">同时显示今天和明天的课程</string>
+    <string name="widget_color_timeline_name">课表 · 彩色日视图</string>
+    <string name="widget_color_timeline_description">使用课程颜色显示今天的课程时间线</string>
 </resources>

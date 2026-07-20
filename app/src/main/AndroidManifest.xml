@@ -27,6 +27,42 @@
             </intent-filter>
         </activity>
 
+        <receiver
+            android:name=".widget.CompactTodayWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_compact_today_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_compact_today_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.TodayTomorrowWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_today_tomorrow_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_today_tomorrow_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ColorTimelineWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_color_timeline_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_color_timeline_info" />
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
