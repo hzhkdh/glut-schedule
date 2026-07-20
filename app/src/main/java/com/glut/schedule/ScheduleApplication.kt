@@ -36,7 +36,6 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 class ScheduleApplication : Application() {
@@ -60,8 +59,7 @@ class ScheduleApplication : Application() {
                 appContainer.settingsStore.semesterEndDate
             ) { courses, periods, semesterStart, semesterEnd ->
                 listOf(courses, periods, semesterStart, semesterEnd)
-            }.drop(1)
-                .debounce(500)
+            }.debounce(500)
                 .collect { ScheduleWidgetUpdater.updateAll(this@ScheduleApplication) }
         }
     }
