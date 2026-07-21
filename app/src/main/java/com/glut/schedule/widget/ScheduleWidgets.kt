@@ -94,10 +94,10 @@ private fun WidgetSurface(context: Context, content: @Composable () -> Unit) {
 @Composable
 private fun CompactTodayContent(snapshot: WidgetScheduleSnapshot) {
     Column(modifier = GlanceModifier.fillMaxSize()) {
-        WidgetHeader(snapshot, "今日课程")
+        CompactWidgetHeader(snapshot)
         Spacer(GlanceModifier.height(10.dp))
         when (snapshot.status) {
-            WidgetScheduleStatus.READY -> CourseList(snapshot.todayCourses, limit = 3)
+            WidgetScheduleStatus.READY -> CourseList(snapshot.todayCourses, limit = 2)
             WidgetScheduleStatus.NO_COURSES -> NoCourseContent(snapshot.nextCourse)
             else -> StatusContent(snapshot.status)
         }
@@ -144,6 +144,31 @@ private fun ColorTimelineContent(snapshot: WidgetScheduleSnapshot) {
 }
 
 @Composable
+private fun CompactWidgetHeader(snapshot: WidgetScheduleSnapshot) {
+    Column(modifier = GlanceModifier.fillMaxWidth()) {
+        Row(
+            modifier = GlanceModifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "今日课程",
+                modifier = GlanceModifier.defaultWeight(),
+                style = TitleStyle,
+                maxLines = 1
+            )
+            WidgetRefreshAction()
+        }
+        Spacer(GlanceModifier.height(2.dp))
+        Text(
+            "${snapshot.today.format(DateTimeFormatter.ofPattern("M月d日"))} · " +
+                "第 ${snapshot.currentWeek} 周 · ${snapshot.today.chineseDayOfWeek()}",
+            style = SmallStyle,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
 private fun WidgetHeader(snapshot: WidgetScheduleSnapshot, label: String) {
     Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = GlanceModifier.defaultWeight()) {
@@ -152,13 +177,18 @@ private fun WidgetHeader(snapshot: WidgetScheduleSnapshot, label: String) {
         }
         Text("第 ${snapshot.currentWeek} 周 · ${snapshot.today.chineseDayOfWeek()}", style = BodyStyle, maxLines = 1)
         Spacer(GlanceModifier.width(8.dp))
-        Text(
-            "刷新",
-            modifier = GlanceModifier.clickable(actionRunCallback<RefreshScheduleWidgetsAction>()),
-            style = TextStyle(color = WidgetAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold),
-            maxLines = 1
-        )
+        WidgetRefreshAction()
     }
+}
+
+@Composable
+private fun WidgetRefreshAction() {
+    Text(
+        "刷新",
+        modifier = GlanceModifier.clickable(actionRunCallback<RefreshScheduleWidgetsAction>()),
+        style = TextStyle(color = WidgetAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold),
+        maxLines = 1
+    )
 }
 
 @Composable

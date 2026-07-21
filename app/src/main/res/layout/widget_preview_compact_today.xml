@@ -12,35 +12,32 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <LinearLayout
+        <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="今日课程"
-                android:textColor="#141821"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="3月16日"
-                android:textColor="#667085"
-                android:textSize="10sp" />
-        </LinearLayout>
+            android:text="今日课程"
+            android:textColor="#141821"
+            android:textSize="14sp"
+            android:textStyle="bold" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="第 2 周 · 周一"
-            android:textColor="#667085"
+            android:text="刷新"
+            android:textColor="#3F7DF6"
             android:textSize="10sp" />
     </LinearLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="3月16日 · 第 2 周 · 周一"
+        android:textColor="#667085"
+        android:textSize="10sp" />
 
     <LinearLayout
         android:layout_width="match_parent"

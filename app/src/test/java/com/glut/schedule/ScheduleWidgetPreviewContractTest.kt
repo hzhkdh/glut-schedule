@@ -110,6 +110,34 @@ class ScheduleWidgetPreviewContractTest {
         assertTrue(widgets.contains("\"刷新\""))
     }
 
+    @Test
+    fun compactWidgetUsesItsOwnTwoRowHeaderAndOnlyTwoCourses() {
+        val widgets = appFile(
+            "src/main/java/com/glut/schedule/widget/ScheduleWidgets.kt"
+        ).readText()
+        val compact = widgets
+            .substringAfter("private fun CompactTodayContent")
+            .substringBefore("private fun TodayTomorrowContent")
+        val wideWidgets = widgets.substringAfter("private fun TodayTomorrowContent")
+
+        assertTrue(compact.contains("CompactWidgetHeader(snapshot)"))
+        assertTrue(compact.contains("CourseList(snapshot.todayCourses, limit = 2)"))
+        assertFalse(compact.lineSequence().any { it.trimStart().startsWith("WidgetHeader(snapshot") })
+        assertTrue(wideWidgets.contains("WidgetHeader(snapshot, \"近期课程\")"))
+        assertTrue(wideWidgets.contains("WidgetHeader(snapshot, \"日视图\")"))
+    }
+
+    @Test
+    fun compactScalablePreviewMatchesTheRealTwoRowHeader() {
+        val preview = appFile(
+            "src/main/res/layout/widget_preview_compact_today.xml"
+        ).readText()
+
+        assertTrue(preview.contains("android:text=\"刷新\""))
+        assertTrue(preview.contains("android:text=\"3月16日 · 第 2 周 · 周一\""))
+        assertEquals(2, "widget_preview_(pink|blue)_bar".toRegex().findAll(preview).count())
+    }
+
     private fun appFile(relativePath: String): File {
         val moduleFile = File(relativePath)
         return if (moduleFile.exists()) moduleFile else File("app/$relativePath")
