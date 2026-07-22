@@ -8,7 +8,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [AcademicSemesterEntity::class, CourseEntity::class, CourseOccurrenceEntity::class, ClassPeriodEntity::class, ExamEntity::class, ScoreEntity::class, GradeExamEntity::class, StudyPlanGroupEntity::class, StudyPlanCourseEntity::class, SemesterAdjustmentEntity::class],
     version = 9,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class ScheduleDatabase : RoomDatabase() {
     abstract fun scheduleDao(): ScheduleDao
@@ -56,17 +56,6 @@ abstract class ScheduleDatabase : RoomDatabase() {
                 db.execSQL("INSERT INTO `courses_new` SELECT `id`, `title`, `room`, `teacher`, `colorHex`, 'legacy-current' FROM `courses`")
 
                 db.execSQL("""
-                    CREATE TABLE `course_occurrences_new` (
-                        `id` TEXT NOT NULL, `courseId` TEXT NOT NULL, `dayOfWeek` INTEGER NOT NULL,
-                        `startSection` INTEGER NOT NULL, `endSection` INTEGER NOT NULL,
-                        `weekText` TEXT NOT NULL, `note` TEXT NOT NULL, `semesterId` TEXT NOT NULL,
-                        PRIMARY KEY(`semesterId`, `id`),
-                        FOREIGN KEY(`semesterId`, `courseId`) REFERENCES `courses_new`(`semesterId`, `id`) ON UPDATE NO ACTION ON DELETE CASCADE
-                    )
-                """.trimIndent())
-                db.execSQL("INSERT INTO `course_occurrences_new` SELECT `id`, `courseId`, `dayOfWeek`, `startSection`, `endSection`, `weekText`, `note`, 'legacy-current' FROM `course_occurrences`")
-
-                db.execSQL("""
                     CREATE TABLE `class_periods_new` (
                         `section` INTEGER NOT NULL, `startsAt` TEXT NOT NULL, `endsAt` TEXT NOT NULL,
                         `semesterId` TEXT NOT NULL, PRIMARY KEY(`semesterId`, `section`),
@@ -89,11 +78,21 @@ abstract class ScheduleDatabase : RoomDatabase() {
                 """.trimIndent())
                 db.execSQL("INSERT INTO `semester_adjustments_new` SELECT `id`, `type`, `title`, `teacher`, `originalWeek`, `originalDay`, `originalStartSection`, `originalEndSection`, `originalRoom`, `makeupWeek`, `makeupDay`, `makeupStartSection`, `makeupEndSection`, `makeupRoom`, 'legacy-current' FROM `semester_adjustments`")
 
-                db.execSQL("DROP TABLE `course_occurrences`")
                 db.execSQL("DROP TABLE `courses`")
                 db.execSQL("DROP TABLE `class_periods`")
                 db.execSQL("DROP TABLE `semester_adjustments`")
                 db.execSQL("ALTER TABLE `courses_new` RENAME TO `courses`")
+                db.execSQL("""
+                    CREATE TABLE `course_occurrences_new` (
+                        `id` TEXT NOT NULL, `courseId` TEXT NOT NULL, `dayOfWeek` INTEGER NOT NULL,
+                        `startSection` INTEGER NOT NULL, `endSection` INTEGER NOT NULL,
+                        `weekText` TEXT NOT NULL, `note` TEXT NOT NULL, `semesterId` TEXT NOT NULL,
+                        PRIMARY KEY(`semesterId`, `id`),
+                        FOREIGN KEY(`semesterId`, `courseId`) REFERENCES `courses`(`semesterId`, `id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("INSERT INTO `course_occurrences_new` SELECT `id`, `courseId`, `dayOfWeek`, `startSection`, `endSection`, `weekText`, `note`, 'legacy-current' FROM `course_occurrences`")
+                db.execSQL("DROP TABLE `course_occurrences`")
                 db.execSQL("ALTER TABLE `course_occurrences_new` RENAME TO `course_occurrences`")
                 db.execSQL("ALTER TABLE `class_periods_new` RENAME TO `class_periods`")
                 db.execSQL("ALTER TABLE `semester_adjustments_new` RENAME TO `semester_adjustments`")
