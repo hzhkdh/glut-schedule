@@ -6,6 +6,7 @@ import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.service.academic.AcademicSemesterImportPayload
+import com.glut.schedule.service.academic.AcademicSemesterCalendarEstimator
 import com.glut.schedule.service.academic.AcademicSemesterProbePlanner
 import com.glut.schedule.service.academic.AcademicSemesterResponseKind
 import com.glut.schedule.service.parser.AcademicSemesterCatalogPlan
@@ -17,6 +18,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AcademicSemesterProbePlannerTest {
+    @Test
+    fun futureCalendarEstimateUsesPromotedSemesterInsteadOfPreviousCalendar() {
+        val next = semester(2025, SemesterSeason.AUTUMN, isCurrent = true)
+
+        val calendar = AcademicSemesterCalendarEstimator.estimate(
+            semester = next,
+            today = LocalDate.of(2025, 7, 22)
+        )
+
+        assertEquals(LocalDate.of(2025, 9, 1), calendar.startMonday)
+        assertEquals(LocalDate.of(2026, 1, 18), calendar.endDate)
+        assertEquals(1, calendar.currentWeekNumber)
+    }
+
     @Test
     fun nonEmptyProbePromotesOnlyImmediateNextAndReusesPayloadWithoutOldCalendar() {
         val selected = semester(2025, SemesterSeason.SPRING, isCurrent = true)

@@ -17,7 +17,10 @@ import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicOALoginClient
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.AcademicSemesterImportService
+import com.glut.schedule.service.academic.AcademicSemesterCalendarEstimator
+import com.glut.schedule.service.academic.AcademicSemesterCurrentImportPlanner
 import com.glut.schedule.service.academic.AcademicSemesterProbePlanner
+import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.CapturingCookieJar
 import com.glut.schedule.service.academic.CredentialStore
@@ -174,7 +177,16 @@ class DirectLoginViewModel(
     fun viewSemester(semesterId: String) {
         val semester = _uiState.value.semesters.firstOrNull { it.id == semesterId } ?: return
         if (!semester.isCurrent && semester.cacheStatus != SemesterCacheStatus.CACHED) return
-        scheduleRepository.selectSemester(semesterId)
+        viewModelScope.launch {
+            val week = AcademicSemesterViewPlanner.weekFor(
+                semester = semester,
+                today = LocalDate.now(),
+                fallbackStart = settingsStore.semesterStartMonday.first(),
+                fallbackEnd = settingsStore.semesterEndDate.first()
+            )
+            settingsStore.setCurrentWeekNumber(week)
+            scheduleRepository.selectSemester(semesterId)
+        }
     }
 
     fun returnToCurrentSemester() {
@@ -552,6 +564,13 @@ class DirectLoginViewModel(
 
             val promotedPayload = decision.promotedPayload
             if (promotedPayload != null) {
+                val estimatedCalendar = AcademicSemesterCalendarEstimator.estimate(
+                    currentSemester,
+                    LocalDate.now()
+                )
+                settingsStore.setSemesterStartMonday(estimatedCalendar.startMonday)
+                settingsStore.setSemesterEndDate(estimatedCalendar.endDate)
+                settingsStore.setCurrentWeekNumber(estimatedCalendar.currentWeekNumber)
                 scheduleRepository.replaceSemesterSchedule(
                     semester = currentSemester,
                     courses = promotedPayload.courses,
@@ -598,30 +617,31 @@ class DirectLoginViewModel(
             }
 
             if (htmlResult != null) {
-                sessionStore.saveHtmlPreview(htmlResult.body.take(3000))
-                var courses = runCatching {
-                    scheduleParser.parsePersonalSchedule(htmlResult.body)
-                }.getOrDefault(emptyList())
-                // Save showTimetable.do URL for adjustments (Nanning) or the course source URL (Guilin)
-                val timetableUrl = nanningShowResult?.url ?: htmlResult.url
-                sessionStore.saveTimetableUrl(timetableUrl)
-                val adjustmentHtml = nanningShowResult?.body ?: htmlResult.body
-                val adjustments = scheduleParser.parseAdjustments(adjustmentHtml)
-                Log.d(TAG, "Parsed ${adjustments.size} semester adjustments from timetable HTML")
-                // Nanning: courses come from currcourse.jsdo which does NOT apply adjustments
-                // internally—apply them now from the separately-fetched showTimetable.do
-                if (campusBaseUrl == AcademicLoginResult.NANNING_URL && adjustmentHtml.isNotBlank()) {
-                    courses = scheduleParser.applyAdjustmentsToCourses(courses, adjustmentHtml)
-                    Log.d(TAG, "Applied adjustments to Nanning courses, result: ${courses.size} courses")
+                val currentImport = AcademicSemesterCurrentImportPlanner.parse(htmlResult.body, scheduleParser)
+                if (currentImport.canReplace) {
+                    sessionStore.saveHtmlPreview(htmlResult.body.take(3000))
+                    var courses = currentImport.courses
+                    // Save showTimetable.do URL for adjustments (Nanning) or the course source URL (Guilin)
+                    val timetableUrl = nanningShowResult?.url ?: htmlResult.url
+                    sessionStore.saveTimetableUrl(timetableUrl)
+                    val adjustmentHtml = nanningShowResult?.body ?: htmlResult.body
+                    val adjustments = scheduleParser.parseAdjustments(adjustmentHtml)
+                    Log.d(TAG, "Parsed ${adjustments.size} semester adjustments from timetable HTML")
+                    // Nanning: courses come from currcourse.jsdo which does NOT apply adjustments
+                    // internally—apply them now from the separately-fetched showTimetable.do
+                    if (campusBaseUrl == AcademicLoginResult.NANNING_URL && adjustmentHtml.isNotBlank()) {
+                        courses = scheduleParser.applyAdjustmentsToCourses(courses, adjustmentHtml)
+                        Log.d(TAG, "Applied adjustments to Nanning courses, result: ${courses.size} courses")
+                    }
+                    scheduleRepository.replaceSemesterSchedule(
+                        semester = currentSemester,
+                        courses = courses,
+                        adjustments = adjustments,
+                        semesterStartDate = calendar?.semesterStartMonday,
+                        semesterEndDate = calendar?.semesterEndDate
+                    )
+                    courseCount = courses.size
                 }
-                scheduleRepository.replaceSemesterSchedule(
-                    semester = currentSemester,
-                    courses = courses,
-                    adjustments = adjustments,
-                    semesterStartDate = calendar?.semesterStartMonday,
-                    semesterEndDate = calendar?.semesterEndDate
-                )
-                courseCount = courses.size
             }
             }
 

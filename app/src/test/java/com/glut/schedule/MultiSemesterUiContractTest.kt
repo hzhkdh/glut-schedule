@@ -58,7 +58,13 @@ class MultiSemesterUiContractTest {
         assertTrue(viewModel.contains("fun downloadSemester(semesterId: String)"))
         assertTrue(viewModel.contains("fun viewSemester(semesterId: String)"))
         assertFalse(downloadBody.contains("scheduleRepository.selectSemester"))
+        assertTrue(viewBody.contains("AcademicSemesterViewPlanner.weekFor("))
+        assertTrue(viewBody.contains("settingsStore.setCurrentWeekNumber(week)"))
         assertTrue(viewBody.contains("scheduleRepository.selectSemester(semesterId)"))
+        assertTrue(
+            viewBody.indexOf("settingsStore.setCurrentWeekNumber(week)") <
+                viewBody.indexOf("scheduleRepository.selectSemester(semesterId)")
+        )
     }
 
     @Test
@@ -71,6 +77,12 @@ class MultiSemesterUiContractTest {
         assertTrue(importBody.contains("AcademicSemesterProbePlanner.decide("))
         assertTrue(importBody.contains("decision.promotedPayload"))
         assertTrue(importBody.split("semesterImportService.importSemester(").size - 1 == 1)
+        assertTrue(importBody.contains("AcademicSemesterCalendarEstimator.estimate("))
+        assertTrue(importBody.contains("settingsStore.setSemesterStartMonday(estimatedCalendar.startMonday)"))
+        assertTrue(importBody.contains("settingsStore.setSemesterEndDate(estimatedCalendar.endDate)"))
+        assertTrue(importBody.contains("settingsStore.setCurrentWeekNumber(estimatedCalendar.currentWeekNumber)"))
+        assertTrue(importBody.contains("AcademicSemesterCurrentImportPlanner.parse("))
+        assertTrue(importBody.contains("if (currentImport.canReplace)"))
     }
 
     @Test
