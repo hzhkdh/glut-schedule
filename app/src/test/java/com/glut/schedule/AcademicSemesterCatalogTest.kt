@@ -15,6 +15,53 @@ import java.time.LocalDate
 
 class AcademicSemesterCatalogTest {
     @Test
+    fun nextSemesterAfterSpringUsesEachCampusActualAutumnTermWithoutFarFutureExposure() {
+        listOf(CampusType.GUILIN to "2", CampusType.NANNING to "3").forEach { (campus, autumnTerm) ->
+            val plan = AcademicSemesterParser.parseCatalogPlan(
+                html = semesterFormWithFutureYears(
+                    selectedYear = 2025,
+                    selectedSeason = SemesterSeason.SPRING,
+                    autumnTerm = autumnTerm
+                ),
+                campus = campus,
+                enrollmentDate = LocalDate.of(2024, 9, 1),
+                today = LocalDate.of(2025, 5, 1)
+            )
+
+            assertEquals(2025, plan.nextSemester?.portalYear)
+            assertEquals(SemesterSeason.AUTUMN, plan.nextSemester?.season)
+            assertEquals("45", plan.nextSemester?.portalYearId)
+            assertEquals(autumnTerm, plan.nextSemester?.portalTermId)
+            assertFalse(plan.semesters.any { it.portalYear > 2025 })
+            assertEquals(1, plan.semesters.count { it.isCurrent })
+        }
+    }
+
+    @Test
+    fun nextSemesterAfterAutumnUsesNextSpringYearWithoutFarFutureExposure() {
+        listOf(CampusType.GUILIN to "2", CampusType.NANNING to "3").forEach { (campus, autumnTerm) ->
+            val plan = AcademicSemesterParser.parseCatalogPlan(
+                html = semesterFormWithFutureYears(
+                    selectedYear = 2025,
+                    selectedSeason = SemesterSeason.AUTUMN,
+                    autumnTerm = autumnTerm
+                ),
+                campus = campus,
+                enrollmentDate = LocalDate.of(2024, 9, 1),
+                today = LocalDate.of(2025, 10, 1)
+            )
+
+            assertEquals(2026, plan.nextSemester?.portalYear)
+            assertEquals(SemesterSeason.SPRING, plan.nextSemester?.season)
+            assertEquals("46", plan.nextSemester?.portalYearId)
+            assertEquals("1", plan.nextSemester?.portalTermId)
+            assertFalse(plan.semesters.any { it.portalYear > 2025 })
+            assertFalse(plan.semesters.any { it.portalYear == 2027 })
+            assertEquals(1, plan.semesters.count { it.isCurrent })
+        }
+    }
+
+    @Test
     fun semesterKeyAndLabelUseCampusPortalYearAndSeason() {
         val semester = AcademicSemester.create(
             campus = CampusType.GUILIN,
@@ -171,6 +218,23 @@ class AcademicSemesterCatalogTest {
         <select name="term">
           <option value="$springTerm" selected>春季学期</option>
           <option value="$autumnTerm">秋季学期</option>
+        </select>
+    """.trimIndent()
+
+    private fun semesterFormWithFutureYears(
+        selectedYear: Int,
+        selectedSeason: SemesterSeason,
+        autumnTerm: String
+    ): String = """
+        <select name="year">
+          <option value="44">2024</option>
+          <option value="45"${if (selectedYear == 2025) " selected" else ""}>2025</option>
+          <option value="46">2026</option>
+          <option value="47">2027</option>
+        </select>
+        <select name="term">
+          <option value="1"${if (selectedSeason == SemesterSeason.SPRING) " selected" else ""}>春季学期</option>
+          <option value="$autumnTerm"${if (selectedSeason == SemesterSeason.AUTUMN) " selected" else ""}>秋季学期</option>
         </select>
     """.trimIndent()
 }

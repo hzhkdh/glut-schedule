@@ -17,11 +17,13 @@ import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicOALoginClient
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.AcademicSemesterImportService
+import com.glut.schedule.service.academic.AcademicSemesterProbePlanner
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.CapturingCookieJar
 import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.academic.NanningPasswordHash
 import com.glut.schedule.service.parser.AcademicScheduleParser
+import com.glut.schedule.service.parser.AcademicSemesterCatalogPlan
 import com.glut.schedule.service.parser.AcademicSemesterParser
 import com.glut.schedule.service.parser.GlutExamParser
 import com.glut.schedule.service.parser.GradeExamParser
@@ -134,12 +136,10 @@ class DirectLoginViewModel(
     fun toggleNanning() { _uiState.value = _uiState.value.copy(isNanning = !_uiState.value.isNanning) }
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
 
-    fun selectOrImportSemester(semesterId: String) {
+    fun downloadSemester(semesterId: String) {
         val semester = _uiState.value.semesters.firstOrNull { it.id == semesterId } ?: return
-        if (semester.cacheStatus == SemesterCacheStatus.CACHED) {
-            scheduleRepository.selectSemester(semesterId)
-            return
-        }
+        if (semester.cacheStatus == SemesterCacheStatus.CACHED ||
+            semester.cacheStatus == SemesterCacheStatus.DOWNLOADING) return
         if (_uiState.value.importingSemesterId != null) return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(importingSemesterId = semesterId, message = "正在下载${semester.displayName}...")
@@ -169,6 +169,12 @@ class DirectLoginViewModel(
                 )
             }
         }
+    }
+
+    fun viewSemester(semesterId: String) {
+        val semester = _uiState.value.semesters.firstOrNull { it.id == semesterId } ?: return
+        if (!semester.isCurrent && semester.cacheStatus != SemesterCacheStatus.CACHED) return
+        scheduleRepository.selectSemester(semesterId)
     }
 
     fun returnToCurrentSemester() {
@@ -485,11 +491,6 @@ class DirectLoginViewModel(
                 com.glut.schedule.data.settings.CampusType.GUILIN
             }
             val calendar = ApiProbeService.extractAcademicCalendar(results)
-            if (calendar != null) {
-                settingsStore.setSemesterStartMonday(calendar.semesterStartMonday)
-                calendar.semesterEndDate?.let { settingsStore.setSemesterEndDate(it) }
-                settingsStore.setCurrentWeekNumber(calendar.currentWeekNumber)
-            }
 
             val catalogHtml = results.firstOrNull {
                 it.url.contains("currcourse.jsdo") && it.httpCode in 200..299
@@ -503,34 +504,64 @@ class DirectLoginViewModel(
                 studentNumber = studentNumber
             )?.catalogStartDate
 
-            var semesterCatalog = if (catalogHtml.isNotBlank() && enrollmentDate != null) {
-                AcademicSemesterParser.parseCatalog(
+            var catalogPlan = if (catalogHtml.isNotBlank() && enrollmentDate != null) {
+                AcademicSemesterParser.parseCatalogPlan(
                     html = catalogHtml,
                     campus = campus,
                     enrollmentDate = enrollmentDate,
                     today = LocalDate.now()
                 )
-            } else emptyList()
-            if (semesterCatalog.isEmpty()) {
+            } else AcademicSemesterCatalogPlan(emptyList(), null)
+            if (catalogPlan.semesters.isEmpty()) {
                 val portalYearId = ApiProbeService.extractYearIdFromCurrcourse(catalogHtml)
                     ?: (LocalDate.now().year - 1980).toString()
                 val portalYear = portalYearId.toIntOrNull()?.plus(1980) ?: LocalDate.now().year
                 val season = if (LocalDate.now().monthValue >= 8) SemesterSeason.AUTUMN else SemesterSeason.SPRING
-                semesterCatalog = listOf(AcademicSemester.create(
-                    campus = campus,
-                    portalYear = portalYear,
-                    portalYearId = portalYearId,
-                    season = season,
-                    portalTermId = ApiProbeService.extractTermIdFromCurrcourse(catalogHtml)
-                        ?: if (season == SemesterSeason.SPRING) "1" else if (campus == com.glut.schedule.data.settings.CampusType.GUILIN) "2" else "3",
-                    isCurrent = true
-                ))
+                catalogPlan = AcademicSemesterCatalogPlan(
+                    semesters = listOf(AcademicSemester.create(
+                        campus = campus,
+                        portalYear = portalYear,
+                        portalYearId = portalYearId,
+                        season = season,
+                        portalTermId = ApiProbeService.extractTermIdFromCurrcourse(catalogHtml)
+                            ?: if (season == SemesterSeason.SPRING) "1" else if (campus == com.glut.schedule.data.settings.CampusType.GUILIN) "2" else "3",
+                        isCurrent = true
+                    )),
+                    nextSemester = null
+                )
             }
+            val nextProbeResult = catalogPlan.nextSemester?.let { nextSemester ->
+                semesterImportService.importSemester(
+                    cookie = cookie,
+                    baseUrl = campusBaseUrl,
+                    semester = nextSemester,
+                    studentIdFallback = studentNumber
+                )
+            }
+            val decision = AcademicSemesterProbePlanner.decide(catalogPlan, nextProbeResult)
+            val semesterCatalog = decision.catalog
+            val currentSemester = decision.currentSemester
             scheduleRepository.saveSemesterCatalog(semesterCatalog)
-            val currentSemester = semesterCatalog.firstOrNull { it.isCurrent } ?: semesterCatalog.first()
             settingsStore.setCurrentSemesterId(currentSemester.id)
+            scheduleRepository.selectSemester(currentSemester.id)
+            if (decision.promotedPayload == null && calendar != null) {
+                settingsStore.setSemesterStartMonday(calendar.semesterStartMonday)
+                calendar.semesterEndDate?.let { settingsStore.setSemesterEndDate(it) }
+                settingsStore.setCurrentWeekNumber(calendar.currentWeekNumber)
+            }
 
-            var htmlResult = apiProbeService.findTimetableHtmlResult(results)
+            val promotedPayload = decision.promotedPayload
+            if (promotedPayload != null) {
+                scheduleRepository.replaceSemesterSchedule(
+                    semester = currentSemester,
+                    courses = promotedPayload.courses,
+                    adjustments = promotedPayload.adjustments,
+                    semesterStartDate = null,
+                    semesterEndDate = null
+                )
+                courseCount = promotedPayload.courses.size
+            } else {
+                var htmlResult = apiProbeService.findTimetableHtmlResult(results)
 
             // Nanning: currcourse.jsdo is the primary schedule endpoint.
             // showTimetable.do has the adjustment table but needs yearid/termid from currcourse.
@@ -591,6 +622,7 @@ class DirectLoginViewModel(
                     semesterEndDate = calendar?.semesterEndDate
                 )
                 courseCount = courses.size
+            }
             }
 
             val examJsonResult = apiProbeService.findExamJsonResult(results)

@@ -21,9 +21,50 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScheduleRepositoryTest {
+    @Test
+    fun replacingSemesterScheduleDoesNotChangeViewedSemester() = runTest {
+        val historical = AcademicSemester.create(
+            CampusType.GUILIN, 2024, "44", SemesterSeason.AUTUMN, "2", isCurrent = false
+        )
+        val dao = FakeScheduleDao(initialSemesters = listOf(historical.toEntity()))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+        repository.selectSemester(AcademicSemester.LEGACY_CURRENT_ID)
+
+        repository.replaceSemesterSchedule(historical, listOf(course("history", "历史课程")), emptyList())
+
+        assertEquals(AcademicSemester.LEGACY_CURRENT_ID, repository.viewedSemesterId.value)
+    }
+
+    @Test
+    fun savingCatalogLeavesExactlyOneIncomingCurrentAndPreservesCacheMetadata() = runTest {
+        val importedAt = 1234L
+        val oldCurrent = AcademicSemester.create(
+            CampusType.GUILIN, 2025, "45", SemesterSeason.SPRING, "1", isCurrent = true
+        )
+        val promoted = AcademicSemester.create(
+            CampusType.GUILIN, 2025, "45", SemesterSeason.AUTUMN, "2", isCurrent = false,
+            cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.CACHED,
+            importedAtEpochMillis = importedAt
+        )
+        val dao = FakeScheduleDao(initialSemesters = listOf(oldCurrent.toEntity(), promoted.toEntity()))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+
+        repository.saveSemesterCatalog(
+            listOf(oldCurrent.copy(isCurrent = false), promoted.copy(isCurrent = true))
+        )
+
+        val semesters = repository.semesters.first()
+        assertEquals(1, semesters.count { it.isCurrent })
+        assertTrue(semesters.single { it.id == promoted.id }.isCurrent)
+        assertFalse(semesters.single { it.id == oldCurrent.id }.isCurrent)
+        assertEquals(importedAt, semesters.single { it.id == promoted.id }.importedAtEpochMillis)
+    }
+
     @Test
     fun replacingScheduleOnlyTargetsSelectedSemester() = runTest {
         val dao = FakeScheduleDao()

@@ -7,6 +7,11 @@ import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.CampusType
 import java.time.LocalDate
 
+data class AcademicSemesterCatalogPlan(
+    val semesters: List<AcademicSemester>,
+    val nextSemester: AcademicSemester?
+)
+
 object AcademicSemesterParser {
     private val selectRegex = Regex("""<select\b[^>]*name\s*=\s*[\"']([^\"']+)[\"'][^>]*>([\s\S]*?)</select>""", RegexOption.IGNORE_CASE)
     private val optionRegex = Regex("""<option\b([^>]*)>([\s\S]*?)</option>""", RegexOption.IGNORE_CASE)
@@ -55,7 +60,14 @@ object AcademicSemesterParser {
         campus: CampusType,
         enrollmentDate: LocalDate,
         today: LocalDate = LocalDate.now()
-    ): List<AcademicSemester> {
+    ): List<AcademicSemester> = parseCatalogPlan(html, campus, enrollmentDate, today).semesters
+
+    fun parseCatalogPlan(
+        html: String,
+        campus: CampusType,
+        enrollmentDate: LocalDate,
+        today: LocalDate = LocalDate.now()
+    ): AcademicSemesterCatalogPlan {
         val selects = selectRegex.findAll(html).associate { match ->
             match.groupValues[1].lowercase() to parseOptions(match.groupValues[2])
         }
@@ -63,7 +75,7 @@ object AcademicSemesterParser {
             val year = option.text.filter(Char::isDigit).take(4).toIntOrNull() ?: return@mapNotNull null
             PortalYear(year, option.value, option.selected)
         }.distinctBy { it.year }
-        if (years.isEmpty()) return emptyList()
+        if (years.isEmpty()) return AcademicSemesterCatalogPlan(emptyList(), null)
 
         val parsedTerms = selects["term"].orEmpty().mapNotNull { option ->
             val season = when {
@@ -79,7 +91,7 @@ object AcademicSemesterParser {
         val selectedSeason = terms.firstOrNull { it.selected }?.season ?: seasonForDate(today)
         val enrollmentSeason = SemesterSeason.AUTUMN
 
-        return years.sortedByDescending { it.year }.flatMap { year ->
+        val semesters = years.sortedByDescending { it.year }.flatMap { year ->
             listOf(SemesterSeason.SPRING, SemesterSeason.AUTUMN).mapNotNull { season ->
                 val term = terms.firstOrNull { it.season == season } ?: return@mapNotNull null
                 if (!isAtOrAfter(year.year, season, enrollmentDate.year, enrollmentSeason)) return@mapNotNull null
@@ -94,6 +106,24 @@ object AcademicSemesterParser {
                 )
             }
         }
+        val (nextYear, nextSeason) = if (selectedSeason == SemesterSeason.SPRING) {
+            selectedYear to SemesterSeason.AUTUMN
+        } else {
+            selectedYear + 1 to SemesterSeason.SPRING
+        }
+        val nextPortalYear = years.firstOrNull { it.year == nextYear }
+        val nextPortalTerm = terms.firstOrNull { it.season == nextSeason }
+        val nextSemester = if (nextPortalYear != null && nextPortalTerm != null) {
+            AcademicSemester.create(
+                campus = campus,
+                portalYear = nextPortalYear.year,
+                portalYearId = nextPortalYear.value,
+                season = nextPortalTerm.season,
+                portalTermId = nextPortalTerm.value,
+                isCurrent = false
+            )
+        } else null
+        return AcademicSemesterCatalogPlan(semesters, nextSemester)
     }
 
     private fun parseOptions(body: String): List<Option> = optionRegex.findAll(body).map { match ->

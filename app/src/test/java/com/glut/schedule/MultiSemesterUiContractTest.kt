@@ -31,7 +31,8 @@ class MultiSemesterUiContractTest {
 
         listOf("学期课表", "当前", "已缓存", "未下载", "下载中", "重试")
             .forEach { assertTrue("missing UI copy: $it", screen.contains(it)) }
-        assertTrue(screen.contains("selectOrImportSemester"))
+        assertTrue(screen.contains("viewModel::downloadSemester"))
+        assertTrue(screen.contains("viewModel::viewSemester"))
         assertTrue(screen.contains("heightIn(min = 48.dp)"))
         assertFalse(screen.contains("EnrollmentStartDialog"))
         assertFalse(screen.contains("showEnrollmentDialog"))
@@ -44,6 +45,32 @@ class MultiSemesterUiContractTest {
         assertTrue(screen.contains("NanningCaptchaDialog"))
         assertTrue(screen.contains("showCaptchaDialog"))
         assertTrue(viewModel.contains("submitNanningCaptcha"))
+    }
+
+    @Test
+    fun semesterDownloadAndViewAreDistinctAndDownloadNeverSelects() {
+        val viewModel = page("DirectLoginViewModel.kt")
+        val downloadBody = viewModel.substringAfter("fun downloadSemester(")
+            .substringBefore("fun viewSemester(")
+        val viewBody = viewModel.substringAfter("fun viewSemester(")
+            .substringBefore("fun returnToCurrentSemester(")
+
+        assertTrue(viewModel.contains("fun downloadSemester(semesterId: String)"))
+        assertTrue(viewModel.contains("fun viewSemester(semesterId: String)"))
+        assertFalse(downloadBody.contains("scheduleRepository.selectSemester"))
+        assertTrue(viewBody.contains("scheduleRepository.selectSemester(semesterId)"))
+    }
+
+    @Test
+    fun loginImportProbesImmediateNextOnceAndReusesPromotedPayload() {
+        val viewModel = page("DirectLoginViewModel.kt")
+        val importBody = viewModel.substringAfter("private suspend fun performImport(")
+            .substringBefore("private suspend fun fetchAndSaveScores(")
+
+        assertTrue(importBody.contains("AcademicSemesterParser.parseCatalogPlan("))
+        assertTrue(importBody.contains("AcademicSemesterProbePlanner.decide("))
+        assertTrue(importBody.contains("decision.promotedPayload"))
+        assertTrue(importBody.split("semesterImportService.importSemester(").size - 1 == 1)
     }
 
     @Test

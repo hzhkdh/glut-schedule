@@ -23,23 +23,55 @@ object AcademicSemesterRequestBuilder {
 }
 
 object AcademicSemesterResponseValidator {
+    fun classify(body: String, courseCount: Int): AcademicSemesterResponseKind {
+        if (isLoginPage(body)) return AcademicSemesterResponseKind.AUTHENTICATION_EXPIRED
+        if (!hasScheduleStructure(body)) return AcademicSemesterResponseKind.INVALID_STRUCTURE
+        return if (courseCount > 0) {
+            AcademicSemesterResponseKind.VALID_NON_EMPTY_SCHEDULE
+        } else {
+            AcademicSemesterResponseKind.VALID_EMPTY_SCHEDULE
+        }
+    }
+
     fun isSchedulePage(body: String): Boolean {
-        if (body.isBlank()) return false
+        return !isLoginPage(body) && hasScheduleStructure(body)
+    }
+
+    private fun isLoginPage(body: String): Boolean {
         val normalized = body.lowercase()
-        val isLoginPage = normalized.contains("j_acegi_security_check") ||
+        return normalized.contains("j_acegi_security_check") ||
             normalized.contains("name=\"j_password\"") ||
             normalized.contains("name='j_password'") ||
             normalized.contains("type=\"password\"") ||
             normalized.contains("type='password'")
-        return !isLoginPage
     }
+
+    private fun hasScheduleStructure(body: String): Boolean {
+        if (body.isBlank()) return false
+        val normalized = body.lowercase()
+        val timetableId = Regex("""id\s*=\s*['\"](?:timetable|manualarrangecoursetable)['\"]""")
+            .containsMatchIn(normalized)
+        val scheduleHeading = listOf("学生课表", "学生个人课表", "个人课表", "当前课程", "本学期课程")
+            .any(body::contains)
+        val hasYear = Regex("""name\s*=\s*['\"]year['\"]""").containsMatchIn(normalized)
+        val hasTerm = Regex("""name\s*=\s*['\"]term['\"]""").containsMatchIn(normalized)
+        return timetableId || scheduleHeading || (hasYear && hasTerm)
+    }
+}
+
+enum class AcademicSemesterResponseKind {
+    AUTHENTICATION_EXPIRED,
+    INVALID_STRUCTURE,
+    VALID_EMPTY_SCHEDULE,
+    VALID_NON_EMPTY_SCHEDULE
 }
 
 data class AcademicSemesterImportPayload(
     val courses: List<ScheduleCourse>,
     val adjustments: List<SemesterAdjustment>,
     val currcourseHtml: String,
-    val timetableHtml: String
+    val timetableHtml: String,
+    val responseKind: AcademicSemesterResponseKind
 )
 
 class AcademicSemesterImportService(
@@ -56,8 +88,12 @@ class AcademicSemesterImportService(
             apiProbeService.probeUrl(cookie, AcademicSemesterRequestBuilder.currcourseUrl(baseUrl, semester))
         ) { "无法下载${semester.displayName}课表" }
         require(currcourse.httpCode in 200..299) { "教务系统返回 ${currcourse.httpCode}" }
-        require(AcademicSemesterResponseValidator.isSchedulePage(currcourse.body)) {
-            "登录状态已失效，请重新登录后再导入"
+        when (AcademicSemesterResponseValidator.classify(currcourse.body, courseCount = 0)) {
+            AcademicSemesterResponseKind.AUTHENTICATION_EXPIRED ->
+                error("登录状态已失效，请重新登录后再导入")
+            AcademicSemesterResponseKind.INVALID_STRUCTURE ->
+                error("无法识别课表结构，未覆盖已有缓存")
+            else -> Unit
         }
 
         val studentId = ApiProbeService.extractInternalIdFromCurrcourse(currcourse.body)
@@ -69,8 +105,14 @@ class AcademicSemesterImportService(
             )
         } else null
         val timetableHtml = timetable?.takeIf { it.httpCode in 200..299 }?.body.orEmpty()
-        require(timetableHtml.isBlank() || AcademicSemesterResponseValidator.isSchedulePage(timetableHtml)) {
-            "登录状态已失效，请重新登录后再导入"
+        if (timetableHtml.isNotBlank()) {
+            when (AcademicSemesterResponseValidator.classify(timetableHtml, courseCount = 0)) {
+                AcademicSemesterResponseKind.AUTHENTICATION_EXPIRED ->
+                    error("登录状态已失效，请重新登录后再导入")
+                AcademicSemesterResponseKind.INVALID_STRUCTURE ->
+                    error("无法识别课表结构，未覆盖已有缓存")
+                else -> Unit
+            }
         }
         val adjustments = if (timetableHtml.isBlank()) emptyList()
             else scheduleParser.parseAdjustments(timetableHtml)
@@ -78,11 +120,13 @@ class AcademicSemesterImportService(
         if (semester.campus == CampusType.NANNING && timetableHtml.isNotBlank()) {
             courses = scheduleParser.applyAdjustmentsToCourses(courses, timetableHtml)
         }
+        val responseKind = AcademicSemesterResponseValidator.classify(currcourse.body, courses.size)
         AcademicSemesterImportPayload(
             courses = courses,
             adjustments = adjustments,
             currcourseHtml = currcourse.body,
-            timetableHtml = timetableHtml
+            timetableHtml = timetableHtml,
+            responseKind = responseKind
         )
     }
 }

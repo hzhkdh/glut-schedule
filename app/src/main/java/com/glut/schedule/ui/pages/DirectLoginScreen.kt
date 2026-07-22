@@ -194,7 +194,8 @@ fun DirectLoginScreen(
                 SemesterManagementSection(
                     semesters = uiState.semesters,
                     importingSemesterId = uiState.importingSemesterId,
-                    onSemesterClick = viewModel::selectOrImportSemester
+                    onDownloadSemester = viewModel::downloadSemester,
+                    onViewSemester = viewModel::viewSemester
                 )
             }
 
@@ -221,7 +222,8 @@ fun DirectLoginScreen(
 private fun SemesterManagementSection(
     semesters: List<AcademicSemester>,
     importingSemesterId: String?,
-    onSemesterClick: (String) -> Unit
+    onDownloadSemester: (String) -> Unit,
+    onViewSemester: (String) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text("学期课表", color = LoginPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -245,7 +247,13 @@ private fun SemesterManagementSection(
                     .fillMaxWidth()
                     .padding(vertical = 4.dp)
                     .heightIn(min = 48.dp)
-                    .clickable(enabled = !isDownloading) { onSemesterClick(semester.id) },
+                    .clickable(enabled = !isDownloading) {
+                        if (semester.isCurrent || semester.cacheStatus == SemesterCacheStatus.CACHED) {
+                            onViewSemester(semester.id)
+                        } else {
+                            onDownloadSemester(semester.id)
+                        }
+                    },
                 color = if (semester.isCurrent) LoginAccent.copy(alpha = 0.10f) else LoginCardBg,
                 shape = RoundedCornerShape(12.dp),
                 tonalElevation = if (semester.isCurrent) 1.dp else 0.dp

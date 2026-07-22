@@ -227,7 +227,6 @@ class ScheduleRepository(
         if (semester.isCurrent && semester.id != AcademicSemester.LEGACY_CURRENT_ID) {
             dao.deleteSemester(AcademicSemester.LEGACY_CURRENT_ID)
         }
-        _viewedSemesterId.value = semester.id
     }
 
     suspend fun saveSemesterCatalog(catalog: List<AcademicSemester>) {
@@ -239,6 +238,9 @@ class ScheduleRepository(
                 semesterStartDate = existing?.semesterStartDate,
                 semesterEndDate = existing?.semesterEndDate
             ).toEntity())
+        }
+        catalog.singleOrNull { it.isCurrent }?.let { current ->
+            dao.clearOtherCurrentSemesters(current.id)
         }
     }
 
