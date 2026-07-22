@@ -2,11 +2,21 @@ package com.glut.schedule
 
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.glut.schedule.data.local.ScheduleDatabase
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.lang.reflect.Proxy
 
 class ScheduleDatabaseMigrationSqlTest {
+    @Test
+    fun applicationDatabaseDoesNotAllowDestructiveMigration() {
+        val module = File("src/main/java/com/glut/schedule/ScheduleApplication.kt")
+        val source = (if (module.exists()) module else File("app/$module")).readText()
+
+        assertFalse(source.contains("fallbackToDestructiveMigration"))
+    }
+
     @Test
     fun migration8To9BuildsOccurrenceForeignKeyAgainstFinalCoursesTable() {
         val statements = mutableListOf<String>()
