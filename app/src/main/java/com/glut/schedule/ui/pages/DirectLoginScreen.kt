@@ -351,7 +351,7 @@ private fun NanningCaptchaDialog(
                     horizontalArrangement = Arrangement.Center,
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
                 ) {
-                    IconButton(onClick = onRefresh, modifier = Modifier.size(28.dp)) {
+                    IconButton(onClick = onRefresh, modifier = Modifier.size(48.dp)) {
                         Icon(
                             Icons.Outlined.Refresh,
                             contentDescription = "刷新验证码",

@@ -53,9 +53,7 @@ object AcademicSemesterResponseValidator {
             .containsMatchIn(normalized)
         val scheduleHeading = listOf("学生课表", "学生个人课表", "个人课表", "当前课程", "本学期课程")
             .any(body::contains)
-        val hasYear = Regex("""name\s*=\s*['\"]year['\"]""").containsMatchIn(normalized)
-        val hasTerm = Regex("""name\s*=\s*['\"]term['\"]""").containsMatchIn(normalized)
-        return timetableId || scheduleHeading || (hasYear && hasTerm)
+        return timetableId || scheduleHeading
     }
 }
 

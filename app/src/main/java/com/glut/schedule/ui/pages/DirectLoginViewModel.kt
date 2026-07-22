@@ -42,6 +42,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLEncoder
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
@@ -153,10 +154,12 @@ class DirectLoginViewModel(
                     AcademicLoginResult.NANNING_URL
                 } else AcademicLoginResult.DEFAULT_GUILIN_URL
             }
+            val authenticatedStudentNumber = sessionStore.authenticatedStudentNumber.first()
+                .ifBlank { credentialStore.getUsername() }
             val result = if (cookie.isBlank()) {
                 Result.failure(IllegalStateException("登录状态已过期，请重新登录"))
             } else {
-                semesterImportService.importSemester(cookie, baseUrl, semester, _uiState.value.username)
+                semesterImportService.importSemester(cookie, baseUrl, semester, authenticatedStudentNumber)
             }
             result.onSuccess { payload ->
                 scheduleRepository.replaceSemesterSchedule(semester, payload.courses, payload.adjustments)
@@ -428,7 +431,7 @@ class DirectLoginViewModel(
             .header("X-Requested-With", "XMLHttpRequest")
             .header("Origin", base)
             .header("Accept", "text/plain, */*; q=0.01")
-            .method("POST", okhttp3.RequestBody.create(null, ByteArray(0)))
+            .method("POST", ByteArray(0).toRequestBody(null))
             .build()
         ).execute().use { response ->
             response.body?.string().orEmpty().trim() == "true"
@@ -477,6 +480,7 @@ class DirectLoginViewModel(
         viewModelScope.launch {
             sessionStore.saveCookie(cookie)
             sessionStore.saveCampusBaseUrl(campusBaseUrl)
+            sessionStore.saveAuthenticatedStudentNumber(studentNumber)
             val campusType = if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
                 com.glut.schedule.data.settings.CampusType.NANNING
             } else {
@@ -592,7 +596,7 @@ class DirectLoginViewModel(
                 val extractedId = ApiProbeService.extractInternalIdFromCurrcourse(currcourseBody)
                 val extractedYearId = ApiProbeService.extractYearIdFromCurrcourse(currcourseBody)
                 val extractedTermId = ApiProbeService.extractTermIdFromCurrcourse(currcourseBody)
-                val id = extractedId ?: _uiState.value.username
+                val id = extractedId ?: studentNumber
                 if (id.isNotBlank()) {
                     val showUrl = "$campusBaseUrl/academic/manager/coursearrange/showTimetable.do" +
                         "?id=$id" +

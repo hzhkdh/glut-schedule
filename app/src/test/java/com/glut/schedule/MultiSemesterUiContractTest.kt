@@ -47,6 +47,7 @@ class MultiSemesterUiContractTest {
         assertFalse(viewModel.contains("confirmedEnrollmentStart"))
         assertTrue(screen.contains("NanningCaptchaDialog"))
         assertTrue(screen.contains("showCaptchaDialog"))
+        assertTrue(screen.contains("onRefresh, modifier = Modifier.size(48.dp)"))
         assertTrue(viewModel.contains("submitNanningCaptcha"))
     }
 
@@ -89,6 +90,39 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
+    fun authenticatedStudentNumberSnapshotCoversCurrentAndHistoricalImports() {
+        val viewModel = page("DirectLoginViewModel.kt")
+        val sessionStore = service("AcademicSessionStore.kt")
+        val downloadBody = viewModel.substringAfter("fun downloadSemester(")
+            .substringBefore("fun viewSemester(")
+        val importBody = viewModel.substringAfter("private suspend fun performImport(")
+            .substringBefore("private suspend fun fetchAndSaveScores(")
+
+        assertTrue(sessionStore.contains("authenticatedStudentNumber"))
+        assertTrue(sessionStore.contains("saveAuthenticatedStudentNumber"))
+        assertTrue(viewModel.contains("sessionStore.saveAuthenticatedStudentNumber(studentNumber)"))
+        assertTrue(downloadBody.contains("sessionStore.authenticatedStudentNumber.first()"))
+        assertFalse(downloadBody.contains("_uiState.value.username"))
+        assertFalse(importBody.contains("_uiState.value.username"))
+        assertTrue(importBody.contains("val id = extractedId ?: studentNumber"))
+    }
+
+    @Test
+    fun scheduleViewModelUsesTargetSemesterBeforeSwitchingViewedState() {
+        val viewModel = page("ScheduleViewModel.kt")
+        val selectBody = viewModel.substringAfter("fun selectSemester(")
+            .substringBefore("fun returnToCurrentSemester(")
+
+        assertTrue(selectBody.contains("AcademicSemesterViewPlanner.weekFor("))
+        assertTrue(selectBody.contains("settingsStore.setCurrentWeekNumber(week)"))
+        assertTrue(selectBody.contains("repository.selectSemester(semesterId)"))
+        assertTrue(
+            selectBody.indexOf("settingsStore.setCurrentWeekNumber(week)") <
+                selectBody.indexOf("repository.selectSemester(semesterId)")
+        )
+    }
+
+    @Test
     fun historicalScheduleUsesLightweightHeaderMenuWithoutBanner() {
         val screen = page("ScheduleScreen.kt")
         val header = component("ScheduleHeader.kt")
@@ -124,5 +158,10 @@ class MultiSemesterUiContractTest {
     private fun component(name: String): String {
         val module = File("src/main/java/com/glut/schedule/ui/components/$name")
         return (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/ui/components/$name")).readText()
+    }
+
+    private fun service(name: String): String {
+        val module = File("src/main/java/com/glut/schedule/service/academic/$name")
+        return (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/service/academic/$name")).readText()
     }
 }

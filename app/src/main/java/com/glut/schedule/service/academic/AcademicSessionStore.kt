@@ -17,6 +17,7 @@ class AcademicSessionStore(
     private val examApiUrlKey = stringPreferencesKey("exam_api_url")
     private val campusUrlKey = stringPreferencesKey("campus_base_url")
     private val timetableUrlKey = stringPreferencesKey("timetable_url")
+    private val authenticatedStudentNumberKey = stringPreferencesKey("authenticated_student_number")
 
     val academicCookie: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
         preferences[cookieKey].orEmpty()
@@ -32,6 +33,10 @@ class AcademicSessionStore(
 
     val campusBaseUrl: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
         preferences[campusUrlKey].orEmpty()
+    }
+
+    val authenticatedStudentNumber: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
+        preferences[authenticatedStudentNumberKey].orEmpty()
     }
 
     suspend fun saveCookie(cookie: String) {
@@ -55,6 +60,12 @@ class AcademicSessionStore(
     suspend fun saveCampusBaseUrl(url: String) {
         context.academicSessionDataStore.edit { preferences ->
             preferences[campusUrlKey] = url
+        }
+    }
+
+    suspend fun saveAuthenticatedStudentNumber(studentNumber: String) {
+        context.academicSessionDataStore.edit { preferences ->
+            preferences[authenticatedStudentNumberKey] = studentNumber
         }
     }
 

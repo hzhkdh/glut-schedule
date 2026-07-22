@@ -27,6 +27,20 @@ class AcademicSemesterResponseValidatorTest {
     }
 
     @Test
+    fun rejectsGenericYearAndTermFormWithoutTimetableStructure() {
+        val body = """
+            <html><body><h1>公告筛选</h1>
+            <select name="year"></select><select name="term"></select>
+            </body></html>
+        """.trimIndent()
+
+        assertEquals(
+            AcademicSemesterResponseKind.INVALID_STRUCTURE,
+            AcademicSemesterResponseValidator.classify(body, courseCount = 0)
+        )
+    }
+
+    @Test
     fun distinguishesValidEmptyAndNonEmptySchedules() {
         val body = """
             <form><select name="year"></select><select name="term"></select></form>

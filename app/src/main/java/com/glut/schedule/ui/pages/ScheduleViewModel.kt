@@ -26,6 +26,7 @@ import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
+import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.shouldUseExistingAcademicCookie
 import com.glut.schedule.service.parser.AcademicScheduleParser
@@ -294,12 +295,15 @@ class ScheduleViewModel(
     fun selectSemester(semesterId: String) {
         val semester = uiState.value.semesters.firstOrNull { it.id == semesterId } ?: return
         if (semester.cacheStatus != SemesterCacheStatus.CACHED) return
-        repository.selectSemester(semesterId)
         viewModelScope.launch {
-            val week = if (semester.isCurrent) {
-                academicWeekForDate(LocalDate.now(), uiState.value.semesterStartMonday, uiState.value.maxAcademicWeek)
-            } else 1
+            val week = AcademicSemesterViewPlanner.weekFor(
+                semester = semester,
+                today = LocalDate.now(),
+                fallbackStart = settingsStore.semesterStartMonday.first(),
+                fallbackEnd = settingsStore.semesterEndDate.first()
+            )
             settingsStore.setCurrentWeekNumber(week)
+            repository.selectSemester(semesterId)
         }
     }
 
