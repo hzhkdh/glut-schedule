@@ -33,6 +33,8 @@ class MultiSemesterUiContractTest {
             .forEach { assertTrue("missing UI copy: $it", screen.contains(it)) }
         listOf("ExposedDropdownMenuBox", "DropdownMenuItem", "下载并缓存", "重新下载", "查看课表", "正在查看")
             .forEach { assertTrue("missing dropdown UI contract: $it", screen.contains(it)) }
+        assertTrue(screen.contains("disabledContentColor = LoginSecondary"))
+        assertFalse(screen.contains("Text(actionLabel, color = Color.White"))
         assertTrue(screen.contains("viewModel::downloadSemester"))
         assertTrue(screen.contains("viewModel::viewSemester"))
         assertTrue(screen.contains("heightIn(min = 48.dp)"))
@@ -135,7 +137,7 @@ class MultiSemesterUiContractTest {
         assertTrue(header.contains("返回当前学期"))
         assertTrue(screen.contains("onSemesterSelected = viewModel::selectSemester"))
         assertTrue(screen.contains("onReturnToCurrentClick = viewModel::returnToCurrentSemester"))
-        assertTrue(screen.contains("本周无课程"))
+        assertFalse(screen.contains("本周无课程"))
         assertFalse(screen.contains("历史学期可刷新"))
     }
 

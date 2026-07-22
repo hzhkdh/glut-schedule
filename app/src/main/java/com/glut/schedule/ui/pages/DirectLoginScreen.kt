@@ -308,14 +308,19 @@ private fun SemesterManagementSection(
             },
             enabled = !isDownloading && selectedSemester.id != viewedSemesterId,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = LoginAccent),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = LoginAccent,
+                contentColor = Color.White,
+                disabledContainerColor = LoginBorder.copy(alpha = 0.45f),
+                disabledContentColor = LoginSecondary
+            ),
             shape = RoundedCornerShape(12.dp)
         ) {
             if (isDownloading) {
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
                 Spacer(modifier = Modifier.width(8.dp))
             }
-            Text(actionLabel, color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text(actionLabel, fontWeight = FontWeight.SemiBold)
         }
     }
 }

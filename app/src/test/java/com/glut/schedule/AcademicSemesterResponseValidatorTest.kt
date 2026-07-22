@@ -41,6 +41,16 @@ class AcademicSemesterResponseValidatorTest {
     }
 
     @Test
+    fun acceptsParsedCoursesEvenWhenHistoricalPageHasNoKnownWrapper() {
+        val body = "<html><body><table class=\"infolist\"><tr><td>历史课程</td></tr></table></body></html>"
+
+        assertEquals(
+            AcademicSemesterResponseKind.VALID_NON_EMPTY_SCHEDULE,
+            AcademicSemesterResponseValidator.classify(body, courseCount = 1)
+        )
+    }
+
+    @Test
     fun distinguishesValidEmptyAndNonEmptySchedules() {
         val body = """
             <form><select name="year"></select><select name="term"></select></form>

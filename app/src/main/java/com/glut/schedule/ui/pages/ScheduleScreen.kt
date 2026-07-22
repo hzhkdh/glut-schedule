@@ -187,26 +187,16 @@ fun ScheduleScreen(
                     uiState.maxAcademicWeek
                 )
                 val pageBlocks = blocksByWeek[pageWeekNumber].orEmpty()
-                Box(modifier = Modifier.fillMaxSize()) {
-                    ScheduleGrid(
-                        week = pageWeek,
-                        today = uiState.today,
-                        periods = uiState.classPeriods,
-                        blocks = pageBlocks,
-                        showWeekend = uiState.showWeekend,
-                        showNoon = uiState.showNoon,
-                        showCalendarDates = uiState.hasAuthoritativeCalendar,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    if (pageBlocks.isEmpty()) {
-                        Text(
-                            "本周无课程",
-                            color = Color.White.copy(alpha = 0.78f),
-                            fontSize = 13.sp,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-                    }
-                }
+                ScheduleGrid(
+                    week = pageWeek,
+                    today = uiState.today,
+                    periods = uiState.classPeriods,
+                    blocks = pageBlocks,
+                    showWeekend = uiState.showWeekend,
+                    showNoon = uiState.showNoon,
+                    showCalendarDates = uiState.hasAuthoritativeCalendar,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         }
         if (showAddActions) {

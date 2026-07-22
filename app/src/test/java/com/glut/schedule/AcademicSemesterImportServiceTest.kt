@@ -52,6 +52,18 @@ class AcademicSemesterImportServiceTest {
         assertEquals(AcademicSemesterResponseKind.VALID_NON_EMPTY_SCHEDULE, result.getOrThrow().responseKind)
     }
 
+    @Test
+    fun parsedHistoricalCoursesAreNotRejectedByUnknownPageWrapper() = runTest {
+        val course = course()
+        val result = importFrom(
+            "<html><body><table class=\"infolist\"><tr><td>历史课程</td></tr></table></body></html>",
+            courses = listOf(course)
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(course), result.getOrThrow().courses)
+    }
+
     private suspend fun importFrom(
         body: String,
         courses: List<ScheduleCourse> = emptyList()

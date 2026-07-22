@@ -6,13 +6,19 @@ import org.junit.Test
 
 class MarkdownUiContractTest {
     @Test
-    fun noticeListUsesSummaryAndDetailUsesMarkdownWithAttachments() {
+    fun noticeListRendersScrollableMarkdownInlineWithoutDetailRoute() {
         val notice = source("ui/pages/NoticeScreen.kt")
 
-        assertTrue(notice.contains("MarkdownPolicy.toPlainText"))
-        assertTrue(notice.contains("NoticeDetail"))
         assertTrue(notice.contains("MarkdownContent("))
+        assertTrue(notice.contains("heightIn(max ="))
+        assertTrue(notice.contains("verticalScroll("))
         assertTrue(notice.contains("AttachmentRow"))
+        assertTrue(!notice.contains("NoticeDetail"))
+        assertTrue(!notice.contains("selectedNotice"))
+        assertTrue(!notice.contains("MarkdownPolicy.toPlainText(notice.content)"))
+
+        val markdown = source("ui/components/MarkdownContent.kt")
+        assertTrue(markdown.contains("markdownColor(text = contentColor)"))
     }
 
     @Test

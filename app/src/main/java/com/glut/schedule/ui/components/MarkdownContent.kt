@@ -2,16 +2,20 @@ package com.glut.schedule.ui.components
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownColor
 
 @Composable
 fun MarkdownContent(
     markdown: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    contentColor: Color = Color(0xFF4A5568)
 ) {
     Markdown(
         content = MarkdownPolicy.sanitize(markdown),
-        modifier = modifier
+        modifier = modifier,
+        colors = markdownColor(text = contentColor)
     )
 }
 
