@@ -7,6 +7,9 @@ import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.HolidayInfo
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.repository.ScheduleRepository
@@ -46,7 +49,10 @@ data class SemesterOverviewUiState(
     val adjustmentsByWeek: Map<Int, List<SemesterAdjustment>> = emptyMap(),
     val isRefreshing: Boolean = false,
     val message: String = "",
-    val hasNoon: Boolean = true // 桂林有中午时段（需反向映射节次标签），南宁无
+    val hasNoon: Boolean = true,
+    val isArchiveMode: Boolean = false,
+    val courseCount: Int = 0,
+    val calendarAvailable: Boolean = true
 )
 
 data class HolidayDisplay(
@@ -63,7 +69,9 @@ data class HolidayDisplay(
 private data class SemesterBase(
     val startMonday: LocalDate,
     val endDate: LocalDate,
-    val adjustments: List<SemesterAdjustment>
+    val adjustments: List<SemesterAdjustment>,
+    val viewedSemester: AcademicSemester?,
+    val courses: List<ScheduleCourse>
 )
 
 class SemesterOverviewViewModel(
@@ -86,9 +94,11 @@ class SemesterOverviewViewModel(
         combine(
             settingsStore.semesterStartMonday,
             settingsStore.semesterEndDate,
-            repository.semesterAdjustments
-        ) { startMonday, endDate, adjustments ->
-            SemesterBase(startMonday, endDate, adjustments)
+            repository.semesterAdjustments,
+            repository.viewedSemester,
+            repository.courses
+        ) { startMonday, endDate, adjustments, viewedSemester, courses ->
+            SemesterBase(startMonday, endDate, adjustments, viewedSemester, courses)
         },
         _holidays,
         _isRefreshing,
@@ -96,29 +106,35 @@ class SemesterOverviewViewModel(
         sessionStore.campusBaseUrl
     ) { base, holidays, isRefreshing, message, campusBaseUrl ->
         val today = LocalDate.now()
-        val maxWeek = academicMaxWeekForCalendar(base.startMonday, base.endDate)
-        val currentWeek = academicWeekForDate(today, base.startMonday, maxWeek)
-        val totalDays = ChronoUnit.DAYS.between(base.startMonday, base.endDate) + 1
+        val isArchiveMode = base.viewedSemester?.isCurrent == false
+        val startDate = base.viewedSemester?.semesterStartDate ?: base.startMonday
+        val endDate = base.viewedSemester?.semesterEndDate ?: base.endDate
+        val calendarAvailable = !isArchiveMode ||
+            (base.viewedSemester?.semesterStartDate != null && base.viewedSemester.semesterEndDate != null)
+        val maxWeek = if (isArchiveMode && !calendarAvailable) historicalMaxWeek(base.courses)
+            else academicMaxWeekForCalendar(startDate, endDate)
+        val currentWeek = if (isArchiveMode) 0 else academicWeekForDate(today, startDate, maxWeek)
+        val totalDays = ChronoUnit.DAYS.between(startDate, endDate) + 1
         val elapsed = ChronoUnit.DAYS.between(base.startMonday, today).coerceIn(0, totalDays)
         val remaining = (totalDays - elapsed).coerceAtLeast(0)
 
-        val year = base.startMonday.year
-        val month = base.startMonday.monthValue
-        val label = when {
+        val year = startDate.year
+        val month = startDate.monthValue
+        val label = base.viewedSemester?.displayName ?: when {
             month in 2..7 -> "${year - 1}-${year} 春季学期"
             else -> "${year}-${year + 1} 秋季学期"
         }
 
         // Append semester-end vacation (暑假/寒假) reactively — uses latest semesterEndDate from settings,
         // unlike the baked-in _holidays which is set once at init and becomes stale after教务 import.
-        val vacationName = if (base.startMonday.monthValue in 2..7) "暑假" else "寒假"
-        val vacationDays = ChronoUnit.DAYS.between(today, base.endDate)
-        val holidaysWithVacation = if (vacationDays > 0) {
+        val vacationName = if (startDate.monthValue in 2..7) "暑假" else "寒假"
+        val vacationDays = ChronoUnit.DAYS.between(today, endDate)
+        val holidaysWithVacation = if (!isArchiveMode && vacationDays > 0) {
             val hasNext = holidays.none { it.isNext }
             holidays + HolidayDisplay(
                 name = vacationName,
-                startDate = base.endDate.toString(),
-                endDate = base.endDate.toString(),
+                startDate = endDate.toString(),
+                endDate = endDate.toString(),
                 daysOff = 0,
                 isPast = false,
                 isOngoing = false,
@@ -129,20 +145,24 @@ class SemesterOverviewViewModel(
 
         SemesterOverviewUiState(
             semesterLabel = label,
-            semesterStartDate = base.startMonday,
-            semesterEndDate = base.endDate,
+            semesterStartDate = startDate,
+            semesterEndDate = endDate,
             currentWeek = currentWeek,
             totalWeeks = maxWeek,
             progressPercent = if (totalDays > 0) (elapsed.toFloat() / totalDays.toFloat()) else 0f,
             elapsedDays = elapsed,
             remainingDays = remaining,
-            holidays = holidaysWithVacation,
+            holidays = if (isArchiveMode) emptyList() else holidaysWithVacation,
             adjustmentsByWeek = base.adjustments.groupBy { adj ->
                 if (adj.makeupWeek > 0) adj.makeupWeek else adj.originalWeek
             },
             isRefreshing = isRefreshing,
             message = message,
-            hasNoon = campusBaseUrl != AcademicLoginResult.NANNING_URL
+            hasNoon = base.viewedSemester?.campus?.let { it != CampusType.NANNING }
+                ?: (campusBaseUrl != AcademicLoginResult.NANNING_URL),
+            isArchiveMode = isArchiveMode,
+            courseCount = base.courses.size,
+            calendarAvailable = calendarAvailable
         )
     }.stateIn(
         scope = viewModelScope,
@@ -151,6 +171,10 @@ class SemesterOverviewViewModel(
     )
 
     fun refresh() {
+        if (uiState.value.isArchiveMode) {
+            _message.value = "历史学期归档为只读，无需刷新"
+            return
+        }
         viewModelScope.launch {
             _isRefreshing.value = true
             _message.value = "正在刷新..."
@@ -168,6 +192,10 @@ class SemesterOverviewViewModel(
     }
 
     fun refreshAdjustments() {
+        if (uiState.value.isArchiveMode) {
+            _message.value = "历史学期调课记录来自缓存，无法刷新"
+            return
+        }
         viewModelScope.launch {
             _isRefreshing.value = true
             _message.value = "正在获取调课信息..."
@@ -374,6 +402,14 @@ class SemesterOverviewViewModel(
             val end = "$year-${dates.last()}"
             HolidayInfo(name = name, startDate = start, endDate = end, daysOff = dates.size)
         }.sortedBy { it.startDate }
+    }
+
+    private fun historicalMaxWeek(courses: List<ScheduleCourse>): Int {
+        val max = courses.asSequence()
+            .flatMap { it.occurrences.asSequence() }
+            .flatMap { Regex("""\d{1,2}""").findAll(it.weekText).mapNotNull { match -> match.value.toIntOrNull() } }
+            .maxOrNull() ?: 20
+        return max.coerceIn(1, MAX_ACADEMIC_WEEK)
     }
 
     companion object {

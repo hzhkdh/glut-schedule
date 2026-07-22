@@ -53,6 +53,18 @@ class ScheduleWidgetPreviewContractTest {
     }
 
     @Test
+    fun widgetsAlwaysObserveTheCurrentSemesterInsteadOfTheViewedHistory() {
+        val application = appFile("src/main/java/com/glut/schedule/ScheduleApplication.kt").readText()
+        val dataSource = appFile(
+            "src/main/java/com/glut/schedule/widget/ScheduleWidgetDataSource.kt"
+        ).readText()
+
+        assertTrue(application.contains("scheduleRepository.currentCourses"))
+        assertTrue(dataSource.contains("scheduleRepository.currentCourses.first()"))
+        assertFalse(dataSource.contains("scheduleRepository.courses.first()"))
+    }
+
+    @Test
     fun widgetDataLoadingPropagatesCoroutineCancellation() {
         val dataSource = appFile(
             "src/main/java/com/glut/schedule/widget/ScheduleWidgetDataSource.kt"

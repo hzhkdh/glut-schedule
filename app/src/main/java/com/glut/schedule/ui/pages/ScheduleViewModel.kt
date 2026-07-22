@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.ClassPeriod
+import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.SemesterCacheStatus
+import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.NOON_SECTIONS
 import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.CourseColorMapper
@@ -36,6 +39,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
+import java.time.temporal.TemporalAdjusters
+import java.time.DayOfWeek
 
 data class ScheduleUiState(
     val week: ScheduleWeek = scheduleWeekForNumber(9, DEFAULT_SEMESTER_START_MONDAY),
@@ -53,7 +58,11 @@ data class ScheduleUiState(
     val courseColorOverrides: Map<String, String> = emptyMap(),
     val isRefreshing: Boolean = false,
     val message: String = "",
-    val needsInteractiveLogin: Boolean = false
+    val needsInteractiveLogin: Boolean = false,
+    val semesters: List<AcademicSemester> = emptyList(),
+    val viewedSemester: AcademicSemester? = null,
+    val isHistoricalSemester: Boolean = false,
+    val hasAuthoritativeCalendar: Boolean = true
 )
 
 private data class ScheduleSettingsUiState(
@@ -168,10 +177,22 @@ class ScheduleViewModel(
         val scheduleState = combine(
             settingsState,
             repository.classPeriods,
-            coloredCoursesState
-        ) { settings, periods, coloredState ->
-            val normalizedStart = normalizeSemesterStartMonday(settings.semesterStartMonday)
-            val maxAcademicWeek = academicMaxWeekForCalendar(normalizedStart, settings.semesterEndDate)
+            coloredCoursesState,
+            repository.viewedSemester,
+            repository.semesters
+        ) { settings, periods, coloredState, viewedSemester, semesters ->
+            val isHistorical = viewedSemester != null && !viewedSemester.isCurrent
+            val hasAuthoritativeCalendar = !isHistorical ||
+                (viewedSemester?.semesterStartDate != null && viewedSemester.semesterEndDate != null)
+            val fallbackStart = viewedSemester?.let(::estimatedSemesterStart) ?: settings.semesterStartMonday
+            val normalizedStart = normalizeSemesterStartMonday(
+                viewedSemester?.semesterStartDate ?: if (isHistorical) fallbackStart else settings.semesterStartMonday
+            )
+            val resolvedEnd = viewedSemester?.semesterEndDate
+                ?: if (isHistorical) normalizedStart.plusWeeks(21).plusDays(6) else settings.semesterEndDate
+            val maxAcademicWeek = if (isHistorical && !hasAuthoritativeCalendar) {
+                historicalMaxWeek(coloredState.courses)
+            } else academicMaxWeekForCalendar(normalizedStart, resolvedEnd)
             val clampedWeekNumber = if (initialWeekSet) {
                 clampAcademicWeek(settings.weekNumber, maxAcademicWeek)
             } else {
@@ -189,7 +210,7 @@ class ScheduleViewModel(
                 today = today,
                 currentWeekNumber = academicWeekForDate(today, normalizedStart, maxAcademicWeek),
                 semesterStartMonday = normalizedStart,
-                semesterEndDate = settings.semesterEndDate,
+                semesterEndDate = resolvedEnd,
                 maxAcademicWeek = maxAcademicWeek,
                 classPeriods = periods,
                 courses = coloredCourses,
@@ -201,7 +222,11 @@ class ScheduleViewModel(
                 showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
                 customBackgroundUri = settings.customBackgroundUri,
-                courseColorOverrides = coloredState.overrides
+                courseColorOverrides = coloredState.overrides,
+                semesters = semesters,
+                viewedSemester = viewedSemester,
+                isHistoricalSemester = isHistorical,
+                hasAuthoritativeCalendar = hasAuthoritativeCalendar
             )
         }
 
@@ -266,6 +291,30 @@ class ScheduleViewModel(
         viewModelScope.launch { settingsStore.setCurrentWeekNumber(currentWeekNumber) }
     }
 
+    fun selectSemester(semesterId: String) {
+        val semester = uiState.value.semesters.firstOrNull { it.id == semesterId } ?: return
+        if (semester.cacheStatus != SemesterCacheStatus.CACHED) return
+        repository.selectSemester(semesterId)
+        viewModelScope.launch {
+            val week = if (semester.isCurrent) {
+                academicWeekForDate(LocalDate.now(), uiState.value.semesterStartMonday, uiState.value.maxAcademicWeek)
+            } else 1
+            settingsStore.setCurrentWeekNumber(week)
+        }
+    }
+
+    fun returnToCurrentSemester() {
+        viewModelScope.launch {
+            repository.resetViewedSemesterToCurrent()
+            val current = repository.currentSemester.first()
+            val start = current?.semesterStartDate ?: settingsStore.semesterStartMonday.first()
+            val end = current?.semesterEndDate ?: settingsStore.semesterEndDate.first()
+            settingsStore.setCurrentWeekNumber(
+                academicWeekForDate(LocalDate.now(), start, academicMaxWeekForCalendar(start, end))
+            )
+        }
+    }
+
     fun setCustomBackgroundUri(uri: String) {
         viewModelScope.launch { settingsStore.setCustomBackgroundUri(uri) }
     }
@@ -287,6 +336,10 @@ class ScheduleViewModel(
     }
 
     fun refreshSchedule() {
+        if (uiState.value.isHistoricalSemester) {
+            message.value = "历史学期为只读缓存，无需刷新"
+            return
+        }
         viewModelScope.launch {
             isRefreshing.value = true
             message.value = "正在刷新课表..."
@@ -488,6 +541,20 @@ class ScheduleViewModel(
 
     fun consumeInteractiveLoginRequest() {
         needsInteractiveLogin.value = false
+    }
+
+    private fun estimatedSemesterStart(semester: AcademicSemester): LocalDate {
+        val month = if (semester.season == SemesterSeason.AUTUMN) 9 else 3
+        return LocalDate.of(semester.portalYear, month, 1)
+            .with(TemporalAdjusters.nextOrSame(DayOfWeek.MONDAY))
+    }
+
+    private fun historicalMaxWeek(courses: List<ScheduleCourse>): Int {
+        val max = courses.asSequence()
+            .flatMap { it.occurrences.asSequence() }
+            .flatMap { Regex("""\d{1,2}""").findAll(it.weekText).map { match -> match.value.toIntOrNull() ?: 1 } }
+            .maxOrNull() ?: 20
+        return max.coerceIn(1, com.glut.schedule.data.model.MAX_ACADEMIC_WEEK)
     }
 }
 

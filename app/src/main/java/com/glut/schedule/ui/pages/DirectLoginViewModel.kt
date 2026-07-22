@@ -7,17 +7,22 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.repository.ScheduleRepository
+import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.SemesterCacheStatus
+import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicLoginHttpClient
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicOALoginClient
 import com.glut.schedule.service.academic.AcademicSessionStore
+import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.CapturingCookieJar
 import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.academic.NanningPasswordHash
 import com.glut.schedule.service.parser.AcademicScheduleParser
+import com.glut.schedule.service.parser.AcademicSemesterParser
 import com.glut.schedule.service.parser.GlutExamParser
 import com.glut.schedule.service.parser.GradeExamParser
 import com.glut.schedule.service.parser.ScoreParser
@@ -25,12 +30,15 @@ import com.glut.schedule.service.parser.StudyPlanParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
+import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 data class DirectLoginUiState(
@@ -45,7 +53,13 @@ data class DirectLoginUiState(
     val captchaInput: String = "",
     //
     val message: String = "",
-    val importResult: ImportResult? = null
+    val importResult: ImportResult? = null,
+    val semesters: List<AcademicSemester> = emptyList(),
+    val viewedSemesterId: String = AcademicSemester.LEGACY_CURRENT_ID,
+    val importingSemesterId: String? = null,
+    val showEnrollmentDialog: Boolean = false,
+    val enrollmentYearInput: String = "",
+    val enrollmentSeason: SemesterSeason = SemesterSeason.AUTUMN
 )
 
 data class ImportResult(
@@ -63,6 +77,7 @@ class DirectLoginViewModel(
     private val scheduleRepository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val apiProbeService: ApiProbeService,
+    private val semesterImportService: AcademicSemesterImportService,
     private val scheduleParser: AcademicScheduleParser,
     private val examParser: GlutExamParser,
     private val scoreParser: ScoreParser,
@@ -81,6 +96,8 @@ class DirectLoginViewModel(
     private var nanningCaptchaBytes: ByteArray? = null
     // Each Nanning login attempt gets a fresh CookieJar → fresh session
     private var nanningCookieJar: CapturingCookieJar? = null
+    private var pendingCatalogHtml: String = ""
+    private var pendingCatalogCampus = com.glut.schedule.data.settings.CampusType.GUILIN
 
     // CookieJar-based client: cookies auto-persist across requests like a browser
     private fun nanningHttpClient(cookieJar: CapturingCookieJar): OkHttpClient = OkHttpClient.Builder()
@@ -103,6 +120,13 @@ class DirectLoginViewModel(
                 )
             }
         }
+        viewModelScope.launch {
+            combine(scheduleRepository.semesters, scheduleRepository.viewedSemesterId) { semesters, viewedId ->
+                semesters to viewedId
+            }.collect { (semesters, viewedId) ->
+                _uiState.value = _uiState.value.copy(semesters = semesters, viewedSemesterId = viewedId)
+            }
+        }
     }
 
     fun updateUsername(username: String) {
@@ -114,6 +138,71 @@ class DirectLoginViewModel(
     fun updateRememberPassword(remember: Boolean) { _uiState.value = _uiState.value.copy(rememberPassword = remember) }
     fun toggleNanning() { _uiState.value = _uiState.value.copy(isNanning = !_uiState.value.isNanning) }
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
+    fun updateEnrollmentYear(input: String) {
+        _uiState.value = _uiState.value.copy(enrollmentYearInput = input.filter(Char::isDigit).take(4))
+    }
+    fun selectEnrollmentSeason(season: SemesterSeason) {
+        _uiState.value = _uiState.value.copy(enrollmentSeason = season)
+    }
+
+    fun confirmEnrollmentStart() {
+        val year = _uiState.value.enrollmentYearInput.toIntOrNull()
+        if (year == null || year !in 2000..LocalDate.now().year) {
+            _uiState.value = _uiState.value.copy(message = "请输入正确的入学年份")
+            return
+        }
+        viewModelScope.launch {
+            val season = _uiState.value.enrollmentSeason
+            settingsStore.setConfirmedEnrollmentStart(year, season)
+            rebuildPendingCatalog(year, season)
+            _uiState.value = _uiState.value.copy(showEnrollmentDialog = false, message = "已保存入学学期")
+        }
+    }
+
+    fun dismissEnrollmentDialog() {
+        _uiState.value = _uiState.value.copy(showEnrollmentDialog = false)
+    }
+
+    fun selectOrImportSemester(semesterId: String) {
+        val semester = _uiState.value.semesters.firstOrNull { it.id == semesterId } ?: return
+        if (semester.cacheStatus == SemesterCacheStatus.CACHED) {
+            scheduleRepository.selectSemester(semesterId)
+            return
+        }
+        if (_uiState.value.importingSemesterId != null) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(importingSemesterId = semesterId, message = "正在下载${semester.displayName}...")
+            scheduleRepository.updateSemesterCacheStatus(semesterId, SemesterCacheStatus.DOWNLOADING)
+            val cookie = sessionStore.academicCookie.first()
+            val baseUrl = sessionStore.campusBaseUrl.first().ifBlank {
+                if (semester.campus == com.glut.schedule.data.settings.CampusType.NANNING) {
+                    AcademicLoginResult.NANNING_URL
+                } else AcademicLoginResult.DEFAULT_GUILIN_URL
+            }
+            val result = if (cookie.isBlank()) {
+                Result.failure(IllegalStateException("登录状态已过期，请重新登录"))
+            } else {
+                semesterImportService.importSemester(cookie, baseUrl, semester, _uiState.value.username)
+            }
+            result.onSuccess { payload ->
+                scheduleRepository.replaceSemesterSchedule(semester, payload.courses, payload.adjustments)
+                _uiState.value = _uiState.value.copy(
+                    importingSemesterId = null,
+                    message = "已缓存${semester.displayName}，历史学期为只读模式"
+                )
+            }.onFailure { error ->
+                scheduleRepository.updateSemesterCacheStatus(semesterId, SemesterCacheStatus.FAILED)
+                _uiState.value = _uiState.value.copy(
+                    importingSemesterId = null,
+                    message = "下载失败：${error.message ?: "请稍后重试"}"
+                )
+            }
+        }
+    }
+
+    fun returnToCurrentSemester() {
+        viewModelScope.launch { scheduleRepository.resetViewedSemesterToCurrent() }
+    }
 
     fun clearLoginState() {
         credentialsCleared = true
@@ -419,11 +508,66 @@ class DirectLoginViewModel(
 
         try {
             val results = apiProbeService.probeAllEndpoints(cookie = cookie, baseUrl = campusBaseUrl)
+            val campus = if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
+                com.glut.schedule.data.settings.CampusType.NANNING
+            } else {
+                com.glut.schedule.data.settings.CampusType.GUILIN
+            }
             val calendar = ApiProbeService.extractAcademicCalendar(results)
             if (calendar != null) {
                 settingsStore.setSemesterStartMonday(calendar.semesterStartMonday)
                 calendar.semesterEndDate?.let { settingsStore.setSemesterEndDate(it) }
                 settingsStore.setCurrentWeekNumber(calendar.currentWeekNumber)
+            }
+
+            val catalogHtml = results.firstOrNull {
+                it.url.contains("currcourse.jsdo") && it.httpCode in 200..299
+            }?.body.orEmpty()
+            pendingCatalogHtml = catalogHtml
+            pendingCatalogCampus = campus
+            val enrollmentHtml = apiProbeService.probeUrl(
+                cookie,
+                "$campusBaseUrl/academic/student/studentinfo/studentInfoModifyIndex.do?frombase=0&wantTag=0"
+            )?.body.orEmpty()
+            val authoritativeEnrollment = AcademicSemesterParser.parseEnrollment(enrollmentHtml)
+                ?.takeIf { it.isConsistent }
+            val confirmedEnrollment = settingsStore.confirmedEnrollmentStart.first()
+            val enrollmentDate = authoritativeEnrollment?.entranceDate
+                ?: authoritativeEnrollment?.enrollmentYear?.let { LocalDate.of(it, 9, 1) }
+                ?: confirmedEnrollment?.let { (year, season) -> enrollmentDate(year, season) }
+
+            var semesterCatalog = if (catalogHtml.isNotBlank()) {
+                AcademicSemesterParser.parseCatalog(
+                    html = catalogHtml,
+                    campus = campus,
+                    enrollmentDate = enrollmentDate ?: LocalDate.now(),
+                    today = LocalDate.now()
+                )
+            } else emptyList()
+            if (semesterCatalog.isEmpty()) {
+                val portalYearId = ApiProbeService.extractYearIdFromCurrcourse(catalogHtml)
+                    ?: (LocalDate.now().year - 1980).toString()
+                val portalYear = portalYearId.toIntOrNull()?.plus(1980) ?: LocalDate.now().year
+                val season = if (LocalDate.now().monthValue >= 8) SemesterSeason.AUTUMN else SemesterSeason.SPRING
+                semesterCatalog = listOf(AcademicSemester.create(
+                    campus = campus,
+                    portalYear = portalYear,
+                    portalYearId = portalYearId,
+                    season = season,
+                    portalTermId = ApiProbeService.extractTermIdFromCurrcourse(catalogHtml)
+                        ?: if (season == SemesterSeason.SPRING) "1" else if (campus == com.glut.schedule.data.settings.CampusType.GUILIN) "2" else "3",
+                    isCurrent = true
+                ))
+            }
+            scheduleRepository.saveSemesterCatalog(semesterCatalog)
+            val currentSemester = semesterCatalog.firstOrNull { it.isCurrent } ?: semesterCatalog.first()
+            settingsStore.setCurrentSemesterId(currentSemester.id)
+            if (enrollmentDate == null) {
+                _uiState.value = _uiState.value.copy(
+                    showEnrollmentDialog = true,
+                    enrollmentYearInput = LocalDate.now().year.toString(),
+                    enrollmentSeason = SemesterSeason.AUTUMN
+                )
             }
 
             var htmlResult = apiProbeService.findTimetableHtmlResult(results)
@@ -473,17 +617,20 @@ class DirectLoginViewModel(
                 val adjustmentHtml = nanningShowResult?.body ?: htmlResult.body
                 val adjustments = scheduleParser.parseAdjustments(adjustmentHtml)
                 Log.d(TAG, "Parsed ${adjustments.size} semester adjustments from timetable HTML")
-                scheduleRepository.replaceSemesterAdjustments(adjustments)
                 // Nanning: courses come from currcourse.jsdo which does NOT apply adjustments
                 // internally—apply them now from the separately-fetched showTimetable.do
                 if (campusBaseUrl == AcademicLoginResult.NANNING_URL && adjustmentHtml.isNotBlank()) {
                     courses = scheduleParser.applyAdjustmentsToCourses(courses, adjustmentHtml)
                     Log.d(TAG, "Applied adjustments to Nanning courses, result: ${courses.size} courses")
                 }
-                if (courses.isNotEmpty()) {
-                    scheduleRepository.replaceImportedCourses(courses)
-                    courseCount = courses.size
-                }
+                scheduleRepository.replaceSemesterSchedule(
+                    semester = currentSemester,
+                    courses = courses,
+                    adjustments = adjustments,
+                    semesterStartDate = calendar?.semesterStartMonday,
+                    semesterEndDate = calendar?.semesterEndDate
+                )
+                courseCount = courses.size
             }
 
             val examJsonResult = apiProbeService.findExamJsonResult(results)
@@ -577,6 +724,20 @@ class DirectLoginViewModel(
             )
         }
     }
+
+    private suspend fun rebuildPendingCatalog(year: Int, season: SemesterSeason) {
+        if (pendingCatalogHtml.isBlank()) return
+        val catalog = AcademicSemesterParser.parseCatalog(
+            html = pendingCatalogHtml,
+            campus = pendingCatalogCampus,
+            enrollmentDate = enrollmentDate(year, season),
+            today = LocalDate.now()
+        )
+        if (catalog.isNotEmpty()) scheduleRepository.saveSemesterCatalog(catalog)
+    }
+
+    private fun enrollmentDate(year: Int, season: SemesterSeason): LocalDate =
+        if (season == SemesterSeason.AUTUMN) LocalDate.of(year, 9, 1) else LocalDate.of(year, 2, 1)
 
     private suspend fun fetchAndSaveScores(cookie: String, campusBaseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL): Int {
         val scoreClient = OkHttpClient.Builder()
@@ -672,6 +833,7 @@ class DirectLoginViewModelFactory(
     private val scheduleRepository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val apiProbeService: ApiProbeService,
+    private val semesterImportService: AcademicSemesterImportService,
     private val scheduleParser: AcademicScheduleParser,
     private val examParser: GlutExamParser,
     private val scoreParser: ScoreParser,
@@ -683,7 +845,7 @@ class DirectLoginViewModelFactory(
         return DirectLoginViewModel(
             loginService, sessionStore, credentialStore,
             scheduleRepository, settingsStore, apiProbeService,
-            scheduleParser, examParser, scoreParser, gradeExamParser, studyPlanParser
+            semesterImportService, scheduleParser, examParser, scoreParser, gradeExamParser, studyPlanParser
         ) as T
     }
 }

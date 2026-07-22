@@ -53,6 +53,7 @@ fun ScheduleGrid(
     blocks: List<CourseBlock>,
     showWeekend: Boolean,
     showNoon: Boolean = false,
+    showCalendarDates: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -71,8 +72,8 @@ fun ScheduleGrid(
 
         Column {
             Row(modifier = Modifier.fillMaxWidth()) {
-                MonthHeader(week = week, width = leftWidth)
-                WeekDayHeader(week = week, today = today, dayWidth = dayWidth, dayCount = dayCount)
+                MonthHeader(week = week, width = leftWidth, showCalendarDates = showCalendarDates)
+                WeekDayHeader(week = week, today = today, dayWidth = dayWidth, dayCount = dayCount, showCalendarDates = showCalendarDates)
             }
 
             Row(
@@ -97,7 +98,8 @@ fun ScheduleGrid(
 @Composable
 private fun MonthHeader(
     week: ScheduleWeek,
-    width: Dp
+    width: Dp,
+    showCalendarDates: Boolean
 ) {
     Box(
         modifier = Modifier
@@ -109,7 +111,7 @@ private fun MonthHeader(
         contentAlignment = Alignment.CenterStart
     ) {
         Text(
-            text = scheduleGridMonthText(week.monday),
+            text = if (showCalendarDates) scheduleGridMonthText(week.monday) else "周次",
             color = Color.White.copy(alpha = 0.9f),
             fontSize = 12.sp,
             lineHeight = 13.sp,
@@ -131,13 +133,14 @@ private fun WeekDayHeader(
     week: ScheduleWeek,
     today: LocalDate,
     dayWidth: Dp,
-    dayCount: Int
+    dayCount: Int,
+    showCalendarDates: Boolean
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
         dayNames.take(dayCount).forEachIndexed { index, name ->
             val day = index + 1
             val date = week.dateFor(day)
-            val isToday = date == today
+            val isToday = showCalendarDates && date == today
             Column(
                 modifier = Modifier
                     .width(dayWidth)
@@ -150,19 +153,21 @@ private fun WeekDayHeader(
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )
-                Text(
-                    text = date.dayOfMonth.toString(),
-                    color = if (isToday) Color.White else Color.White.copy(alpha = 0.34f),
-                    fontSize = 12.sp,
-                    modifier = if (isToday) {
-                        Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White.copy(alpha = 0.22f))
-                            .padding(horizontal = 7.dp, vertical = 2.dp)
-                    } else {
-                        Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                    }
-                )
+                if (showCalendarDates) {
+                    Text(
+                        text = date.dayOfMonth.toString(),
+                        color = if (isToday) Color.White else Color.White.copy(alpha = 0.34f),
+                        fontSize = 12.sp,
+                        modifier = if (isToday) {
+                            Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.White.copy(alpha = 0.22f))
+                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                        } else {
+                            Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                        }
+                    )
+                }
             }
         }
     }

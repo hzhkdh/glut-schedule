@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -36,63 +37,82 @@ fun ScheduleHeader(
     currentWeekNumber: Int,
     onWeekTitleClick: () -> Unit,
     onRefreshClick: () -> Unit,
+    semesterLabel: String,
+    onSemesterClick: () -> Unit,
+    showRefresh: Boolean = true,
     onDrawerOpen: () -> Unit = {},
     isRefreshing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val formatter = DateTimeFormatter.ofPattern("yyyy/M/d")
     val dayLabel = today.dayLabel()
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 12.dp, vertical = 4.dp)
     ) {
-        IconButton(
-            onClick = onDrawerOpen,
-            modifier = Modifier.size(36.dp),
-            colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
-        ) {
-            Icon(Icons.Outlined.Menu, contentDescription = "菜单", modifier = Modifier.size(22.dp))
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(end = 8.dp)
-                .widthIn(min = 0.dp)
-                .clickable(onClick = onWeekTitleClick)
-        ) {
-            Text(
-                text = scheduleHeaderPrimaryText(week.number, currentWeekNumber, dayLabel),
-                color = Color.White,
-                fontSize = 21.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = today.format(formatter),
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium
-            )
-        }
-
-        IconButton(
-            onClick = onRefreshClick,
-            enabled = !isRefreshing,
-            modifier = Modifier.size(36.dp),
-            colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
-        ) {
-            if (isRefreshing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(19.dp),
-                    strokeWidth = 2.dp,
-                    color = Color.White
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onDrawerOpen,
+                modifier = Modifier.size(48.dp),
+                colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
+            ) {
+                Icon(Icons.Outlined.Menu, contentDescription = "菜单", modifier = Modifier.size(22.dp))
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .padding(end = 8.dp)
+                    .widthIn(min = 0.dp)
+                    .clickable(onClick = onWeekTitleClick),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
+            ) {
+                Text(
+                    text = scheduleHeaderPrimaryText(week.number, currentWeekNumber, dayLabel),
+                    color = Color.White,
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.Bold
                 )
-            } else {
-                Icon(Icons.Outlined.Refresh, contentDescription = "刷新课表", modifier = Modifier.size(21.dp))
+                Text(
+                    text = today.format(formatter),
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            if (showRefresh) {
+                IconButton(
+                    onClick = onRefreshClick,
+                    enabled = !isRefreshing,
+                    modifier = Modifier.size(48.dp),
+                    colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
+                ) {
+                    if (isRefreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(19.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                    } else {
+                        Icon(Icons.Outlined.Refresh, contentDescription = "刷新课表", modifier = Modifier.size(21.dp))
+                    }
+                }
             }
         }
+        Text(
+            text = semesterLabel.ifBlank { "选择学期" },
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .clickable(onClick = onSemesterClick)
+                .padding(start = 56.dp, end = 12.dp, top = 14.dp, bottom = 12.dp)
+        )
     }
 }
 

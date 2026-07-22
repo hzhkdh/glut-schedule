@@ -5,6 +5,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.glut.schedule.data.model.ClassPeriod
+import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.GradeExamInfo
@@ -14,48 +15,134 @@ import com.glut.schedule.data.model.StudyPlanCourse
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.SemesterCacheStatus
+import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.sanitized
 
-@Entity(tableName = "courses")
-data class CourseEntity(
+@Entity(tableName = "academic_semesters")
+data class AcademicSemesterEntity(
     @PrimaryKey val id: String,
+    val campus: String,
+    val portalYear: Int,
+    val portalYearId: String,
+    val season: String,
+    val portalTermId: String,
+    val displayName: String,
+    val isCurrent: Boolean,
+    val cacheStatus: String,
+    val importedAtEpochMillis: Long?,
+    val semesterStartDate: String?,
+    val semesterEndDate: String?
+)
+
+fun AcademicSemester.toEntity(): AcademicSemesterEntity = AcademicSemesterEntity(
+    id = id,
+    campus = campus.name,
+    portalYear = portalYear,
+    portalYearId = portalYearId,
+    season = season.name,
+    portalTermId = portalTermId,
+    displayName = displayName,
+    isCurrent = isCurrent,
+    cacheStatus = cacheStatus.name,
+    importedAtEpochMillis = importedAtEpochMillis,
+    semesterStartDate = semesterStartDate?.toString(),
+    semesterEndDate = semesterEndDate?.toString()
+)
+
+fun AcademicSemesterEntity.toModel(): AcademicSemester = AcademicSemester(
+    id = id,
+    campus = runCatching { com.glut.schedule.data.settings.CampusType.valueOf(campus) }
+        .getOrDefault(com.glut.schedule.data.settings.CampusType.GUILIN),
+    portalYear = portalYear,
+    portalYearId = portalYearId,
+    season = runCatching { SemesterSeason.valueOf(season) }.getOrDefault(SemesterSeason.SPRING),
+    portalTermId = portalTermId,
+    displayName = displayName,
+    isCurrent = isCurrent,
+    cacheStatus = runCatching { SemesterCacheStatus.valueOf(cacheStatus) }
+        .getOrDefault(SemesterCacheStatus.NOT_CACHED),
+    importedAtEpochMillis = importedAtEpochMillis,
+    semesterStartDate = semesterStartDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
+    semesterEndDate = semesterEndDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+)
+
+@Entity(
+    tableName = "courses",
+    primaryKeys = ["semesterId", "id"],
+    foreignKeys = [ForeignKey(
+        entity = AcademicSemesterEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["semesterId"],
+        onDelete = ForeignKey.CASCADE
+    )],
+    indices = [Index(value = ["semesterId"])]
+)
+data class CourseEntity(
+    val id: String,
     val title: String,
     val room: String,
     val teacher: String,
-    val colorHex: String
+    val colorHex: String,
+    val semesterId: String = AcademicSemester.LEGACY_CURRENT_ID
 )
 
-@Entity(tableName = "course_occurrences")
+@Entity(
+    tableName = "course_occurrences",
+    primaryKeys = ["semesterId", "id"],
+    foreignKeys = [ForeignKey(
+        entity = CourseEntity::class,
+        parentColumns = ["semesterId", "id"],
+        childColumns = ["semesterId", "courseId"],
+        onDelete = ForeignKey.CASCADE
+    )],
+    indices = [Index(value = ["semesterId", "courseId"])]
+)
 data class CourseOccurrenceEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val courseId: String,
     val dayOfWeek: Int,
     val startSection: Int,
     val endSection: Int,
     val weekText: String,
-    val note: String
+    val note: String,
+    val semesterId: String = AcademicSemester.LEGACY_CURRENT_ID
 )
 
-@Entity(tableName = "class_periods")
+@Entity(
+    tableName = "class_periods",
+    primaryKeys = ["semesterId", "section"],
+    foreignKeys = [ForeignKey(
+        entity = AcademicSemesterEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["semesterId"],
+        onDelete = ForeignKey.CASCADE
+    )],
+    indices = [Index(value = ["semesterId"])]
+)
 data class ClassPeriodEntity(
-    @PrimaryKey val section: Int,
+    val section: Int,
     val startsAt: String,
-    val endsAt: String
+    val endsAt: String,
+    val semesterId: String = AcademicSemester.LEGACY_CURRENT_ID
 )
 
-fun ScheduleCourse.toEntity(): CourseEntity = CourseEntity(id, title, room, teacher, colorHex)
+fun ScheduleCourse.toEntity(semesterId: String = AcademicSemester.LEGACY_CURRENT_ID): CourseEntity =
+    CourseEntity(id, title, room, teacher, colorHex, semesterId)
 
-fun CourseOccurrence.toEntity(): CourseOccurrenceEntity = CourseOccurrenceEntity(
+fun CourseOccurrence.toEntity(semesterId: String = AcademicSemester.LEGACY_CURRENT_ID): CourseOccurrenceEntity = CourseOccurrenceEntity(
     id = id,
     courseId = courseId,
     dayOfWeek = dayOfWeek,
     startSection = startSection,
     endSection = endSection,
     weekText = weekText,
-    note = note
+    note = note,
+    semesterId = semesterId
 )
 
-fun ClassPeriod.toEntity(): ClassPeriodEntity = ClassPeriodEntity(section, startsAt, endsAt)
+fun ClassPeriod.toEntity(semesterId: String = AcademicSemester.LEGACY_CURRENT_ID): ClassPeriodEntity =
+    ClassPeriodEntity(section, startsAt, endsAt, semesterId)
 
 fun CourseOccurrenceEntity.toModel(): CourseOccurrence = CourseOccurrence(
     id = id,
@@ -225,9 +312,19 @@ fun StudyPlanCourseEntity.toModel(): StudyPlanCourse = StudyPlanCourse(
     status = try { CourseStatus.valueOf(status) } catch (_: Exception) { CourseStatus.UNKNOWN }
 )
 
-@Entity(tableName = "semester_adjustments")
+@Entity(
+    tableName = "semester_adjustments",
+    primaryKeys = ["semesterId", "id"],
+    foreignKeys = [ForeignKey(
+        entity = AcademicSemesterEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["semesterId"],
+        onDelete = ForeignKey.CASCADE
+    )],
+    indices = [Index(value = ["semesterId"])]
+)
 data class SemesterAdjustmentEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val type: String,
     val title: String,
     val teacher: String,
@@ -240,17 +337,19 @@ data class SemesterAdjustmentEntity(
     val makeupDay: Int,
     val makeupStartSection: Int,
     val makeupEndSection: Int,
-    val makeupRoom: String
+    val makeupRoom: String,
+    val semesterId: String = AcademicSemester.LEGACY_CURRENT_ID
 )
 
-fun SemesterAdjustment.toEntity(): SemesterAdjustmentEntity = SemesterAdjustmentEntity(
+fun SemesterAdjustment.toEntity(semesterId: String = AcademicSemester.LEGACY_CURRENT_ID): SemesterAdjustmentEntity = SemesterAdjustmentEntity(
     id = id, type = type, title = title, teacher = teacher,
     originalWeek = originalWeek, originalDay = originalDay,
     originalStartSection = originalStartSection, originalEndSection = originalEndSection,
     originalRoom = originalRoom,
     makeupWeek = makeupWeek, makeupDay = makeupDay,
     makeupStartSection = makeupStartSection, makeupEndSection = makeupEndSection,
-    makeupRoom = makeupRoom
+    makeupRoom = makeupRoom,
+    semesterId = semesterId
 )
 
 fun SemesterAdjustmentEntity.toModel(): SemesterAdjustment = SemesterAdjustment(

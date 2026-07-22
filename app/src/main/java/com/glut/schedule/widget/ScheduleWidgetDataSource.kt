@@ -12,8 +12,8 @@ class ScheduleWidgetDataSource(private val context: Context) {
             val container = (context.applicationContext as ScheduleApplication).appContainer
             ScheduleWidgetSnapshotBuilder.build(
                 now = now,
-                courses = container.scheduleRepository.courses.first(),
-                classPeriods = container.scheduleRepository.classPeriods.first(),
+                courses = container.scheduleRepository.currentCourses.first(),
+                classPeriods = container.scheduleRepository.currentClassPeriods.first(),
                 semesterStartMonday = container.settingsStore.semesterStartMonday.first(),
                 semesterEndDate = container.settingsStore.semesterEndDate.first()
             )

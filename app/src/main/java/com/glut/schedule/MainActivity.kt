@@ -134,6 +134,8 @@ import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
+import com.glut.schedule.ui.components.MarkdownContent
+import com.glut.schedule.ui.components.MarkdownPolicy
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
@@ -263,6 +265,7 @@ class MainActivity : ComponentActivity() {
                         scheduleRepository = container.scheduleRepository,
                         settingsStore = container.settingsStore,
                         apiProbeService = container.apiProbeService,
+                        semesterImportService = container.academicSemesterImportService,
                         scheduleParser = container.academicScheduleParser,
                         examParser = container.examParser,
                         scoreParser = container.scoreParser,
@@ -1428,10 +1431,12 @@ private fun NoticePopupContent(
         if (notice.content.isNotBlank()) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = notice.content,
+                text = MarkdownPolicy.toPlainText(notice.content),
                 color = Color(0xFF3D3940),
                 fontSize = 14.sp,
-                lineHeight = 20.sp
+                lineHeight = 20.sp,
+                maxLines = 5,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -1544,12 +1549,7 @@ private fun UpdateDialog(
                             if (state.info.releaseNotes.isNotBlank()) {
                                 LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                                     item {
-                                        Text(
-                                            state.info.releaseNotes,
-                                            fontSize = 14.sp,
-                                            lineHeight = 20.sp,
-                                            color = Color(0xFF3D3940)
-                                        )
+                                        MarkdownContent(markdown = state.info.releaseNotes, modifier = Modifier.fillMaxWidth())
                                     }
                                 }
                             }

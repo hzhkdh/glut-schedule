@@ -10,6 +10,21 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ScheduleDao {
+    @Query("SELECT * FROM academic_semesters ORDER BY portalYear DESC, season ASC")
+    fun observeSemesters(): Flow<List<AcademicSemesterEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSemester(semester: AcademicSemesterEntity)
+
+    @Query("UPDATE academic_semesters SET isCurrent = 0 WHERE id != :semesterId")
+    suspend fun clearOtherCurrentSemesters(semesterId: String)
+
+    @Query("DELETE FROM academic_semesters WHERE id = :semesterId")
+    suspend fun deleteSemester(semesterId: String)
+
+    @Query("DELETE FROM academic_semesters")
+    suspend fun deleteAllSemesters()
+
     @Query("SELECT * FROM courses ORDER BY title")
     fun observeCourses(): Flow<List<CourseEntity>>
 
@@ -19,10 +34,10 @@ interface ScheduleDao {
     @Query("SELECT * FROM class_periods ORDER BY section")
     fun observeClassPeriods(): Flow<List<ClassPeriodEntity>>
 
-    @Query("SELECT COUNT(*) FROM courses")
+    @Query("SELECT COUNT(*) FROM courses WHERE semesterId = 'legacy-current'")
     suspend fun courseCount(): Int
 
-    @Query("SELECT id FROM courses")
+    @Query("SELECT id FROM courses WHERE semesterId = 'legacy-current'")
     suspend fun courseIds(): List<String>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -37,9 +52,12 @@ interface ScheduleDao {
     @Query("DELETE FROM class_periods")
     suspend fun deleteClassPeriods()
 
+    @Query("DELETE FROM class_periods WHERE semesterId = :semesterId")
+    suspend fun deleteClassPeriodsForSemester(semesterId: String)
+
     @Transaction
     suspend fun replaceClassPeriods(periods: List<ClassPeriodEntity>) {
-        deleteClassPeriods()
+        deleteClassPeriodsForSemester(com.glut.schedule.data.model.AcademicSemester.LEGACY_CURRENT_ID)
         insertClassPeriods(periods)
     }
 
@@ -49,21 +67,50 @@ interface ScheduleDao {
     @Query("DELETE FROM course_occurrences")
     suspend fun deleteOccurrences()
 
-    @Query("DELETE FROM courses WHERE id IN (:courseIds)")
+    @Query("DELETE FROM courses WHERE semesterId = 'legacy-current' AND id IN (:courseIds)")
     suspend fun deleteCoursesByIds(courseIds: List<String>)
 
-    @Query("DELETE FROM course_occurrences WHERE courseId IN (:courseIds)")
+    @Query("DELETE FROM course_occurrences WHERE semesterId = 'legacy-current' AND courseId IN (:courseIds)")
     suspend fun deleteOccurrencesForCourses(courseIds: List<String>)
+
+    @Query("DELETE FROM courses WHERE semesterId = :semesterId")
+    suspend fun deleteCoursesForSemester(semesterId: String)
+
+    @Query("DELETE FROM course_occurrences WHERE semesterId = :semesterId")
+    suspend fun deleteOccurrencesForSemester(semesterId: String)
 
     @Transaction
     suspend fun replaceCourses(
         courses: List<CourseEntity>,
         occurrences: List<CourseOccurrenceEntity>
     ) {
-        deleteOccurrences()
-        deleteCourses()
+        deleteOccurrencesForSemester(com.glut.schedule.data.model.AcademicSemester.LEGACY_CURRENT_ID)
+        deleteCoursesForSemester(com.glut.schedule.data.model.AcademicSemester.LEGACY_CURRENT_ID)
         insertCourses(courses)
         insertOccurrences(occurrences)
+    }
+
+    @Query("DELETE FROM semester_adjustments WHERE semesterId = :semesterId")
+    suspend fun deleteSemesterAdjustmentsForSemester(semesterId: String)
+
+    @Transaction
+    suspend fun replaceSemesterSchedule(
+        semester: AcademicSemesterEntity,
+        courses: List<CourseEntity>,
+        occurrences: List<CourseOccurrenceEntity>,
+        periods: List<ClassPeriodEntity>,
+        adjustments: List<SemesterAdjustmentEntity>
+    ) {
+        if (semester.isCurrent) clearOtherCurrentSemesters(semester.id)
+        insertSemester(semester)
+        deleteOccurrencesForSemester(semester.id)
+        deleteCoursesForSemester(semester.id)
+        deleteClassPeriodsForSemester(semester.id)
+        deleteSemesterAdjustmentsForSemester(semester.id)
+        insertCourses(courses)
+        insertOccurrences(occurrences)
+        insertClassPeriods(periods)
+        insertSemesterAdjustments(adjustments)
     }
 
     @Query("SELECT * FROM exams ORDER BY examDate, startTime")
@@ -157,7 +204,7 @@ interface ScheduleDao {
 
     @Transaction
     suspend fun replaceSemesterAdjustments(adjustments: List<SemesterAdjustmentEntity>) {
-        deleteAllSemesterAdjustments()
+        deleteSemesterAdjustmentsForSemester(com.glut.schedule.data.model.AcademicSemester.LEGACY_CURRENT_ID)
         insertSemesterAdjustments(adjustments)
     }
 
@@ -172,5 +219,6 @@ interface ScheduleDao {
         deleteAllStudyPlanCourses()
         deleteAllSemesterAdjustments()
         deleteClassPeriods()
+        deleteAllSemesters()
     }
 }

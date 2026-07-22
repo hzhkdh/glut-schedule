@@ -89,11 +89,14 @@ fun SemesterOverviewScreen(
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item { SemesterInfoCard(uiState) }
-            item { ProgressPieCard(uiState) }
-
-            if (uiState.holidays.isNotEmpty()) {
-                item { HolidaysCard(uiState.holidays) }
+            if (uiState.isArchiveMode) {
+                item { ArchiveSummaryCard(uiState) }
+            } else {
+                item { SemesterInfoCard(uiState) }
+                item { ProgressPieCard(uiState) }
+                if (uiState.holidays.isNotEmpty()) {
+                    item { HolidaysCard(uiState.holidays) }
+                }
             }
 
             item {
@@ -108,17 +111,19 @@ fun SemesterOverviewScreen(
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(
-                        onClick = viewModel::refreshAdjustments,
-                        enabled = !uiState.isRefreshing,
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.Outlined.Refresh,
-                            contentDescription = "刷新调课",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
+                    if (!uiState.isArchiveMode) {
+                        IconButton(
+                            onClick = viewModel::refreshAdjustments,
+                            enabled = !uiState.isRefreshing,
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.Refresh,
+                                contentDescription = "刷新调课",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -135,6 +140,35 @@ fun SemesterOverviewScreen(
             }
 
             item { Spacer(modifier = Modifier.height(8.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun ArchiveSummaryCard(state: SemesterOverviewUiState) {
+    val adjustmentCount = state.adjustmentsByWeek.values.sumOf { it.size }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = CardBg,
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("历史学期归档", color = AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text(state.semesterLabel, color = TextPrimary, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+            Text(
+                "${state.courseCount} 门课程 · 教学周范围 1-${state.totalWeeks} 周 · $adjustmentCount 条调课记录",
+                color = TextSecondary,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            if (!state.calendarAvailable) {
+                Text(
+                    "教务系统未提供该历史学期的权威校历，因此不显示日期、进度和节假日。",
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
         }
     }
 }

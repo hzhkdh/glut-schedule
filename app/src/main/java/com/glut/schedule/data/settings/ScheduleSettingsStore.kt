@@ -10,6 +10,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import kotlinx.coroutines.flow.Flow
@@ -39,6 +41,9 @@ class ScheduleSettingsStore(
     private val dismissedNoticePopupIdsKey = stringSetPreferencesKey("dismissed_notice_popup_ids")
     private val holidaysCacheKey = stringPreferencesKey("holidays_cache")
     private val holidaysCacheDateKey = stringPreferencesKey("holidays_cache_date")
+    private val currentSemesterIdKey = stringPreferencesKey("current_semester_id")
+    private val confirmedEnrollmentYearKey = intPreferencesKey("confirmed_enrollment_year")
+    private val confirmedEnrollmentSeasonKey = stringPreferencesKey("confirmed_enrollment_season")
 
     val currentWeekNumber: Flow<Int> = context.scheduleSettings.data.map { preferences ->
         clampAcademicWeek(preferences[currentWeekKey] ?: 9)
@@ -74,9 +79,34 @@ class ScheduleSettingsStore(
         runCatching { CampusType.valueOf(name) }.getOrDefault(CampusType.GUILIN)
     }
 
+    val currentSemesterId: Flow<String> = context.scheduleSettings.data.map { preferences ->
+        preferences[currentSemesterIdKey] ?: AcademicSemester.LEGACY_CURRENT_ID
+    }.distinctUntilChanged()
+
+    val confirmedEnrollmentStart: Flow<Pair<Int, SemesterSeason>?> = context.scheduleSettings.data.map { preferences ->
+        val year = preferences[confirmedEnrollmentYearKey] ?: return@map null
+        val season = preferences[confirmedEnrollmentSeasonKey]
+            ?.let { runCatching { SemesterSeason.valueOf(it) }.getOrNull() }
+            ?: SemesterSeason.AUTUMN
+        year to season
+    }.distinctUntilChanged()
+
     suspend fun setCampusType(type: CampusType) {
         context.scheduleSettings.edit { preferences ->
             preferences[campusTypeKey] = type.name
+        }
+    }
+
+    suspend fun setCurrentSemesterId(semesterId: String) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[currentSemesterIdKey] = semesterId
+        }
+    }
+
+    suspend fun setConfirmedEnrollmentStart(year: Int, season: SemesterSeason) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[confirmedEnrollmentYearKey] = year
+            preferences[confirmedEnrollmentSeasonKey] = season.name
         }
     }
 

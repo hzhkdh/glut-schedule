@@ -99,6 +99,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.38.0")
 
     ksp("androidx.room:room-compiler:2.8.4")
 

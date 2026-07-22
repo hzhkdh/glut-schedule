@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,6 +27,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -53,6 +55,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.SemesterCacheStatus
+import com.glut.schedule.data.model.SemesterSeason
 
 private val LoginPrimary = Color(0xFF141821)
 private val LoginSecondary = Color(0xFF667085)
@@ -186,6 +191,15 @@ fun DirectLoginScreen(
                 }
             }
 
+            if (uiState.semesters.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(24.dp))
+                SemesterManagementSection(
+                    semesters = uiState.semesters,
+                    importingSemesterId = uiState.importingSemesterId,
+                    onSemesterClick = viewModel::selectOrImportSemester
+                )
+            }
+
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
@@ -202,6 +216,120 @@ fun DirectLoginScreen(
             onDismiss = viewModel::cancelNanningCaptcha
         )
     }
+
+    if (uiState.showEnrollmentDialog) {
+        EnrollmentStartDialog(
+            year = uiState.enrollmentYearInput,
+            season = uiState.enrollmentSeason,
+            onYearChange = viewModel::updateEnrollmentYear,
+            onSeasonChange = viewModel::selectEnrollmentSeason,
+            onConfirm = viewModel::confirmEnrollmentStart,
+            onDismiss = viewModel::dismissEnrollmentDialog
+        )
+    }
+}
+
+@Composable
+private fun SemesterManagementSection(
+    semesters: List<AcademicSemester>,
+    importingSemesterId: String?,
+    onSemesterClick: (String) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text("学期课表", color = LoginPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "当前学期自动更新，历史学期下载后可离线只读查看",
+            color = LoginSecondary,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+        )
+        semesters.forEach { semester ->
+            val isDownloading = importingSemesterId == semester.id || semester.cacheStatus == SemesterCacheStatus.DOWNLOADING
+            val status = when {
+                isDownloading -> "下载中"
+                semester.isCurrent -> "当前"
+                semester.cacheStatus == SemesterCacheStatus.CACHED -> "已缓存"
+                semester.cacheStatus == SemesterCacheStatus.FAILED -> "重试"
+                else -> "未下载"
+            }
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .heightIn(min = 48.dp)
+                    .clickable(enabled = !isDownloading) { onSemesterClick(semester.id) },
+                color = if (semester.isCurrent) LoginAccent.copy(alpha = 0.10f) else LoginCardBg,
+                shape = RoundedCornerShape(12.dp),
+                tonalElevation = if (semester.isCurrent) 1.dp else 0.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(semester.displayName, color = LoginPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        if (semester.cacheStatus == SemesterCacheStatus.CACHED && !semester.isCurrent) {
+                            Text("历史学期 · 只读", color = LoginSecondary, fontSize = 12.sp)
+                        }
+                    }
+                    if (isDownloading) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = LoginAccent)
+                    } else {
+                        Text(status, color = if (status == "重试") Color(0xFFDC2626) else LoginAccent, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EnrollmentStartDialog(
+    year: String,
+    season: SemesterSeason,
+    onYearChange: (String) -> Unit,
+    onSeasonChange: (SemesterSeason) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("确认入学学期", color = LoginPrimary, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column {
+                Text("教务系统未返回可靠的入学时间。确认后只展示从该学期开始的课表。", color = LoginSecondary, fontSize = 13.sp)
+                OutlinedTextField(
+                    value = year,
+                    onValueChange = onYearChange,
+                    label = { Text("入学年份") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    colors = loginTextFieldColors()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = season == SemesterSeason.AUTUMN,
+                        onClick = { onSeasonChange(SemesterSeason.AUTUMN) },
+                        label = { Text("秋季入学") }
+                    )
+                    FilterChip(
+                        selected = season == SemesterSeason.SPRING,
+                        onClick = { onSeasonChange(SemesterSeason.SPRING) },
+                        label = { Text("春季入学") }
+                    )
+                }
+            }
+        },
+        confirmButton = { Button(onClick = onConfirm) { Text("确认") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("稍后") } },
+        containerColor = LoginCardBg,
+        shape = RoundedCornerShape(16.dp)
+    )
 }
 
 @Composable

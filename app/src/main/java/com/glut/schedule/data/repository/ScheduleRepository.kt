@@ -4,6 +4,8 @@ import com.glut.schedule.data.local.ScheduleDao
 import com.glut.schedule.data.local.toEntity
 import com.glut.schedule.data.local.toModel
 import com.glut.schedule.data.model.ClassPeriod
+import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.GradeExamInfo
@@ -18,6 +20,8 @@ import com.glut.schedule.data.model.guilinClassPeriods
 import com.glut.schedule.data.model.nanningClassPeriods
 import com.glut.schedule.data.settings.CampusType
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -28,23 +32,67 @@ class ScheduleRepository(
     private val campusType: Flow<CampusType>,
     private val courseColorOverrides: Flow<Map<String, String>> = flowOf(emptyMap())
 ) {
-    val courses: Flow<List<ScheduleCourse>> = combine(
-        dao.observeCourses(),
-        dao.observeOccurrences()
-    ) { courses, occurrences ->
-        val occurrencesByCourse = occurrences.map { it.toModel() }.groupBy { it.courseId }
-        courses.map { course -> course.toModel(occurrencesByCourse[course.id].orEmpty()) }
+    private val _viewedSemesterId = MutableStateFlow(AcademicSemester.LEGACY_CURRENT_ID)
+    val viewedSemesterId: StateFlow<String> = _viewedSemesterId
+
+    val semesters: Flow<List<AcademicSemester>> = dao.observeSemesters().map { entities ->
+        entities.map { it.toModel() }
     }
 
-    val classPeriods: Flow<List<ClassPeriod>> = campusType.map { campusType ->
-        when (campusType) {
+    val currentSemester: Flow<AcademicSemester?> = semesters.map { list ->
+        list.firstOrNull { it.isCurrent } ?: list.firstOrNull { it.id == AcademicSemester.LEGACY_CURRENT_ID }
+    }
+
+    val viewedSemester: Flow<AcademicSemester?> = combine(semesters, viewedSemesterId) { list, selectedId ->
+        list.firstOrNull { it.id == selectedId }
+            ?: list.firstOrNull { it.isCurrent }
+            ?: list.firstOrNull()
+    }
+
+    val courses: Flow<List<ScheduleCourse>> = combine(
+        dao.observeCourses(),
+        dao.observeOccurrences(),
+        viewedSemesterId
+    ) { courses, occurrences, semesterId ->
+        mapCourses(courses, occurrences, semesterId)
+    }
+
+    val currentCourses: Flow<List<ScheduleCourse>> = combine(
+        dao.observeCourses(),
+        dao.observeOccurrences(),
+        currentSemester
+    ) { courses, occurrences, semester ->
+        mapCourses(courses, occurrences, semester?.id ?: AcademicSemester.LEGACY_CURRENT_ID)
+    }
+
+    val classPeriods: Flow<List<ClassPeriod>> = combine(
+        dao.observeClassPeriods(), viewedSemesterId, campusType
+    ) { stored, semesterId, campus ->
+        stored.filter { it.semesterId == semesterId }.map { it.toModel() }.ifEmpty {
+            when (campus) {
             CampusType.GUILIN -> guilinClassPeriods()
             CampusType.NANNING -> nanningClassPeriods()
+            }
+        }
+    }
+
+    val currentClassPeriods: Flow<List<ClassPeriod>> = combine(
+        dao.observeClassPeriods(), currentSemester, campusType
+    ) { stored, semester, campus ->
+        val semesterId = semester?.id ?: AcademicSemester.LEGACY_CURRENT_ID
+        stored.filter { it.semesterId == semesterId }.map { it.toModel() }.ifEmpty {
+            when (campus) {
+                CampusType.GUILIN -> guilinClassPeriods()
+                CampusType.NANNING -> nanningClassPeriods()
+            }
         }
     }
 
     suspend fun seedIfEmpty() {
-        dao.replaceClassPeriods(defaultClassPeriods().map { it.toEntity() })
+        if (semesters.first().isEmpty()) {
+            dao.insertSemester(legacySemesterEntity())
+            dao.replaceClassPeriods(defaultClassPeriods().map { it.toEntity() })
+        }
 
         if (dao.courseCount() > 0) {
             clearLegacyBundledSampleCoursesIfPresent()
@@ -117,12 +165,16 @@ class ScheduleRepository(
         )
     }
 
-    val semesterAdjustments: Flow<List<SemesterAdjustment>> = dao.observeSemesterAdjustments().map { entities ->
-        entities.map { it.toModel() }
+    val semesterAdjustments: Flow<List<SemesterAdjustment>> = combine(
+        dao.observeSemesterAdjustments(), viewedSemesterId
+    ) { entities, semesterId ->
+        entities.filter { it.semesterId == semesterId }.map { it.toModel() }
     }
 
     suspend fun replaceSemesterAdjustments(adjustments: List<SemesterAdjustment>) {
-        dao.replaceSemesterAdjustments(adjustments.map { it.toEntity() })
+        val semesterId = viewedSemesterId.value
+        dao.deleteSemesterAdjustmentsForSemester(semesterId)
+        dao.insertSemesterAdjustments(adjustments.map { it.toEntity(semesterId) })
     }
 
     suspend fun replaceImportedCourses(courses: List<ScheduleCourse>) {
@@ -132,12 +184,75 @@ class ScheduleRepository(
             CampusType.GUILIN -> guilinClassPeriods()
             CampusType.NANNING -> nanningClassPeriods()
         }
-        dao.replaceClassPeriods(periods.map { it.toEntity() })
+        val semester = currentSemester.first() ?: legacySemesterEntity().toModel()
         val coloredCourses = CourseColorMapper.assignColors(courses, courseColorOverrides.first())
-        dao.replaceCourses(
-            courses = coloredCourses.map { it.toEntity() },
-            occurrences = coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity() } }
+        dao.replaceSemesterSchedule(
+            semester = semester.copy(
+                cacheStatus = SemesterCacheStatus.CACHED,
+                importedAtEpochMillis = System.currentTimeMillis()
+            ).toEntity(),
+            courses = coloredCourses.map { it.toEntity(semester.id) },
+            occurrences = coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity(semester.id) } },
+            periods = periods.map { it.toEntity(semester.id) },
+            adjustments = dao.observeSemesterAdjustments().first()
+                .filter { it.semesterId == semester.id }
         )
+    }
+
+    suspend fun replaceSemesterSchedule(
+        semester: AcademicSemester,
+        courses: List<ScheduleCourse>,
+        adjustments: List<SemesterAdjustment>,
+        semesterStartDate: java.time.LocalDate? = semester.semesterStartDate,
+        semesterEndDate: java.time.LocalDate? = semester.semesterEndDate
+    ) {
+        val periods = when (semester.campus) {
+            CampusType.GUILIN -> guilinClassPeriods()
+            CampusType.NANNING -> nanningClassPeriods()
+        }
+        val coloredCourses = CourseColorMapper.assignColors(courses, courseColorOverrides.first())
+        val cachedSemester = semester.copy(
+            cacheStatus = SemesterCacheStatus.CACHED,
+            importedAtEpochMillis = System.currentTimeMillis(),
+            semesterStartDate = semesterStartDate,
+            semesterEndDate = semesterEndDate
+        )
+        dao.replaceSemesterSchedule(
+            semester = cachedSemester.toEntity(),
+            courses = coloredCourses.map { it.toEntity(semester.id) },
+            occurrences = coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity(semester.id) } },
+            periods = periods.map { it.toEntity(semester.id) },
+            adjustments = adjustments.map { it.toEntity(semester.id) }
+        )
+        if (semester.isCurrent && semester.id != AcademicSemester.LEGACY_CURRENT_ID) {
+            dao.deleteSemester(AcademicSemester.LEGACY_CURRENT_ID)
+        }
+        _viewedSemesterId.value = semester.id
+    }
+
+    suspend fun saveSemesterCatalog(catalog: List<AcademicSemester>) {
+        catalog.forEach { incoming ->
+            val existing = semesters.first().firstOrNull { it.id == incoming.id }
+            dao.insertSemester(incoming.copy(
+                cacheStatus = existing?.cacheStatus ?: incoming.cacheStatus,
+                importedAtEpochMillis = existing?.importedAtEpochMillis,
+                semesterStartDate = existing?.semesterStartDate,
+                semesterEndDate = existing?.semesterEndDate
+            ).toEntity())
+        }
+    }
+
+    suspend fun updateSemesterCacheStatus(semesterId: String, status: SemesterCacheStatus) {
+        val semester = semesters.first().firstOrNull { it.id == semesterId } ?: return
+        dao.insertSemester(semester.copy(cacheStatus = status).toEntity())
+    }
+
+    fun selectSemester(semesterId: String) {
+        _viewedSemesterId.value = semesterId
+    }
+
+    suspend fun resetViewedSemesterToCurrent() {
+        _viewedSemesterId.value = currentSemester.first()?.id ?: AcademicSemester.LEGACY_CURRENT_ID
     }
 
     suspend fun clearAllData() {
@@ -154,6 +269,32 @@ class ScheduleRepository(
             "os",
             "java",
             "algorithm"
+        )
+
+        fun mapCourses(
+            courses: List<com.glut.schedule.data.local.CourseEntity>,
+            occurrences: List<com.glut.schedule.data.local.CourseOccurrenceEntity>,
+            semesterId: String
+        ): List<ScheduleCourse> {
+            val matchingOccurrences = occurrences.filter { it.semesterId == semesterId }
+            val occurrencesByCourse = matchingOccurrences.map { it.toModel() }.groupBy { it.courseId }
+            return courses.filter { it.semesterId == semesterId }
+                .map { course -> course.toModel(occurrencesByCourse[course.id].orEmpty()) }
+        }
+
+        fun legacySemesterEntity() = com.glut.schedule.data.local.AcademicSemesterEntity(
+            id = AcademicSemester.LEGACY_CURRENT_ID,
+            campus = CampusType.GUILIN.name,
+            portalYear = 0,
+            portalYearId = "",
+            season = com.glut.schedule.data.model.SemesterSeason.SPRING.name,
+            portalTermId = "",
+            displayName = "当前学期（待确认）",
+            isCurrent = true,
+            cacheStatus = SemesterCacheStatus.CACHED.name,
+            importedAtEpochMillis = null,
+            semesterStartDate = null,
+            semesterEndDate = null
         )
     }
 }

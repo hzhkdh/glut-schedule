@@ -9,6 +9,7 @@ import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginService
+import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.fitness.FitnessApiService
 import com.glut.schedule.service.fitness.FitnessStore
@@ -46,6 +47,7 @@ class ScheduleApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         appContainer = AppContainer(this)
+        applicationScope.launch { appContainer.scheduleRepository.resetViewedSemesterToCurrent() }
         observeWidgetDataChanges()
     }
 
@@ -53,8 +55,8 @@ class ScheduleApplication : Application() {
     private fun observeWidgetDataChanges() {
         applicationScope.launch {
             combine(
-                appContainer.scheduleRepository.courses,
-                appContainer.scheduleRepository.classPeriods,
+                appContainer.scheduleRepository.currentCourses,
+                appContainer.scheduleRepository.currentClassPeriods,
                 appContainer.settingsStore.semesterStartMonday,
                 appContainer.settingsStore.semesterEndDate
             ) { courses, periods, semesterStart, semesterEnd ->
@@ -71,7 +73,7 @@ class AppContainer(application: Application) {
         ScheduleDatabase::class.java,
         "glut_schedule.db"
     ).fallbackToDestructiveMigration(false)
-     .addMigrations(ScheduleDatabase.MIGRATION_7_8)
+     .addMigrations(ScheduleDatabase.MIGRATION_7_8, ScheduleDatabase.MIGRATION_8_9)
      .build()
 
     val settingsStore = ScheduleSettingsStore(application)
@@ -91,6 +93,7 @@ class AppContainer(application: Application) {
     val examParser = GlutExamParser()
     val academicExamService = AcademicExamService(examParser)
     val credentialStore = CredentialStore(application)
+    val academicSemesterImportService = AcademicSemesterImportService(apiProbeService, academicScheduleParser)
     val fitnessStore = FitnessStore(application)
     val fitnessApiService = FitnessApiService()
     val fitnessParser = FitnessParser()
