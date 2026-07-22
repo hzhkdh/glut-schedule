@@ -1,6 +1,7 @@
 package com.glut.schedule.service.parser
 
 import com.glut.schedule.data.model.AcademicEnrollment
+import com.glut.schedule.data.model.AcademicEnrollmentSource
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.CampusType
@@ -13,21 +14,39 @@ object AcademicSemesterParser {
     private val attributeRegex = Regex("""([\w:-]+)\s*=\s*([\"'])(.*?)\2""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
     private val tagRegex = Regex("<[^>]+>")
 
-    fun parseEnrollment(html: String): AcademicEnrollment? {
+    fun parseEnrollment(
+        html: String,
+        studentNumber: String = "",
+        currentYear: Int = LocalDate.now().year
+    ): AcademicEnrollment? {
         val fields = inputRegex.findAll(html).mapNotNull { match ->
             val attrs = attributes(match.groupValues[1])
             val name = attrs["name"] ?: return@mapNotNull null
             name.lowercase() to attrs["value"].orEmpty().trim()
         }.toMap()
-        val entranceDate = fields["entrancedate"]?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-        val enrollmentYear = sequenceOf("enrollyearid", "entrancegradeid", "gradeid")
-            .mapNotNull { fields[it]?.toIntOrNull() }
+        val plausibleYears = 2000..(currentYear + 1)
+        val entranceDate = fields["entrancedate"]
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?.takeIf { it.year in plausibleYears }
+        val portalYear = sequenceOf("enrollyearid", "entrancegradeid", "gradeid")
+            .mapNotNull { fields[it]?.let { value -> normalizePortalYear(value, plausibleYears) } }
             .firstOrNull()
-        if (entranceDate == null && enrollmentYear == null) return null
+        val studentYear = studentNumber.trim()
+            .takeIf { it.length >= 3 && it.all(Char::isDigit) }
+            ?.substring(1, 3)
+            ?.toIntOrNull()
+            ?.plus(2000)
+        val enrollmentYear = entranceDate?.year ?: portalYear ?: studentYear ?: return null
+        val source = when {
+            entranceDate != null -> AcademicEnrollmentSource.ENTRANCE_DATE
+            portalYear != null -> AcademicEnrollmentSource.PORTAL_FIELD
+            else -> AcademicEnrollmentSource.STUDENT_NUMBER
+        }
         return AcademicEnrollment(
             entranceDate = entranceDate,
-            enrollmentYear = enrollmentYear ?: entranceDate?.year,
-            isConsistent = entranceDate == null || enrollmentYear == null || entranceDate.year == enrollmentYear
+            enrollmentYear = enrollmentYear,
+            source = source,
+            isConsistent = entranceDate == null || portalYear == null || entranceDate.year == portalYear
         )
     }
 
@@ -58,7 +77,7 @@ object AcademicSemesterParser {
 
         val selectedYear = years.firstOrNull { it.selected }?.year ?: today.year
         val selectedSeason = terms.firstOrNull { it.selected }?.season ?: seasonForDate(today)
-        val enrollmentSeason = seasonForDate(enrollmentDate)
+        val enrollmentSeason = SemesterSeason.AUTUMN
 
         return years.sortedByDescending { it.year }.flatMap { year ->
             listOf(SemesterSeason.SPRING, SemesterSeason.AUTUMN).mapNotNull { season ->
@@ -89,6 +108,15 @@ object AcademicSemesterParser {
 
     private fun attributes(raw: String): Map<String, String> = attributeRegex.findAll(raw).associate { match ->
         match.groupValues[1].lowercase() to match.groupValues[3]
+    }
+
+    private fun normalizePortalYear(value: String, plausibleYears: IntRange): Int? {
+        val year = value.trim().toIntOrNull() ?: return null
+        return when {
+            year in 1..99 -> year + 1980
+            year in plausibleYears -> year
+            else -> null
+        }
     }
 
     private fun defaultTerms(campus: CampusType): List<PortalTerm> = listOf(

@@ -56,10 +56,7 @@ data class DirectLoginUiState(
     val importResult: ImportResult? = null,
     val semesters: List<AcademicSemester> = emptyList(),
     val viewedSemesterId: String = AcademicSemester.LEGACY_CURRENT_ID,
-    val importingSemesterId: String? = null,
-    val showEnrollmentDialog: Boolean = false,
-    val enrollmentYearInput: String = "",
-    val enrollmentSeason: SemesterSeason = SemesterSeason.AUTUMN
+    val importingSemesterId: String? = null
 )
 
 data class ImportResult(
@@ -96,8 +93,6 @@ class DirectLoginViewModel(
     private var nanningCaptchaBytes: ByteArray? = null
     // Each Nanning login attempt gets a fresh CookieJar → fresh session
     private var nanningCookieJar: CapturingCookieJar? = null
-    private var pendingCatalogHtml: String = ""
-    private var pendingCatalogCampus = com.glut.schedule.data.settings.CampusType.GUILIN
 
     // CookieJar-based client: cookies auto-persist across requests like a browser
     private fun nanningHttpClient(cookieJar: CapturingCookieJar): OkHttpClient = OkHttpClient.Builder()
@@ -138,30 +133,6 @@ class DirectLoginViewModel(
     fun updateRememberPassword(remember: Boolean) { _uiState.value = _uiState.value.copy(rememberPassword = remember) }
     fun toggleNanning() { _uiState.value = _uiState.value.copy(isNanning = !_uiState.value.isNanning) }
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
-    fun updateEnrollmentYear(input: String) {
-        _uiState.value = _uiState.value.copy(enrollmentYearInput = input.filter(Char::isDigit).take(4))
-    }
-    fun selectEnrollmentSeason(season: SemesterSeason) {
-        _uiState.value = _uiState.value.copy(enrollmentSeason = season)
-    }
-
-    fun confirmEnrollmentStart() {
-        val year = _uiState.value.enrollmentYearInput.toIntOrNull()
-        if (year == null || year !in 2000..LocalDate.now().year) {
-            _uiState.value = _uiState.value.copy(message = "请输入正确的入学年份")
-            return
-        }
-        viewModelScope.launch {
-            val season = _uiState.value.enrollmentSeason
-            settingsStore.setConfirmedEnrollmentStart(year, season)
-            rebuildPendingCatalog(year, season)
-            _uiState.value = _uiState.value.copy(showEnrollmentDialog = false, message = "已保存入学学期")
-        }
-    }
-
-    fun dismissEnrollmentDialog() {
-        _uiState.value = _uiState.value.copy(showEnrollmentDialog = false)
-    }
 
     fun selectOrImportSemester(semesterId: String) {
         val semester = _uiState.value.semesters.firstOrNull { it.id == semesterId } ?: return
@@ -523,24 +494,20 @@ class DirectLoginViewModel(
             val catalogHtml = results.firstOrNull {
                 it.url.contains("currcourse.jsdo") && it.httpCode in 200..299
             }?.body.orEmpty()
-            pendingCatalogHtml = catalogHtml
-            pendingCatalogCampus = campus
             val enrollmentHtml = apiProbeService.probeUrl(
                 cookie,
                 "$campusBaseUrl/academic/student/studentinfo/studentInfoModifyIndex.do?frombase=0&wantTag=0"
             )?.body.orEmpty()
-            val authoritativeEnrollment = AcademicSemesterParser.parseEnrollment(enrollmentHtml)
-                ?.takeIf { it.isConsistent }
-            val confirmedEnrollment = settingsStore.confirmedEnrollmentStart.first()
-            val enrollmentDate = authoritativeEnrollment?.entranceDate
-                ?: authoritativeEnrollment?.enrollmentYear?.let { LocalDate.of(it, 9, 1) }
-                ?: confirmedEnrollment?.let { (year, season) -> enrollmentDate(year, season) }
+            val enrollmentDate = AcademicSemesterParser.parseEnrollment(
+                html = enrollmentHtml,
+                studentNumber = _uiState.value.username
+            )?.catalogStartDate
 
-            var semesterCatalog = if (catalogHtml.isNotBlank()) {
+            var semesterCatalog = if (catalogHtml.isNotBlank() && enrollmentDate != null) {
                 AcademicSemesterParser.parseCatalog(
                     html = catalogHtml,
                     campus = campus,
-                    enrollmentDate = enrollmentDate ?: LocalDate.now(),
+                    enrollmentDate = enrollmentDate,
                     today = LocalDate.now()
                 )
             } else emptyList()
@@ -562,13 +529,6 @@ class DirectLoginViewModel(
             scheduleRepository.saveSemesterCatalog(semesterCatalog)
             val currentSemester = semesterCatalog.firstOrNull { it.isCurrent } ?: semesterCatalog.first()
             settingsStore.setCurrentSemesterId(currentSemester.id)
-            if (enrollmentDate == null) {
-                _uiState.value = _uiState.value.copy(
-                    showEnrollmentDialog = true,
-                    enrollmentYearInput = LocalDate.now().year.toString(),
-                    enrollmentSeason = SemesterSeason.AUTUMN
-                )
-            }
 
             var htmlResult = apiProbeService.findTimetableHtmlResult(results)
 
@@ -724,20 +684,6 @@ class DirectLoginViewModel(
             )
         }
     }
-
-    private suspend fun rebuildPendingCatalog(year: Int, season: SemesterSeason) {
-        if (pendingCatalogHtml.isBlank()) return
-        val catalog = AcademicSemesterParser.parseCatalog(
-            html = pendingCatalogHtml,
-            campus = pendingCatalogCampus,
-            enrollmentDate = enrollmentDate(year, season),
-            today = LocalDate.now()
-        )
-        if (catalog.isNotEmpty()) scheduleRepository.saveSemesterCatalog(catalog)
-    }
-
-    private fun enrollmentDate(year: Int, season: SemesterSeason): LocalDate =
-        if (season == SemesterSeason.AUTUMN) LocalDate.of(year, 9, 1) else LocalDate.of(year, 2, 1)
 
     private suspend fun fetchAndSaveScores(cookie: String, campusBaseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL): Int {
         val scoreClient = OkHttpClient.Builder()

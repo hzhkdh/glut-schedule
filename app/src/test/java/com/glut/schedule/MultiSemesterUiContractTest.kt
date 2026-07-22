@@ -7,13 +7,25 @@ import org.junit.Test
 
 class MultiSemesterUiContractTest {
     @Test
-    fun importScreenExposesSemesterCacheAndEnrollmentStates() {
-        val source = page("DirectLoginScreen.kt")
+    fun importScreenExposesSemesterCacheWithoutEnrollmentModal() {
+        val screen = page("DirectLoginScreen.kt")
+        val viewModel = page("DirectLoginViewModel.kt")
 
-        listOf("学期课表", "当前", "已缓存", "未下载", "下载中", "重试", "确认入学学期")
-            .forEach { assertTrue("missing UI copy: $it", source.contains(it)) }
-        assertTrue(source.contains("selectOrImportSemester"))
-        assertTrue(source.contains("heightIn(min = 48.dp)"))
+        listOf("学期课表", "当前", "已缓存", "未下载", "下载中", "重试")
+            .forEach { assertTrue("missing UI copy: $it", screen.contains(it)) }
+        assertTrue(screen.contains("selectOrImportSemester"))
+        assertTrue(screen.contains("heightIn(min = 48.dp)"))
+        assertFalse(screen.contains("EnrollmentStartDialog"))
+        assertFalse(screen.contains("showEnrollmentDialog"))
+        assertFalse(viewModel.contains("showEnrollmentDialog"))
+        assertFalse(viewModel.contains("confirmEnrollmentStart"))
+        assertFalse(viewModel.contains("enrollmentYearInput"))
+        assertFalse(viewModel.contains("enrollmentSeason"))
+        assertFalse(viewModel.contains("pendingCatalogHtml"))
+        assertFalse(viewModel.contains("confirmedEnrollmentStart"))
+        assertTrue(screen.contains("NanningCaptchaDialog"))
+        assertTrue(screen.contains("showCaptchaDialog"))
+        assertTrue(viewModel.contains("submitNanningCaptcha"))
     }
 
     @Test

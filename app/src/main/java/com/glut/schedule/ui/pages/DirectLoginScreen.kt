@@ -27,7 +27,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -57,7 +56,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
-import com.glut.schedule.data.model.SemesterSeason
 
 private val LoginPrimary = Color(0xFF141821)
 private val LoginSecondary = Color(0xFF667085)
@@ -217,16 +215,6 @@ fun DirectLoginScreen(
         )
     }
 
-    if (uiState.showEnrollmentDialog) {
-        EnrollmentStartDialog(
-            year = uiState.enrollmentYearInput,
-            season = uiState.enrollmentSeason,
-            onYearChange = viewModel::updateEnrollmentYear,
-            onSeasonChange = viewModel::selectEnrollmentSeason,
-            onConfirm = viewModel::confirmEnrollmentStart,
-            onDismiss = viewModel::dismissEnrollmentDialog
-        )
-    }
 }
 
 @Composable
@@ -282,54 +270,6 @@ private fun SemesterManagementSection(
             }
         }
     }
-}
-
-@Composable
-private fun EnrollmentStartDialog(
-    year: String,
-    season: SemesterSeason,
-    onYearChange: (String) -> Unit,
-    onSeasonChange: (SemesterSeason) -> Unit,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("确认入学学期", color = LoginPrimary, fontWeight = FontWeight.SemiBold) },
-        text = {
-            Column {
-                Text("教务系统未返回可靠的入学时间。确认后只展示从该学期开始的课表。", color = LoginSecondary, fontSize = 13.sp)
-                OutlinedTextField(
-                    value = year,
-                    onValueChange = onYearChange,
-                    label = { Text("入学年份") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-                    colors = loginTextFieldColors()
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = season == SemesterSeason.AUTUMN,
-                        onClick = { onSeasonChange(SemesterSeason.AUTUMN) },
-                        label = { Text("秋季入学") }
-                    )
-                    FilterChip(
-                        selected = season == SemesterSeason.SPRING,
-                        onClick = { onSeasonChange(SemesterSeason.SPRING) },
-                        label = { Text("春季入学") }
-                    )
-                }
-            }
-        },
-        confirmButton = { Button(onClick = onConfirm) { Text("确认") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("稍后") } },
-        containerColor = LoginCardBg,
-        shape = RoundedCornerShape(16.dp)
-    )
 }
 
 @Composable

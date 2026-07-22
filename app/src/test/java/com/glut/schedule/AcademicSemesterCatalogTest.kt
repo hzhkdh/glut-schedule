@@ -1,6 +1,7 @@
 package com.glut.schedule
 
 import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.AcademicEnrollmentSource
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.service.parser.AcademicSemesterParser
@@ -62,19 +63,75 @@ class AcademicSemesterCatalogTest {
     }
 
     @Test
-    fun enrollmentParserPrefersEntranceDateAndCrossChecksEnrollmentYear() {
+    fun guilinEnrollmentPrefersEntranceDateAndNormalizesPortalOffsets() {
         val html = """
             <form>
-              <input type="hidden" name="entranceDate" value="2024-09-08" />
-              <input value="2024" name="enrollYearId" type="hidden" />
+              <input type="hidden" name="entranceDate" value="2024-03-08" />
+              <input value="44" name="enrollYearId" type="hidden" />
+              <input value="33666" name="gradeId" type="hidden" />
             </form>
         """.trimIndent()
 
-        val enrollment = AcademicSemesterParser.parseEnrollment(html)
+        val enrollment = AcademicSemesterParser.parseEnrollment(html, "3242050858113")
 
-        assertEquals(LocalDate.of(2024, 9, 8), enrollment?.entranceDate)
+        assertEquals(LocalDate.of(2024, 3, 8), enrollment?.entranceDate)
         assertEquals(2024, enrollment?.enrollmentYear)
+        assertEquals(AcademicEnrollmentSource.ENTRANCE_DATE, enrollment?.source)
         assertTrue(enrollment?.isConsistent == true)
+
+        val catalog = AcademicSemesterParser.parseCatalog(
+            html = semesterForm(selectedYear = 2025, springTerm = "1", autumnTerm = "2"),
+            campus = CampusType.GUILIN,
+            enrollmentDate = enrollment!!.entranceDate!!,
+            today = LocalDate.of(2025, 5, 1)
+        )
+        assertEquals(listOf("guilin:2025:spring", "guilin:2024:autumn"), catalog.map { it.id })
+    }
+
+    @Test
+    fun nanningEnrollmentUsesFirstValidTwoDigitPortalYear() {
+        val html = """
+            <form>
+              <input value="44" name="enrollYearId" type="hidden" />
+              <input value="43" name="entranceGradeId" type="hidden" />
+              <input value="33666" name="gradeId" type="hidden" />
+            </form>
+        """.trimIndent()
+
+        val enrollment = AcademicSemesterParser.parseEnrollment(html, "not-a-student-number")
+
+        assertEquals(2024, enrollment?.enrollmentYear)
+        assertEquals(AcademicEnrollmentSource.PORTAL_FIELD, enrollment?.source)
+        assertEquals(LocalDate.of(2024, 9, 1), enrollment?.catalogStartDate)
+
+        val fourDigitEnrollment = AcademicSemesterParser.parseEnrollment(
+            "<input value=\"2024\" name=\"enrollYearId\" type=\"hidden\" />",
+            currentYear = 2025
+        )
+        assertEquals(2024, fourDigitEnrollment?.enrollmentYear)
+        assertEquals(AcademicEnrollmentSource.PORTAL_FIELD, fourDigitEnrollment?.source)
+    }
+
+    @Test
+    fun studentNumberFallbackUsesCharactersTwoAndThree() {
+        listOf("3242050858113", "5241994207").forEach { studentNumber ->
+            val enrollment = AcademicSemesterParser.parseEnrollment("", studentNumber)
+
+            assertEquals(2024, enrollment?.enrollmentYear)
+            assertEquals(AcademicEnrollmentSource.STUDENT_NUMBER, enrollment?.source)
+            assertEquals(LocalDate.of(2024, 9, 1), enrollment?.catalogStartDate)
+        }
+    }
+
+    @Test
+    fun malformedStudentNumberAndInvalidPortalIdsDoNotInventEnrollment() {
+        val html = """
+            <input value="33666" name="enrollYearId" type="hidden" />
+            <input value="1999" name="entranceGradeId" type="hidden" />
+            <input value="9999" name="gradeId" type="hidden" />
+        """.trimIndent()
+
+        assertEquals(null, AcademicSemesterParser.parseEnrollment(html, "3x"))
     }
 
     @Test

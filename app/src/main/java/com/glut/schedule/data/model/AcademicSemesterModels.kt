@@ -60,7 +60,11 @@ data class AcademicSemester(
 
 data class AcademicEnrollment(
     val entranceDate: LocalDate?,
-    val enrollmentYear: Int?,
+    val enrollmentYear: Int,
+    val source: AcademicEnrollmentSource,
     val isConsistent: Boolean
-)
+) {
+    val catalogStartDate: LocalDate = LocalDate.of(enrollmentYear, 9, 1)
+}
 
+enum class AcademicEnrollmentSource { ENTRANCE_DATE, PORTAL_FIELD, STUDENT_NUMBER }
