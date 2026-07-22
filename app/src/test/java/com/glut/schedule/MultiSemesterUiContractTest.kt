@@ -7,6 +7,24 @@ import org.junit.Test
 
 class MultiSemesterUiContractTest {
     @Test
+    fun admissionParsingUsesTheStudentNumberFromEachAuthenticationAttempt() {
+        val viewModel = page("DirectLoginViewModel.kt")
+
+        val successCallsWithSnapshot = viewModel.lineSequence().count { line ->
+            line.contains("onLoginSuccess(") &&
+                line.contains("state.rememberPassword, state.username")
+        }
+        assertTrue(
+            "Guilin direct, OA fallback, and Nanning captcha success must pass their student-number snapshot",
+            successCallsWithSnapshot == 3
+        )
+        assertTrue(viewModel.contains("remember: Boolean, studentNumber: String"))
+        assertTrue(viewModel.contains("performImport(cookie, campusBaseUrl, studentNumber)"))
+        assertTrue(viewModel.contains("studentNumber = studentNumber"))
+        assertFalse(viewModel.contains("studentNumber = _uiState.value.username"))
+    }
+
+    @Test
     fun importScreenExposesSemesterCacheWithoutEnrollmentModal() {
         val screen = page("DirectLoginScreen.kt")
         val viewModel = page("DirectLoginViewModel.kt")

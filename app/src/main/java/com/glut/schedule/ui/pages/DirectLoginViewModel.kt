@@ -206,7 +206,7 @@ class DirectLoginViewModel(
             try {
                 val result = loginHttpClient.login(state.username, state.password)
                 when (result) {
-                    is AcademicLoginResult.Success -> onLoginSuccess(result.cookie, result.campusBaseUrl, state.rememberPassword)
+                    is AcademicLoginResult.Success -> onLoginSuccess(result.cookie, result.campusBaseUrl, state.rememberPassword, state.username)
                     AcademicLoginResult.MissingCredentials ->
                         _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "请输入学号和密码")
                     AcademicLoginResult.InvalidCredentials ->
@@ -215,7 +215,7 @@ class DirectLoginViewModel(
                         _uiState.value = _uiState.value.copy(message = "正在尝试统一身份认证登录...")
                         val oaResult = oaLoginClient.login(state.username, state.password)
                         when (oaResult) {
-                            is AcademicLoginResult.Success -> onLoginSuccess(oaResult.cookie, oaResult.campusBaseUrl, state.rememberPassword)
+                            is AcademicLoginResult.Success -> onLoginSuccess(oaResult.cookie, oaResult.campusBaseUrl, state.rememberPassword, state.username)
                             AcademicLoginResult.InvalidCredentials ->
                                 _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "学号或密码错误，请重试")
                             else ->
@@ -305,7 +305,7 @@ class DirectLoginViewModel(
             try {
                 val loginCookie = performNanningLogin(cj, state.username, state.password, captchaCode)
                 if (loginCookie != null) {
-                    onLoginSuccess(loginCookie, AcademicLoginResult.NANNING_URL, state.rememberPassword)
+                    onLoginSuccess(loginCookie, AcademicLoginResult.NANNING_URL, state.rememberPassword, state.username)
                 } else {
                     refreshNanningCaptcha()
                     _uiState.value = _uiState.value.copy(
@@ -450,7 +450,7 @@ class DirectLoginViewModel(
 
     // ---- Shared helpers ----
 
-    private fun onLoginSuccess(cookie: String, campusBaseUrl: String, remember: Boolean) {
+    private fun onLoginSuccess(cookie: String, campusBaseUrl: String, remember: Boolean, studentNumber: String) {
         if (remember) {
             credentialStore.saveCredentials(_uiState.value.username, _uiState.value.password)
         } else {
@@ -466,11 +466,11 @@ class DirectLoginViewModel(
             }
             settingsStore.setCampusType(campusType)
             _uiState.value = _uiState.value.copy(message = "登录成功，正在导入数据...")
-            performImport(cookie, campusBaseUrl)
+            performImport(cookie, campusBaseUrl, studentNumber)
         }
     }
 
-    private suspend fun performImport(cookie: String, campusBaseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL) {
+    private suspend fun performImport(cookie: String, campusBaseUrl: String, studentNumber: String) {
         var courseCount = 0
         var examCount = 0
         var scoreCount = 0
@@ -500,7 +500,7 @@ class DirectLoginViewModel(
             )?.body.orEmpty()
             val enrollmentDate = AcademicSemesterParser.parseEnrollment(
                 html = enrollmentHtml,
-                studentNumber = _uiState.value.username
+                studentNumber = studentNumber
             )?.catalogStartDate
 
             var semesterCatalog = if (catalogHtml.isNotBlank() && enrollmentDate != null) {
