@@ -10,14 +10,10 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
@@ -33,8 +29,6 @@ import androidx.compose.material3.Surface
 
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,7 +50,6 @@ import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
 import com.glut.schedule.data.model.ScheduleCourse
-import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.scheduleWeekForNumber
@@ -69,7 +62,6 @@ import com.glut.schedule.ui.components.shouldCommitCustomBackgroundUri
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScheduleScreen(
     viewModel: ScheduleViewModel,
@@ -83,7 +75,6 @@ fun ScheduleScreen(
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     var showAddActions by remember { mutableStateOf(false) }
-    var showSemesterSheet by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val backgroundPicker = rememberLauncherForActivityResult(
@@ -169,28 +160,14 @@ fun ScheduleScreen(
                     viewModel.refreshSchedule()
                 },
                 semesterLabel = uiState.viewedSemester?.displayName.orEmpty(),
-                onSemesterClick = { showSemesterSheet = true },
-                showRefresh = !uiState.isHistoricalSemester,
+                semesters = uiState.semesters,
+                isHistorical = uiState.isHistoricalSemester,
+                onSemesterSelected = viewModel::selectSemester,
+                onManageSemesters = onImportClick,
+                onReturnToCurrentClick = viewModel::returnToCurrentSemester,
                 onDrawerOpen = onDrawerOpen,
                 isRefreshing = uiState.isRefreshing
             )
-            if (uiState.isHistoricalSemester) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.48f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(start = 16.dp, end = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("历史学期 · 只读", color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                        TextButton(
-                            onClick = viewModel::returnToCurrentSemester,
-                            modifier = Modifier.heightIn(min = 48.dp)
-                        ) { Text("返回当前", color = Color.White) }
-                    }
-                }
-            }
             HorizontalPager(
                 state = pagerState,
                 key = { page -> page },
@@ -209,16 +186,27 @@ fun ScheduleScreen(
                     uiState.semesterStartMonday,
                     uiState.maxAcademicWeek
                 )
-                ScheduleGrid(
-                    week = pageWeek,
-                    today = uiState.today,
-                    periods = uiState.classPeriods,
-                    blocks = blocksByWeek[pageWeekNumber].orEmpty(),
-                    showWeekend = uiState.showWeekend,
-                    showNoon = uiState.showNoon,
-                    showCalendarDates = uiState.hasAuthoritativeCalendar,
-                    modifier = Modifier.fillMaxSize()
-                )
+                val pageBlocks = blocksByWeek[pageWeekNumber].orEmpty()
+                Box(modifier = Modifier.fillMaxSize()) {
+                    ScheduleGrid(
+                        week = pageWeek,
+                        today = uiState.today,
+                        periods = uiState.classPeriods,
+                        blocks = pageBlocks,
+                        showWeekend = uiState.showWeekend,
+                        showNoon = uiState.showNoon,
+                        showCalendarDates = uiState.hasAuthoritativeCalendar,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    if (pageBlocks.isEmpty()) {
+                        Text(
+                            "本周无课程",
+                            color = Color.White.copy(alpha = 0.78f),
+                            fontSize = 13.sp,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    }
+                }
             }
         }
         if (showAddActions) {
@@ -256,38 +244,6 @@ fun ScheduleScreen(
         if (message.isNotBlank()) {
             snackbarHostState.showSnackbar(message)
             viewModel.clearMessage()
-        }
-    }
-    if (showSemesterSheet) {
-        ModalBottomSheet(onDismissRequest = { showSemesterSheet = false }) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
-                Text("切换学期", fontSize = 20.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                Text("这里只显示当前学期和已缓存的历史学期", fontSize = 13.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp, bottom = 8.dp))
-                uiState.semesters
-                    .filter { it.isCurrent || it.cacheStatus == SemesterCacheStatus.CACHED }
-                    .forEach { semester ->
-                        TextButton(
-                            onClick = {
-                                viewModel.selectSemester(semester.id)
-                                showSemesterSheet = false
-                            },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                        ) {
-                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text(semester.displayName, modifier = Modifier.weight(1f))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(if (semester.isCurrent) "当前" else "已缓存", fontSize = 12.sp)
-                            }
-                        }
-                    }
-                TextButton(
-                    onClick = {
-                        showSemesterSheet = false
-                        onImportClick()
-                    },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                ) { Text("管理与下载其他学期") }
-            }
         }
     }
 }

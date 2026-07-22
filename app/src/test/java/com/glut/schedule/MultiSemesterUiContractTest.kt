@@ -31,9 +31,12 @@ class MultiSemesterUiContractTest {
 
         listOf("学期课表", "当前", "已缓存", "未下载", "下载中", "重试")
             .forEach { assertTrue("missing UI copy: $it", screen.contains(it)) }
+        listOf("ExposedDropdownMenuBox", "DropdownMenuItem", "下载并缓存", "重新下载", "查看课表", "正在查看")
+            .forEach { assertTrue("missing dropdown UI contract: $it", screen.contains(it)) }
         assertTrue(screen.contains("viewModel::downloadSemester"))
         assertTrue(screen.contains("viewModel::viewSemester"))
         assertTrue(screen.contains("heightIn(min = 48.dp)"))
+        assertFalse(screen.contains("Scaffold("))
         assertFalse(screen.contains("EnrollmentStartDialog"))
         assertFalse(screen.contains("showEnrollmentDialog"))
         assertFalse(viewModel.contains("showEnrollmentDialog"))
@@ -86,12 +89,19 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
-    fun historicalScheduleIsReadOnlyAndOffersReturnToCurrent() {
+    fun historicalScheduleUsesLightweightHeaderMenuWithoutBanner() {
         val screen = page("ScheduleScreen.kt")
+        val header = component("ScheduleHeader.kt")
 
-        assertTrue(screen.contains("历史学期 · 只读"))
-        assertTrue(screen.contains("返回当前"))
-        assertTrue(screen.contains("onSemesterClick"))
+        assertFalse(screen.contains("Surface(\n                    color = Color.Black.copy(alpha = 0.48f)"))
+        assertFalse(screen.contains("ModalBottomSheet"))
+        assertTrue(header.contains("DropdownMenu("))
+        assertTrue(header.contains("管理与下载其他学期"))
+        assertTrue(header.contains("· 只读"))
+        assertTrue(header.contains("返回当前学期"))
+        assertTrue(screen.contains("onSemesterSelected = viewModel::selectSemester"))
+        assertTrue(screen.contains("onReturnToCurrentClick = viewModel::returnToCurrentSemester"))
+        assertTrue(screen.contains("本周无课程"))
         assertFalse(screen.contains("历史学期可刷新"))
     }
 
@@ -109,5 +119,10 @@ class MultiSemesterUiContractTest {
     private fun page(name: String): String {
         val module = File("src/main/java/com/glut/schedule/ui/pages/$name")
         return (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/ui/pages/$name")).readText()
+    }
+
+    private fun component(name: String): String {
+        val module = File("src/main/java/com/glut/schedule/ui/components/$name")
+        return (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/ui/components/$name")).readText()
     }
 }

@@ -1,6 +1,7 @@
 package com.glut.schedule.ui.components
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,21 +12,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ScheduleWeek
+import com.glut.schedule.data.model.SemesterCacheStatus
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -38,12 +49,16 @@ fun ScheduleHeader(
     onWeekTitleClick: () -> Unit,
     onRefreshClick: () -> Unit,
     semesterLabel: String,
-    onSemesterClick: () -> Unit,
-    showRefresh: Boolean = true,
+    semesters: List<AcademicSemester>,
+    isHistorical: Boolean,
+    onSemesterSelected: (String) -> Unit,
+    onManageSemesters: () -> Unit,
+    onReturnToCurrentClick: () -> Unit,
     onDrawerOpen: () -> Unit = {},
     isRefreshing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    var semesterMenuExpanded by remember { mutableStateOf(false) }
     val formatter = DateTimeFormatter.ofPattern("yyyy/M/d")
     val dayLabel = today.dayLabel()
     Column(
@@ -83,7 +98,19 @@ fun ScheduleHeader(
                 )
             }
 
-            if (showRefresh) {
+            if (isHistorical) {
+                IconButton(
+                    onClick = onReturnToCurrentClick,
+                    modifier = Modifier.size(48.dp),
+                    colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "返回当前学期",
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
+            } else {
                 IconButton(
                     onClick = onRefreshClick,
                     enabled = !isRefreshing,
@@ -102,17 +129,54 @@ fun ScheduleHeader(
                 }
             }
         }
-        Text(
-            text = semesterLabel.ifBlank { "选择学期" },
-            color = Color.White,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
-                .clickable(onClick = onSemesterClick)
-                .padding(start = 56.dp, end = 12.dp, top = 14.dp, bottom = 12.dp)
-        )
+                .clickable { semesterMenuExpanded = true }
+        ) {
+            Text(
+                text = buildString {
+                    append(semesterLabel.ifBlank { "选择学期" })
+                    if (isHistorical) append(" · 只读")
+                    append("  ▾")
+                },
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(start = 56.dp, end = 12.dp, top = 14.dp, bottom = 12.dp)
+            )
+            DropdownMenu(
+                expanded = semesterMenuExpanded,
+                onDismissRequest = { semesterMenuExpanded = false }
+            ) {
+                semesters
+                    .filter { it.isCurrent || it.cacheStatus == SemesterCacheStatus.CACHED }
+                    .forEach { semester ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(semester.displayName, modifier = Modifier.weight(1f))
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(if (semester.isCurrent) "当前" else "已缓存", fontSize = 12.sp)
+                                }
+                            },
+                            onClick = {
+                                semesterMenuExpanded = false
+                                onSemesterSelected(semester.id)
+                            }
+                        )
+                    }
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text("管理与下载其他学期") },
+                    onClick = {
+                        semesterMenuExpanded = false
+                        onManageSemesters()
+                    }
+                )
+            }
+        }
     }
 }
 

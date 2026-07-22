@@ -1,6 +1,7 @@
 package com.glut.schedule.ui.pages
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,11 +28,15 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -43,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -64,6 +70,7 @@ private val LoginPageBg = Color(0xFFF6F4EF)
 private val LoginCardBg = Color(0xFFFFFEFB)
 private val LoginBorder = Color(0xFFD1D5DB)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DirectLoginScreen(
     viewModel: DirectLoginViewModel,
@@ -72,19 +79,15 @@ fun DirectLoginScreen(
     val uiState by viewModel.uiState.collectAsState()
     var passwordVisible by remember { mutableStateOf(false) }
 
-    Scaffold(
-        modifier = modifier,
-        containerColor = LoginPageBg
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(modifier = Modifier.height(32.dp))
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(LoginPageBg)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text("登录教务系统，一键导入课程和考试", color = LoginSecondary, fontSize = 14.sp, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
 
@@ -193,6 +196,7 @@ fun DirectLoginScreen(
                 Spacer(modifier = Modifier.height(24.dp))
                 SemesterManagementSection(
                     semesters = uiState.semesters,
+                    viewedSemesterId = uiState.viewedSemesterId,
                     importingSemesterId = uiState.importingSemesterId,
                     onDownloadSemester = viewModel::downloadSemester,
                     onViewSemester = viewModel::viewSemester
@@ -200,7 +204,6 @@ fun DirectLoginScreen(
             }
 
             Spacer(modifier = Modifier.height(32.dp))
-        }
     }
 
     // Native captcha dialog for Nanning login
@@ -218,64 +221,101 @@ fun DirectLoginScreen(
 
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SemesterManagementSection(
     semesters: List<AcademicSemester>,
+    viewedSemesterId: String,
     importingSemesterId: String?,
     onDownloadSemester: (String) -> Unit,
     onViewSemester: (String) -> Unit
 ) {
+    var expanded by remember { mutableStateOf(false) }
+    var selectedSemesterId by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectedSemester = semesters.firstOrNull { it.id == selectedSemesterId }
+        ?: semesters.firstOrNull { it.isCurrent }
+        ?: semesters.first()
+    val isDownloading = importingSemesterId == selectedSemester.id ||
+        selectedSemester.cacheStatus == SemesterCacheStatus.DOWNLOADING
+    val isViewable = selectedSemester.isCurrent || selectedSemester.cacheStatus == SemesterCacheStatus.CACHED
+    val actionLabel = when {
+        isDownloading -> "下载中..."
+        isViewable && selectedSemester.id == viewedSemesterId -> "正在查看"
+        isViewable -> "查看课表"
+        selectedSemester.cacheStatus == SemesterCacheStatus.FAILED -> "重新下载"
+        else -> "下载并缓存"
+    }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         Text("学期课表", color = LoginPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Text(
-            "当前学期自动更新，历史学期下载后可离线只读查看",
+            "选择学期，按需下载并离线保存",
             color = LoginSecondary,
             fontSize = 13.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
         )
-        semesters.forEach { semester ->
-            val isDownloading = importingSemesterId == semester.id || semester.cacheStatus == SemesterCacheStatus.DOWNLOADING
-            val status = when {
-                isDownloading -> "下载中"
-                semester.isCurrent -> "当前"
-                semester.cacheStatus == SemesterCacheStatus.CACHED -> "已缓存"
-                semester.cacheStatus == SemesterCacheStatus.FAILED -> "重试"
-                else -> "未下载"
-            }
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-                    .heightIn(min = 48.dp)
-                    .clickable(enabled = !isDownloading) {
-                        if (semester.isCurrent || semester.cacheStatus == SemesterCacheStatus.CACHED) {
-                            onViewSemester(semester.id)
-                        } else {
-                            onDownloadSemester(semester.id)
-                        }
-                    },
-                color = if (semester.isCurrent) LoginAccent.copy(alpha = 0.10f) else LoginCardBg,
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = !expanded },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = selectedSemester.displayName,
+                onValueChange = {},
+                readOnly = true,
+                singleLine = true,
+                label = { Text("选择要下载的学期") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                colors = loginTextFieldColors(),
                 shape = RoundedCornerShape(12.dp),
-                tonalElevation = if (semester.isCurrent) 1.dp else 0.dp
+                modifier = Modifier
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+            )
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(semester.displayName, color = LoginPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        if (semester.cacheStatus == SemesterCacheStatus.CACHED && !semester.isCurrent) {
-                            Text("历史学期 · 只读", color = LoginSecondary, fontSize = 12.sp)
-                        }
+                semesters.forEach { semester ->
+                    val status = when {
+                        importingSemesterId == semester.id || semester.cacheStatus == SemesterCacheStatus.DOWNLOADING -> "下载中"
+                        semester.isCurrent -> "当前"
+                        semester.cacheStatus == SemesterCacheStatus.CACHED -> "已缓存"
+                        semester.cacheStatus == SemesterCacheStatus.FAILED -> "重试"
+                        else -> "未下载"
                     }
-                    if (isDownloading) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = LoginAccent)
-                    } else {
-                        Text(status, color = if (status == "重试") Color(0xFFDC2626) else LoginAccent, fontSize = 13.sp)
-                    }
+                    DropdownMenuItem(
+                        text = {
+                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(semester.displayName, modifier = Modifier.weight(1f))
+                                Text(status, color = if (status == "重试") Color(0xFFDC2626) else LoginAccent, fontSize = 12.sp)
+                            }
+                        },
+                        onClick = {
+                            selectedSemesterId = semester.id
+                            expanded = false
+                        },
+                        modifier = Modifier.heightIn(min = 48.dp)
+                    )
                 }
             }
+        }
+        Button(
+            onClick = {
+                if (isViewable) onViewSemester(selectedSemester.id)
+                else onDownloadSemester(selectedSemester.id)
+            },
+            enabled = !isDownloading && selectedSemester.id != viewedSemesterId,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = LoginAccent),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            if (isDownloading) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+            Text(actionLabel, color = Color.White, fontWeight = FontWeight.SemiBold)
         }
     }
 }
