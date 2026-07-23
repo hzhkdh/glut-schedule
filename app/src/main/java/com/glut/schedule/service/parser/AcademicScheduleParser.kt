@@ -4,6 +4,7 @@ import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.academicWeeksForText
 import java.security.MessageDigest
 
 interface AcademicScheduleParser {
@@ -20,7 +21,15 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         if (html.isBlank()) return emptyList()
         val hasNoonInTimetable = html.contains("中午")
         return parseSupplementalAdjustmentRows(html, hasNoonInTimetable).map { adj ->
-            val adjId = stableId("adj-${adj.title}-${adj.teacher}-${adj.originalWeek}-${adj.originalDay}-${adj.makeupWeek}-${adj.makeupDay}")
+            val adjId = stableId(
+                listOf(
+                    "adj", adj.type, adj.title, adj.teacher,
+                    adj.originalWeek, adj.originalDay, adj.originalStartSection,
+                    adj.originalEndSection, adj.originalRoom,
+                    adj.makeupWeek, adj.makeupDay, adj.makeupStartSection,
+                    adj.makeupEndSection, adj.makeupRoom
+                ).joinToString("|")
+            )
             SemesterAdjustment(
                 id = adjId,
                 type = adj.type,
@@ -815,30 +824,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
     }
 
     private fun expandActiveWeeks(weekText: String): List<Int> {
-        val normalized = weekText
-            .replace("第", "")
-            .replace(" ", "")
-            .replace("，", ",")
-            .trim()
-        val requiresOdd = normalized.contains("单周")
-        val requiresEven = normalized.contains("双周")
-        val spans = weekSpanRegex.findAll(normalized).mapNotNull { match ->
-            val parts = match.value.split("-", "－", "—")
-            val start = parts.getOrNull(0)?.toIntOrNull()
-            val end = parts.getOrNull(1)?.toIntOrNull() ?: start
-            if (start != null && end != null && start <= end) start..end else null
-        }.toList()
-        val baseWeeks = if (spans.isEmpty()) {
-            (1..22).toList()
-        } else {
-            spans.flatMap { it.toList() }
-        }
-        return baseWeeks
-            .map { it.coerceIn(1, 22) }
-            .distinct()
-            .sorted()
-            .filter { week -> !requiresOdd || week % 2 == 1 }
-            .filter { week -> !requiresEven || week % 2 == 0 }
+        return academicWeeksForText(weekText)
     }
 
     private fun compactWeekNumbers(weeks: List<Int>): List<String> {

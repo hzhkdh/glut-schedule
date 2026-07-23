@@ -69,7 +69,7 @@ class CampusImageViewModel(
                     updateTab(type) {
                         CampusImageTabState(
                             document = document,
-                            message = if (document.fromCache) "网络不可用，已显示上次缓存" else ""
+                            message = if (forceRefresh && document.fromCache) "刷新失败，已显示上次缓存" else ""
                         )
                     }
                 }

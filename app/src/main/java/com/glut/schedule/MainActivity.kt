@@ -131,11 +131,10 @@ import com.glut.schedule.ui.pages.CampusImageScreen
 import com.glut.schedule.ui.pages.CampusImageViewModel
 import com.glut.schedule.ui.pages.CampusImageViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
+import com.glut.schedule.ui.pages.ClassPeriodSettingsScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
-import com.glut.schedule.ui.components.MarkdownContent
-import com.glut.schedule.ui.components.MarkdownPolicy
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
@@ -155,6 +154,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+
+private enum class SettingsSubPage(val title: String) {
+    ROOT("设置"),
+    COURSE_COLORS("课程卡片颜色"),
+    CLASS_PERIODS("上课时间")
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -183,14 +188,14 @@ class MainActivity : ComponentActivity() {
                 var noticePopupSessionDismissedIds by remember { mutableStateOf(emptySet<String>()) }
                 var initialNoticeCheckFinished by remember { mutableStateOf(false) }
                 var showResetConfirm by remember { mutableStateOf(false) }
-                var showCourseColors by remember { mutableStateOf(false) }
+                var settingsSubPage by remember { mutableStateOf(SettingsSubPage.ROOT) }
                 var drawerGestureBlocked by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
                     when {
                         drawerState.isOpen -> scope.launch { drawerState.close() }
-                        showCourseColors -> showCourseColors = false
+                        settingsSubPage != SettingsSubPage.ROOT -> settingsSubPage = SettingsSubPage.ROOT
                         selectedItem != DrawerItem.Schedule -> selectedItem = DrawerItem.Schedule
                         else -> finish()
                     }
@@ -202,8 +207,7 @@ class MainActivity : ComponentActivity() {
                         settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
-                        apiProbeService = container.apiProbeService,
-                        parser = container.academicScheduleParser
+                        semesterImportService = container.academicSemesterImportService
                     )
                 )
                 val examViewModel: ExamViewModel = viewModel(
@@ -403,7 +407,7 @@ class MainActivity : ComponentActivity() {
                     gesturesEnabled = !drawerGestureBlocked,
                     drawerContent = {
                         ModalDrawerSheet(
-                            modifier = Modifier.fillMaxWidth(0.60f),
+                            modifier = Modifier.fillMaxWidth(0.75f),
                             drawerContainerColor = Color(0xFFE8E4D6),
                             drawerContentColor = Color(0xFF141821)
                         ) {
@@ -434,7 +438,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             showDot = item == DrawerItem.About && showUpdateDot,
                                             onClick = {
                                                 selectedItem = item
-                                                showCourseColors = false
+                                                settingsSubPage = SettingsSubPage.ROOT
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -459,7 +463,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     target = item,
                                                     onProfessionalScoreEntered = professionalScoreViewModel::resetAcademicYearSelection
                                                 )
-                                                showCourseColors = false
+                                                settingsSubPage = SettingsSubPage.ROOT
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -480,7 +484,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             isSelected = selectedItem == item,
                                             onClick = {
                                                 selectedItem = item
-                                                showCourseColors = false
+                                                settingsSubPage = SettingsSubPage.ROOT
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -503,7 +507,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                 || (item == DrawerItem.Notice && showNoticeDot),
                                             onClick = {
                                                 selectedItem = item
-                                                showCourseColors = false
+                                                settingsSubPage = SettingsSubPage.ROOT
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -520,19 +524,19 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 TopAppBar(
                                     title = {
                                         Text(
-                                            if (showCourseColors) "课程卡片颜色" else selectedItem.title,
+                                            if (selectedItem == DrawerItem.Settings) settingsSubPage.title else selectedItem.title,
                                             color = Color(0xFF141821),
                                             fontWeight = FontWeight.SemiBold
                                         )
                                     },
                                     navigationIcon = {
                                         IconButton(onClick = {
-                                            if (showCourseColors) showCourseColors = false
+                                            if (settingsSubPage != SettingsSubPage.ROOT) settingsSubPage = SettingsSubPage.ROOT
                                             else scope.launch { drawerState.open() }
                                         }) {
                                             Icon(
-                                                imageVector = if (showCourseColors) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
-                                                contentDescription = if (showCourseColors) "返回" else "菜单",
+                                                imageVector = if (settingsSubPage != SettingsSubPage.ROOT) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
+                                                contentDescription = if (settingsSubPage != SettingsSubPage.ROOT) "返回" else "菜单",
                                                 tint = Color(0xFF141821),
                                                 modifier = Modifier.size(26.dp)
                                             )
@@ -671,9 +675,9 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
                                     viewModel = scheduleViewModel,
-                                    showCourseColors = showCourseColors,
+                                    subPage = settingsSubPage,
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
-                                    onShowCourseColors = { showCourseColors = true },
+                                    onSubPageChange = { settingsSubPage = it },
                                     onReset = { showResetConfirm = true }
                                 )
                                 DrawerItem.Notice -> NoticeScreen(notices = notices)
@@ -815,32 +819,39 @@ private fun ScheduleDestination(
 @Composable
 private fun ScheduleSettingsDestination(
     viewModel: ScheduleViewModel,
-    showCourseColors: Boolean,
+    subPage: SettingsSubPage,
     onPickBackground: () -> Unit,
-    onShowCourseColors: () -> Unit,
+    onSubPageChange: (SettingsSubPage) -> Unit,
     onReset: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    if (showCourseColors) {
-        CourseColorsPage(
-            courses = uiState.courses,
-            overrides = uiState.courseColorOverrides,
-            onSetColor = viewModel::setCourseColorOverride,
-            onRemoveColor = viewModel::removeCourseColorOverride,
-            onResetAll = viewModel::clearCourseColorOverrides
+    when (subPage) {
+        SettingsSubPage.COURSE_COLORS -> CourseColorsPage(
+                courses = uiState.courses,
+                overrides = uiState.courseColorOverrides,
+                onSetColor = viewModel::setCourseColorOverride,
+                onRemoveColor = viewModel::removeCourseColorOverride,
+                onResetAll = viewModel::clearCourseColorOverrides
+            )
+        SettingsSubPage.CLASS_PERIODS -> ClassPeriodSettingsScreen(
+            campusType = uiState.campusType,
+            periods = uiState.classPeriods,
+            onSetPeriods = viewModel::setClassPeriods,
+            onResetPeriods = viewModel::resetClassPeriods,
+            onSaved = { onSubPageChange(SettingsSubPage.ROOT) }
         )
-    } else {
-        SettingsPage(
-            showWeekend = uiState.showWeekend,
-            onShowWeekendChange = viewModel::setShowWeekend,
-            showNoon = uiState.showNoon,
-            onShowNoonChange = viewModel::setShowNoon,
-            hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
-            onPickBackground = onPickBackground,
-            onClearBackground = viewModel::clearCustomBackground,
-            onCourseColors = onShowCourseColors,
-            onReset = onReset
-        )
+        SettingsSubPage.ROOT -> SettingsPage(
+                showWeekend = uiState.showWeekend,
+                onShowWeekendChange = viewModel::setShowWeekend,
+                showNoon = uiState.showNoon,
+                onShowNoonChange = viewModel::setShowNoon,
+                hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
+                onPickBackground = onPickBackground,
+                onClearBackground = viewModel::clearCustomBackground,
+                onCourseColors = { onSubPageChange(SettingsSubPage.COURSE_COLORS) },
+                onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
+                onReset = onReset
+            )
     }
 }
 
@@ -917,6 +928,7 @@ private fun SettingsPage(
     onPickBackground: () -> Unit = {},
     onClearBackground: () -> Unit = {},
     onCourseColors: () -> Unit = {},
+    onClassPeriods: () -> Unit = {},
     onReset: () -> Unit = {}
 ) {
     val settingsBg = Color(0xFFF6F4EF)
@@ -928,6 +940,7 @@ private fun SettingsPage(
         modifier = Modifier
             .fillMaxSize()
             .background(settingsBg)
+            .verticalScroll(rememberScrollState())
     ) {
         Column(
             modifier = Modifier.padding(24.dp),
@@ -976,6 +989,22 @@ private fun SettingsPage(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("课程卡片颜色", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
+                }
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onClassPeriods)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("上课时间", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
                 }
             }
@@ -1431,12 +1460,10 @@ private fun NoticePopupContent(
         if (notice.content.isNotBlank()) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = MarkdownPolicy.toPlainText(notice.content),
+                text = notice.content,
                 color = Color(0xFF3D3940),
                 fontSize = 14.sp,
-                lineHeight = 20.sp,
-                maxLines = 5,
-                overflow = TextOverflow.Ellipsis
+                lineHeight = 20.sp
             )
         }
     }
@@ -1549,7 +1576,12 @@ private fun UpdateDialog(
                             if (state.info.releaseNotes.isNotBlank()) {
                                 LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                                     item {
-                                        MarkdownContent(markdown = state.info.releaseNotes, modifier = Modifier.fillMaxWidth())
+                                        Text(
+                                            state.info.releaseNotes,
+                                            fontSize = 14.sp,
+                                            lineHeight = 20.sp,
+                                            color = Color(0xFF3D3940)
+                                        )
                                     }
                                 }
                             }

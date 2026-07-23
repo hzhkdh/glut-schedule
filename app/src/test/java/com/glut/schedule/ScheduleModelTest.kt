@@ -1,20 +1,65 @@
 package com.glut.schedule
 
 import com.glut.schedule.data.model.CourseOccurrence
+import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.ScheduleWeek
 import com.glut.schedule.data.model.academicWeekForDate
+import com.glut.schedule.data.model.historicalAcademicMaxWeek
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
+import com.glut.schedule.data.model.academicMaxWeekForSemester
 import com.glut.schedule.data.model.visibleDayCount
 import com.glut.schedule.data.model.defaultClassPeriods
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
+import com.glut.schedule.data.settings.CampusType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 
 class ScheduleModelTest {
+    @Test
+    fun historicalMaximumWeekPrefersPortalDropdownOverCourseOccurrences() {
+        val course = ScheduleCourse(
+            id = "internship",
+            title = "实习",
+            room = "",
+            teacher = "教师",
+            colorHex = "#4477AA",
+            occurrences = listOf(
+                CourseOccurrence("occ", "internship", 1, 1, 2, "1-16周", "")
+            )
+        )
+
+        assertEquals(19, historicalAcademicMaxWeek(portalMaxWeek = 19, courses = listOf(course)))
+        assertEquals(16, historicalAcademicMaxWeek(portalMaxWeek = null, courses = listOf(course)))
+    }
+
+    @Test
+    fun historicalMaximumWeekIgnoresPersistedCalendarDates() {
+        val course = ScheduleCourse(
+            id = "internship",
+            title = "实习",
+            room = "",
+            teacher = "教师",
+            colorHex = "#4477AA",
+            occurrences = listOf(
+                CourseOccurrence("occ", "internship", 1, 1, 2, "1-16周", "")
+            )
+        )
+
+        assertEquals(
+            19,
+            academicMaxWeekForSemester(
+                isCurrentSemester = false,
+                portalMaxWeek = 19,
+                courses = listOf(course),
+                semesterStartMonday = LocalDate.of(2024, 9, 2),
+                semesterEndDate = LocalDate.of(2024, 12, 22)
+            )
+        )
+    }
     @Test
     fun scheduleWeek_movesBySevenDaysAndUpdatesWeekNumber() {
         val current = ScheduleWeek(number = 9, monday = LocalDate.of(2026, 5, 4))
@@ -32,6 +77,17 @@ class ScheduleModelTest {
         assertEquals(14, periods.size)
         assertEquals("08:30", periods.first().startsAt)
         assertEquals("21:45", periods.last().endsAt)
+    }
+
+    @Test
+    fun defaultClassPeriodsUseTheSelectedCampusTemplate() {
+        val guilin = defaultClassPeriods(CampusType.GUILIN)
+        val nanning = defaultClassPeriods(CampusType.NANNING)
+
+        assertEquals((1..14).toList(), guilin.map { it.section })
+        assertEquals("08:30", guilin.first().startsAt)
+        assertEquals((1..11).toList(), nanning.map { it.section })
+        assertEquals("08:40", nanning.first().startsAt)
     }
 
     @Test
@@ -107,6 +163,25 @@ class ScheduleModelTest {
         assertTrue(!occurrenceWithWeek("6-14双周").isActiveInWeek(11))
         assertTrue(occurrenceWithWeek("1,4").isActiveInWeek(4))
         assertTrue(!occurrenceWithWeek("1,4").isActiveInWeek(2))
+    }
+
+    @Test
+    fun occurrenceActiveWeekAppliesParityToEachSegmentOnly() {
+        val occurrence = occurrenceWithWeek("6-14双,16-18")
+
+        assertTrue(occurrence.isActiveInWeek(6))
+        assertTrue(!occurrence.isActiveInWeek(7))
+        assertTrue(occurrence.isActiveInWeek(14))
+        assertTrue(occurrence.isActiveInWeek(16))
+        assertTrue(occurrence.isActiveInWeek(17))
+        assertTrue(occurrence.isActiveInWeek(18))
+        assertTrue(!occurrence.isActiveInWeek(19))
+    }
+
+    @Test
+    fun occurrenceActiveWeekAcceptsChineseRangeSeparators() {
+        assertTrue(occurrenceWithWeek("6－14双周").isActiveInWeek(10))
+        assertTrue(occurrenceWithWeek("16—18周").isActiveInWeek(17))
     }
 
     private fun occurrenceWithWeek(weekText: String): CourseOccurrence {

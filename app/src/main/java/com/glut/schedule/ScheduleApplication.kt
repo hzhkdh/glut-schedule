@@ -72,14 +72,20 @@ class AppContainer(application: Application) {
         application,
         ScheduleDatabase::class.java,
         "glut_schedule.db"
-    ).addMigrations(ScheduleDatabase.MIGRATION_7_8, ScheduleDatabase.MIGRATION_8_9)
+    ).addMigrations(
+        ScheduleDatabase.MIGRATION_7_8,
+        ScheduleDatabase.MIGRATION_8_9,
+        ScheduleDatabase.MIGRATION_9_10,
+        ScheduleDatabase.MIGRATION_10_11
+    )
      .build()
 
     val settingsStore = ScheduleSettingsStore(application)
     val scheduleRepository = ScheduleRepository(
         database.scheduleDao(),
         settingsStore.campusType,
-        settingsStore.courseColorOverrides
+        settingsStore.courseColorOverrides,
+        settingsStore.classPeriodOverrides
     )
     val backgroundStore = ScheduleBackgroundStore(application)
     val academicSessionStore = AcademicSessionStore(application)

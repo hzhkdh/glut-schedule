@@ -156,7 +156,7 @@ class NanningCurrcourseParser : AcademicScheduleParser {
 
     private fun parsePeriodRange(text: String): Pair<Int, Int> {
         val clean = text.replace("第", "").replace("节", "").trim()
-        val parts = clean.split("-", "－", "—")
+        val parts = clean.split("-", "－", "—", "、")
         val start = parts.getOrNull(0)?.toIntOrNull() ?: return 0 to 0
         val end = parts.getOrNull(1)?.toIntOrNull() ?: start
         return start to end

@@ -48,7 +48,6 @@ fun ScheduleHeader(
     currentWeekNumber: Int,
     onWeekTitleClick: () -> Unit,
     onRefreshClick: () -> Unit,
-    semesterLabel: String,
     semesters: List<AcademicSemester>,
     isHistorical: Boolean,
     onSemesterSelected: (String) -> Unit,
@@ -81,11 +80,20 @@ fun ScheduleHeader(
                     .heightIn(min = 48.dp)
                     .padding(end = 8.dp)
                     .widthIn(min = 0.dp)
-                    .clickable(onClick = onWeekTitleClick),
+                    .then(
+                        if (isWeekTitleClickable(isHistorical)) {
+                            Modifier.clickable(onClick = onWeekTitleClick)
+                        } else Modifier
+                    ),
                 verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
             ) {
                 Text(
-                    text = scheduleHeaderPrimaryText(week.number, currentWeekNumber, dayLabel),
+                    text = scheduleHeaderPrimaryText(
+                        week.number,
+                        currentWeekNumber,
+                        dayLabel,
+                        isHistorical
+                    ),
                     color = Color.White,
                     fontSize = 21.sp,
                     fontWeight = FontWeight.Bold
@@ -96,6 +104,50 @@ fun ScheduleHeader(
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium
                 )
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable { semesterMenuExpanded = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "▾",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                DropdownMenu(
+                    expanded = semesterMenuExpanded,
+                    onDismissRequest = { semesterMenuExpanded = false }
+                ) {
+                    semesters
+                        .filter { it.isCurrent || it.cacheStatus == SemesterCacheStatus.CACHED }
+                        .forEach { semester ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(semester.displayName, modifier = Modifier.weight(1f))
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Text(if (semester.isCurrent) "当前" else "已缓存", fontSize = 12.sp)
+                                    }
+                                },
+                                onClick = {
+                                    semesterMenuExpanded = false
+                                    onSemesterSelected(semester.id)
+                                }
+                            )
+                        }
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("管理与下载其他学期") },
+                        onClick = {
+                            semesterMenuExpanded = false
+                            onManageSemesters()
+                        }
+                    )
+                }
             }
 
             if (isHistorical) {
@@ -129,68 +181,25 @@ fun ScheduleHeader(
                 }
             }
         }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp)
-                .clickable { semesterMenuExpanded = true }
-        ) {
-            Text(
-                text = buildString {
-                    append(semesterLabel.ifBlank { "选择学期" })
-                    if (isHistorical) append(" · 只读")
-                    append("  ▾")
-                },
-                color = Color.White,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(start = 56.dp, end = 12.dp, top = 14.dp, bottom = 12.dp)
-            )
-            DropdownMenu(
-                expanded = semesterMenuExpanded,
-                onDismissRequest = { semesterMenuExpanded = false }
-            ) {
-                semesters
-                    .filter { it.isCurrent || it.cacheStatus == SemesterCacheStatus.CACHED }
-                    .forEach { semester ->
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(semester.displayName, modifier = Modifier.weight(1f))
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text(if (semester.isCurrent) "当前" else "已缓存", fontSize = 12.sp)
-                                }
-                            },
-                            onClick = {
-                                semesterMenuExpanded = false
-                                onSemesterSelected(semester.id)
-                            }
-                        )
-                    }
-                HorizontalDivider()
-                DropdownMenuItem(
-                    text = { Text("管理与下载其他学期") },
-                    onClick = {
-                        semesterMenuExpanded = false
-                        onManageSemesters()
-                    }
-                )
-            }
-        }
     }
 }
 
 internal fun scheduleHeaderPrimaryText(
     weekNumber: Int,
     currentWeekNumber: Int,
-    dayLabel: String
+    dayLabel: String,
+    isHistorical: Boolean = false
 ): String {
-    return if (weekNumber == currentWeekNumber) {
+    return if (isHistorical) {
+        "第${weekNumber}周"
+    } else if (weekNumber == currentWeekNumber) {
         "第${weekNumber}周 $dayLabel"
     } else {
         "第${weekNumber}周(非本周)"
     }
 }
+
+internal fun isWeekTitleClickable(isHistorical: Boolean): Boolean = !isHistorical
 
 private fun LocalDate.dayLabel(): String {
     return when (dayOfWeek) {

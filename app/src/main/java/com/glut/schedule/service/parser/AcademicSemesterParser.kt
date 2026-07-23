@@ -13,10 +13,13 @@ data class AcademicSemesterCatalogPlan(
 )
 
 object AcademicSemesterParser {
-    private val selectRegex = Regex("""<select\b[^>]*name\s*=\s*[\"']([^\"']+)[\"'][^>]*>([\s\S]*?)</select>""", RegexOption.IGNORE_CASE)
+    private val selectRegex = Regex("""<select\b([^>]*)>([\s\S]*?)</select>""", RegexOption.IGNORE_CASE)
     private val optionRegex = Regex("""<option\b([^>]*)>([\s\S]*?)</option>""", RegexOption.IGNORE_CASE)
     private val inputRegex = Regex("""<input\b([^>]*)>""", RegexOption.IGNORE_CASE)
-    private val attributeRegex = Regex("""([\w:-]+)\s*=\s*([\"'])(.*?)\2""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val attributeRegex = Regex(
+        """([\w:-]+)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'=<>]+))""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
     private val tagRegex = Regex("<[^>]+>")
 
     fun parseEnrollment(
@@ -68,9 +71,10 @@ object AcademicSemesterParser {
         enrollmentDate: LocalDate,
         today: LocalDate = LocalDate.now()
     ): AcademicSemesterCatalogPlan {
-        val selects = selectRegex.findAll(html).associate { match ->
-            match.groupValues[1].lowercase() to parseOptions(match.groupValues[2])
-        }
+        val selects = selectRegex.findAll(html).mapNotNull { match ->
+            val name = attributes(match.groupValues[1])["name"]?.lowercase() ?: return@mapNotNull null
+            name to parseOptions(match.groupValues[2])
+        }.toMap()
         val years = selects["year"].orEmpty().mapNotNull { option ->
             val year = option.text.filter(Char::isDigit).take(4).toIntOrNull() ?: return@mapNotNull null
             PortalYear(year, option.value, option.selected)
@@ -92,7 +96,7 @@ object AcademicSemesterParser {
         val enrollmentSeason = SemesterSeason.AUTUMN
 
         val semesters = years.sortedByDescending { it.year }.flatMap { year ->
-            listOf(SemesterSeason.SPRING, SemesterSeason.AUTUMN).mapNotNull { season ->
+            listOf(SemesterSeason.AUTUMN, SemesterSeason.SPRING).mapNotNull { season ->
                 val term = terms.firstOrNull { it.season == season } ?: return@mapNotNull null
                 if (!isAtOrAfter(year.year, season, enrollmentDate.year, enrollmentSeason)) return@mapNotNull null
                 if (!isAtOrBefore(year.year, season, selectedYear, selectedSeason)) return@mapNotNull null
@@ -137,7 +141,7 @@ object AcademicSemesterParser {
     }.toList()
 
     private fun attributes(raw: String): Map<String, String> = attributeRegex.findAll(raw).associate { match ->
-        match.groupValues[1].lowercase() to match.groupValues[3]
+        match.groupValues[1].lowercase() to match.groupValues.drop(2).firstOrNull { it.isNotEmpty() }.orEmpty()
     }
 
     private fun normalizePortalYear(value: String, plausibleYears: IntRange): Int? {

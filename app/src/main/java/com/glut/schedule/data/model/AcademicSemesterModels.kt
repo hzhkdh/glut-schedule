@@ -19,7 +19,8 @@ data class AcademicSemester(
     val cacheStatus: SemesterCacheStatus = SemesterCacheStatus.NOT_CACHED,
     val importedAtEpochMillis: Long? = null,
     val semesterStartDate: LocalDate? = null,
-    val semesterEndDate: LocalDate? = null
+    val semesterEndDate: LocalDate? = null,
+    val portalMaxWeek: Int? = null
 ) {
     companion object {
         const val LEGACY_CURRENT_ID = "legacy-current"
@@ -34,25 +35,33 @@ data class AcademicSemester(
             cacheStatus: SemesterCacheStatus = SemesterCacheStatus.NOT_CACHED,
             importedAtEpochMillis: Long? = null,
             semesterStartDate: LocalDate? = null,
-            semesterEndDate: LocalDate? = null
+            semesterEndDate: LocalDate? = null,
+            portalMaxWeek: Int? = null
         ): AcademicSemester {
             val campusKey = campus.name.lowercase()
             val seasonKey = season.name.lowercase()
-            val academicYearStart = if (season == SemesterSeason.AUTUMN) portalYear else portalYear - 1
             val seasonLabel = if (season == SemesterSeason.SPRING) "春" else "秋"
+            val resolvedYearId = portalYearId.ifBlank { (portalYear - 1980).toString() }
+            val resolvedTermId = portalTermId.ifBlank {
+                when (season) {
+                    SemesterSeason.SPRING -> "1"
+                    SemesterSeason.AUTUMN -> if (campus == CampusType.GUILIN) "2" else "3"
+                }
+            }
             return AcademicSemester(
                 id = "$campusKey:$portalYear:$seasonKey",
                 campus = campus,
                 portalYear = portalYear,
-                portalYearId = portalYearId,
+                portalYearId = resolvedYearId,
                 season = season,
-                portalTermId = portalTermId,
-                displayName = "$academicYearStart-${academicYearStart + 1} 学年 · $seasonLabel",
+                portalTermId = resolvedTermId,
+                displayName = "$portalYear·$seasonLabel",
                 isCurrent = isCurrent,
                 cacheStatus = cacheStatus,
                 importedAtEpochMillis = importedAtEpochMillis,
                 semesterStartDate = semesterStartDate,
-                semesterEndDate = semesterEndDate
+                semesterEndDate = semesterEndDate,
+                portalMaxWeek = portalMaxWeek
             )
         }
     }

@@ -17,6 +17,13 @@ enum class WidgetScheduleStatus {
     READ_ERROR
 }
 
+internal fun widgetHeaderWeekText(status: WidgetScheduleStatus, currentWeek: Int, weekday: String): String =
+    if (status == WidgetScheduleStatus.READY || status == WidgetScheduleStatus.NO_COURSES) {
+        "第 $currentWeek 周 · $weekday"
+    } else {
+        weekday
+    }
+
 data class WidgetCourseItem(
     val date: LocalDate,
     val title: String,

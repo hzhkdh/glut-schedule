@@ -179,7 +179,12 @@ fun DirectLoginScreen(
             // Message
             if (uiState.message.isNotBlank()) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(uiState.message, color = if (uiState.message.contains("成功") || uiState.message.contains("完成")) Color(0xFF2D9A72) else Color(0xFFDC2626), fontSize = 14.sp)
+                val messageColor = when (loginMessageTone(uiState.message)) {
+                    LoginMessageTone.SUCCESS -> Color(0xFF2D9A72)
+                    LoginMessageTone.ERROR -> Color(0xFFDC2626)
+                    LoginMessageTone.INFO -> LoginSecondary
+                }
+                Text(uiState.message, color = messageColor, fontSize = 14.sp)
             }
 
             // Import result cards
@@ -424,3 +429,15 @@ private fun loginTextFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedLabelColor = LoginAccent,
     unfocusedLabelColor = LoginSecondary
 )
+internal enum class LoginMessageTone { SUCCESS, ERROR, INFO }
+
+internal fun loginMessageTone(message: String): LoginMessageTone {
+    val normalized = message.trim()
+    return when {
+        listOf("失败", "错误", "失效", "无法", "未获取").any(normalized::contains) ->
+            LoginMessageTone.ERROR
+        listOf("已缓存", "成功", "完成").any(normalized::contains) ->
+            LoginMessageTone.SUCCESS
+        else -> LoginMessageTone.INFO
+    }
+}

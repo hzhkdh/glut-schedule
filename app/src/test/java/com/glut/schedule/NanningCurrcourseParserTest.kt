@@ -46,6 +46,24 @@ class NanningCurrcourseParserTest {
     }
 
     @Test
+    fun parsesChineseEnumerationSeparatorUsedByLivePortal() {
+        val html = """
+            <table class="infolist_tab"><tr class="infolist_common">
+                <td><a class="infolist">高等数学</a></td>
+                <td><a href='/academic/manager/teacherinfo/showTeacherInfoItem.do?userid=1' class="infolist">张三</a></td>
+                <td><table class="none"><tr>
+                    <td>1-18周</td><td>星期一</td><td>第1、2节</td><td>06104</td>
+                </tr></table></td>
+            </tr></table>
+        """.trimIndent()
+
+        val occurrence = parser.parsePersonalSchedule(html).single().occurrences.single()
+
+        assertEquals(1, occurrence.startSection)
+        assertEquals(2, occurrence.endSection)
+    }
+
+    @Test
     fun parsesCourseWithMultipleTimeSlots() {
         val html = """
             <table class="infolist_tab"><tr class="infolist_common">

@@ -59,6 +59,35 @@ class ApiProbeService {
         }.getOrNull()
     }
 
+    suspend fun probeForm(
+        cookie: String,
+        url: String,
+        body: String,
+        referer: String
+    ): ProbeResult? = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .header("Cookie", cookie)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .header("Accept", "text/html,application/json;q=0.9,*/*;q=0.8")
+                .header("Referer", referer)
+                .post(body.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
+                .build()
+            client.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string().orEmpty()
+                ProbeResult(
+                    url = url,
+                    method = "POST",
+                    httpCode = response.code,
+                    contentType = response.header("Content-Type").orEmpty(),
+                    body = responseBody,
+                    bodyLength = responseBody.length
+                )
+            }
+        }.getOrNull()
+    }
+
     suspend fun probeScheduleEndpoints(
         cookie: String,
         capturedTimetableUrls: List<String> = emptyList(),

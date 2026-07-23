@@ -26,6 +26,23 @@ class CampusImageServiceTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun normalLoadReturnsDiskCacheWithoutStartingANetworkRequest() = runTest {
+        MockWebServer().use { server ->
+            val cached = CampusImageDocument(
+                imageUrl = "https://xxfw.glut.edu.cn/cached.png",
+                bytes = PNG_BYTES,
+                fetchedAt = 1234L
+            )
+
+            val document = service(server, MemoryCache(cached))
+                .fetch(CampusImageType.ACADEMIC_CALENDAR, forceRefresh = false)
+
+            assertTrue(document.fromCache)
+            assertEquals(0, server.requestCount)
+        }
+    }
+
+    @Test
     fun calendarIgnoresCommentedLegacyImageAndUsesTheFirstVisibleOfficialImage() = runTest {
         MockWebServer().use { server ->
             server.enqueue(html("""

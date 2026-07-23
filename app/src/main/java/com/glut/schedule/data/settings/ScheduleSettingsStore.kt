@@ -9,11 +9,13 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
+import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
+import com.glut.schedule.data.model.validateClassPeriods
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -33,6 +35,8 @@ class ScheduleSettingsStore(
     private val semesterEndDateKey = stringPreferencesKey("semester_end_date")
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
     private val courseColorOverridesKey = stringSetPreferencesKey("course_color_overrides")
+    private val guilinClassPeriodsKey = stringSetPreferencesKey("guilin_class_periods")
+    private val nanningClassPeriodsKey = stringSetPreferencesKey("nanning_class_periods")
     private val campusTypeKey = stringPreferencesKey("campus_type")
     private val updateAvailableVersionKey = stringPreferencesKey("update_available_version")
     private val dismissedUpdatePopupVersionKey = stringPreferencesKey("dismissed_update_popup_version")
@@ -73,6 +77,20 @@ class ScheduleSettingsStore(
     val courseColorOverrides: Flow<Map<String, String>> = context.scheduleSettings.data.map { preferences ->
         decodeCourseColorOverrides(preferences[courseColorOverridesKey].orEmpty())
     }.distinctUntilChanged()
+
+    val classPeriodOverrides: Flow<Map<CampusType, List<ClassPeriod>>> =
+        context.scheduleSettings.data.map { preferences ->
+            buildMap {
+                decodeClassPeriods(
+                    CampusType.GUILIN,
+                    preferences[guilinClassPeriodsKey].orEmpty()
+                )?.let { put(CampusType.GUILIN, it) }
+                decodeClassPeriods(
+                    CampusType.NANNING,
+                    preferences[nanningClassPeriodsKey].orEmpty()
+                )?.let { put(CampusType.NANNING, it) }
+            }
+        }.distinctUntilChanged()
 
     val campusType: Flow<CampusType> = context.scheduleSettings.data.map { preferences ->
         val name = preferences[campusTypeKey] ?: CampusType.GUILIN.name
@@ -193,6 +211,20 @@ class ScheduleSettingsStore(
         context.scheduleSettings.edit { preferences -> preferences.remove(courseColorOverridesKey) }
     }
 
+    suspend fun setClassPeriods(campus: CampusType, periods: List<ClassPeriod>): Boolean {
+        if (!validateClassPeriods(campus, periods)) return false
+        context.scheduleSettings.edit { preferences ->
+            preferences[classPeriodsKey(campus)] = encodeClassPeriods(periods)
+        }
+        return true
+    }
+
+    suspend fun resetClassPeriods(campus: CampusType) {
+        context.scheduleSettings.edit { preferences ->
+            preferences.remove(classPeriodsKey(campus))
+        }
+    }
+
     /** Latest update version that has already been shown as an automatic startup popup. */
     val dismissedUpdatePopupVersion: Flow<String> = context.scheduleSettings.data.map { preferences ->
         preferences[dismissedUpdatePopupVersionKey].orEmpty()
@@ -278,4 +310,34 @@ class ScheduleSettingsStore(
             CourseColorMapper.normalizeHexColor(color)?.let { "$key\u0000$it" }
         }.toSet()
     }
+
+    private fun classPeriodsKey(campus: CampusType) = when (campus) {
+        CampusType.GUILIN -> guilinClassPeriodsKey
+        CampusType.NANNING -> nanningClassPeriodsKey
+    }
+}
+
+internal fun encodeClassPeriods(periods: List<ClassPeriod>): Set<String> {
+    return periods.map { period ->
+        "${period.section}\u0000${period.startsAt}\u0000${period.endsAt}"
+    }.toSet()
+}
+
+internal fun decodeClassPeriods(
+    campus: CampusType,
+    entries: Set<String>
+): List<ClassPeriod>? {
+    if (entries.isEmpty()) return null
+    val periods = entries.mapNotNull { entry ->
+        val parts = entry.split('\u0000')
+        if (parts.size != 3) return@mapNotNull null
+        ClassPeriod(
+            section = parts[0].toIntOrNull() ?: return@mapNotNull null,
+            startsAt = parts[1],
+            endsAt = parts[2]
+        )
+    }
+    if (periods.size != entries.size) return null
+    val sorted = periods.sortedBy { it.section }
+    return sorted.takeIf { validateClassPeriods(campus, it) }
 }

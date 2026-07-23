@@ -32,6 +32,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -114,10 +115,12 @@ fun ScheduleScreen(
     val blocksByWeek = remember(uiState.courses, uiState.maxAcademicWeek) {
         courseBlocksByWeek(uiState.courses, uiState.maxAcademicWeek)
     }
-    val pagerState = rememberPagerState(
-        initialPage = pagerPageForWeekNumber(uiState.week.number, uiState.maxAcademicWeek),
-        pageCount = { uiState.maxAcademicWeek }
-    )
+    val pagerState = key(uiState.viewedSemester?.id) {
+        rememberPagerState(
+            initialPage = pagerPageForWeekNumber(uiState.week.number, uiState.maxAcademicWeek),
+            pageCount = { uiState.maxAcademicWeek }
+        )
+    }
     val latestWeekNumber by rememberUpdatedState(uiState.week.number)
     val latestMaxAcademicWeek by rememberUpdatedState(uiState.maxAcademicWeek)
 
@@ -159,7 +162,6 @@ fun ScheduleScreen(
                     showAddActions = false
                     viewModel.refreshSchedule()
                 },
-                semesterLabel = uiState.viewedSemester?.displayName.orEmpty(),
                 semesters = uiState.semesters,
                 isHistorical = uiState.isHistoricalSemester,
                 onSemesterSelected = viewModel::selectSemester,

@@ -74,6 +74,28 @@ class ScheduleWidgetSnapshotBuilderTest {
     }
 
     @Test
+    fun suppliedCustomClassPeriodsControlWidgetCourseTimes() {
+        val customPeriods = periods.map {
+            when (it.section) {
+                1 -> it.copy(startsAt = "07:45", endsAt = "08:30")
+                2 -> it.copy(startsAt = "08:35", endsAt = "09:20")
+                else -> it
+            }
+        }
+        val snapshot = ScheduleWidgetSnapshotBuilder.build(
+            now = LocalDateTime.of(2026, 3, 16, 7, 0),
+            courses = listOf(course("morning", occurrence("morning", day = 1, weeks = "1-19周"))),
+            classPeriods = customPeriods,
+            semesterStartMonday = semesterStart,
+            semesterEndDate = semesterEnd
+        )
+
+        assertEquals("07:45", snapshot.todayCourses.single().startTime)
+        assertEquals("09:20", snapshot.todayCourses.single().endTime)
+        assertEquals("07:45", snapshot.nextCourse?.startTime)
+    }
+
+    @Test
     fun noCourseTodayIncludesNearestCourseWithinSevenDays() {
         val now = LocalDateTime.of(2026, 3, 18, 12, 0) // Wednesday of week 2.
         val fridayCourse = course(

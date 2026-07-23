@@ -10,15 +10,23 @@ import com.glut.schedule.data.local.ScheduleDao
 import com.glut.schedule.data.local.ScoreEntity
 import com.glut.schedule.data.local.toEntity
 import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterSeason
+import com.glut.schedule.data.model.guilinClassPeriods
+import com.glut.schedule.data.model.nanningClassPeriods
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.CampusType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,6 +34,144 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScheduleRepositoryTest {
+    @Test
+    fun classPeriodsUseViewedSemesterCampusOverrideWhileCurrentPeriodsUseCurrentCampusOverride() = runTest {
+        val historical = AcademicSemester.create(
+            CampusType.GUILIN, 2024, "44", SemesterSeason.AUTUMN, "2", isCurrent = false
+        )
+        val current = AcademicSemester.create(
+            CampusType.NANNING, 2026, "46", SemesterSeason.AUTUMN, "2", isCurrent = true
+        )
+        val guilinOverride = guilinClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "07:45", endsAt = "08:30") else it
+        }
+        val nanningOverride = nanningClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "07:55", endsAt = "08:40") else it
+        }
+        val dao = FakeScheduleDao(
+            initialSemesters = listOf(historical.toEntity(), current.toEntity())
+        )
+        val repository = ScheduleRepository(
+            dao = dao,
+            campusType = flowOf(CampusType.NANNING),
+            classPeriodOverrides = flowOf(
+                mapOf(
+                    CampusType.GUILIN to guilinOverride,
+                    CampusType.NANNING to nanningOverride
+                )
+            )
+        )
+
+        repository.selectSemester(historical.id)
+
+        assertEquals(guilinOverride, repository.classPeriods.first())
+        assertEquals(nanningOverride, repository.currentClassPeriods.first())
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun classPeriodOverrideFlowUpdatesLiveAndMissingOverrideFallsBackToStoredPeriods() = runTest {
+        val historical = AcademicSemester.create(
+            CampusType.GUILIN, 2024, "44", SemesterSeason.AUTUMN, "2", isCurrent = false
+        )
+        val stored = guilinClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "08:05", endsAt = "08:50") else it
+        }
+        val override = guilinClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "07:40", endsAt = "08:25") else it
+        }
+        val overrides = MutableStateFlow<Map<CampusType, List<ClassPeriod>>>(emptyMap())
+        val dao = FakeScheduleDao(initialSemesters = listOf(historical.toEntity()))
+        dao.insertClassPeriods(stored.map { it.toEntity(historical.id) })
+        val repository = ScheduleRepository(
+            dao = dao,
+            campusType = flowOf(CampusType.NANNING),
+            classPeriodOverrides = overrides
+        )
+        repository.selectSemester(historical.id)
+
+        val emissions = async { repository.classPeriods.take(2).toList() }
+        runCurrent()
+
+        overrides.value = mapOf(CampusType.GUILIN to override)
+
+        assertEquals(listOf(stored, override), emissions.await())
+    }
+
+    @Test
+    fun missingOverrideAndStoredPeriodsFallBackToEachSemestersCampusDefaults() = runTest {
+        val historical = AcademicSemester.create(
+            CampusType.GUILIN, 2024, "44", SemesterSeason.AUTUMN, "2", isCurrent = false
+        )
+        val current = AcademicSemester.create(
+            CampusType.NANNING, 2026, "46", SemesterSeason.AUTUMN, "2", isCurrent = true
+        )
+        val dao = FakeScheduleDao(
+            initialSemesters = listOf(historical.toEntity(), current.toEntity())
+        )
+        val repository = ScheduleRepository(
+            dao = dao,
+            campusType = flowOf(CampusType.GUILIN),
+            classPeriodOverrides = flowOf(emptyMap())
+        )
+        repository.selectSemester(historical.id)
+
+        assertEquals(guilinClassPeriods(), repository.classPeriods.first())
+        assertEquals(nanningClassPeriods(), repository.currentClassPeriods.first())
+    }
+
+    @Test
+    fun legacyCurrentUsesSelectedNanningOverrideInsteadOfLegacyGuilinCampus() = runTest {
+        val override = nanningClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "07:55", endsAt = "08:35") else it
+        }
+        val dao = FakeScheduleDao(initialSemesters = listOf(legacyCurrentSemester()))
+        dao.insertClassPeriods(
+            guilinClassPeriods().map { it.toEntity(AcademicSemester.LEGACY_CURRENT_ID) }
+        )
+        val repository = ScheduleRepository(
+            dao = dao,
+            campusType = flowOf(CampusType.NANNING),
+            classPeriodOverrides = flowOf(mapOf(CampusType.NANNING to override))
+        )
+
+        assertEquals(override, repository.currentClassPeriods.first())
+        assertEquals(11, repository.classPeriods.first().size)
+    }
+
+    @Test
+    fun legacyCurrentRejectsStoredGuilinPeriodsWhenSelectedCampusIsNanning() = runTest {
+        val dao = FakeScheduleDao(initialSemesters = listOf(legacyCurrentSemester()))
+        dao.insertClassPeriods(
+            guilinClassPeriods().map { it.toEntity(AcademicSemester.LEGACY_CURRENT_ID) }
+        )
+        val repository = ScheduleRepository(
+            dao = dao,
+            campusType = flowOf(CampusType.NANNING)
+        )
+
+        assertEquals(nanningClassPeriods(), repository.currentClassPeriods.first())
+        assertEquals(nanningClassPeriods(), repository.classPeriods.first())
+    }
+
+    @Test
+    fun legacyCurrentKeepsValidStoredPeriodsForSelectedGuilinCampus() = runTest {
+        val stored = guilinClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "08:10", endsAt = "08:55") else it
+        }
+        val dao = FakeScheduleDao(initialSemesters = listOf(legacyCurrentSemester()))
+        dao.insertClassPeriods(
+            stored.map { it.toEntity(AcademicSemester.LEGACY_CURRENT_ID) }
+        )
+        val repository = ScheduleRepository(
+            dao = dao,
+            campusType = flowOf(CampusType.GUILIN)
+        )
+
+        assertEquals(stored, repository.currentClassPeriods.first())
+        assertEquals(stored, repository.classPeriods.first())
+    }
+
     @Test
     fun replacingSemesterScheduleDoesNotChangeViewedSemester() = runTest {
         val historical = AcademicSemester.create(
@@ -84,6 +230,24 @@ class ScheduleRepositoryTest {
         repository.selectSemester(autumn.id)
         assertEquals("历史课程", repository.courses.first().single().title)
         assertEquals(spring.id, repository.currentSemester.first()?.id)
+    }
+
+    @Test
+    fun replacingHistoricalSchedulePersistsPortalMaximumWeek() = runTest {
+        val semester = AcademicSemester.create(
+            CampusType.GUILIN, 2025, "45", SemesterSeason.AUTUMN, "2", isCurrent = false
+        )
+        val dao = FakeScheduleDao(initialSemesters = listOf(semester.toEntity()))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+
+        repository.replaceSemesterSchedule(
+            semester = semester,
+            courses = listOf(course("internship", "实习")),
+            adjustments = emptyList(),
+            portalMaxWeek = 19
+        )
+
+        assertEquals(19, repository.semesters.first().single().portalMaxWeek)
     }
 
     @Test
@@ -182,6 +346,76 @@ class ScheduleRepositoryTest {
         assertEquals(listOf(current.id), dao.semesterIds)
     }
 
+    @Test
+    fun seedIfEmptyMakesEmptyHistoricalCachesDownloadableAgain() = runTest {
+        val current = AcademicSemester.create(
+            CampusType.GUILIN, 2026, "46", SemesterSeason.AUTUMN, "2", isCurrent = true,
+            cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.CACHED
+        )
+        val historical = AcademicSemester.create(
+            CampusType.GUILIN, 2026, "46", SemesterSeason.SPRING, "1", isCurrent = false,
+            cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.CACHED
+        )
+        val dao = FakeScheduleDao(initialSemesters = listOf(current.toEntity(), historical.toEntity()))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+
+        repository.seedIfEmpty()
+
+        val semesters = repository.semesters.first()
+        assertEquals(
+            com.glut.schedule.data.model.SemesterCacheStatus.NOT_CACHED,
+            semesters.single { it.id == historical.id }.cacheStatus
+        )
+        assertEquals(
+            com.glut.schedule.data.model.SemesterCacheStatus.CACHED,
+            semesters.single { it.id == current.id }.cacheStatus
+        )
+    }
+
+    @Test
+    fun seedIfEmptyMakesHistoricalCachesWithoutOccurrencesDownloadableAgain() = runTest {
+        val current = AcademicSemester.create(
+            CampusType.GUILIN, 2026, "46", SemesterSeason.AUTUMN, "2", isCurrent = true,
+            cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.CACHED
+        )
+        val historical = AcademicSemester.create(
+            CampusType.GUILIN, 2025, "45", SemesterSeason.AUTUMN, "2", isCurrent = false,
+            cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.CACHED
+        )
+        val dao = FakeScheduleDao(initialSemesters = listOf(current.toEntity(), historical.toEntity()))
+        dao.insertCourses(listOf(course("broken-history", "历史课程").toEntity(historical.id)))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+
+        repository.seedIfEmpty()
+
+        assertEquals(
+            com.glut.schedule.data.model.SemesterCacheStatus.NOT_CACHED,
+            repository.semesters.first().single { it.id == historical.id }.cacheStatus
+        )
+    }
+
+    @Test
+    fun seedIfEmptyMakesInterruptedDownloadsRetryableAfterRestart() = runTest {
+        val current = AcademicSemester.create(
+            CampusType.GUILIN, 2026, "46", SemesterSeason.AUTUMN, "2", isCurrent = true,
+            cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.DOWNLOADING
+        )
+        val historical = AcademicSemester.create(
+            CampusType.GUILIN, 2025, "45", SemesterSeason.AUTUMN, "2", isCurrent = false,
+            cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.DOWNLOADING
+        )
+        val dao = FakeScheduleDao(initialSemesters = listOf(current.toEntity(), historical.toEntity()))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+
+        repository.seedIfEmpty()
+
+        assertTrue(
+            repository.semesters.first().all {
+                it.cacheStatus == com.glut.schedule.data.model.SemesterCacheStatus.NOT_CACHED
+            }
+        )
+    }
+
     private fun course(id: String, title: String) = ScheduleCourse(
         id = id,
         title = title,
@@ -192,6 +426,17 @@ class ScheduleRepositoryTest {
             CourseOccurrence("$id-occ", id, 1, 1, 2, "1-16周", "")
         )
     )
+
+    private fun legacyCurrentSemester() = AcademicSemester(
+        id = AcademicSemester.LEGACY_CURRENT_ID,
+        campus = CampusType.GUILIN,
+        portalYear = 0,
+        portalYearId = "",
+        season = SemesterSeason.SPRING,
+        portalTermId = "",
+        displayName = "当前学期（待确认）",
+        isCurrent = true
+    ).toEntity()
 
     private class FakeScheduleDao(
         courseCount: Int? = null,

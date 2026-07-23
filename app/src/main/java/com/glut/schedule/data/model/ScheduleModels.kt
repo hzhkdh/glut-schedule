@@ -1,13 +1,15 @@
 package com.glut.schedule.data.model
 
+import com.glut.schedule.data.settings.CampusType
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 
 const val MIN_ACADEMIC_WEEK = 1
 const val MAX_ACADEMIC_WEEK = 22
-private val weekSpanPattern = Regex("""\d{1,2}(?:-\d{1,2})?""")
+private val weekSpanPattern = Regex("""\d{1,2}(?:[-－—]\d{1,2})?""")
 val DEFAULT_SEMESTER_START_MONDAY: LocalDate = LocalDate.of(2026, 3, 9)
 
 /** Estimate semester end date when教务 system doesn't provide it.
@@ -120,33 +122,47 @@ fun CourseOccurrence.isActiveInWeek(weekNumber: Int): Boolean {
 }
 
 fun isWeekTextActive(weekText: String, weekNumber: Int): Boolean {
+    return weekNumber in academicWeeksForText(weekText)
+}
+
+fun academicWeeksForText(weekText: String, maxWeek: Int = 22): List<Int> {
     val normalized = weekText
         .replace("第", "")
         .replace(" ", "")
         .replace("，", ",")
+        .replace("、", ",")
+        .replace("；", ",")
+        .replace(";", ",")
         .trim()
 
-    if (normalized.isBlank() || normalized == "全周") return true
+    if (maxWeek < 1) return emptyList()
+    if (normalized.isBlank() || normalized == "全周") return (1..maxWeek).toList()
 
-    val requiresOdd = normalized.contains("单周")
-    val requiresEven = normalized.contains("双周")
-    if (requiresOdd && weekNumber % 2 == 0) return false
-    if (requiresEven && weekNumber % 2 != 0) return false
-
-    val spans = weekSpanPattern.findAll(normalized).mapNotNull { match ->
-        val token = match.value
-        if ("-" in token) {
-            val parts = token.split("-")
-            val start = parts.getOrNull(0)?.toIntOrNull()
-            val end = parts.getOrNull(1)?.toIntOrNull()
-            if (start != null && end != null && start <= end) start..end else null
+    val parsed = normalized.split(',').flatMap { segment ->
+        val requiresOdd = segment.contains("单")
+        val requiresEven = segment.contains("双")
+        val spans = weekSpanPattern.findAll(segment).mapNotNull { match ->
+            val token = match.value.replace('－', '-').replace('—', '-')
+            if ("-" in token) {
+                val parts = token.split("-")
+                val start = parts.getOrNull(0)?.toIntOrNull()
+                val end = parts.getOrNull(1)?.toIntOrNull()
+                if (start != null && end != null && start <= end) start..end else null
+            } else {
+                token.toIntOrNull()?.let { it..it }
+            }
+        }.toList()
+        val baseWeeks = if (spans.isEmpty() && (requiresOdd || requiresEven)) {
+            (1..maxWeek).toList()
         } else {
-            token.toIntOrNull()?.let { it..it }
+            spans.flatMap { it.toList() }
         }
-    }.toList()
-
-    if (spans.isEmpty()) return true
-    return spans.any { weekNumber in it }
+        baseWeeks
+            .filter { it in 1..maxWeek }
+            .filter { !requiresOdd || it % 2 == 1 }
+            .filter { !requiresEven || it % 2 == 0 }
+    }
+    return (parsed.ifEmpty { (1..maxWeek).toList() }).distinct().sorted()
 }
 
 data class ScheduleCourse(
@@ -158,12 +174,66 @@ data class ScheduleCourse(
     val occurrences: List<CourseOccurrence>
 )
 
+fun historicalAcademicMaxWeek(
+    portalMaxWeek: Int?,
+    courses: List<ScheduleCourse>
+): Int {
+    val derivedMaxWeek = courses.asSequence()
+        .flatMap { it.occurrences.asSequence() }
+        .flatMap { occurrence ->
+            Regex("""\d{1,2}""").findAll(occurrence.weekText)
+                .mapNotNull { it.value.toIntOrNull() }
+        }
+        .maxOrNull()
+        ?: 20
+    return (portalMaxWeek ?: derivedMaxWeek).coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
+}
+
+fun academicMaxWeekForSemester(
+    isCurrentSemester: Boolean,
+    portalMaxWeek: Int?,
+    courses: List<ScheduleCourse>,
+    semesterStartMonday: LocalDate,
+    semesterEndDate: LocalDate
+): Int {
+    return if (isCurrentSemester) {
+        academicMaxWeekForCalendar(semesterStartMonday, semesterEndDate)
+    } else {
+        historicalAcademicMaxWeek(portalMaxWeek, courses)
+    }
+}
+
 data class CourseBlock(
     val course: ScheduleCourse,
     val occurrence: CourseOccurrence
 )
 
 fun defaultClassPeriods(): List<ClassPeriod> = guilinClassPeriods()
+
+fun defaultClassPeriods(campus: CampusType): List<ClassPeriod> = when (campus) {
+    CampusType.GUILIN -> guilinClassPeriods()
+    CampusType.NANNING -> nanningClassPeriods()
+}
+
+fun validateClassPeriods(campus: CampusType, periods: List<ClassPeriod>): Boolean {
+    val expectedSections = defaultClassPeriods(campus).map { it.section }
+    if (periods.map { it.section } != expectedSections) return false
+
+    val parsedTimes = periods.map { period ->
+        val start = parseClassPeriodTime(period.startsAt) ?: return false
+        val end = parseClassPeriodTime(period.endsAt) ?: return false
+        if (!start.isBefore(end)) return false
+        start to end
+    }
+    return parsedTimes.zipWithNext().all { (current, next) ->
+        !next.first.isBefore(current.second)
+    }
+}
+
+private fun parseClassPeriodTime(value: String): LocalTime? {
+    if (!Regex("""(?:[01]\d|2[0-3]):[0-5]\d""").matches(value)) return null
+    return runCatching { LocalTime.parse(value) }.getOrNull()
+}
 
 fun guilinClassPeriods(): List<ClassPeriod> = listOf(
     ClassPeriod(1, "08:30", "09:15"),

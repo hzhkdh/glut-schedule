@@ -2,8 +2,6 @@ package com.glut.schedule.ui.pages
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,7 +9,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,8 +33,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.NoticeAttachment
 import com.glut.schedule.data.model.NoticeInfo
-import com.glut.schedule.ui.components.MarkdownContent
-import com.glut.schedule.ui.components.MarkdownPolicy
 
 @Composable
 fun NoticeScreen(
@@ -69,7 +65,7 @@ fun NoticeScreen(
             NoticeItem(
                 notice = notice,
                 onOpenUrl = { url ->
-                    if (MarkdownPolicy.isSafeHttpUrl(url)) uriHandler.openUri(url)
+                    if (isSafeNoticeUrl(url)) uriHandler.openUri(url)
                 }
             )
         }
@@ -111,28 +107,44 @@ private fun NoticeItem(
             )
             if (notice.content.isNotBlank()) {
                 Spacer(modifier = Modifier.height(10.dp))
-                MarkdownContent(
-                    markdown = notice.content,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 320.dp)
-                        .verticalScroll(rememberScrollState())
+                Text(
+                    text = notice.content,
+                    color = Color(0xFF4A5568),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
                 )
             }
-            notice.attachments.forEach { attachment ->
-                AttachmentRow(attachment = attachment, onOpen = { onOpenUrl(attachment.url) })
+            if (notice.attachments.isNotEmpty() || notice.url.isNotBlank()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = Color(0xFFEDE8DE))
             }
-            if (notice.url.isNotBlank() && MarkdownPolicy.isSafeHttpUrl(notice.url)) {
-                Text(
-                    text = "打开公告原文",
-                    color = Color(0xFF3F7DF6),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
+            notice.attachments.forEach { attachment ->
+                AttachmentRow(
+                    attachment = attachment,
+                    onOpen = { onOpenUrl(attachment.url) }
+                )
+            }
+            if (notice.url.isNotBlank()) {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { onOpenUrl(notice.url) }
-                        .padding(top = 12.dp, bottom = 4.dp)
-                )
+                        .padding(top = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "查看详情",
+                        color = Color(0xFF3F7DF6),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector = Icons.Outlined.ChevronRight,
+                        contentDescription = null,
+                        tint = Color(0xFF9CA3AF)
+                    )
+                }
             }
         }
     }
@@ -220,4 +232,9 @@ internal fun noticeLevelLabel(level: String): String {
         "update" -> "更新"
         else -> "通知"
     }
+}
+
+internal fun isSafeNoticeUrl(url: String): Boolean {
+    val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
+    return scheme == "http" || scheme == "https"
 }

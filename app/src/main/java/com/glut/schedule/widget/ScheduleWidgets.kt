@@ -161,7 +161,7 @@ private fun CompactWidgetHeader(snapshot: WidgetScheduleSnapshot) {
         Spacer(GlanceModifier.height(2.dp))
         Text(
             "${snapshot.today.format(DateTimeFormatter.ofPattern("M月d日"))} · " +
-                "第 ${snapshot.currentWeek} 周 · ${snapshot.today.chineseDayOfWeek()}",
+                widgetHeaderWeekText(snapshot.status, snapshot.currentWeek, snapshot.today.chineseDayOfWeek()),
             style = SmallStyle,
             maxLines = 1
         )
@@ -175,7 +175,11 @@ private fun WidgetHeader(snapshot: WidgetScheduleSnapshot, label: String) {
             Text(label, style = TitleStyle, maxLines = 1)
             Text(snapshot.today.format(DateTimeFormatter.ofPattern("M月d日")), style = SmallStyle, maxLines = 1)
         }
-        Text("第 ${snapshot.currentWeek} 周 · ${snapshot.today.chineseDayOfWeek()}", style = BodyStyle, maxLines = 1)
+        Text(
+            widgetHeaderWeekText(snapshot.status, snapshot.currentWeek, snapshot.today.chineseDayOfWeek()),
+            style = BodyStyle,
+            maxLines = 1
+        )
         Spacer(GlanceModifier.width(8.dp))
         WidgetRefreshAction()
     }

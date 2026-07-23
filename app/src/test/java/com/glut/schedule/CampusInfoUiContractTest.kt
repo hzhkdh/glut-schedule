@@ -21,6 +21,7 @@ class CampusInfoUiContractTest {
         assertTrue(screen.contains("clipToBounds()"))
         assertTrue(screen.indexOf("clipToBounds()") < screen.indexOf("transformable(transformState)"))
         assertTrue(screen.contains("R.drawable.yanshan_campus_map"))
+        assertTrue(screen.contains("R.drawable.pingfeng_campus_map"))
     }
 
     @Test

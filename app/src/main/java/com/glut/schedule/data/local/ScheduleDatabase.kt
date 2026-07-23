@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [AcademicSemesterEntity::class, CourseEntity::class, CourseOccurrenceEntity::class, ClassPeriodEntity::class, ExamEntity::class, ScoreEntity::class, GradeExamEntity::class, StudyPlanGroupEntity::class, StudyPlanCourseEntity::class, SemesterAdjustmentEntity::class],
-    version = 9,
+    version = 11,
     exportSchema = true
 )
 abstract class ScheduleDatabase : RoomDatabase() {
@@ -100,6 +100,41 @@ abstract class ScheduleDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX `index_course_occurrences_semesterId_courseId` ON `course_occurrences` (`semesterId`, `courseId`)")
                 db.execSQL("CREATE INDEX `index_class_periods_semesterId` ON `class_periods` (`semesterId`)")
                 db.execSQL("CREATE INDEX `index_semester_adjustments_semesterId` ON `semester_adjustments` (`semesterId`)")
+            }
+        }
+
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val historicalSemesterIds =
+                    "SELECT `id` FROM `academic_semesters` WHERE `isCurrent` = 0"
+                db.execSQL(
+                    "DELETE FROM `course_occurrences` WHERE `semesterId` IN ($historicalSemesterIds)"
+                )
+                db.execSQL(
+                    "DELETE FROM `courses` WHERE `semesterId` IN ($historicalSemesterIds)"
+                )
+                db.execSQL(
+                    "DELETE FROM `class_periods` WHERE `semesterId` IN ($historicalSemesterIds)"
+                )
+                db.execSQL(
+                    "DELETE FROM `semester_adjustments` WHERE `semesterId` IN ($historicalSemesterIds)"
+                )
+                db.execSQL(
+                    "UPDATE `academic_semesters` " +
+                        "SET `cacheStatus` = 'NOT_CACHED', `importedAtEpochMillis` = NULL " +
+                        "WHERE `isCurrent` = 0"
+                )
+            }
+        }
+
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE academic_semesters ADD COLUMN portalMaxWeek INTEGER")
+                db.execSQL(
+                    "UPDATE `academic_semesters` " +
+                        "SET `cacheStatus` = 'NOT_CACHED', `importedAtEpochMillis` = NULL " +
+                        "WHERE `isCurrent` = 0"
+                )
             }
         }
     }

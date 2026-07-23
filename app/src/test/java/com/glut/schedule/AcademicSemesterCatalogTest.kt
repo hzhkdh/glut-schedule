@@ -3,6 +3,8 @@ package com.glut.schedule
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.AcademicEnrollmentSource
 import com.glut.schedule.data.model.SemesterSeason
+import com.glut.schedule.data.local.AcademicSemesterEntity
+import com.glut.schedule.data.local.toModel
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.service.parser.AcademicSemesterParser
 import com.glut.schedule.service.academic.AcademicSemesterRequestBuilder
@@ -73,7 +75,58 @@ class AcademicSemesterCatalogTest {
         )
 
         assertEquals("guilin:2025:spring", semester.id)
-        assertEquals("2024-2025 学年 · 春", semester.displayName)
+        assertEquals("2025·春", semester.displayName)
+    }
+
+    @Test
+    fun parserAcceptsProductionUnquotedOptionAttributesAndIncludesImmediateAutumn() {
+        val html = """
+            <select name=year>
+              <option value=44>2024</option>
+              <option value=45>2025</option>
+              <option value=46 selected>2026</option>
+            </select>
+            <select name=term>
+              <option value=1>春</option>
+              <option value=2 selected>秋</option>
+            </select>
+        """.trimIndent()
+
+        val catalog = AcademicSemesterParser.parseCatalog(
+            html = html,
+            campus = CampusType.GUILIN,
+            enrollmentDate = LocalDate.of(2024, 9, 1),
+            today = LocalDate.of(2026, 7, 22)
+        )
+
+        assertEquals(
+            listOf("guilin:2026:autumn", "guilin:2026:spring", "guilin:2025:autumn", "guilin:2025:spring", "guilin:2024:autumn"),
+            catalog.map { it.id }
+        )
+        assertEquals("46", catalog.first().portalYearId)
+        assertEquals("2", catalog.first().portalTermId)
+    }
+
+    @Test
+    fun legacyCachedSemesterIsNormalizedWithoutClearingAppData() {
+        val semester = AcademicSemesterEntity(
+            id = "guilin:2026:autumn",
+            campus = "GUILIN",
+            portalYear = 2026,
+            portalYearId = "",
+            season = "AUTUMN",
+            portalTermId = "",
+            displayName = "2025-2026 学年 · 秋",
+            isCurrent = false,
+            cacheStatus = "CACHED",
+            importedAtEpochMillis = null,
+            semesterStartDate = null,
+            semesterEndDate = null
+        ).toModel()
+
+        assertEquals("46", semester.portalYearId)
+        assertEquals("2", semester.portalTermId)
+        assertEquals("2026·秋", semester.displayName)
     }
 
     @Test

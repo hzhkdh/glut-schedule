@@ -95,6 +95,9 @@ class CampusImageService(
 
     override suspend fun fetch(type: CampusImageType, forceRefresh: Boolean): CampusImageDocument =
         withContext(Dispatchers.IO) {
+            if (!forceRefresh) {
+                cache.load(type)?.let { return@withContext it.copy(fromCache = true) }
+            }
             try {
                 fetchFromNetwork(type, forceRefresh).also { document ->
                     runCatching { cache.save(type, document) }

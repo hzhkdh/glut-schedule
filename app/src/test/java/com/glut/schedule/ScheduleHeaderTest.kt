@@ -1,6 +1,7 @@
 package com.glut.schedule
 
 import com.glut.schedule.ui.components.scheduleHeaderPrimaryText
+import com.glut.schedule.ui.components.isWeekTitleClickable
 import com.glut.schedule.ui.components.scheduleGridMonthHeaderStartPaddingDp
 import com.glut.schedule.ui.components.scheduleGridMonthHeaderTopPaddingDp
 import com.glut.schedule.ui.components.scheduleGridMonthText
@@ -15,9 +16,16 @@ class ScheduleHeaderTest {
     }
 
     @Test
-    fun headerPrimaryTextMarksNonCurrentWeekWithEnglishParentheses() {
+    fun currentSemesterHeaderMarksNonCurrentWeekWithEnglishParentheses() {
         assertEquals("第6周(非本周)", scheduleHeaderPrimaryText(6, 9, "周日"))
         assertEquals("第14周(非本周)", scheduleHeaderPrimaryText(14, 9, "周日"))
+    }
+
+    @Test
+    fun historicalHeaderUsesPlainWeekTitleAndDisablesClick() {
+        assertEquals("第3周", scheduleHeaderPrimaryText(3, 9, "周日", isHistorical = true))
+        assertEquals(false, isWeekTitleClickable(isHistorical = true))
+        assertEquals(true, isWeekTitleClickable(isHistorical = false))
     }
 
     @Test

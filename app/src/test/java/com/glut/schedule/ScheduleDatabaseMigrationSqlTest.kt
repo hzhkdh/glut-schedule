@@ -46,4 +46,52 @@ class ScheduleDatabaseMigrationSqlTest {
             statements[childCreate].contains("REFERENCES `courses`(`semesterId`, `id`)")
         )
     }
+
+    @Test
+    fun migration9To10InvalidatesOnlyHistoricalScheduleCaches() {
+        val statements = mutableListOf<String>()
+        val database = Proxy.newProxyInstance(
+            SupportSQLiteDatabase::class.java.classLoader,
+            arrayOf(SupportSQLiteDatabase::class.java)
+        ) { _, method, arguments ->
+            if (method.name == "execSQL") statements += arguments.orEmpty().first() as String
+            null
+        } as SupportSQLiteDatabase
+
+        ScheduleDatabase.MIGRATION_9_10.migrate(database)
+
+        assertTrue(statements.any { it.contains("DELETE FROM `course_occurrences`") && it.contains("`isCurrent` = 0") })
+        assertTrue(statements.any { it.contains("DELETE FROM `courses`") && it.contains("`isCurrent` = 0") })
+        assertTrue(statements.any { it.contains("DELETE FROM `semester_adjustments`") && it.contains("`isCurrent` = 0") })
+        assertTrue(statements.any { it.contains("`cacheStatus` = 'NOT_CACHED'") && it.contains("`isCurrent` = 0") })
+        assertFalse(statements.any { it.contains("DELETE FROM `academic_semesters`") })
+
+        val module = File("src/main/java/com/glut/schedule/ScheduleApplication.kt")
+        val source = (if (module.exists()) module else File("app/$module")).readText()
+        assertTrue(source.contains("ScheduleDatabase.MIGRATION_9_10"))
+    }
+
+    @Test
+    fun migration10To11PersistsPortalMaximumWeek() {
+        val statements = mutableListOf<String>()
+        val database = Proxy.newProxyInstance(
+            SupportSQLiteDatabase::class.java.classLoader,
+            arrayOf(SupportSQLiteDatabase::class.java)
+        ) { _, method, arguments ->
+            if (method.name == "execSQL") statements += arguments.orEmpty().first() as String
+            null
+        } as SupportSQLiteDatabase
+
+        ScheduleDatabase.MIGRATION_10_11.migrate(database)
+
+        assertTrue(statements.any {
+            it.contains("ALTER TABLE academic_semesters ADD COLUMN portalMaxWeek INTEGER")
+        })
+        assertTrue(statements.any {
+            it.contains("`cacheStatus` = 'NOT_CACHED'") && it.contains("`isCurrent` = 0")
+        })
+        val module = File("src/main/java/com/glut/schedule/ScheduleApplication.kt")
+        val source = (if (module.exists()) module else File("app/$module")).readText()
+        assertTrue(source.contains("ScheduleDatabase.MIGRATION_10_11"))
+    }
 }

@@ -11,6 +11,7 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
+import com.glut.schedule.data.model.academicMaxWeekForSemester
 import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.ScheduleSettingsStore
@@ -111,8 +112,13 @@ class SemesterOverviewViewModel(
         val endDate = base.viewedSemester?.semesterEndDate ?: base.endDate
         val calendarAvailable = !isArchiveMode ||
             (base.viewedSemester?.semesterStartDate != null && base.viewedSemester.semesterEndDate != null)
-        val maxWeek = if (isArchiveMode && !calendarAvailable) historicalMaxWeek(base.courses)
-            else academicMaxWeekForCalendar(startDate, endDate)
+        val maxWeek = academicMaxWeekForSemester(
+            isCurrentSemester = !isArchiveMode,
+            portalMaxWeek = base.viewedSemester?.portalMaxWeek,
+            courses = base.courses,
+            semesterStartMonday = startDate,
+            semesterEndDate = endDate
+        )
         val currentWeek = if (isArchiveMode) 0 else academicWeekForDate(today, startDate, maxWeek)
         val totalDays = ChronoUnit.DAYS.between(startDate, endDate) + 1
         val elapsed = ChronoUnit.DAYS.between(base.startMonday, today).coerceIn(0, totalDays)
@@ -154,7 +160,7 @@ class SemesterOverviewViewModel(
             remainingDays = remaining,
             holidays = if (isArchiveMode) emptyList() else holidaysWithVacation,
             adjustmentsByWeek = base.adjustments.groupBy { adj ->
-                if (adj.makeupWeek > 0) adj.makeupWeek else adj.originalWeek
+                if (adj.originalWeek > 0) adj.originalWeek else adj.makeupWeek
             },
             isRefreshing = isRefreshing,
             message = message,
@@ -402,14 +408,6 @@ class SemesterOverviewViewModel(
             val end = "$year-${dates.last()}"
             HolidayInfo(name = name, startDate = start, endDate = end, daysOff = dates.size)
         }.sortedBy { it.startDate }
-    }
-
-    private fun historicalMaxWeek(courses: List<ScheduleCourse>): Int {
-        val max = courses.asSequence()
-            .flatMap { it.occurrences.asSequence() }
-            .flatMap { Regex("""\d{1,2}""").findAll(it.weekText).mapNotNull { match -> match.value.toIntOrNull() } }
-            .maxOrNull() ?: 20
-        return max.coerceIn(1, MAX_ACADEMIC_WEEK)
     }
 
     companion object {

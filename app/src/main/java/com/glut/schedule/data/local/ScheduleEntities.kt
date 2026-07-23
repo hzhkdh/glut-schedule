@@ -32,7 +32,8 @@ data class AcademicSemesterEntity(
     val cacheStatus: String,
     val importedAtEpochMillis: Long?,
     val semesterStartDate: String?,
-    val semesterEndDate: String?
+    val semesterEndDate: String?,
+    val portalMaxWeek: Int? = null
 )
 
 fun AcademicSemester.toEntity(): AcademicSemesterEntity = AcademicSemesterEntity(
@@ -47,25 +48,29 @@ fun AcademicSemester.toEntity(): AcademicSemesterEntity = AcademicSemesterEntity
     cacheStatus = cacheStatus.name,
     importedAtEpochMillis = importedAtEpochMillis,
     semesterStartDate = semesterStartDate?.toString(),
-    semesterEndDate = semesterEndDate?.toString()
+    semesterEndDate = semesterEndDate?.toString(),
+    portalMaxWeek = portalMaxWeek
 )
 
-fun AcademicSemesterEntity.toModel(): AcademicSemester = AcademicSemester(
-    id = id,
-    campus = runCatching { com.glut.schedule.data.settings.CampusType.valueOf(campus) }
-        .getOrDefault(com.glut.schedule.data.settings.CampusType.GUILIN),
-    portalYear = portalYear,
-    portalYearId = portalYearId,
-    season = runCatching { SemesterSeason.valueOf(season) }.getOrDefault(SemesterSeason.SPRING),
-    portalTermId = portalTermId,
-    displayName = displayName,
-    isCurrent = isCurrent,
-    cacheStatus = runCatching { SemesterCacheStatus.valueOf(cacheStatus) }
-        .getOrDefault(SemesterCacheStatus.NOT_CACHED),
-    importedAtEpochMillis = importedAtEpochMillis,
-    semesterStartDate = semesterStartDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
-    semesterEndDate = semesterEndDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
-)
+fun AcademicSemesterEntity.toModel(): AcademicSemester {
+    val resolvedCampus = runCatching { com.glut.schedule.data.settings.CampusType.valueOf(campus) }
+        .getOrDefault(com.glut.schedule.data.settings.CampusType.GUILIN)
+    val resolvedSeason = runCatching { SemesterSeason.valueOf(season) }.getOrDefault(SemesterSeason.SPRING)
+    return AcademicSemester.create(
+        campus = resolvedCampus,
+        portalYear = portalYear,
+        portalYearId = portalYearId,
+        season = resolvedSeason,
+        portalTermId = portalTermId,
+        isCurrent = isCurrent,
+        cacheStatus = runCatching { SemesterCacheStatus.valueOf(cacheStatus) }
+            .getOrDefault(SemesterCacheStatus.NOT_CACHED),
+        importedAtEpochMillis = importedAtEpochMillis,
+        semesterStartDate = semesterStartDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
+        semesterEndDate = semesterEndDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
+        portalMaxWeek = portalMaxWeek
+    ).copy(id = id)
+}
 
 @Entity(
     tableName = "courses",

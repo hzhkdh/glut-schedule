@@ -16,7 +16,7 @@ android {
         applicationId = "com.glut.schedule"
         minSdk = 26
         targetSdk = 36
-        versionCode = 118
+        versionCode = 119
         versionName = "0.20.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -104,7 +104,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
-    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.38.0")
+    implementation("org.jsoup:jsoup:1.21.2")
 
     ksp("androidx.room:room-compiler:2.8.4")
 

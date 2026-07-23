@@ -5,7 +5,10 @@ import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.service.parser.AcademicScheduleParser
+import com.glut.schedule.service.parser.WeeklyTimetableParser
+import com.glut.schedule.service.parser.validateFor
 import java.net.URLEncoder
+import java.time.LocalDate
 
 object AcademicSemesterRequestBuilder {
     fun currcourseUrl(baseUrl: String, semester: AcademicSemester): String =
@@ -18,6 +21,16 @@ object AcademicSemesterRequestBuilder {
             "&yearid=${encode(semester.portalYearId)}" +
             "&termid=${encode(semester.portalTermId)}" +
             "&timetableType=STUDENT&sectionType=BASE"
+
+    fun weeklyTimetableUrl(baseUrl: String, semester: AcademicSemester): String =
+        "${baseUrl.trimEnd('/')}/academic/manager/coursearrange/studentWeeklyTimetable.do" +
+            "?yearid=${encode(semester.portalYearId)}&termid=${encode(semester.portalTermId)}"
+
+    fun weeklyTimetablePostUrl(baseUrl: String): String =
+        "${baseUrl.trimEnd('/')}/academic/manager/coursearrange/studentWeeklyTimetable.do"
+
+    fun weeklyTimetableForm(semester: AcademicSemester, week: Int): String =
+        "yearid=${encode(semester.portalYearId)}&termid=${encode(semester.portalTermId)}&whichWeek=$week"
 
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
 }
@@ -35,6 +48,38 @@ object AcademicSemesterResponseValidator {
 
     fun isSchedulePage(body: String): Boolean {
         return !isLoginPage(body) && hasScheduleStructure(body)
+    }
+
+    fun matchesRequestedSemester(body: String, semester: AcademicSemester): Boolean {
+        val selectedYear = selectedOptionValue(body, "year")
+        val selectedTerm = selectedOptionValue(body, "term")
+        return (selectedYear == null || selectedYear == semester.portalYearId) &&
+            (selectedTerm == null || selectedTerm == semester.portalTermId)
+    }
+
+    private fun selectedOptionValue(body: String, selectName: String): String? {
+        val selectRegex = Regex(
+            """<select\b([^>]*)>([\s\S]*?)</select>""",
+            RegexOption.IGNORE_CASE
+        )
+        return selectRegex.findAll(body).firstNotNullOfOrNull { select ->
+            val attributes = select.groupValues[1]
+            val name = attributeValue(attributes, "name")
+            if (!name.equals(selectName, ignoreCase = true)) return@firstNotNullOfOrNull null
+            val option = Regex(
+                """<option\b((?=[^>]*\bselected\b)[^>]*)>""",
+                RegexOption.IGNORE_CASE
+            ).find(select.groupValues[2]) ?: return@firstNotNullOfOrNull null
+            attributeValue(option.groupValues[1], "value")
+        }
+    }
+
+    private fun attributeValue(attributes: String, name: String): String? {
+        val match = Regex(
+            """\b${Regex.escape(name)}\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>]+))""",
+            RegexOption.IGNORE_CASE
+        ).find(attributes) ?: return null
+        return match.groupValues.drop(1).firstOrNull { it.isNotEmpty() }?.trim()
     }
 
     private fun isLoginPage(body: String): Boolean {
@@ -69,18 +114,22 @@ data class AcademicSemesterImportPayload(
     val adjustments: List<SemesterAdjustment>,
     val currcourseHtml: String,
     val timetableHtml: String,
-    val responseKind: AcademicSemesterResponseKind
+    val responseKind: AcademicSemesterResponseKind,
+    val portalMaxWeek: Int? = null
 )
 
 class AcademicSemesterImportService(
     private val apiProbeService: ApiProbeService,
-    private val scheduleParser: AcademicScheduleParser
+    private val scheduleParser: AcademicScheduleParser,
+    private val weeklyTimetableParser: WeeklyTimetableParser = WeeklyTimetableParser()
 ) {
     suspend fun importSemester(
         cookie: String,
         baseUrl: String,
         semester: AcademicSemester,
-        studentIdFallback: String
+        studentIdFallback: String,
+        useWeeklyTimetable: Boolean = true,
+        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> }
     ): Result<AcademicSemesterImportPayload> = runCatching {
         val currcourse = requireNotNull(
             apiProbeService.probeUrl(cookie, AcademicSemesterRequestBuilder.currcourseUrl(baseUrl, semester))
@@ -91,13 +140,74 @@ class AcademicSemesterImportService(
                 error("登录状态已失效，请重新登录后再导入")
             else -> Unit
         }
+        require(AcademicSemesterResponseValidator.matchesRequestedSemester(currcourse.body, semester)) {
+            "教务系统返回学期与请求不一致，已保留现有缓存"
+        }
 
-        var courses = scheduleParser.parsePersonalSchedule(currcourse.body)
-        val responseKind = AcademicSemesterResponseValidator.classify(currcourse.body, courses.size)
+        val personalCourses = scheduleParser.parsePersonalSchedule(currcourse.body)
+        val responseKind = AcademicSemesterResponseValidator.classify(currcourse.body, personalCourses.size)
         if (responseKind == AcademicSemesterResponseKind.INVALID_STRUCTURE) {
             error("无法识别课表结构，未覆盖已有缓存")
         }
+        var courses = personalCourses.map { it.copy(occurrences = emptyList()) }
 
+        var adjustments = emptyList<SemesterAdjustment>()
+        var resolvedTimetableHtml = ""
+        var portalMaxWeek: Int? = null
+        if (useWeeklyTimetable) {
+            val landingUrl = AcademicSemesterRequestBuilder.weeklyTimetableUrl(baseUrl, semester)
+            val landing = requireNotNull(apiProbeService.probeUrl(cookie, landingUrl)) {
+                "无法打开${semester.displayName}周次课表"
+            }
+            require(landing.httpCode in 200..299) { "周次课表返回 ${landing.httpCode}" }
+            val landingPage = weeklyTimetableParser.parsePage(
+                landing.body,
+                hasNoon = semester.campus != CampusType.NANNING
+            )
+            require(landingPage.semesterLabel == semesterPortalLabel(semester)) {
+                "周次课表返回学期与请求不一致，已保留现有缓存"
+            }
+            require(landingPage.availableWeeks.isNotEmpty()) { "周次课表未提供可下载周次" }
+            portalMaxWeek = landingPage.availableWeeks.maxOrNull()
+            var expectedSemesterMonday: LocalDate? = null
+            val pages = buildList {
+                landingPage.availableWeeks.sorted().forEach { week ->
+                    val response = requireNotNull(
+                        apiProbeService.probeForm(
+                            cookie = cookie,
+                            url = AcademicSemesterRequestBuilder.weeklyTimetablePostUrl(baseUrl),
+                            body = AcademicSemesterRequestBuilder.weeklyTimetableForm(semester, week),
+                            referer = landingUrl
+                        )
+                    ) { "第${week}周课表下载失败" }
+                    require(response.httpCode in 200..299) {
+                        "第${week}周课表返回 ${response.httpCode}"
+                    }
+                    val page = weeklyTimetableParser.parsePage(
+                        response.body,
+                        hasNoon = semester.campus != CampusType.NANNING
+                    )
+                    expectedSemesterMonday = page.validateFor(
+                        expectedWeek = week,
+                        expectedSemesterLabel = semesterPortalLabel(semester),
+                        expectedSemesterMonday = expectedSemesterMonday
+                    )
+                    add(page)
+                    onProgress(size, landingPage.availableWeeks.size)
+                }
+            }
+            require(pages.any { it.rows.isNotEmpty() } || courses.isEmpty()) {
+                "周次课表未返回课程，已保留现有缓存"
+            }
+            val mergedCourses = weeklyTimetableParser.mergeWithMetadata(courses, pages)
+            require(courses.isEmpty() || mergedCourses.any { it.occurrences.isNotEmpty() }) {
+                "周次课表未解析到有效上课时间，已保留现有缓存"
+            }
+            courses = mergedCourses
+            val weeklyAdjustments = scheduleParser.parseAdjustments(landing.body)
+            if (weeklyAdjustments.isNotEmpty()) adjustments = weeklyAdjustments
+            resolvedTimetableHtml = landing.body
+        }
         val studentId = ApiProbeService.extractInternalIdFromCurrcourse(currcourse.body)
             .orEmpty().ifBlank { studentIdFallback }
         val timetable = if (studentId.isNotBlank()) {
@@ -113,18 +223,21 @@ class AcademicSemesterImportService(
                     error("登录状态已失效，请重新登录后再导入")
                 else -> Unit
             }
-        }
-        val adjustments = if (timetableHtml.isBlank()) emptyList()
-            else scheduleParser.parseAdjustments(timetableHtml)
-        if (semester.campus == CampusType.NANNING && timetableHtml.isNotBlank()) {
-            courses = scheduleParser.applyAdjustmentsToCourses(courses, timetableHtml)
+            if (adjustments.isEmpty()) adjustments = scheduleParser.parseAdjustments(timetableHtml)
+            if (!useWeeklyTimetable) resolvedTimetableHtml = timetableHtml
         }
         AcademicSemesterImportPayload(
             courses = courses,
             adjustments = adjustments,
             currcourseHtml = currcourse.body,
-            timetableHtml = timetableHtml,
-            responseKind = responseKind
+            timetableHtml = resolvedTimetableHtml,
+            responseKind = responseKind,
+            portalMaxWeek = portalMaxWeek
         )
+    }
+
+    private fun semesterPortalLabel(semester: AcademicSemester): String {
+        val season = if (semester.season.name == "SPRING") "春" else "秋"
+        return "${semester.portalYear}$season"
     }
 }

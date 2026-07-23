@@ -161,14 +161,6 @@ private fun ArchiveSummaryCard(state: SemesterOverviewUiState) {
                 fontSize = 13.sp,
                 modifier = Modifier.padding(top = 8.dp)
             )
-            if (!state.calendarAvailable) {
-                Text(
-                    "教务系统未提供该历史学期的权威校历，因此不显示日期、进度和节假日。",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
         }
     }
 }

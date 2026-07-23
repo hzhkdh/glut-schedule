@@ -159,10 +159,26 @@ class DirectLoginViewModel(
             val result = if (cookie.isBlank()) {
                 Result.failure(IllegalStateException("登录状态已过期，请重新登录"))
             } else {
-                semesterImportService.importSemester(cookie, baseUrl, semester, authenticatedStudentNumber)
+                semesterImportService.importSemester(
+                    cookie = cookie,
+                    baseUrl = baseUrl,
+                    semester = semester,
+                    studentIdFallback = authenticatedStudentNumber,
+                    useWeeklyTimetable = true,
+                    onProgress = { completed, total ->
+                        _uiState.value = _uiState.value.copy(
+                            message = "正在下载${semester.displayName}（第${completed}/${total}周）..."
+                        )
+                    }
+                )
             }
             result.onSuccess { payload ->
-                scheduleRepository.replaceSemesterSchedule(semester, payload.courses, payload.adjustments)
+                scheduleRepository.replaceSemesterSchedule(
+                    semester = semester,
+                    courses = payload.courses,
+                    adjustments = payload.adjustments,
+                    portalMaxWeek = payload.portalMaxWeek
+                )
                 _uiState.value = _uiState.value.copy(
                     importingSemesterId = null,
                     message = "已缓存${semester.displayName}，历史学期为只读模式"
@@ -187,8 +203,8 @@ class DirectLoginViewModel(
                 fallbackStart = settingsStore.semesterStartMonday.first(),
                 fallbackEnd = settingsStore.semesterEndDate.first()
             )
-            settingsStore.setCurrentWeekNumber(week)
             scheduleRepository.selectSemester(semesterId)
+            settingsStore.setCurrentWeekNumber(week)
         }
     }
 
@@ -551,103 +567,61 @@ class DirectLoginViewModel(
                     cookie = cookie,
                     baseUrl = campusBaseUrl,
                     semester = nextSemester,
-                    studentIdFallback = studentNumber
+                    studentIdFallback = studentNumber,
+                    useWeeklyTimetable = false
                 )
             }
             val decision = AcademicSemesterProbePlanner.decide(catalogPlan, nextProbeResult)
             val semesterCatalog = decision.catalog
             val currentSemester = decision.currentSemester
+            val promotedPayload = decision.promotedPayload
+            val estimatedCalendar = if (promotedPayload != null) {
+                AcademicSemesterCalendarEstimator.estimate(
+                    currentSemester,
+                    LocalDate.now()
+                )
+            } else null
+
+            _uiState.value = _uiState.value.copy(message = "正在下载${currentSemester.displayName}周次课表...")
+            val currentPayload = semesterImportService.importSemester(
+                cookie = cookie,
+                baseUrl = campusBaseUrl,
+                semester = currentSemester,
+                studentIdFallback = studentNumber,
+                useWeeklyTimetable = true,
+                onProgress = { completed, total ->
+                    _uiState.value = _uiState.value.copy(
+                        message = "正在下载${currentSemester.displayName}（第${completed}/${total}周）..."
+                    )
+                }
+            ).getOrElse { error ->
+                throw IllegalStateException(
+                    "${currentSemester.displayName}周次课表导入失败：${error.message.orEmpty()}",
+                    error
+                )
+            }
+            sessionStore.saveHtmlPreview(currentPayload.currcourseHtml.take(3000))
             scheduleRepository.saveSemesterCatalog(semesterCatalog)
             settingsStore.setCurrentSemesterId(currentSemester.id)
             scheduleRepository.selectSemester(currentSemester.id)
-            if (decision.promotedPayload == null && calendar != null) {
+            if (estimatedCalendar != null) {
+                settingsStore.setSemesterStartMonday(estimatedCalendar.startMonday)
+                settingsStore.setSemesterEndDate(estimatedCalendar.endDate)
+                settingsStore.setCurrentWeekNumber(estimatedCalendar.currentWeekNumber)
+            } else if (calendar != null) {
                 settingsStore.setSemesterStartMonday(calendar.semesterStartMonday)
                 calendar.semesterEndDate?.let { settingsStore.setSemesterEndDate(it) }
                 settingsStore.setCurrentWeekNumber(calendar.currentWeekNumber)
             }
-
-            val promotedPayload = decision.promotedPayload
-            if (promotedPayload != null) {
-                val estimatedCalendar = AcademicSemesterCalendarEstimator.estimate(
-                    currentSemester,
-                    LocalDate.now()
-                )
-                settingsStore.setSemesterStartMonday(estimatedCalendar.startMonday)
-                settingsStore.setSemesterEndDate(estimatedCalendar.endDate)
-                settingsStore.setCurrentWeekNumber(estimatedCalendar.currentWeekNumber)
-                scheduleRepository.replaceSemesterSchedule(
-                    semester = currentSemester,
-                    courses = promotedPayload.courses,
-                    adjustments = promotedPayload.adjustments,
-                    semesterStartDate = null,
-                    semesterEndDate = null
-                )
-                courseCount = promotedPayload.courses.size
-            } else {
-                var htmlResult = apiProbeService.findTimetableHtmlResult(results)
-
-            // Nanning: currcourse.jsdo is the primary schedule endpoint.
-            // showTimetable.do has the adjustment table but needs yearid/termid from currcourse.
-            var nanningShowResult: ApiProbeService.ProbeResult? = null
-            if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
-                // Always attempt to probe showTimetable.do for adjustments
-                val currcourseBody = results
-                    .find { it.url.contains("currcourse.jsdo") }?.body ?: ""
-                val extractedId = ApiProbeService.extractInternalIdFromCurrcourse(currcourseBody)
-                val extractedYearId = ApiProbeService.extractYearIdFromCurrcourse(currcourseBody)
-                val extractedTermId = ApiProbeService.extractTermIdFromCurrcourse(currcourseBody)
-                val id = extractedId ?: studentNumber
-                if (id.isNotBlank()) {
-                    val showUrl = "$campusBaseUrl/academic/manager/coursearrange/showTimetable.do" +
-                        "?id=$id" +
-                        "&yearid=${extractedYearId ?: "46"}" +
-                        "&termid=${extractedTermId ?: "1"}" +
-                        "&timetableType=STUDENT&sectionType=BASE"
-                    nanningShowResult = apiProbeService.probeUrl(cookie, showUrl)
-                }
-
-                // Priority 1: currcourse.jsdo (primary Nanning course source)
-                val currcourse = results.find {
-                    it.url.contains("currcourse.jsdo") && it.httpCode == 200
-                }
-                if (currcourse != null && currcourse.body.length > 1000) {
-                    htmlResult = currcourse
-                }
-
-                // Priority 2: fall back to showTimetable.do for courses as well
-                if (htmlResult == null) {
-                    htmlResult = nanningShowResult
-                }
-            }
-
-            if (htmlResult != null) {
-                val currentImport = AcademicSemesterCurrentImportPlanner.parse(htmlResult.body, scheduleParser)
-                if (currentImport.canReplace) {
-                    sessionStore.saveHtmlPreview(htmlResult.body.take(3000))
-                    var courses = currentImport.courses
-                    // Save showTimetable.do URL for adjustments (Nanning) or the course source URL (Guilin)
-                    val timetableUrl = nanningShowResult?.url ?: htmlResult.url
-                    sessionStore.saveTimetableUrl(timetableUrl)
-                    val adjustmentHtml = nanningShowResult?.body ?: htmlResult.body
-                    val adjustments = scheduleParser.parseAdjustments(adjustmentHtml)
-                    Log.d(TAG, "Parsed ${adjustments.size} semester adjustments from timetable HTML")
-                    // Nanning: courses come from currcourse.jsdo which does NOT apply adjustments
-                    // internally—apply them now from the separately-fetched showTimetable.do
-                    if (campusBaseUrl == AcademicLoginResult.NANNING_URL && adjustmentHtml.isNotBlank()) {
-                        courses = scheduleParser.applyAdjustmentsToCourses(courses, adjustmentHtml)
-                        Log.d(TAG, "Applied adjustments to Nanning courses, result: ${courses.size} courses")
-                    }
-                    scheduleRepository.replaceSemesterSchedule(
-                        semester = currentSemester,
-                        courses = courses,
-                        adjustments = adjustments,
-                        semesterStartDate = calendar?.semesterStartMonday,
-                        semesterEndDate = calendar?.semesterEndDate
-                    )
-                    courseCount = courses.size
-                }
-            }
-            }
+            scheduleRepository.replaceSemesterSchedule(
+                semester = currentSemester,
+                courses = currentPayload.courses,
+                adjustments = currentPayload.adjustments,
+                semesterStartDate = if (promotedPayload == null) calendar?.semesterStartMonday else null,
+                semesterEndDate = if (promotedPayload == null) calendar?.semesterEndDate else null,
+                portalMaxWeek = currentPayload.portalMaxWeek
+            )
+            courseCount = currentPayload.courses.size
 
             val examJsonResult = apiProbeService.findExamJsonResult(results)
             if (examJsonResult != null) {

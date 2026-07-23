@@ -654,4 +654,34 @@ class AcademicScheduleParserTest {
         assertTrue(wedCourse.occurrences.none { it.dayOfWeek == 2 })
         assertTrue(tueCourse.occurrences.none { it.dayOfWeek == 3 })
     }
+
+    @Test
+    fun multiRowAdjustmentsKeepDistinctIdsWhenWeeksAndWeekdaysMatch() {
+        val html = """
+            <html><body><table>
+              <tr>
+                <th>类型</th><th>课程号</th><th>课程名</th><th>课序号</th><th>教师姓名</th><th>代课人</th><th>学时</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+              </tr>
+              <tr>
+                <td rowspan="2">调课</td><td rowspan="2">360730</td><td rowspan="2">C语言程序设计</td><td rowspan="2">5</td>
+                <td rowspan="2">杨呈永</td><td rowspan="2"></td><td rowspan="2">4.0</td>
+                <td>12-25</td><td>17</td><td>周三</td><td>第7、8节</td><td>014104J</td>
+                <td>12-27</td><td>17</td><td>周五</td><td>第7、8节</td><td>014104J</td>
+              </tr>
+              <tr>
+                <td>12-25</td><td>17</td><td>周三</td><td>第5、6节</td><td>014202J</td>
+                <td>12-27</td><td>17</td><td>周五</td><td>第5、6节</td><td>014202J</td>
+              </tr>
+            </table></body></html>
+        """.trimIndent()
+
+        val adjustments = parser.parseAdjustments(html)
+
+        assertEquals(2, adjustments.size)
+        assertEquals(2, adjustments.map { it.id }.distinct().size)
+        assertEquals(setOf(5, 7), adjustments.map { it.originalStartSection }.toSet())
+        assertEquals(setOf(5, 7), adjustments.map { it.makeupStartSection }.toSet())
+    }
 }

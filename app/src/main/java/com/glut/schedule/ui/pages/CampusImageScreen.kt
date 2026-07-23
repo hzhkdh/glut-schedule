@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -61,11 +62,9 @@ fun CampusImageScreen(
     val bitmap = remember(state.selectedType, state.document?.fetchedAt) {
         state.document?.bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
     }
-    val painter = if (state.selectedType == CampusImageType.CAMPUS_MAP) {
-        painterResource(R.drawable.yanshan_campus_map)
-    } else {
+    val painter = if (state.selectedType != CampusImageType.CAMPUS_MAP) {
         remember(bitmap) { bitmap?.asImageBitmap()?.let(::BitmapPainter) }
-    }
+    } else null
     var scale by remember(state.selectedType, state.document?.fetchedAt) { mutableFloatStateOf(1f) }
     var offset by remember(state.selectedType, state.document?.fetchedAt) { mutableStateOf(Offset.Zero) }
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
@@ -109,7 +108,31 @@ fun CampusImageScreen(
                 .transformable(transformState),
             contentAlignment = Alignment.Center
         ) {
-            if (painter != null) {
+            if (state.selectedType == CampusImageType.CAMPUS_MAP) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offset.x
+                            translationY = offset.y
+                        }
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.yanshan_campus_map),
+                        contentDescription = "雁山校区地图",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth().weight(1f)
+                    )
+                    Image(
+                        painter = painterResource(R.drawable.pingfeng_campus_map),
+                        contentDescription = "屏风校区地图",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth().weight(1f)
+                    )
+                }
+            } else if (painter != null) {
                 Image(
                     painter = painter,
                     contentDescription = CampusImageTabs.first { it.first == state.selectedType }.second,
