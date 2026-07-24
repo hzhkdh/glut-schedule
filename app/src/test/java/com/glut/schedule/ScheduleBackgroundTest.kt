@@ -1,6 +1,7 @@
 package com.glut.schedule
 
 import com.glut.schedule.ui.components.BackgroundSwitchResult
+import com.glut.schedule.ui.components.BuiltInScheduleBackground
 import com.glut.schedule.ui.components.ImageCropRegion
 import com.glut.schedule.ui.components.calculateBackgroundDecodePlan
 import com.glut.schedule.ui.components.calculateBitmapSampleSize
@@ -18,6 +19,16 @@ class ScheduleBackgroundTest {
         assertFalse(shouldUseCustomBackground(""))
         assertFalse(shouldUseCustomBackground("   "))
         assertTrue(shouldUseCustomBackground("content://images/background"))
+    }
+
+    @Test
+    fun builtInBackgroundMarkersDoNotUseExternalImageDecoder() {
+        assertFalse(shouldUseCustomBackground(BuiltInScheduleBackground.FLOWER.storageValue))
+        assertEquals(
+            BuiltInScheduleBackground.FLOWER,
+            BuiltInScheduleBackground.fromStorageValue("builtin://flower")
+        )
+        assertEquals(null, BuiltInScheduleBackground.fromStorageValue("content://images/background"))
     }
 
     @Test

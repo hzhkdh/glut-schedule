@@ -41,6 +41,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
@@ -86,6 +87,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.focus.onFocusEvent
@@ -135,6 +137,7 @@ import com.glut.schedule.ui.pages.ClassPeriodSettingsScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
+import com.glut.schedule.ui.components.BuiltInScheduleBackground
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
@@ -158,7 +161,8 @@ import kotlinx.coroutines.runBlocking
 private enum class SettingsSubPage(val title: String) {
     ROOT("设置"),
     COURSE_COLORS("课程卡片颜色"),
-    CLASS_PERIODS("上课时间")
+    CLASS_PERIODS("上课时间"),
+    BUILT_IN_BACKGROUNDS("内置背景")
 }
 
 class MainActivity : ComponentActivity() {
@@ -840,6 +844,15 @@ private fun ScheduleSettingsDestination(
             onResetPeriods = viewModel::resetClassPeriods,
             onSaved = { onSubPageChange(SettingsSubPage.ROOT) }
         )
+        SettingsSubPage.BUILT_IN_BACKGROUNDS -> BuiltInBackgroundsPage(
+            selectedBackground = BuiltInScheduleBackground.fromStorageValue(uiState.customBackgroundUri)
+                ?: if (uiState.customBackgroundUri.isBlank()) BuiltInScheduleBackground.STARRY else null,
+            onSelectBackground = { background ->
+                // 内置背景使用稳定标识持久化，默认星空以空值兼容旧设置。
+                viewModel.setCustomBackgroundUri(background.storageValue)
+                onSubPageChange(SettingsSubPage.ROOT)
+            }
+        )
         SettingsSubPage.ROOT -> SettingsPage(
                 showWeekend = uiState.showWeekend,
                 onShowWeekendChange = viewModel::setShowWeekend,
@@ -848,6 +861,7 @@ private fun ScheduleSettingsDestination(
                 hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
                 onPickBackground = onPickBackground,
                 onClearBackground = viewModel::clearCustomBackground,
+                onBuiltInBackgrounds = { onSubPageChange(SettingsSubPage.BUILT_IN_BACKGROUNDS) },
                 onCourseColors = { onSubPageChange(SettingsSubPage.COURSE_COLORS) },
                 onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
                 onReset = onReset
@@ -927,6 +941,7 @@ private fun SettingsPage(
     hasCustomBackground: Boolean = false,
     onPickBackground: () -> Unit = {},
     onClearBackground: () -> Unit = {},
+    onBuiltInBackgrounds: () -> Unit = {},
     onCourseColors: () -> Unit = {},
     onClassPeriods: () -> Unit = {},
     onReset: () -> Unit = {}
@@ -1020,6 +1035,22 @@ private fun SettingsPage(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clickable(onClick = onBuiltInBackgrounds)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("内置背景", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Icon(
+                            Icons.Outlined.ChevronRight,
+                            contentDescription = null,
+                            tint = settingsSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    HorizontalDivider(color = Color(0xFFEDE8DE))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
                             .clickable(onClick = onPickBackground)
                             .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -1063,6 +1094,84 @@ private fun SettingsPage(
                 ) {
                     Text("重置应用", color = Color(0xFFDC2626), fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Text("恢复初次使用状态", color = settingsSecondary, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BuiltInBackgroundsPage(
+    selectedBackground: BuiltInScheduleBackground?,
+    onSelectBackground: (BuiltInScheduleBackground) -> Unit
+) {
+    val settingsBg = Color(0xFFF6F4EF)
+    val settingsPrimary = Color(0xFF141821)
+    val settingsSecondary = Color(0xFF667085)
+    val settingsCardBg = Color(0xFFFFFEFB)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(settingsBg)
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text("内置背景", color = settingsPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("选择后立即应用；星空为默认背景。", color = settingsSecondary, fontSize = 13.sp)
+        BuiltInBackgroundsCard(
+            background = BuiltInScheduleBackground.STARRY,
+            selected = selectedBackground == BuiltInScheduleBackground.STARRY,
+            onClick = { onSelectBackground(BuiltInScheduleBackground.STARRY) },
+            cardColor = settingsCardBg,
+            textColor = settingsPrimary
+        )
+        BuiltInBackgroundsCard(
+            background = BuiltInScheduleBackground.FLOWER,
+            selected = selectedBackground == BuiltInScheduleBackground.FLOWER,
+            onClick = { onSelectBackground(BuiltInScheduleBackground.FLOWER) },
+            cardColor = settingsCardBg,
+            textColor = settingsPrimary
+        )
+    }
+}
+
+@Composable
+private fun BuiltInBackgroundsCard(
+    background: BuiltInScheduleBackground,
+    selected: Boolean,
+    onClick: () -> Unit,
+    cardColor: Color,
+    textColor: Color
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = cardColor,
+        shape = RoundedCornerShape(14.dp),
+        shadowElevation = if (selected) 2.dp else 0.dp
+    ) {
+        Column(modifier = Modifier.clickable(onClick = onClick)) {
+            Image(
+                painter = painterResource(background.drawableRes),
+                contentDescription = "${background.displayName}背景预览",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp),
+                contentScale = ContentScale.Crop
+            )
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(background.displayName, color = textColor, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                if (selected) {
+                    Icon(
+                        Icons.Outlined.Check,
+                        contentDescription = "已选择",
+                        tint = Color(0xFF2563EB),
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }

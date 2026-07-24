@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.annotation.DrawableRes
 import com.glut.schedule.R
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,24 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val RecomposeTag = "Recompose"
+
+/** 应用内置背景使用固定标识保存，不会被当作外部 URI 读取。 */
+enum class BuiltInScheduleBackground(
+    val storageValue: String,
+    @param:DrawableRes val drawableRes: Int,
+    val displayName: String
+) {
+    STARRY("", R.drawable.builtin_starry_background, "星空"),
+    FLOWER("builtin://flower", R.drawable.builtin_flower_background, "花")
+    ;
+
+    companion object {
+        fun fromStorageValue(value: String): BuiltInScheduleBackground? =
+            entries.firstOrNull { background ->
+                background.storageValue.isNotBlank() && background.storageValue == value
+            }
+    }
+}
 
 class ScheduleBackgroundStore(
     private val context: Context
@@ -147,26 +166,30 @@ fun StarryScheduleBackground(
             drawRect(Color(0x99000000))
         }
     } else {
-        DefaultScheduleBackground(modifier = modifier)
+        // 空值代表默认星空；内置标识只切换资源，不走外部图片解码流程。
+        BuiltInScheduleBackgroundImage(
+            background = BuiltInScheduleBackground.fromStorageValue(customBackgroundUri)
+                ?: BuiltInScheduleBackground.STARRY,
+            modifier = modifier
+        )
     }
 }
 
 @Composable
-private fun DefaultScheduleBackground(modifier: Modifier = Modifier) {
+private fun BuiltInScheduleBackgroundImage(
+    background: BuiltInScheduleBackground,
+    modifier: Modifier = Modifier
+) {
     Image(
-        painter = painterResource(R.drawable.default_bg),
+        painter = painterResource(background.drawableRes),
         contentDescription = null,
         modifier = modifier.fillMaxSize(),
         contentScale = ContentScale.Crop
     )
-    // Subtle dark overlay to keep text readable
-    Canvas(modifier = modifier.fillMaxSize()) {
-        drawRect(Color(0x66000000))
-    }
 }
 
 fun shouldUseCustomBackground(uri: String): Boolean {
-    return uri.isNotBlank()
+    return uri.isNotBlank() && BuiltInScheduleBackground.fromStorageValue(uri) == null
 }
 
 enum class BackgroundSwitchResult {
