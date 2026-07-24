@@ -1,7 +1,7 @@
 {
-  "version": "v0.19.0",
-  "versionCode": 34,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.19.0",
-  "releaseNotes": "- 新增校园地图并优化校园信息图片查看体验\n- 优化自定义背景图片清晰度\n- 精简专业成绩说明并新增关于页小程序入口\n- 更新 README 功能、架构、数据流与服务来源说明",
-  "publishedAt": "2026-07-20T06:51:25Z"
+  "version": "v0.20.0",
+  "versionCode": 35,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.20.0",
+  "releaseNotes": "Release v0.20.0",
+  "publishedAt": "2026-07-24T14:57:52Z"
 }
