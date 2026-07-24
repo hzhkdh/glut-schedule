@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Upsert
 import com.glut.schedule.data.local.ScoreEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -13,7 +14,8 @@ interface ScheduleDao {
     @Query("SELECT * FROM academic_semesters ORDER BY portalYear DESC, season ASC")
     fun observeSemesters(): Flow<List<AcademicSemesterEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    // 原地更新学期元数据，避免 REPLACE 删除父记录后级联清空该学期的缓存课程。
+    @Upsert
     suspend fun insertSemester(semester: AcademicSemesterEntity)
 
     @Query("UPDATE academic_semesters SET isCurrent = 0 WHERE id != :semesterId")

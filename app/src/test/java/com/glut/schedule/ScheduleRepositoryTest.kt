@@ -189,6 +189,7 @@ class ScheduleRepositoryTest {
     @Test
     fun savingCatalogLeavesExactlyOneIncomingCurrentAndPreservesCacheMetadata() = runTest {
         val importedAt = 1234L
+        val historicalCourse = course("history", "历史缓存课程")
         val oldCurrent = AcademicSemester.create(
             CampusType.GUILIN, 2025, "45", SemesterSeason.SPRING, "1", isCurrent = true
         )
@@ -198,6 +199,8 @@ class ScheduleRepositoryTest {
             importedAtEpochMillis = importedAt
         )
         val dao = FakeScheduleDao(initialSemesters = listOf(oldCurrent.toEntity(), promoted.toEntity()))
+        dao.insertCourses(listOf(historicalCourse.toEntity(promoted.id)))
+        dao.insertOccurrences(historicalCourse.occurrences.map { it.toEntity(promoted.id) })
         val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
 
         repository.saveSemesterCatalog(
@@ -209,6 +212,8 @@ class ScheduleRepositoryTest {
         assertTrue(semesters.single { it.id == promoted.id }.isCurrent)
         assertFalse(semesters.single { it.id == oldCurrent.id }.isCurrent)
         assertEquals(importedAt, semesters.single { it.id == promoted.id }.importedAtEpochMillis)
+        repository.selectSemester(promoted.id)
+        assertEquals(listOf(historicalCourse), repository.courses.first())
     }
 
     @Test
