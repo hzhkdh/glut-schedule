@@ -1,9 +1,6 @@
 package com.glut.schedule
 
-import android.content.Context
-import android.content.Intent
 import android.graphics.Color as AndroidColor
-import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import androidx.activity.ComponentActivity
@@ -11,8 +8,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.FileProvider
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -46,7 +41,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
@@ -92,8 +86,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.focus.onFocusEvent
@@ -108,13 +100,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glut.schedule.data.model.NoticeInfo
-import java.io.File
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.hasUnreadNotices
 import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.UpdateInfo
+import com.glut.schedule.service.campus.CampusImageType
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.navigation.campusDrawerItems
 import com.glut.schedule.ui.navigation.otherDrawerItems
@@ -141,11 +133,9 @@ import com.glut.schedule.ui.pages.CampusImageScreen
 import com.glut.schedule.ui.pages.CampusImageViewModel
 import com.glut.schedule.ui.pages.CampusImageViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
-import com.glut.schedule.ui.pages.ClassPeriodSettingsScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
-import com.glut.schedule.ui.components.BuiltInScheduleBackground
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
@@ -162,16 +152,11 @@ import com.glut.schedule.ui.pages.StudyPlanViewModelFactory
 import com.glut.schedule.ui.theme.GlutScheduleTheme
 import com.glut.schedule.data.settings.CampusType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-
-private enum class SettingsSubPage(val title: String) {
-    ROOT("设置"),
-    COURSE_COLORS("课程卡片颜色"),
-    CLASS_PERIODS("上课时间"),
-    BUILT_IN_BACKGROUNDS("内置背景")
-}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -200,14 +185,14 @@ class MainActivity : ComponentActivity() {
                 var noticePopupSessionDismissedIds by remember { mutableStateOf(emptySet<String>()) }
                 var initialNoticeCheckFinished by remember { mutableStateOf(false) }
                 var showResetConfirm by remember { mutableStateOf(false) }
-                var settingsSubPage by remember { mutableStateOf(SettingsSubPage.ROOT) }
+                var showCourseColors by remember { mutableStateOf(false) }
                 var drawerGestureBlocked by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
                     when {
                         drawerState.isOpen -> scope.launch { drawerState.close() }
-                        settingsSubPage != SettingsSubPage.ROOT -> settingsSubPage = SettingsSubPage.ROOT
+                        showCourseColors -> showCourseColors = false
                         selectedItem != DrawerItem.Schedule -> selectedItem = DrawerItem.Schedule
                         else -> finish()
                     }
@@ -219,7 +204,8 @@ class MainActivity : ComponentActivity() {
                         settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
-                        semesterImportService = container.academicSemesterImportService
+                        apiProbeService = container.apiProbeService,
+                        parser = container.academicScheduleParser
                     )
                 )
                 val examViewModel: ExamViewModel = viewModel(
@@ -281,7 +267,6 @@ class MainActivity : ComponentActivity() {
                         scheduleRepository = container.scheduleRepository,
                         settingsStore = container.settingsStore,
                         apiProbeService = container.apiProbeService,
-                        semesterImportService = container.academicSemesterImportService,
                         scheduleParser = container.academicScheduleParser,
                         examParser = container.examParser,
                         scoreParser = container.scoreParser,
@@ -297,11 +282,24 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
-                val campusInfoViewModel: CampusImageViewModel? =
-                    if (selectedItem == DrawerItem.CampusInfo) {
+                val calendarViewModel: CampusImageViewModel? =
+                    if (selectedItem == DrawerItem.AcademicCalendar) {
                         viewModel(
-                            key = "campus-info",
-                            factory = CampusImageViewModelFactory(container.campusImageService)
+                            key = "campus-calendar",
+                            factory = CampusImageViewModelFactory(
+                                container.campusImageService,
+                                CampusImageType.ACADEMIC_CALENDAR
+                            )
+                        )
+                    } else null
+                val shuttleViewModel: CampusImageViewModel? =
+                    if (selectedItem == DrawerItem.ShuttleBus) {
+                        viewModel(
+                            key = "campus-shuttle",
+                            factory = CampusImageViewModelFactory(
+                                container.campusImageService,
+                                CampusImageType.SHUTTLE_BUS
+                            )
                         )
                     } else null
                 val financeViewModels = remember { FinanceViewModelRegistry() }
@@ -319,7 +317,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(campusType) {
                     if (
                         campusType != CampusType.GUILIN &&
-                        selectedItem == DrawerItem.CampusInfo
+                        selectedItem in listOf(DrawerItem.AcademicCalendar, DrawerItem.ShuttleBus)
                     ) {
                         selectedItem = DrawerItem.Schedule
                     }
@@ -419,7 +417,7 @@ class MainActivity : ComponentActivity() {
                     gesturesEnabled = !drawerGestureBlocked,
                     drawerContent = {
                         ModalDrawerSheet(
-                            modifier = Modifier.fillMaxWidth(0.75f),
+                            modifier = Modifier.fillMaxWidth(0.60f),
                             drawerContainerColor = Color(0xFFE8E4D6),
                             drawerContentColor = Color(0xFF141821)
                         ) {
@@ -450,7 +448,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             showDot = item == DrawerItem.About && showUpdateDot,
                                             onClick = {
                                                 selectedItem = item
-                                                settingsSubPage = SettingsSubPage.ROOT
+                                                showCourseColors = false
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -475,7 +473,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     target = item,
                                                     onProfessionalScoreEntered = professionalScoreViewModel::resetAcademicYearSelection
                                                 )
-                                                settingsSubPage = SettingsSubPage.ROOT
+                                                showCourseColors = false
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -496,7 +494,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             isSelected = selectedItem == item,
                                             onClick = {
                                                 selectedItem = item
-                                                settingsSubPage = SettingsSubPage.ROOT
+                                                showCourseColors = false
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -519,7 +517,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                 || (item == DrawerItem.Notice && showNoticeDot),
                                             onClick = {
                                                 selectedItem = item
-                                                settingsSubPage = SettingsSubPage.ROOT
+                                                showCourseColors = false
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -536,19 +534,19 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 TopAppBar(
                                     title = {
                                         Text(
-                                            if (selectedItem == DrawerItem.Settings) settingsSubPage.title else selectedItem.title,
+                                            if (showCourseColors) "课程卡片颜色" else selectedItem.title,
                                             color = Color(0xFF141821),
                                             fontWeight = FontWeight.SemiBold
                                         )
                                     },
                                     navigationIcon = {
                                         IconButton(onClick = {
-                                            if (settingsSubPage != SettingsSubPage.ROOT) settingsSubPage = SettingsSubPage.ROOT
+                                            if (showCourseColors) showCourseColors = false
                                             else scope.launch { drawerState.open() }
                                         }) {
                                             Icon(
-                                                imageVector = if (settingsSubPage != SettingsSubPage.ROOT) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
-                                                contentDescription = if (settingsSubPage != SettingsSubPage.ROOT) "返回" else "菜单",
+                                                imageVector = if (showCourseColors) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
+                                                contentDescription = if (showCourseColors) "返回" else "菜单",
                                                 tint = Color(0xFF141821),
                                                 modifier = Modifier.size(26.dp)
                                             )
@@ -601,15 +599,22 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
-                                            DrawerItem.CampusInfo -> campusInfoViewModel?.let { viewModel ->
+                                            DrawerItem.AcademicCalendar -> calendarViewModel?.let { viewModel ->
                                                 val campusImageState by viewModel.uiState.collectAsStateWithLifecycle()
-                                                if (campusImageState.selectedType.isRemote) {
-                                                    IconButton(
-                                                        onClick = viewModel::refreshCurrent,
-                                                        enabled = !campusImageState.isLoading
-                                                    ) {
-                                                        Icon(Icons.Outlined.Refresh, contentDescription = "刷新校园信息")
-                                                    }
+                                                IconButton(
+                                                    onClick = viewModel::refresh,
+                                                    enabled = !campusImageState.isLoading
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新校历")
+                                                }
+                                            }
+                                            DrawerItem.ShuttleBus -> shuttleViewModel?.let { viewModel ->
+                                                val campusImageState by viewModel.uiState.collectAsStateWithLifecycle()
+                                                IconButton(
+                                                    onClick = viewModel::refresh,
+                                                    enabled = !campusImageState.isLoading
+                                                ) {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新校车路线")
                                                 }
                                             }
                                             DrawerItem.Finance -> {
@@ -667,8 +672,16 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     viewModel = fitnessScoreViewModel,
                                     onTableGestureActive = { drawerGestureBlocked = it }
                                 )
-                                DrawerItem.CampusInfo -> campusInfoViewModel?.let {
+                                DrawerItem.AcademicCalendar -> calendarViewModel?.let {
                                     CampusImageScreen(
+                                        title = DrawerItem.AcademicCalendar.title,
+                                        viewModel = it,
+                                        onImageGestureActive = { active -> drawerGestureBlocked = active }
+                                    )
+                                }
+                                DrawerItem.ShuttleBus -> shuttleViewModel?.let {
+                                    CampusImageScreen(
+                                        title = DrawerItem.ShuttleBus.title,
                                         viewModel = it,
                                         onImageGestureActive = { active -> drawerGestureBlocked = active }
                                     )
@@ -687,25 +700,21 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
                                     viewModel = scheduleViewModel,
-                                    subPage = settingsSubPage,
+                                    showCourseColors = showCourseColors,
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
-                                    onSubPageChange = { settingsSubPage = it },
+                                    onShowCourseColors = { showCourseColors = true },
                                     onReset = { showResetConfirm = true }
                                 )
                                 DrawerItem.Notice -> NoticeScreen(notices = notices)
                                 DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
                                 DrawerItem.FAQ -> FaqScreen()
-                                DrawerItem.About -> {
-                                    val shareCtx = LocalContext.current
-                                    AboutScreen(
-                                        updateChecker = container.updateChecker,
-                                        updateAvailableVersion = updateAvailableVersion,
-                                        onShowUpdateDialog = { info ->
-                                            showUpdateDialog = UpdateDialogState.Idle(info)
-                                        },
-                                        onShare = { shareApk(shareCtx) }
-                                    )
-                                }
+                                DrawerItem.About -> AboutScreen(
+                                    updateChecker = container.updateChecker,
+                                    updateAvailableVersion = updateAvailableVersion,
+                                    onShowUpdateDialog = { info ->
+                                        showUpdateDialog = UpdateDialogState.Idle(info)
+                                    }
+                                )
                             }
                         }
                     }
@@ -835,51 +844,32 @@ private fun ScheduleDestination(
 @Composable
 private fun ScheduleSettingsDestination(
     viewModel: ScheduleViewModel,
-    subPage: SettingsSubPage,
+    showCourseColors: Boolean,
     onPickBackground: () -> Unit,
-    onSubPageChange: (SettingsSubPage) -> Unit,
+    onShowCourseColors: () -> Unit,
     onReset: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    when (subPage) {
-        SettingsSubPage.COURSE_COLORS -> CourseColorsPage(
-                courses = uiState.courses,
-                overrides = uiState.courseColorOverrides,
-                onSetColor = viewModel::setCourseColorOverride,
-                onRemoveColor = viewModel::removeCourseColorOverride,
-                onResetAll = viewModel::clearCourseColorOverrides
-            )
-        SettingsSubPage.CLASS_PERIODS -> ClassPeriodSettingsScreen(
-            campusType = uiState.campusType,
-            periods = uiState.classPeriods,
-            guilinSubCampus = uiState.guilinSubCampus,
-            onSetPeriods = viewModel::setClassPeriods,
-            onResetPeriods = viewModel::resetClassPeriods,
-            onSetGuilinSubCampus = viewModel::setGuilinSubCampus,
-            onSaved = { onSubPageChange(SettingsSubPage.ROOT) }
+    if (showCourseColors) {
+        CourseColorsPage(
+            courses = uiState.courses,
+            overrides = uiState.courseColorOverrides,
+            onSetColor = viewModel::setCourseColorOverride,
+            onRemoveColor = viewModel::removeCourseColorOverride,
+            onResetAll = viewModel::clearCourseColorOverrides
         )
-        SettingsSubPage.BUILT_IN_BACKGROUNDS -> BuiltInBackgroundsPage(
-            selectedBackground = BuiltInScheduleBackground.fromStorageValue(uiState.customBackgroundUri)
-                ?: if (uiState.customBackgroundUri.isBlank()) BuiltInScheduleBackground.STARRY else null,
-            onSelectBackground = { background ->
-                // 内置背景使用稳定标识持久化，默认星空以空值兼容旧设置。
-                viewModel.setCustomBackgroundUri(background.storageValue)
-                onSubPageChange(SettingsSubPage.ROOT)
-            }
+    } else {
+        SettingsPage(
+            showWeekend = uiState.showWeekend,
+            onShowWeekendChange = viewModel::setShowWeekend,
+            showNoon = uiState.showNoon,
+            onShowNoonChange = viewModel::setShowNoon,
+            hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
+            onPickBackground = onPickBackground,
+            onClearBackground = viewModel::clearCustomBackground,
+            onCourseColors = onShowCourseColors,
+            onReset = onReset
         )
-        SettingsSubPage.ROOT -> SettingsPage(
-                showWeekend = uiState.showWeekend,
-                onShowWeekendChange = viewModel::setShowWeekend,
-                showNoon = uiState.showNoon,
-                onShowNoonChange = viewModel::setShowNoon,
-                hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
-                onPickBackground = onPickBackground,
-                onClearBackground = viewModel::clearCustomBackground,
-                onBuiltInBackgrounds = { onSubPageChange(SettingsSubPage.BUILT_IN_BACKGROUNDS) },
-                onCourseColors = { onSubPageChange(SettingsSubPage.COURSE_COLORS) },
-                onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
-                onReset = onReset
-            )
     }
 }
 
@@ -955,9 +945,7 @@ private fun SettingsPage(
     hasCustomBackground: Boolean = false,
     onPickBackground: () -> Unit = {},
     onClearBackground: () -> Unit = {},
-    onBuiltInBackgrounds: () -> Unit = {},
     onCourseColors: () -> Unit = {},
-    onClassPeriods: () -> Unit = {},
     onReset: () -> Unit = {}
 ) {
     val settingsBg = Color(0xFFF6F4EF)
@@ -969,7 +957,6 @@ private fun SettingsPage(
         modifier = Modifier
             .fillMaxSize()
             .background(settingsBg)
-            .verticalScroll(rememberScrollState())
     ) {
         Column(
             modifier = Modifier.padding(24.dp),
@@ -1021,22 +1008,6 @@ private fun SettingsPage(
                     Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
                 }
             }
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onClassPeriods)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("上课时间", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
-                }
-            }
 
             // Background section
             Text("背景", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -1046,22 +1017,6 @@ private fun SettingsPage(
                 shape = RoundedCornerShape(14.dp)
             ) {
                 Column {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(onClick = onBuiltInBackgrounds)
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("内置背景", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                        Icon(
-                            Icons.Outlined.ChevronRight,
-                            contentDescription = null,
-                            tint = settingsSecondary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    HorizontalDivider(color = Color(0xFFEDE8DE))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1108,82 +1063,6 @@ private fun SettingsPage(
                 ) {
                     Text("重置应用", color = Color(0xFFDC2626), fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Text("恢复初次使用状态", color = settingsSecondary, fontSize = 12.sp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun BuiltInBackgroundsPage(
-    selectedBackground: BuiltInScheduleBackground?,
-    onSelectBackground: (BuiltInScheduleBackground) -> Unit
-) {
-    val settingsBg = Color(0xFFF6F4EF)
-    val settingsPrimary = Color(0xFF141821)
-    val settingsSecondary = Color(0xFF667085)
-    val settingsCardBg = Color(0xFFFFFEFB)
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(settingsBg)
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        BuiltInBackgroundsCard(
-            background = BuiltInScheduleBackground.STARRY,
-            selected = selectedBackground == BuiltInScheduleBackground.STARRY,
-            onClick = { onSelectBackground(BuiltInScheduleBackground.STARRY) },
-            cardColor = settingsCardBg,
-            textColor = settingsPrimary
-        )
-        BuiltInBackgroundsCard(
-            background = BuiltInScheduleBackground.FLOWER,
-            selected = selectedBackground == BuiltInScheduleBackground.FLOWER,
-            onClick = { onSelectBackground(BuiltInScheduleBackground.FLOWER) },
-            cardColor = settingsCardBg,
-            textColor = settingsPrimary
-        )
-    }
-}
-
-@Composable
-private fun BuiltInBackgroundsCard(
-    background: BuiltInScheduleBackground,
-    selected: Boolean,
-    onClick: () -> Unit,
-    cardColor: Color,
-    textColor: Color
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = cardColor,
-        shape = RoundedCornerShape(14.dp),
-        shadowElevation = if (selected) 2.dp else 0.dp
-    ) {
-        Column(modifier = Modifier.clickable(onClick = onClick)) {
-            Image(
-                painter = painterResource(background.drawableRes),
-                contentDescription = "${background.displayName}背景预览",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp),
-                contentScale = ContentScale.Crop
-            )
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(background.displayName, color = textColor, fontSize = 16.sp, modifier = Modifier.weight(1f))
-                if (selected) {
-                    Icon(
-                        Icons.Outlined.Check,
-                        contentDescription = "已选择",
-                        tint = Color(0xFF2563EB),
-                        modifier = Modifier.size(20.dp)
-                    )
                 }
             }
         }
@@ -1513,6 +1392,11 @@ private fun hsvToHex(hue: Float, saturation: Float, value: Float): String {
 
 // ---- Notice Popup Dialog ----
 
+private val EXPLICIT_ACTION_DIALOG_PROPERTIES = DialogProperties(
+    dismissOnBackPress = false,
+    dismissOnClickOutside = false
+)
+
 @Composable
 private fun NoticePopupDialog(
     notice: NoticeInfo,
@@ -1520,8 +1404,8 @@ private fun NoticePopupDialog(
     onOpenNotices: () -> Unit
 ) {
     AlertDialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(dismissOnClickOutside = false),
+        onDismissRequest = { },
+        properties = EXPLICIT_ACTION_DIALOG_PROPERTIES,
         containerColor = Color(0xFFFFFBFE),
         titleContentColor = Color(0xFF1D1B20),
         textContentColor = Color(0xFF49454F),
@@ -1640,9 +1524,11 @@ private fun UpdateDialog(
     onStateChange: (UpdateDialogState?) -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
 
     fun startDownload(info: UpdateInfo) {
-        scope.launch {
+        downloadJob?.cancel()
+        downloadJob = scope.launch {
             onStateChange(
                 UpdateDialogState.Downloading(
                     info = info,
@@ -1666,6 +1552,8 @@ private fun UpdateDialog(
                     )
                 }
                 onStateChange(UpdateDialogState.Done(info, apkFile))
+            } catch (error: CancellationException) {
+                throw error
             } catch (e: Exception) {
                 onStateChange(
                     UpdateDialogState.DownloadFailed(
@@ -1673,6 +1561,8 @@ private fun UpdateDialog(
                         message = e.message ?: "下载失败，请检查网络后重试"
                     )
                 )
+            } finally {
+                if (downloadJob === coroutineContext[Job]) downloadJob = null
             }
         }
     }
@@ -1680,8 +1570,8 @@ private fun UpdateDialog(
     when (state) {
         is UpdateDialogState.Idle -> {
             AlertDialog(
-                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
-                properties = DialogProperties(dismissOnClickOutside = false),
+                onDismissRequest = { },
+                properties = EXPLICIT_ACTION_DIALOG_PROPERTIES,
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
@@ -1730,13 +1620,8 @@ private fun UpdateDialog(
 
         is UpdateDialogState.Downloading -> {
             AlertDialog(
-                onDismissRequest = {
-                    if (!state.info.isForceUpdate) {
-                        onDismiss()
-                        onStateChange(null)
-                    }
-                },
-                properties = DialogProperties(dismissOnClickOutside = false),
+                onDismissRequest = { },
+                properties = EXPLICIT_ACTION_DIALOG_PROPERTIES,
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
@@ -1760,7 +1645,12 @@ private fun UpdateDialog(
                 confirmButton = {},
                 dismissButton = {
                     if (!state.info.isForceUpdate) {
-                        TextButton(onClick = { onDismiss(); onStateChange(null) }) {
+                        TextButton(onClick = {
+                            downloadJob?.cancel()
+                            downloadJob = null
+                            onDismiss()
+                            onStateChange(null)
+                        }) {
                             Text("取消下载")
                         }
                     }
@@ -1770,8 +1660,8 @@ private fun UpdateDialog(
 
         is UpdateDialogState.DownloadFailed -> {
             AlertDialog(
-                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
-                properties = DialogProperties(dismissOnClickOutside = false),
+                onDismissRequest = { },
+                properties = EXPLICIT_ACTION_DIALOG_PROPERTIES,
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
@@ -1792,8 +1682,8 @@ private fun UpdateDialog(
 
         is UpdateDialogState.Done -> {
             AlertDialog(
-                onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
-                properties = DialogProperties(dismissOnClickOutside = false),
+                onDismissRequest = { },
+                properties = EXPLICIT_ACTION_DIALOG_PROPERTIES,
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
@@ -1814,36 +1704,5 @@ private fun UpdateDialog(
                 }
             )
         }
-    }
-}
-
-/** 复制已安装的 APK 到缓存目录并通过系统分享面板发送给 QQ/微信等 */
-private fun shareApk(context: Context) {
-    try {
-        val src = File(context.packageCodePath)
-        // 清理缓存目录中所有旧版本分享 APK，避免文件名冲突产生后缀
-        context.cacheDir.listFiles()?.filter {
-            it.name.startsWith("桂系一站式_v") && it.name.endsWith(".apk")
-        }?.forEach { it.delete() }
-        val dest = File(context.cacheDir, "桂系一站式_v${BuildConfig.VERSION_NAME}.apk")
-        src.copyTo(dest, overwrite = true)
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            dest
-        )
-        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/vnd.android.package-archive"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            putExtra(
-                Intent.EXTRA_TEXT,
-                "桂系一站式 — 查课表、成绩、考试安排超方便！"
-            )
-        }
-        // 使用 createChooser 强制每次都弹出选择器，避免用户选择"始终"后锁定单一平台
-        context.startActivity(Intent.createChooser(shareIntent, "分享到"))
-    } catch (_: Exception) {
-        // 分享失败静默忽略（如 FileProvider 配置异常等边缘情况）
     }
 }

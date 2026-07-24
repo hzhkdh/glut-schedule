@@ -35,6 +35,7 @@ login.html
 # ===== Local agent / tooling temp files =====
 .codegraph/
 .superpowers/
+.worktrees/
 CLAUDE.md
 AGENTS.md
 
