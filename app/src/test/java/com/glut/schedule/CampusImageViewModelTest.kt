@@ -26,21 +26,17 @@ class CampusImageViewModelTest {
     @After fun tearDown() = Dispatchers.resetMain()
 
     @Test
-    fun initialLoadDisplaysOnlyTheAcademicCalendar() = runTest {
-        val calendar = document(CampusImageType.ACADEMIC_CALENDAR)
+    fun initialLoadSelectsCampusMapWithoutNetworkCall() = runTest {
         val gateway = FakeGateway().apply {
-            results[CampusImageType.ACADEMIC_CALENDAR] = Result.success(calendar)
+            results[CampusImageType.ACADEMIC_CALENDAR] = Result.success(document(CampusImageType.ACADEMIC_CALENDAR))
         }
 
         val viewModel = CampusImageViewModel(gateway)
 
-        assertEquals(CampusImageType.ACADEMIC_CALENDAR, viewModel.uiState.value.selectedType)
-        assertEquals(calendar, viewModel.uiState.value.document)
+        // 默认选中校园地图（非远程资源），不触发网络加载
+        assertEquals(CampusImageType.CAMPUS_MAP, viewModel.uiState.value.selectedType)
         assertFalse(viewModel.uiState.value.isLoading)
-        assertEquals(
-            listOf(FetchCall(CampusImageType.ACADEMIC_CALENDAR, false)),
-            gateway.calls
-        )
+        assertEquals(emptyList<FetchCall>(), gateway.calls)
     }
 
     @Test
@@ -53,14 +49,15 @@ class CampusImageViewModelTest {
         }
         val viewModel = CampusImageViewModel(gateway)
 
+        // 初始默认为校园地图（非远程），init 不触发网络加载
         viewModel.selectType(CampusImageType.CLASS_TIME)
         viewModel.selectType(CampusImageType.ACADEMIC_CALENDAR)
 
         assertEquals(calendar, viewModel.uiState.value.document)
         assertEquals(
             listOf(
-                FetchCall(CampusImageType.ACADEMIC_CALENDAR, false),
-                FetchCall(CampusImageType.CLASS_TIME, false)
+                FetchCall(CampusImageType.CLASS_TIME, false),
+                FetchCall(CampusImageType.ACADEMIC_CALENDAR, false)
             ),
             gateway.calls
         )
@@ -106,6 +103,8 @@ class CampusImageViewModelTest {
         }
 
         val viewModel = CampusImageViewModel(gateway)
+        // 初始默认校园地图（非远程），需显式切换到远程类型触发加载
+        viewModel.selectType(CampusImageType.ACADEMIC_CALENDAR)
 
         assertEquals(null, viewModel.uiState.value.document)
         assertTrue(viewModel.uiState.value.message.contains("重试"))
@@ -121,11 +120,13 @@ class CampusImageViewModelTest {
                 return deferred.await()
             }
         }
-        val viewModel = CampusImageViewModel(gateway)
+        // 通过构造函数指定初始远程类型，init 触发首次加载并挂起
+        val viewModel = CampusImageViewModel(gateway, CampusImageType.ACADEMIC_CALENDAR)
 
         viewModel.refreshCurrent()
         viewModel.refreshCurrent()
 
+        // 首次加载挂起未完成 → isLoading=true → 后续刷新被忽略
         assertEquals(listOf(FetchCall(CampusImageType.ACADEMIC_CALENDAR, false)), gateway.calls)
         assertTrue(viewModel.uiState.value.isLoading)
         deferred.complete(document(CampusImageType.ACADEMIC_CALENDAR))

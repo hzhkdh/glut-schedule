@@ -163,7 +163,7 @@ fun StarryScheduleBackground(
             contentScale = ContentScale.Crop
         )
         Canvas(modifier = modifier.fillMaxSize()) {
-            drawRect(Color(0x99000000))
+            drawRect(Color(0x80000000))
         }
     } else {
         // 空值代表默认星空；内置标识只切换资源，不走外部图片解码流程。
@@ -186,6 +186,10 @@ private fun BuiltInScheduleBackgroundImage(
         modifier = modifier.fillMaxSize(),
         contentScale = ContentScale.Crop
     )
+    // 与外部自定义背景统一：叠加 50% 黑色蒙层保障文字对比度
+    Canvas(modifier = modifier.fillMaxSize()) {
+        drawRect(Color(0x80000000))
+    }
 }
 
 fun shouldUseCustomBackground(uri: String): Boolean {

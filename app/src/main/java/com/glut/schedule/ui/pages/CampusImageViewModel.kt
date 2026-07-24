@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class CampusImageUiState(
-    val selectedType: CampusImageType = CampusImageType.ACADEMIC_CALENDAR,
+    val selectedType: CampusImageType = CampusImageType.CAMPUS_MAP,
     val tabs: Map<CampusImageType, CampusImageTabState> = emptyMap()
 ) {
     private val current: CampusImageTabState
@@ -35,13 +35,14 @@ data class CampusImageTabState(
 
 class CampusImageViewModel(
     private val gateway: CampusImageGateway,
-    initialType: CampusImageType = CampusImageType.ACADEMIC_CALENDAR
+    initialType: CampusImageType = CampusImageType.CAMPUS_MAP
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(CampusImageUiState(selectedType = initialType))
     val uiState: StateFlow<CampusImageUiState> = _uiState.asStateFlow()
 
     init {
-        load(initialType, forceRefresh = false)
+        // 内置资源（如校园地图）无需网络加载，跳过 fetch
+        if (initialType.isRemote) load(initialType, forceRefresh = false)
     }
 
     fun selectType(type: CampusImageType) {
@@ -94,7 +95,7 @@ class CampusImageViewModel(
 
 class CampusImageViewModelFactory(
     private val gateway: CampusImageGateway,
-    private val initialType: CampusImageType = CampusImageType.ACADEMIC_CALENDAR
+    private val initialType: CampusImageType = CampusImageType.CAMPUS_MAP
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =

@@ -45,10 +45,10 @@ private val CampusMessageBackground = Color(0xFFFFFEFB)
 private val CampusText = Color(0xFF141821)
 
 private val CampusImageTabs = listOf(
+    CampusImageType.CAMPUS_MAP to "校园地图",
     CampusImageType.ACADEMIC_CALENDAR to "教学日历",
     CampusImageType.CLASS_TIME to "上课时间",
-    CampusImageType.SHUTTLE_BUS to "校车路线",
-    CampusImageType.CAMPUS_MAP to "校园地图"
+    CampusImageType.SHUTTLE_BUS to "校车路线"
 )
 
 @OptIn(ExperimentalMaterial3Api::class)

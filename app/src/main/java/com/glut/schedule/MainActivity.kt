@@ -99,6 +99,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glut.schedule.data.model.NoticeInfo
 import com.glut.schedule.data.model.CourseColorMapper
@@ -1118,8 +1119,6 @@ private fun BuiltInBackgroundsPage(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("内置背景", color = settingsPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("选择后立即应用；星空为默认背景。", color = settingsSecondary, fontSize = 13.sp)
         BuiltInBackgroundsCard(
             background = BuiltInScheduleBackground.STARRY,
             selected = selectedBackground == BuiltInScheduleBackground.STARRY,
@@ -1509,6 +1508,7 @@ private fun NoticePopupDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnClickOutside = false),
         containerColor = Color(0xFFFFFBFE),
         titleContentColor = Color(0xFF1D1B20),
         textContentColor = Color(0xFF49454F),
@@ -1668,6 +1668,7 @@ private fun UpdateDialog(
         is UpdateDialogState.Idle -> {
             AlertDialog(
                 onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                properties = DialogProperties(dismissOnClickOutside = false),
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
@@ -1722,6 +1723,7 @@ private fun UpdateDialog(
                         onStateChange(null)
                     }
                 },
+                properties = DialogProperties(dismissOnClickOutside = false),
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
@@ -1756,6 +1758,7 @@ private fun UpdateDialog(
         is UpdateDialogState.DownloadFailed -> {
             AlertDialog(
                 onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                properties = DialogProperties(dismissOnClickOutside = false),
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
@@ -1777,6 +1780,7 @@ private fun UpdateDialog(
         is UpdateDialogState.Done -> {
             AlertDialog(
                 onDismissRequest = { if (!state.info.isForceUpdate) onDismiss() },
+                properties = DialogProperties(dismissOnClickOutside = false),
                 containerColor = Color(0xFFFFFBFE),
                 titleContentColor = Color(0xFF1D1B20),
                 textContentColor = Color(0xFF49454F),
