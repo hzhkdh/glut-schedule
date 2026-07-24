@@ -29,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -335,6 +337,11 @@ private fun CourseCard(
             .background(color)
             .then(clickableModifier)
             .padding(horizontal = 4.dp, vertical = 4.dp)
+            .semantics {
+                contentDescription =
+                    "${block.course.title}，${block.course.teacher}，${block.course.room}" +
+                    if (conflictCount > 1) "，共${conflictCount}门冲突课程" else ""
+            }
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(

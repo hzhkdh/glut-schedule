@@ -17,7 +17,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 120
-        versionName = "0.20.1"
+        versionName = "0.20.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     }
@@ -100,9 +100,12 @@ dependencies {
     implementation("androidx.room:room-ktx:2.8.4")
     implementation("androidx.datastore:datastore-preferences:1.2.1")
     implementation("androidx.glance:glance-appwidget:1.1.1")
-    implementation("androidx.work:work-runtime-ktx:2.7.1")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
+    // security-crypto 1.1.0 尚无稳定版，alpha06 的 MasterKey API 在多个 alpha 版本间
+    // 保持兼容（FinanceStore/FitnessStore 均依赖此 API）。alpha 标签不影响本应用的
+    // 加密安全性——加密算法本身（AES-256 GCM/SIV）与稳定版一致。
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("org.jsoup:jsoup:1.21.2")
 

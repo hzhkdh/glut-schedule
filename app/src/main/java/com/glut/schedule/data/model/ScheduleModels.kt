@@ -235,7 +235,11 @@ private fun parseClassPeriodTime(value: String): LocalTime? {
     return runCatching { LocalTime.parse(value) }.getOrNull()
 }
 
-fun guilinClassPeriods(): List<ClassPeriod> = listOf(
+/** 桂林校区默认上课时间（雁山校区） */
+fun guilinClassPeriods(): List<ClassPeriod> = yanshanClassPeriods()
+
+/** 雁山校区上课时间（2026春起第6-7节课间→20分钟，后续顺延10分钟） */
+fun yanshanClassPeriods(): List<ClassPeriod> = listOf(
     ClassPeriod(1, "08:30", "09:15"),
     ClassPeriod(2, "09:20", "10:05"),
     ClassPeriod(3, "10:25", "11:10"),
@@ -248,8 +252,26 @@ fun guilinClassPeriods(): List<ClassPeriod> = listOf(
     ClassPeriod(10, "17:15", "18:00"), // 第8节
     ClassPeriod(11, "18:30", "19:15"), // 第9节
     ClassPeriod(12, "19:20", "20:05"), // 第10节
-    ClassPeriod(13, "20:10", "20:55"), // 第11节
-    ClassPeriod(14, "21:00", "21:45"), // 第12节
+    ClassPeriod(13, "20:15", "21:00"), // 第11节
+    ClassPeriod(14, "21:05", "21:50"), // 第12节
+)
+
+/** 屏风校区上课时间 */
+fun pingfengClassPeriods(): List<ClassPeriod> = listOf(
+    ClassPeriod(1, "08:20", "09:05"),
+    ClassPeriod(2, "09:15", "10:00"),
+    ClassPeriod(3, "10:20", "11:05"),
+    ClassPeriod(4, "11:15", "12:00"),
+    ClassPeriod(5, "12:30", "13:15"), // 中午1（教务节次=5）
+    ClassPeriod(6, "13:20", "14:05"), // 中午2（教务节次=6）
+    ClassPeriod(7, "14:30", "15:15"), // 第5节
+    ClassPeriod(8, "15:25", "16:10"), // 第6节
+    ClassPeriod(9, "16:20", "17:05"), // 第7节
+    ClassPeriod(10, "17:15", "18:00"), // 第8节
+    ClassPeriod(11, "18:30", "19:15"), // 第9节
+    ClassPeriod(12, "19:25", "20:10"), // 第10节
+    ClassPeriod(13, "20:20", "21:05"), // 第11节
+    ClassPeriod(14, "21:15", "22:00"), // 第12节
 )
 
 /** 中午时段节次号（教务用5/6表示中午1/2，设置>显示中午 开关控制） */

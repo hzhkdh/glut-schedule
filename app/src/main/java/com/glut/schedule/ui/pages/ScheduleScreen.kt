@@ -164,6 +164,7 @@ fun ScheduleScreen(
                 },
                 semesters = uiState.semesters,
                 isHistorical = uiState.isHistoricalSemester,
+                viewedSemesterId = uiState.viewedSemester?.id,
                 onSemesterSelected = viewModel::selectSemester,
                 onManageSemesters = onImportClick,
                 onReturnToCurrentClick = viewModel::returnToCurrentSemester,

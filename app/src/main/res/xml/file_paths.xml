@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <external-cache-path name="apk" path="." />
+    <!-- 分享 APK 文件使用内部缓存目录 -->
+    <cache-path name="share_apk" path="." />
 </paths>

@@ -23,6 +23,8 @@ import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
+import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
 import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
@@ -51,6 +53,7 @@ data class ScheduleUiState(
     val semesterEndDate: LocalDate = DEFAULT_SEMESTER_END_DATE,
     val maxAcademicWeek: Int = academicMaxWeekForCalendar(DEFAULT_SEMESTER_START_MONDAY, DEFAULT_SEMESTER_END_DATE),
     val campusType: CampusType = CampusType.GUILIN,
+    val guilinSubCampus: String = GUILIN_SUB_CAMPUS_DEFAULT,
     val classPeriods: List<ClassPeriod> = emptyList(),
     val courses: List<ScheduleCourse> = emptyList(),
     val courseBlocks: List<CourseBlock> = emptyList(),
@@ -74,7 +77,8 @@ private data class ScheduleSettingsUiState(
     val semesterStartMonday: LocalDate,
     val semesterEndDate: LocalDate,
     val customBackgroundUri: String,
-    val campusType: CampusType
+    val campusType: CampusType,
+    val guilinSubCampus: String = GUILIN_SUB_CAMPUS_DEFAULT
 )
 
 private data class ScheduleCalendarSettings(
@@ -130,8 +134,9 @@ class ScheduleViewModel(
                 )
             },
             settingsStore.customBackgroundUri,
-            settingsStore.campusType
-        ) { base, customBackgroundUri, campusType ->
+            settingsStore.campusType,
+            settingsStore.guilinSubCampus
+        ) { base, customBackgroundUri, campusType, guilinSubCampus ->
             ScheduleSettingsUiState(
                 weekNumber = base.weekNumber,
                 showWeekend = base.showWeekend,
@@ -139,7 +144,8 @@ class ScheduleViewModel(
                 semesterStartMonday = base.semesterStartMonday,
                 semesterEndDate = base.semesterEndDate,
                 customBackgroundUri = customBackgroundUri,
-                campusType = campusType
+                campusType = campusType,
+                guilinSubCampus = guilinSubCampus
             )
         }
 
@@ -198,6 +204,7 @@ class ScheduleViewModel(
                 semesterEndDate = resolvedEnd,
                 maxAcademicWeek = maxAcademicWeek,
                 campusType = settings.campusType,
+                guilinSubCampus = settings.guilinSubCampus,
                 classPeriods = periods,
                 courses = coloredCourses,
                 courseBlocks = coloredCourses.flatMap { course ->
@@ -326,6 +333,12 @@ class ScheduleViewModel(
     fun resetClassPeriods() {
         viewModelScope.launch {
             settingsStore.resetClassPeriods(uiState.value.campusType)
+        }
+    }
+
+    fun setGuilinSubCampus(subCampus: String) {
+        viewModelScope.launch {
+            settingsStore.setGuilinSubCampus(subCampus)
         }
     }
 

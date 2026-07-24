@@ -36,10 +36,10 @@ class ClassPeriodSettingsUiContractTest {
         assertTrue(activity.contains("\"上课时间\""))
         assertTrue(activity.contains("onClassPeriods"))
         assertTrue(screen.contains("\"保存\""))
-        assertTrue(screen.contains("\"恢复默认时间\""))
-        assertTrue(screen.contains("remember(campusType, periods)"))
+        assertTrue(screen.contains("恢复"))
+        assertTrue(screen.contains("guilinSubCampus"))
         assertTrue(screen.contains("validateClassPeriods(campusType, draft)"))
-        assertTrue(screen.contains("draft = defaultClassPeriods(campusType)"))
+        assertTrue(screen.contains("subCampusDefaults()"))
     }
 
     private fun source(name: String): String {

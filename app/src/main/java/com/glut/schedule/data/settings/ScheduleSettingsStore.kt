@@ -23,6 +23,10 @@ import java.time.LocalDate
 
 enum class CampusType { GUILIN, NANNING }
 
+/** 桂林子校区标识 */
+const val GUILIN_SUB_CAMPUS_DEFAULT = "yanshan"
+const val GUILIN_SUB_CAMPUS_PINGFENG = "pingfeng"
+
 private val Context.scheduleSettings by preferencesDataStore(name = "schedule_settings")
 
 class ScheduleSettingsStore(
@@ -48,6 +52,7 @@ class ScheduleSettingsStore(
     private val currentSemesterIdKey = stringPreferencesKey("current_semester_id")
     private val confirmedEnrollmentYearKey = intPreferencesKey("confirmed_enrollment_year")
     private val confirmedEnrollmentSeasonKey = stringPreferencesKey("confirmed_enrollment_season")
+    private val guilinSubCampusKey = stringPreferencesKey("guilin_sub_campus")
 
     val currentWeekNumber: Flow<Int> = context.scheduleSettings.data.map { preferences ->
         clampAcademicWeek(preferences[currentWeekKey] ?: 9)
@@ -108,6 +113,21 @@ class ScheduleSettingsStore(
             ?: SemesterSeason.AUTUMN
         year to season
     }.distinctUntilChanged()
+
+    /** 桂林子校区偏好：yanshan（默认）或 pingfeng */
+    val guilinSubCampus: Flow<String> = context.scheduleSettings.data.map { preferences ->
+        preferences[guilinSubCampusKey] ?: GUILIN_SUB_CAMPUS_DEFAULT
+    }.distinctUntilChanged()
+
+    suspend fun setGuilinSubCampus(subCampus: String) {
+        context.scheduleSettings.edit { preferences ->
+            if (subCampus == GUILIN_SUB_CAMPUS_DEFAULT) {
+                preferences.remove(guilinSubCampusKey)
+            } else {
+                preferences[guilinSubCampusKey] = subCampus
+            }
+        }
+    }
 
     suspend fun setCampusType(type: CampusType) {
         context.scheduleSettings.edit { preferences ->

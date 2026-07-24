@@ -47,7 +47,13 @@ class ScheduleApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         appContainer = AppContainer(this)
-        applicationScope.launch { appContainer.scheduleRepository.resetViewedSemesterToCurrent() }
+        applicationScope.launch {
+            try {
+                appContainer.scheduleRepository.resetViewedSemesterToCurrent()
+            } catch (e: Exception) {
+                android.util.Log.e("ScheduleApp", "Failed to reset semester on start", e)
+            }
+        }
         observeWidgetDataChanges()
     }
 
@@ -85,7 +91,8 @@ class AppContainer(application: Application) {
         database.scheduleDao(),
         settingsStore.campusType,
         settingsStore.courseColorOverrides,
-        settingsStore.classPeriodOverrides
+        settingsStore.classPeriodOverrides,
+        guilinSubCampus = settingsStore.guilinSubCampus
     )
     val backgroundStore = ScheduleBackgroundStore(application)
     val academicSessionStore = AcademicSessionStore(application)

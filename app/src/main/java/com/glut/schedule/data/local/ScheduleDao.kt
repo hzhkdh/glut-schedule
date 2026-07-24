@@ -204,11 +204,10 @@ interface ScheduleDao {
     @Query("DELETE FROM semester_adjustments")
     suspend fun deleteAllSemesterAdjustments()
 
-    @Transaction
-    suspend fun replaceSemesterAdjustments(adjustments: List<SemesterAdjustmentEntity>) {
-        deleteSemesterAdjustmentsForSemester(com.glut.schedule.data.model.AcademicSemester.LEGACY_CURRENT_ID)
-        insertSemesterAdjustments(adjustments)
-    }
+    // 已移除 replaceSemesterAdjustments() DAO 事务方法。
+    // 原实现硬编码 LEGACY_CURRENT_ID，与多学期模型不兼容。
+    // 调用方应使用 Repository.replaceSemesterAdjustments()，由 Repository
+    // 根据 viewedSemesterId 动态确定目标学期。
 
     @Transaction
     suspend fun clearAll() {

@@ -1,6 +1,9 @@
 package com.glut.schedule
 
+import android.content.Context
+import android.content.Intent
 import android.graphics.Color as AndroidColor
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import androidx.activity.ComponentActivity
@@ -8,6 +11,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -88,6 +93,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.focus.onFocusEvent
@@ -102,6 +108,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glut.schedule.data.model.NoticeInfo
+import java.io.File
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.hasUnreadNotices
@@ -688,13 +695,17 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.Notice -> NoticeScreen(notices = notices)
                                 DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
                                 DrawerItem.FAQ -> FaqScreen()
-                                DrawerItem.About -> AboutScreen(
-                                    updateChecker = container.updateChecker,
-                                    updateAvailableVersion = updateAvailableVersion,
-                                    onShowUpdateDialog = { info ->
-                                        showUpdateDialog = UpdateDialogState.Idle(info)
-                                    }
-                                )
+                                DrawerItem.About -> {
+                                    val shareCtx = LocalContext.current
+                                    AboutScreen(
+                                        updateChecker = container.updateChecker,
+                                        updateAvailableVersion = updateAvailableVersion,
+                                        onShowUpdateDialog = { info ->
+                                            showUpdateDialog = UpdateDialogState.Idle(info)
+                                        },
+                                        onShare = { shareApk(shareCtx) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -841,8 +852,10 @@ private fun ScheduleSettingsDestination(
         SettingsSubPage.CLASS_PERIODS -> ClassPeriodSettingsScreen(
             campusType = uiState.campusType,
             periods = uiState.classPeriods,
+            guilinSubCampus = uiState.guilinSubCampus,
             onSetPeriods = viewModel::setClassPeriods,
             onResetPeriods = viewModel::resetClassPeriods,
+            onSetGuilinSubCampus = viewModel::setGuilinSubCampus,
             onSaved = { onSubPageChange(SettingsSubPage.ROOT) }
         )
         SettingsSubPage.BUILT_IN_BACKGROUNDS -> BuiltInBackgroundsPage(
@@ -1801,5 +1814,36 @@ private fun UpdateDialog(
                 }
             )
         }
+    }
+}
+
+/** 复制已安装的 APK 到缓存目录并通过系统分享面板发送给 QQ/微信等 */
+private fun shareApk(context: Context) {
+    try {
+        val src = File(context.packageCodePath)
+        // 清理缓存目录中所有旧版本分享 APK，避免文件名冲突产生后缀
+        context.cacheDir.listFiles()?.filter {
+            it.name.startsWith("桂系一站式_v") && it.name.endsWith(".apk")
+        }?.forEach { it.delete() }
+        val dest = File(context.cacheDir, "桂系一站式_v${BuildConfig.VERSION_NAME}.apk")
+        src.copyTo(dest, overwrite = true)
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            dest
+        )
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/vnd.android.package-archive"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra(
+                Intent.EXTRA_TEXT,
+                "桂系一站式 — 查课表、成绩、考试安排超方便！"
+            )
+        }
+        // 使用 createChooser 强制每次都弹出选择器，避免用户选择"始终"后锁定单一平台
+        context.startActivity(Intent.createChooser(shareIntent, "分享到"))
+    } catch (_: Exception) {
+        // 分享失败静默忽略（如 FileProvider 配置异常等边缘情况）
     }
 }

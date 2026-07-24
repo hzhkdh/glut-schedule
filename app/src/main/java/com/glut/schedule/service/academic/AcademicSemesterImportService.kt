@@ -131,10 +131,11 @@ class AcademicSemesterImportService(
         useWeeklyTimetable: Boolean = true,
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> }
     ): Result<AcademicSemesterImportPayload> = runCatching {
-        val currcourse = requireNotNull(
-            apiProbeService.probeUrl(cookie, AcademicSemesterRequestBuilder.currcourseUrl(baseUrl, semester))
-        ) { "无法下载${semester.displayName}课表" }
-        require(currcourse.httpCode in 200..299) { "教务系统返回 ${currcourse.httpCode}" }
+        val currcourse = apiProbeService.probeUrl(cookie, AcademicSemesterRequestBuilder.currcourseUrl(baseUrl, semester))
+            ?: error("无法连接教务服务器，下载${semester.displayName}课表失败")
+        require(currcourse.httpCode in 200..299) {
+            "教务系统返回 HTTP ${currcourse.httpCode}，下载${semester.displayName}课表失败"
+        }
         when (AcademicSemesterResponseValidator.classify(currcourse.body, courseCount = 0)) {
             AcademicSemesterResponseKind.AUTHENTICATION_EXPIRED ->
                 error("登录状态已失效，请重新登录后再导入")
@@ -156,10 +157,11 @@ class AcademicSemesterImportService(
         var portalMaxWeek: Int? = null
         if (useWeeklyTimetable) {
             val landingUrl = AcademicSemesterRequestBuilder.weeklyTimetableUrl(baseUrl, semester)
-            val landing = requireNotNull(apiProbeService.probeUrl(cookie, landingUrl)) {
-                "无法打开${semester.displayName}周次课表"
+            val landing = apiProbeService.probeUrl(cookie, landingUrl)
+                ?: error("无法连接教务服务器，打开${semester.displayName}周次课表失败")
+            require(landing.httpCode in 200..299) {
+                "周次课表返回 HTTP ${landing.httpCode}"
             }
-            require(landing.httpCode in 200..299) { "周次课表返回 ${landing.httpCode}" }
             val landingPage = weeklyTimetableParser.parsePage(
                 landing.body,
                 hasNoon = semester.campus != CampusType.NANNING
@@ -172,16 +174,14 @@ class AcademicSemesterImportService(
             var expectedSemesterMonday: LocalDate? = null
             val pages = buildList {
                 landingPage.availableWeeks.sorted().forEach { week ->
-                    val response = requireNotNull(
-                        apiProbeService.probeForm(
-                            cookie = cookie,
-                            url = AcademicSemesterRequestBuilder.weeklyTimetablePostUrl(baseUrl),
-                            body = AcademicSemesterRequestBuilder.weeklyTimetableForm(semester, week),
-                            referer = landingUrl
-                        )
-                    ) { "第${week}周课表下载失败" }
+                    val response = apiProbeService.probeForm(
+                        cookie = cookie,
+                        url = AcademicSemesterRequestBuilder.weeklyTimetablePostUrl(baseUrl),
+                        body = AcademicSemesterRequestBuilder.weeklyTimetableForm(semester, week),
+                        referer = landingUrl
+                    ) ?: error("第${week}周课表下载失败：网络请求返回空")
                     require(response.httpCode in 200..299) {
-                        "第${week}周课表返回 ${response.httpCode}"
+                        "第${week}周课表返回 HTTP ${response.httpCode}"
                     }
                     val page = weeklyTimetableParser.parsePage(
                         response.body,
@@ -237,7 +237,10 @@ class AcademicSemesterImportService(
     }
 
     private fun semesterPortalLabel(semester: AcademicSemester): String {
-        val season = if (semester.season.name == "SPRING") "春" else "秋"
+        val season = when (semester.season) {
+            com.glut.schedule.data.model.SemesterSeason.SPRING -> "春"
+            com.glut.schedule.data.model.SemesterSeason.AUTUMN -> "秋"
+        }
         return "${semester.portalYear}$season"
     }
 }

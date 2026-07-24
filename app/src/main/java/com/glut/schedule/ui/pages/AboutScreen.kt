@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
@@ -62,6 +63,7 @@ fun AboutScreen(
     updateChecker: UpdateChecker,
     updateAvailableVersion: String,
     onShowUpdateDialog: (UpdateInfo) -> Unit,
+    onShare: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -209,6 +211,13 @@ fun AboutScreen(
                                 onClick = {
                                     uriHandler.openUri("mailto:hezh0425@qq.com")
                                 }
+                            )
+                            HorizontalDivider(color = Color(0xFFEDE8DE))
+                            AboutInfoRow(
+                                icon = Icons.Outlined.Share,
+                                label = "分享",
+                                value = "推荐给同学",
+                                onClick = onShare
                             )
                         }
                     }

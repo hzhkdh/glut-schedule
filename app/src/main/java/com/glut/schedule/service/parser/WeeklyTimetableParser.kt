@@ -257,8 +257,10 @@ class WeeklyTimetableParser {
 
     private fun normalizeTitle(value: String): String = value.replace(Regex("""\s+"""), "").trim()
 
+    // 统一使用 MD5 与 AcademicScheduleParser / NanningCurrcourseParser 保持
+    // 哈希算法一致，确保跨解析器的课程 ID 可合并去重。
     private fun stableId(value: String): String {
-        return MessageDigest.getInstance("SHA-256")
+        return MessageDigest.getInstance("MD5")
             .digest(value.toByteArray())
             .take(8)
             .joinToString("") { "%02x".format(it) }

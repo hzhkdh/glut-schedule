@@ -56,20 +56,24 @@ fun AcademicSemesterEntity.toModel(): AcademicSemester {
     val resolvedCampus = runCatching { com.glut.schedule.data.settings.CampusType.valueOf(campus) }
         .getOrDefault(com.glut.schedule.data.settings.CampusType.GUILIN)
     val resolvedSeason = runCatching { SemesterSeason.valueOf(season) }.getOrDefault(SemesterSeason.SPRING)
-    return AcademicSemester.create(
+    val resolvedCacheStatus = runCatching { SemesterCacheStatus.valueOf(cacheStatus) }
+        .getOrDefault(SemesterCacheStatus.NOT_CACHED)
+    // 直接使用数据库中存储的 displayName，避免 create() 工厂方法重新计算导致与持久化值不一致。
+    return AcademicSemester(
+        id = id,
         campus = resolvedCampus,
         portalYear = portalYear,
         portalYearId = portalYearId,
         season = resolvedSeason,
         portalTermId = portalTermId,
+        displayName = displayName,
         isCurrent = isCurrent,
-        cacheStatus = runCatching { SemesterCacheStatus.valueOf(cacheStatus) }
-            .getOrDefault(SemesterCacheStatus.NOT_CACHED),
+        cacheStatus = resolvedCacheStatus,
         importedAtEpochMillis = importedAtEpochMillis,
         semesterStartDate = semesterStartDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
         semesterEndDate = semesterEndDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
         portalMaxWeek = portalMaxWeek
-    ).copy(id = id)
+    )
 }
 
 @Entity(

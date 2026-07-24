@@ -50,6 +50,7 @@ fun ScheduleHeader(
     onRefreshClick: () -> Unit,
     semesters: List<AcademicSemester>,
     isHistorical: Boolean,
+    viewedSemesterId: String? = null,
     onSemesterSelected: (String) -> Unit,
     onManageSemesters: () -> Unit,
     onReturnToCurrentClick: () -> Unit,

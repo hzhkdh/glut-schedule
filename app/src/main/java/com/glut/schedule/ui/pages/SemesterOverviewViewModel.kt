@@ -277,9 +277,17 @@ class SemesterOverviewViewModel(
 
     private suspend fun fetchTimetableHtml(cookie: String, fallbackBaseUrl: String): String = withContext(Dispatchers.IO) {
         try {
-            val storedUrl = sessionStore.timetableUrl.first()
-            val url = if (storedUrl.isNotBlank()) storedUrl
-            else "$fallbackBaseUrl/academic/manager/coursearrange/showTimetable.do?timetableType=STUDENT&sectionType=BASE"
+            // 优先根据当前查看学期动态构造 URL，避免使用 DataStore 中的旧 URL
+            // （旧 URL 可能包含已切换学期的 yearid/termid 参数，导致跨学期调课数据污染）。
+            val viewedSemester = repository.viewedSemester.first()
+            val studentId = sessionStore.authenticatedStudentNumber.first().ifBlank { "" }
+            val url = if (viewedSemester != null && studentId.isNotBlank()) {
+                com.glut.schedule.service.academic.AcademicSemesterRequestBuilder.timetableUrl(
+                    fallbackBaseUrl, studentId, viewedSemester
+                )
+            } else {
+                "$fallbackBaseUrl/academic/manager/coursearrange/showTimetable.do?timetableType=STUDENT&sectionType=BASE"
+            }
             val client = OkHttpClient.Builder()
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)

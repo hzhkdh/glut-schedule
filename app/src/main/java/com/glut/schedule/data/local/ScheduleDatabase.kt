@@ -105,24 +105,29 @@ abstract class ScheduleDatabase : RoomDatabase() {
 
         val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                val historicalSemesterIds =
-                    "SELECT `id` FROM `academic_semesters` WHERE `isCurrent` = 0"
+                // 仅清理旧格式的不兼容历史学期缓存（v9 引入多学期结构前的临时数据），
+                // 不触碰用户在 v9 停留期间新导入的有效历史缓存。
+                // 旧格式历史学期特征：无 importedAtEpochMillis 时间戳（未完成缓存导入）。
                 db.execSQL(
-                    "DELETE FROM `course_occurrences` WHERE `semesterId` IN ($historicalSemesterIds)"
+                    "DELETE FROM `course_occurrences` WHERE `semesterId` IN " +
+                        "(SELECT `id` FROM `academic_semesters` WHERE `isCurrent` = 0 AND `importedAtEpochMillis` IS NULL)"
                 )
                 db.execSQL(
-                    "DELETE FROM `courses` WHERE `semesterId` IN ($historicalSemesterIds)"
+                    "DELETE FROM `courses` WHERE `semesterId` IN " +
+                        "(SELECT `id` FROM `academic_semesters` WHERE `isCurrent` = 0 AND `importedAtEpochMillis` IS NULL)"
                 )
                 db.execSQL(
-                    "DELETE FROM `class_periods` WHERE `semesterId` IN ($historicalSemesterIds)"
+                    "DELETE FROM `class_periods` WHERE `semesterId` IN " +
+                        "(SELECT `id` FROM `academic_semesters` WHERE `isCurrent` = 0 AND `importedAtEpochMillis` IS NULL)"
                 )
                 db.execSQL(
-                    "DELETE FROM `semester_adjustments` WHERE `semesterId` IN ($historicalSemesterIds)"
+                    "DELETE FROM `semester_adjustments` WHERE `semesterId` IN " +
+                        "(SELECT `id` FROM `academic_semesters` WHERE `isCurrent` = 0 AND `importedAtEpochMillis` IS NULL)"
                 )
                 db.execSQL(
                     "UPDATE `academic_semesters` " +
                         "SET `cacheStatus` = 'NOT_CACHED', `importedAtEpochMillis` = NULL " +
-                        "WHERE `isCurrent` = 0"
+                        "WHERE `isCurrent` = 0 AND `importedAtEpochMillis` IS NULL"
                 )
             }
         }
@@ -130,11 +135,7 @@ abstract class ScheduleDatabase : RoomDatabase() {
         val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE academic_semesters ADD COLUMN portalMaxWeek INTEGER")
-                db.execSQL(
-                    "UPDATE `academic_semesters` " +
-                        "SET `cacheStatus` = 'NOT_CACHED', `importedAtEpochMillis` = NULL " +
-                        "WHERE `isCurrent` = 0"
-                )
+                // v9→v10 已处理历史缓存清理，此处不再重复。
             }
         }
     }

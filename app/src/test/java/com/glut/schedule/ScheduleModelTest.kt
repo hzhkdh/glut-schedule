@@ -76,7 +76,7 @@ class ScheduleModelTest {
 
         assertEquals(14, periods.size)
         assertEquals("08:30", periods.first().startsAt)
-        assertEquals("21:45", periods.last().endsAt)
+        assertEquals("21:50", periods.last().endsAt)
     }
 
     @Test

@@ -10,7 +10,7 @@ class ReleaseVersionTest {
         val module = File("build.gradle.kts")
         val source = (if (module.exists()) module else File("app/build.gradle.kts")).readText()
         assertTrue(source.contains("versionCode = 120"))
-        assertTrue(source.contains("versionName = \"0.20.1\""))
+        assertTrue(source.contains("versionName = \"0.20.0\""))
     }
 
     @Test
