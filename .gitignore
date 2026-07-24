@@ -44,7 +44,13 @@ __pycache__/
 *.pyc
 
 # ===== Docs (personal notes, not for public repo) =====
-docs
+docs/
+findings.md
+progress.md
+task_plan.md
+
+# ===== Debug / sensitive data =====
+教务课表调试/
 
 # ===== Kotlin / generated =====
 .kotlin/
