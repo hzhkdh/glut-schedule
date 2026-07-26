@@ -29,6 +29,8 @@ import com.glut.schedule.service.parser.StudyPlanParser
 import com.glut.schedule.service.AppUpdater
 import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
+import com.glut.schedule.service.greeting.GreetingTemplateRepository
+import com.glut.schedule.service.greeting.HttpGreetingTemplateRemote
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.widget.ScheduleWidgetUpdater
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +55,9 @@ class ScheduleApplication : Application() {
             } catch (e: Exception) {
                 android.util.Log.e("ScheduleApp", "Failed to reset semester on start", e)
             }
+        }
+        applicationScope.launch {
+            appContainer.greetingTemplateRepository.initializeAndRefresh()
         }
         observeWidgetDataChanges()
     }
@@ -87,6 +92,10 @@ class AppContainer(application: Application) {
      .build()
 
     val settingsStore = ScheduleSettingsStore(application)
+    val greetingTemplateRepository = GreetingTemplateRepository(
+        cache = settingsStore,
+        remote = HttpGreetingTemplateRemote()
+    )
     val scheduleRepository = ScheduleRepository(
         database.scheduleDao(),
         settingsStore.campusType,

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
@@ -17,8 +18,11 @@ import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import com.glut.schedule.data.model.validateClassPeriods
+import com.glut.schedule.service.greeting.GreetingTemplateCache
+import com.glut.schedule.service.greeting.GreetingTemplateCacheSnapshot
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 
@@ -58,7 +62,7 @@ private val Context.scheduleSettings by preferencesDataStore(name = "schedule_se
 
 class ScheduleSettingsStore(
     private val context: Context
-) {
+) : GreetingTemplateCache {
     private val currentWeekKey = intPreferencesKey("current_week")
     private val showWeekendKey = booleanPreferencesKey("show_weekend")
     private val showNoonKey = booleanPreferencesKey("show_noon")
@@ -82,6 +86,10 @@ class ScheduleSettingsStore(
     private val confirmedEnrollmentYearKey = intPreferencesKey("confirmed_enrollment_year")
     private val confirmedEnrollmentSeasonKey = stringPreferencesKey("confirmed_enrollment_season")
     private val guilinSubCampusKey = stringPreferencesKey("guilin_sub_campus")
+    private val greetingEnabledKey = booleanPreferencesKey("drawer_greeting_enabled")
+    private val greetingTemplatesJsonKey = stringPreferencesKey("greeting_templates_json")
+    private val greetingTemplatesSuccessAtKey = longPreferencesKey("greeting_templates_success_at")
+    private val greetingTemplatesAttemptAtKey = longPreferencesKey("greeting_templates_attempt_at")
 
     val currentWeekNumber: Flow<Int> = context.scheduleSettings.data.map { preferences ->
         clampAcademicWeek(preferences[currentWeekKey] ?: 9)
@@ -157,6 +165,10 @@ class ScheduleSettingsStore(
     /** 桂林子校区偏好：yanshan（默认）或 pingfeng */
     val guilinSubCampus: Flow<String> = context.scheduleSettings.data.map { preferences ->
         preferences[guilinSubCampusKey] ?: GUILIN_SUB_CAMPUS_DEFAULT
+    }.distinctUntilChanged()
+
+    val greetingEnabled: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
+        greetingEnabledFromStored(preferences[greetingEnabledKey])
     }.distinctUntilChanged()
 
     suspend fun setGuilinSubCampus(subCampus: String) {
@@ -280,6 +292,12 @@ class ScheduleSettingsStore(
         return true
     }
 
+    suspend fun setGreetingEnabled(enabled: Boolean) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[greetingEnabledKey] = enabled
+        }
+    }
+
     suspend fun setClassPeriods(profile: ClassPeriodProfile, periods: List<ClassPeriod>): Boolean {
         if (!com.glut.schedule.data.model.validateClassPeriods(profile, periods)) return false
         context.scheduleSettings.edit { preferences ->
@@ -393,6 +411,29 @@ class ScheduleSettingsStore(
         CampusType.NANNING -> nanningClassPeriodsKey
     }
 
+    override suspend fun read(): GreetingTemplateCacheSnapshot {
+        val preferences = context.scheduleSettings.data.first()
+        return GreetingTemplateCacheSnapshot(
+            rawJson = preferences[greetingTemplatesJsonKey].orEmpty(),
+            lastSuccessEpochMillis = preferences[greetingTemplatesSuccessAtKey] ?: 0L,
+            lastAttemptEpochMillis = preferences[greetingTemplatesAttemptAtKey] ?: 0L
+        )
+    }
+
+    override suspend fun recordAttempt(nowEpochMillis: Long) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[greetingTemplatesAttemptAtKey] = nowEpochMillis
+        }
+    }
+
+    override suspend fun saveSuccess(rawJson: String, nowEpochMillis: Long) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[greetingTemplatesJsonKey] = rawJson
+            preferences[greetingTemplatesSuccessAtKey] = nowEpochMillis
+            preferences[greetingTemplatesAttemptAtKey] = nowEpochMillis
+        }
+    }
+
     private fun classPeriodsKey(profile: ClassPeriodProfile) = when (profile) {
         ClassPeriodProfile.GUILIN_YANSHAN -> guilinYanshanClassPeriodsKey
         ClassPeriodProfile.GUILIN_PINGFENG -> guilinPingfengClassPeriodsKey
@@ -416,6 +457,8 @@ class ScheduleSettingsStore(
         preferences.remove(guilinClassPeriodsKey)
     }
 }
+
+internal fun greetingEnabledFromStored(value: Boolean?): Boolean = value ?: true
 
 internal fun encodeClassPeriods(periods: List<ClassPeriod>): Set<String> {
     return periods.map { period ->

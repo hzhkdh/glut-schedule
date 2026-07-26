@@ -5,6 +5,7 @@ import com.glut.schedule.data.model.AcademicEnrollmentSource
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.CampusType
+import org.jsoup.Jsoup
 import java.time.LocalDate
 
 data class AcademicSemesterCatalogPlan(
@@ -21,6 +22,32 @@ object AcademicSemesterParser {
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
     )
     private val tagRegex = Regex("<[^>]+>")
+
+    /**
+     * 个人信息页在不同校区和版本中字段名不完全一致，因此先按已知 input 名查找，
+     * 再从可见的“姓名”表格行兜底；只返回短的纯文本，避免把整段页面误存为姓名。
+     */
+    fun parseStudentName(html: String): String? {
+        if (html.isBlank()) return null
+        val document = Jsoup.parse(html)
+        val inputs = document.select("input[name]").associate { element ->
+            element.attr("name").lowercase() to element.attr("value").trim()
+        }
+        sequenceOf("studentname", "xm", "name", "student_name")
+            .mapNotNull { inputs[it] }
+            .map(::normalizeStudentName)
+            .firstOrNull { it != null }
+            ?.let { return it }
+
+        document.select("tr").forEach { row ->
+            val cells = row.select("th,td")
+            val labelIndex = cells.indexOfFirst { it.text().trim().removeSuffix("：").removeSuffix(":") == "姓名" }
+            if (labelIndex >= 0 && labelIndex + 1 < cells.size) {
+                normalizeStudentName(cells[labelIndex + 1].text())?.let { return it }
+            }
+        }
+        return null
+    }
 
     fun parseEnrollment(
         html: String,
@@ -151,6 +178,11 @@ object AcademicSemesterParser {
             year in plausibleYears -> year
             else -> null
         }
+    }
+
+    private fun normalizeStudentName(value: String): String? {
+        val normalized = value.trim().replace(Regex("""\s+"""), " ")
+        return normalized.takeIf { it.length in 1..30 && it.none(Char::isISOControl) }
     }
 
     private fun defaultTerms(campus: CampusType): List<PortalTerm> = listOf(

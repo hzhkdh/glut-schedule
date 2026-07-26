@@ -18,6 +18,7 @@ class AcademicSessionStore(
     private val campusUrlKey = stringPreferencesKey("campus_base_url")
     private val timetableUrlKey = stringPreferencesKey("timetable_url")
     private val authenticatedStudentNumberKey = stringPreferencesKey("authenticated_student_number")
+    private val authenticatedStudentNameKey = stringPreferencesKey("authenticated_student_name")
 
     val academicCookie: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
         preferences[cookieKey].orEmpty()
@@ -37,6 +38,10 @@ class AcademicSessionStore(
 
     val authenticatedStudentNumber: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
         preferences[authenticatedStudentNumberKey].orEmpty()
+    }
+
+    val authenticatedStudentName: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
+        preferences[authenticatedStudentNameKey].orEmpty()
     }
 
     suspend fun saveCookie(cookie: String) {
@@ -64,8 +69,27 @@ class AcademicSessionStore(
     }
 
     suspend fun saveAuthenticatedStudentNumber(studentNumber: String) {
+        saveAuthenticatedStudent(studentNumber, null)
+    }
+
+    /**
+     * 学号与姓名在同一次 DataStore 事务中更新，确保切换账号时不会读到旧账号姓名。
+     * 同账号偶发解析失败时保留已知姓名；新账号解析失败则清空姓名。
+     */
+    suspend fun saveAuthenticatedStudent(studentNumber: String, parsedStudentName: String?) {
         context.academicSessionDataStore.edit { preferences ->
-            preferences[authenticatedStudentNumberKey] = studentNumber
+            val resolved = resolveAuthenticatedStudent(
+                existingStudentNumber = preferences[authenticatedStudentNumberKey].orEmpty(),
+                existingStudentName = preferences[authenticatedStudentNameKey].orEmpty(),
+                newStudentNumber = studentNumber,
+                parsedStudentName = parsedStudentName
+            )
+            preferences[authenticatedStudentNumberKey] = resolved.studentNumber
+            if (resolved.studentName.isBlank()) {
+                preferences.remove(authenticatedStudentNameKey)
+            } else {
+                preferences[authenticatedStudentNameKey] = resolved.studentName
+            }
         }
     }
 
@@ -82,4 +106,25 @@ class AcademicSessionStore(
     suspend fun clearAll() {
         context.academicSessionDataStore.edit { it.clear() }
     }
+}
+
+data class AuthenticatedStudentIdentity(
+    val studentNumber: String,
+    val studentName: String
+)
+
+internal fun resolveAuthenticatedStudent(
+    existingStudentNumber: String,
+    existingStudentName: String,
+    newStudentNumber: String,
+    parsedStudentName: String?
+): AuthenticatedStudentIdentity {
+    val normalizedNumber = newStudentNumber.trim()
+    val normalizedParsedName = parsedStudentName?.trim().orEmpty()
+    val resolvedName = when {
+        normalizedParsedName.isNotBlank() -> normalizedParsedName
+        existingStudentNumber.trim() == normalizedNumber -> existingStudentName.trim()
+        else -> ""
+    }
+    return AuthenticatedStudentIdentity(normalizedNumber, resolvedName)
 }

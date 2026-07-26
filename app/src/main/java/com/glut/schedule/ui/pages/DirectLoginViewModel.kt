@@ -531,6 +531,8 @@ class DirectLoginViewModel(
                 cookie,
                 "$campusBaseUrl/academic/student/studentinfo/studentInfoModifyIndex.do?frombase=0&wantTag=0"
             )?.body.orEmpty()
+            val studentName = AcademicSemesterParser.parseStudentName(enrollmentHtml)
+            sessionStore.saveAuthenticatedStudent(studentNumber, studentName)
             val enrollmentDate = AcademicSemesterParser.parseEnrollment(
                 html = enrollmentHtml,
                 studentNumber = studentNumber

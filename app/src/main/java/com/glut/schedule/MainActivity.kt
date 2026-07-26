@@ -1,10 +1,12 @@
 package com.glut.schedule
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.view.View
+import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -80,7 +82,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,6 +102,8 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -112,6 +118,9 @@ import com.glut.schedule.data.model.hasUnreadNotices
 import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.UpdateInfo
+import com.glut.schedule.service.greeting.DrawerGreeting
+import com.glut.schedule.service.greeting.DrawerGreetingContext
+import com.glut.schedule.service.greeting.DrawerGreetingPlanner
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.navigation.campusDrawerItems
 import com.glut.schedule.ui.navigation.otherDrawerItems
@@ -161,10 +170,13 @@ import com.glut.schedule.data.settings.CampusType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.time.LocalDateTime
 
 private enum class SettingsSubPage(val title: String) {
     ROOT("设置"),
@@ -297,6 +309,30 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
+                val greetingEnabled by container.settingsStore.greetingEnabled.collectAsStateWithLifecycle(initialValue = true)
+                val studentName by container.academicSessionStore.authenticatedStudentName
+                    .collectAsStateWithLifecycle(initialValue = "")
+                val authenticatedStudentNumber by container.academicSessionStore.authenticatedStudentNumber
+                    .collectAsStateWithLifecycle(initialValue = "")
+                val greetingExams by container.scheduleRepository.exams
+                    .collectAsStateWithLifecycle(initialValue = emptyList())
+                val greetingSemesterStart by container.settingsStore.semesterStartMonday
+                    .collectAsStateWithLifecycle(initialValue = com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY)
+                val greetingSemesterEnd by container.settingsStore.semesterEndDate
+                    .collectAsStateWithLifecycle(initialValue = com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE)
+                val greetingTemplates by container.greetingTemplateRepository.templates.collectAsStateWithLifecycle()
+                val greetingPlanner = remember { DrawerGreetingPlanner() }
+                var drawerGreeting by remember {
+                    mutableStateOf(
+                        DrawerGreeting(
+                            text = DrawerGreetingPlanner.STATIC_SLOGAN,
+                            category = null,
+                            animate = false
+                        )
+                    )
+                }
+                var greetingAnimationRunId by remember { mutableStateOf(0) }
+                var lastGreetingAnimationAt by remember { mutableStateOf<Long?>(null) }
                 val campusInfoViewModel: CampusImageViewModel? =
                     if (selectedItem == DrawerItem.CampusInfo) {
                         viewModel(
@@ -351,6 +387,50 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val isSchedulePage = selectedItem == DrawerItem.Schedule
+                val latestGreetingEnabled by rememberUpdatedState(greetingEnabled)
+                val latestStudentName by rememberUpdatedState(studentName)
+                val latestAuthenticatedStudentNumber by rememberUpdatedState(authenticatedStudentNumber)
+                val latestGreetingExams by rememberUpdatedState(greetingExams)
+                val latestSemesterStart by rememberUpdatedState(greetingSemesterStart)
+                val latestSemesterEnd by rememberUpdatedState(greetingSemesterEnd)
+                val latestGreetingTemplates by rememberUpdatedState(greetingTemplates)
+
+                LaunchedEffect(drawerState) {
+                    snapshotFlow { drawerState.targetValue }
+                        .distinctUntilChanged()
+                        .collect { target ->
+                            if (target != DrawerValue.Open) return@collect
+                            greetingAnimationRunId++
+                            if (!latestGreetingEnabled) {
+                                drawerGreeting = DrawerGreeting(
+                                    text = DrawerGreetingPlanner.STATIC_SLOGAN,
+                                    category = null,
+                                    animate = false
+                                )
+                                return@collect
+                            }
+                            val nowMillis = System.currentTimeMillis()
+                            val nextGreeting = greetingPlanner.next(
+                                context = DrawerGreetingContext(
+                                    studentName = latestStudentName,
+                                    exams = latestGreetingExams,
+                                    now = LocalDateTime.now(),
+                                    semesterStart = latestSemesterStart
+                                        .takeIf { latestAuthenticatedStudentNumber.isNotBlank() },
+                                    semesterEnd = latestSemesterEnd
+                                        .takeIf { latestAuthenticatedStudentNumber.isNotBlank() }
+                                ),
+                                templates = latestGreetingTemplates,
+                                previousText = drawerGreeting.text,
+                                lastAnimatedAtEpochMillis = lastGreetingAnimationAt,
+                                nowEpochMillis = nowMillis
+                            )
+                            drawerGreeting = nextGreeting
+                            if (nextGreeting.animate) {
+                                lastGreetingAnimationAt = nowMillis
+                            }
+                        }
+                }
 
                 DisposableEffect(selectedItem) {
                     applySystemBarStyle(lightIcons = !isSchedulePage)
@@ -423,7 +503,18 @@ class MainActivity : ComponentActivity() {
                             drawerContainerColor = Color(0xFFE8E4D6),
                             drawerContentColor = Color(0xFF141821)
                         ) {
-                            DrawerHeader()
+                            DrawerHeader(
+                                greeting = if (greetingEnabled) {
+                                    drawerGreeting
+                                } else {
+                                    DrawerGreeting(
+                                        text = DrawerGreetingPlanner.STATIC_SLOGAN,
+                                        category = null,
+                                        animate = false
+                                    )
+                                },
+                                animationRunId = greetingAnimationRunId
+                            )
                             HorizontalDivider(color = Color(0xFFDDE2EA))
                             Column(
                                 modifier = Modifier
@@ -690,6 +781,12 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
                                     viewModel = scheduleViewModel,
                                     subPage = settingsSubPage,
+                                    greetingEnabled = greetingEnabled,
+                                    onGreetingEnabledChange = { enabled ->
+                                        scope.launch {
+                                            container.settingsStore.setGreetingEnabled(enabled)
+                                        }
+                                    },
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
                                     onSubPageChange = { settingsSubPage = it },
                                     onReset = { showResetConfirm = true }
@@ -838,6 +935,8 @@ private fun ScheduleDestination(
 private fun ScheduleSettingsDestination(
     viewModel: ScheduleViewModel,
     subPage: SettingsSubPage,
+    greetingEnabled: Boolean,
+    onGreetingEnabledChange: (Boolean) -> Unit,
     onPickBackground: () -> Unit,
     onSubPageChange: (SettingsSubPage) -> Unit,
     onReset: () -> Unit
@@ -873,6 +972,8 @@ private fun ScheduleSettingsDestination(
             onShowWeekendChange = viewModel::setShowWeekend,
             showNoon = uiState.showNoon,
             onShowNoonChange = viewModel::setShowNoon,
+            greetingEnabled = greetingEnabled,
+            onGreetingEnabledChange = onGreetingEnabledChange,
             hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
             onPickBackground = onPickBackground,
             onClearBackground = viewModel::clearCustomBackground,
@@ -885,7 +986,10 @@ private fun ScheduleSettingsDestination(
 }
 
 @Composable
-private fun DrawerHeader() {
+private fun DrawerHeader(
+    greeting: DrawerGreeting,
+    animationRunId: Int
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -906,7 +1010,11 @@ private fun DrawerHeader() {
                 Column {
                     Text("桂系一站式", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("简单 高效 纯粹", color = Color(0xFF667085), fontSize = 13.sp)
+                    TypewriterGreetingText(
+                        fullText = greeting.text,
+                        animate = greeting.animate,
+                        animationRunId = animationRunId
+                    )
                 }
             }
         }
@@ -953,6 +1061,8 @@ private fun SettingsPage(
     onShowWeekendChange: (Boolean) -> Unit,
     showNoon: Boolean = false,
     onShowNoonChange: (Boolean) -> Unit = {},
+    greetingEnabled: Boolean = true,
+    onGreetingEnabledChange: (Boolean) -> Unit = {},
     hasCustomBackground: Boolean = false,
     onPickBackground: () -> Unit = {},
     onClearBackground: () -> Unit = {},
@@ -1002,6 +1112,20 @@ private fun SettingsPage(
                 ) {
                     Text("显示中午", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Switch(checked = showNoon, onCheckedChange = onShowNoonChange)
+                }
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("问候语", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = greetingEnabled, onCheckedChange = onGreetingEnabledChange)
                 }
             }
 
@@ -1113,6 +1237,60 @@ private fun SettingsPage(
             }
         }
     }
+}
+
+@Composable
+private fun TypewriterGreetingText(
+    fullText: String,
+    animate: Boolean,
+    animationRunId: Int
+) {
+    val context = LocalContext.current
+    val accessibilityEnabled = remember {
+        context.getSystemService(AccessibilityManager::class.java)?.isEnabled == true
+    }
+    val canAnimate = animate &&
+        ValueAnimator.areAnimatorsEnabled() &&
+        !accessibilityEnabled
+    var visibleText by remember(fullText, animationRunId, canAnimate) {
+        mutableStateOf(if (canAnimate) "" else fullText)
+    }
+    var typing by remember(fullText, animationRunId, canAnimate) {
+        mutableStateOf(canAnimate)
+    }
+
+    LaunchedEffect(fullText, animationRunId, canAnimate) {
+        if (!canAnimate) {
+            visibleText = fullText
+            typing = false
+            return@LaunchedEffect
+        }
+        val codePointCount = fullText.codePointCount(0, fullText.length)
+        val stepDelay = if (codePointCount == 0) 0L else {
+            minOf(50L, 1_200L / codePointCount.coerceAtLeast(1))
+        }
+        for (index in 1..codePointCount) {
+            val end = fullText.offsetByCodePoints(0, index)
+            visibleText = fullText.substring(0, end)
+            if (stepDelay > 0L) delay(stepDelay)
+        }
+        typing = false
+    }
+
+    Text(
+        text = visibleText + if (typing) "▌" else "",
+        color = Color(0xFF667085),
+        fontSize = 13.sp,
+        lineHeight = 20.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(20.dp)
+            .clearAndSetSemantics {
+                contentDescription = fullText
+            }
+    )
 }
 
 @Composable
