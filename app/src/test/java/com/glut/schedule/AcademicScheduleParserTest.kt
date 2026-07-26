@@ -156,28 +156,30 @@ class AcademicScheduleParserTest {
                 <tr class="infolist_hr_common">
                   <th>第1节<br>08:20<br>┆<br>09:05</th>
                   <td id="1-1">&nbsp;</td><td id="2-1">&nbsp;</td><td id="3-1">&nbsp;</td><td id="4-1">&nbsp;</td>
-                  <td id="5-1">&lt;&lt;微机原理与接口技术&gt;&gt;;1<br>014102S<br>陈守学<br>2-1<br>第11周<br>实验学时</td>
+                  <td id="5-1">&lt;&lt;微机原理与接口技<wbr><wbr>术&gt;&gt;;1<br>06104D<br>蒋志军<br>1-10周<br>讲课学时<br>&lt;&lt;微机原理与接口技<wbr><wbr>术&gt;&gt;;1<br>014102S<br>陈守学<br>2-1<br>第11周<br>实验学时</td>
                 </tr>
                 <tr class="infolist_hr_common">
                   <th>第2节<br>09:15<br>┆<br>10:00</th>
                   <td id="1-2">&nbsp;</td><td id="2-2">&nbsp;</td><td id="3-2">&nbsp;</td><td id="4-2">&nbsp;</td>
-                  <td id="5-2">&lt;&lt;微机原理与接口技术&gt;&gt;;1<br>014102S<br>陈守学<br>2-1<br>第11周<br>实验学时</td>
+                  <td id="5-2">&lt;&lt;微机原理与接口技<wbr><wbr>术&gt;&gt;;1<br>06104D<br>蒋志军<br>1-10周<br>讲课学时<br>&lt;&lt;微机原理与接口技<wbr><wbr>术&gt;&gt;;1<br>014102S<br>陈守学<br>2-1<br>第11周<br>实验学时</td>
                 </tr>
                 <tr class="infolist_hr_common">
                   <th>第3节<br>10:20<br>┆<br>11:05</th>
                   <td id="1-3">&nbsp;</td><td id="2-3">&nbsp;</td><td id="3-3">&nbsp;</td><td id="4-3">&nbsp;</td>
-                  <td id="5-3">&lt;&lt;微机原理与接口技术&gt;&gt;;1<br>014102S<br>陈守学<br>2-1<br>第11周<br>实验学时</td>
+                  <td id="5-3">&lt;&lt;微机原理与接口技<wbr><wbr>术&gt;&gt;;1<br>06408D<br>蒋志军<br>1-10周<br>讲课学时<br>&lt;&lt;微机原理与接口技<wbr><wbr>术&gt;&gt;;1<br>014102S<br>陈守学<br>2-1<br>第11周<br>实验学时</td>
                 </tr>
                 <tr class="infolist_hr_common">
                   <th>第4节<br>11:15<br>┆<br>12:00</th>
                   <td id="1-4">&nbsp;</td><td id="2-4">&nbsp;</td><td id="3-4">&nbsp;</td><td id="4-4">&nbsp;</td>
-                  <td id="5-4">&lt;&lt;微机原理与接口技术&gt;&gt;;1<br>014102S<br>陈守学<br>2-1<br>第11周<br>实验学时</td>
+                  <td id="5-4">&lt;&lt;微机原理与接口技<wbr><wbr>术&gt;&gt;;1<br>06408D<br>蒋志军<br>1-10周<br>讲课学时<br>&lt;&lt;微机原理与接口技<wbr><wbr>术&gt;&gt;;1<br>014102S<br>陈守学<br>2-1<br>第11周<br>实验学时</td>
                 </tr>
               </table>
             </body></html>
         """.trimIndent()
 
-        val course = parser.parsePersonalSchedule(html).single()
+        val course = parser.parsePersonalSchedule(html).single {
+            it.room == "014102S" && it.teacher == "陈守学"
+        }
         val occurrence = course.occurrences.single()
 
         assertEquals("微机原理与接口技术", course.title)

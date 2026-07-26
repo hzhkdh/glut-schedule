@@ -56,6 +56,7 @@ class MultiSemesterUiContractTest {
     @Test
     fun semesterDownloadAndViewAreDistinctAndDownloadNeverSelects() {
         val viewModel = page("DirectLoginViewModel.kt")
+        val screen = page("DirectLoginScreen.kt")
         val downloadBody = viewModel.substringAfter("fun downloadSemester(")
             .substringBefore("fun viewSemester(")
         val viewBody = viewModel.substringAfter("fun viewSemester(")
@@ -67,6 +68,10 @@ class MultiSemesterUiContractTest {
         assertTrue(downloadBody.contains("useWeeklyTimetable = true"))
         assertTrue(downloadBody.contains("onProgress = { completed, total ->"))
         assertTrue(downloadBody.contains("第${'$'}{completed}/${'$'}{total}周"))
+        assertFalse(downloadBody.contains("semester.cacheStatus == SemesterCacheStatus.CACHED ||"))
+        assertTrue(downloadBody.contains("previousCacheStatus"))
+        assertTrue(screen.contains("canRedownload"))
+        assertTrue(screen.contains("onDownloadSemester(selectedSemester.id)"))
         assertTrue(viewBody.contains("AcademicSemesterViewPlanner.weekFor("))
         assertTrue(viewBody.contains("settingsStore.setCurrentWeekNumber(week)"))
         assertTrue(viewBody.contains("scheduleRepository.selectSemester(semesterId)"))

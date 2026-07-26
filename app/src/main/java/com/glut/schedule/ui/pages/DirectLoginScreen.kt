@@ -35,6 +35,7 @@ import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -248,6 +249,8 @@ private fun SemesterManagementSection(
     val isDownloading = importingSemesterId == selectedSemester.id ||
         selectedSemester.cacheStatus == SemesterCacheStatus.DOWNLOADING
     val isViewable = selectedSemester.isCurrent || selectedSemester.cacheStatus == SemesterCacheStatus.CACHED
+    val canRedownload = !selectedSemester.isCurrent &&
+        selectedSemester.cacheStatus == SemesterCacheStatus.CACHED
     val actionLabel = when {
         isDownloading -> "下载中..."
         isViewable && selectedSemester.id == viewedSemesterId -> "正在查看"
@@ -331,6 +334,16 @@ private fun SemesterManagementSection(
                 Spacer(modifier = Modifier.width(8.dp))
             }
             Text(actionLabel, fontWeight = FontWeight.SemiBold)
+        }
+        if (canRedownload) {
+            OutlinedButton(
+                onClick = { onDownloadSemester(selectedSemester.id) },
+                enabled = !isDownloading,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 8.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("重新下载", color = LoginAccent, fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }

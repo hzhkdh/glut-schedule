@@ -189,9 +189,9 @@ class DirectLoginViewModel(
 
     fun downloadSemester(semesterId: String) {
         val semester = _uiState.value.semesters.firstOrNull { it.id == semesterId } ?: return
-        if (semester.cacheStatus == SemesterCacheStatus.CACHED ||
-            semester.cacheStatus == SemesterCacheStatus.DOWNLOADING) return
+        if (semester.cacheStatus == SemesterCacheStatus.DOWNLOADING) return
         if (_uiState.value.importingSemesterId != null) return
+        val previousCacheStatus = semester.cacheStatus
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(importingSemesterId = semesterId, message = "正在下载${semester.displayName}...")
             scheduleRepository.updateSemesterCacheStatus(semesterId, SemesterCacheStatus.DOWNLOADING)
@@ -231,10 +231,20 @@ class DirectLoginViewModel(
                     message = "已缓存${semester.displayName}，历史学期为只读模式"
                 )
             }.onFailure { error ->
-                scheduleRepository.updateSemesterCacheStatus(semesterId, SemesterCacheStatus.FAILED)
+                // 历史缓存刷新失败时恢复原状态，避免一次网络波动让已有课表不可查看。
+                val fallbackStatus = if (previousCacheStatus == SemesterCacheStatus.CACHED) {
+                    SemesterCacheStatus.CACHED
+                } else {
+                    SemesterCacheStatus.FAILED
+                }
+                scheduleRepository.updateSemesterCacheStatus(semesterId, fallbackStatus)
                 _uiState.value = _uiState.value.copy(
                     importingSemesterId = null,
-                    message = "下载失败：${error.message ?: "请稍后重试"}"
+                    message = if (fallbackStatus == SemesterCacheStatus.CACHED) {
+                        "重新下载失败，已保留现有缓存：${error.message ?: "请稍后重试"}"
+                    } else {
+                        "下载失败：${error.message ?: "请稍后重试"}"
+                    }
                 )
             }
         }
