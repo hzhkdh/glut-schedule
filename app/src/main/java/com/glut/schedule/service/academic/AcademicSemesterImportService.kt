@@ -152,8 +152,36 @@ class AcademicSemesterImportService(
         }
         var courses = personalCourses.map { it.copy(occurrences = emptyList()) }
 
-        var adjustments = emptyList<SemesterAdjustment>()
-        var resolvedTimetableHtml = ""
+        val studentId = ApiProbeService.extractInternalIdFromCurrcourse(currcourse.body)
+            .orEmpty().ifBlank { studentIdFallback }
+        val timetable = if (studentId.isNotBlank()) {
+            apiProbeService.probeUrl(
+                cookie,
+                AcademicSemesterRequestBuilder.timetableUrl(baseUrl, studentId, semester)
+            )
+        } else null
+        val timetableHtml = timetable?.takeIf { it.httpCode in 200..299 }?.body.orEmpty()
+        if (timetableHtml.isNotBlank() &&
+            AcademicSemesterResponseValidator.classify(timetableHtml, courseCount = 0) ==
+            AcademicSemesterResponseKind.AUTHENTICATION_EXPIRED
+        ) {
+            error("登录状态已失效，请重新登录后再导入")
+        }
+        // 个人课表把每个教室精确绑定到实际教师，仅作为逐周课表的优先元数据；
+        // 解析失败时保持空列表，继续回退到课程安排页，避免新增导入失败条件。
+        val preferredMetadataCourses = if (timetableHtml.isBlank()) {
+            emptyList()
+        } else {
+            runCatching { scheduleParser.parsePersonalSchedule(timetableHtml) }
+                .getOrDefault(emptyList())
+        }
+
+        var adjustments = if (timetableHtml.isBlank()) {
+            emptyList()
+        } else {
+            scheduleParser.parseAdjustments(timetableHtml)
+        }
+        var resolvedTimetableHtml = if (useWeeklyTimetable) "" else timetableHtml
         var portalMaxWeek: Int? = null
         if (useWeeklyTimetable) {
             val landingUrl = AcademicSemesterRequestBuilder.weeklyTimetableUrl(baseUrl, semester)
@@ -199,7 +227,11 @@ class AcademicSemesterImportService(
             require(pages.any { it.rows.isNotEmpty() } || courses.isEmpty()) {
                 "周次课表未返回课程，已保留现有缓存"
             }
-            val mergedCourses = weeklyTimetableParser.mergeWithMetadata(courses, pages)
+            val mergedCourses = weeklyTimetableParser.mergeWithMetadata(
+                baseCourses = courses,
+                pages = pages,
+                preferredMetadataCourses = preferredMetadataCourses
+            )
             require(courses.isEmpty() || mergedCourses.any { it.occurrences.isNotEmpty() }) {
                 "周次课表未解析到有效上课时间，已保留现有缓存"
             }
@@ -207,24 +239,6 @@ class AcademicSemesterImportService(
             val weeklyAdjustments = scheduleParser.parseAdjustments(landing.body)
             if (weeklyAdjustments.isNotEmpty()) adjustments = weeklyAdjustments
             resolvedTimetableHtml = landing.body
-        }
-        val studentId = ApiProbeService.extractInternalIdFromCurrcourse(currcourse.body)
-            .orEmpty().ifBlank { studentIdFallback }
-        val timetable = if (studentId.isNotBlank()) {
-            apiProbeService.probeUrl(
-                cookie,
-                AcademicSemesterRequestBuilder.timetableUrl(baseUrl, studentId, semester)
-            )
-        } else null
-        val timetableHtml = timetable?.takeIf { it.httpCode in 200..299 }?.body.orEmpty()
-        if (timetableHtml.isNotBlank()) {
-            when (AcademicSemesterResponseValidator.classify(timetableHtml, courseCount = 0)) {
-                AcademicSemesterResponseKind.AUTHENTICATION_EXPIRED ->
-                    error("登录状态已失效，请重新登录后再导入")
-                else -> Unit
-            }
-            if (adjustments.isEmpty()) adjustments = scheduleParser.parseAdjustments(timetableHtml)
-            if (!useWeeklyTimetable) resolvedTimetableHtml = timetableHtml
         }
         AcademicSemesterImportPayload(
             courses = courses,

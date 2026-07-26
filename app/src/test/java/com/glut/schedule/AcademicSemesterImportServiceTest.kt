@@ -100,9 +100,9 @@ class AcademicSemesterImportServiceTest {
     fun accurateImportGetsLandingBeforePostingEachWeek() = runTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
             server.enqueue(MockResponse().setResponseCode(200).setBody(weeklyLandingHtml()))
             server.enqueue(MockResponse().setResponseCode(200).setBody(weeklyWeekHtml()))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
             val progress = mutableListOf<Pair<Int, Int>>()
 
             val result = AcademicSemesterImportService(
@@ -125,15 +125,68 @@ class AcademicSemesterImportServiceTest {
             assertEquals(1, result.getOrThrow().portalMaxWeek)
             assertEquals(listOf(1 to 1), progress)
             val currcourseRequest = server.takeRequest()
+            val timetableRequest = server.takeRequest()
             val landingRequest = server.takeRequest()
             val weekRequest = server.takeRequest()
-            val timetableRequest = server.takeRequest()
             assertTrue(currcourseRequest.path.orEmpty().contains("currcourse.jsdo"))
+            assertTrue(timetableRequest.path.orEmpty().contains("showTimetable.do"))
             assertTrue(landingRequest.path.orEmpty().contains("studentWeeklyTimetable.do?yearid=45&termid=1"))
             assertEquals("POST", weekRequest.method)
             assertEquals("yearid=45&termid=1&whichWeek=1", weekRequest.body.readUtf8())
             assertEquals(server.url("academic/manager/coursearrange/studentWeeklyTimetable.do?yearid=45&termid=1").toString(), weekRequest.getHeader("Referer"))
-            assertTrue(timetableRequest.path.orEmpty().contains("showTimetable.do"))
+        }
+    }
+
+    @Test
+    fun personalTimetableTeacherOverridesCourseArrangementTeacherForExactRoom() = runTest {
+        val mainTeacherCourse = course().copy(
+            title = "微机原理与接口技术",
+            room = "014102S",
+            teacher = "蒋志军"
+        )
+        val experimentTeacherCourse = mainTeacherCourse.copy(teacher = "陈守学")
+
+        MockWebServer().use { server ->
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val path = request.path.orEmpty()
+                    return when {
+                        path.contains("currcourse.jsdo") ->
+                            MockResponse().setResponseCode(200)
+                                .setBody(validScheduleHtml() + "<div>课程安排来源</div>")
+                        path.contains("showTimetable.do") ->
+                            MockResponse().setResponseCode(200)
+                                .setBody("<html><body>个人课表来源</body></html>")
+                        request.method == "GET" ->
+                            MockResponse().setResponseCode(200)
+                                .setBody(weeklyLandingHtml(listOf(11)))
+                        else ->
+                            MockResponse().setResponseCode(200)
+                                .setBody(experimentWeeklyWeekHtml())
+                    }
+                }
+            }
+            val parser = SourceAwareParser(
+                courseArrangementCourses = listOf(mainTeacherCourse),
+                personalTimetableCourses = listOf(experimentTeacherCourse)
+            )
+
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                parser
+            ).importSemester(
+                cookie = "JSESSIONID=test",
+                baseUrl = server.url("/").toString(),
+                semester = semester(),
+                studentIdFallback = "student-internal-id",
+                useWeeklyTimetable = true
+            )
+
+            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
+            val imported = result.getOrThrow().courses.single()
+            assertEquals("陈守学", imported.teacher)
+            assertEquals("014102S", imported.room)
+            assertEquals("第11周", imported.occurrences.single().weekText)
         }
     }
 
@@ -238,9 +291,9 @@ class AcademicSemesterImportServiceTest {
     fun nanningDiscardsPersonalOccurrencesAndKeepsWeeklySectionsOneThroughElevenUnshifted() = runTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml(term = "2")))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml(term = "2")))
             server.enqueue(MockResponse().setResponseCode(200).setBody(weeklyLandingHtml()))
             server.enqueue(MockResponse().setResponseCode(200).setBody(nanningWeeklyWeekHtml()))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml(term = "2")))
             val parser = FailIfPersonalOccurrencesAreAppliedParser(listOf(course()))
 
             val result = AcademicSemesterImportService(
@@ -353,6 +406,16 @@ class AcademicSemesterImportServiceTest {
         </body></html>
     """.trimIndent()
 
+    private fun experimentWeeklyWeekHtml() = """
+        <html><body><form><span>2025春 第 </span><select name="whichWeek">
+        <option value="11" selected>11</option></select><span> 周 周次课表</span></form>
+        <table><tr><th>日期</th><th>课程名</th><th>选课属性</th><th>考试性质</th><th>星期</th>
+        <th>节次</th><th>开始时间</th><th>结束时间</th><th>教学楼</th><th>教室</th><th></th></tr>
+        <tr><td>2025-05-14</td><td>微机原理与接口技术</td><td>必修</td><td>正常考试</td><td>星期三</td>
+        <td>第7、8节</td><td>16:20</td><td>18:00</td><td>雁山14号楼</td><td>014102S</td><td></td></tr></table>
+        </body></html>
+    """.trimIndent()
+
     private fun semester() = AcademicSemester.create(
         CampusType.GUILIN, 2025, "45", SemesterSeason.SPRING, "1", isCurrent = true
     )
@@ -372,6 +435,19 @@ class AcademicSemesterImportServiceTest {
 
     private class FixedParser(private val courses: List<ScheduleCourse>) : AcademicScheduleParser {
         override fun parsePersonalSchedule(html: String): List<ScheduleCourse> = courses
+    }
+
+    private class SourceAwareParser(
+        private val courseArrangementCourses: List<ScheduleCourse>,
+        private val personalTimetableCourses: List<ScheduleCourse>
+    ) : AcademicScheduleParser {
+        override fun parsePersonalSchedule(html: String): List<ScheduleCourse> {
+            return if (html.contains("个人课表来源")) {
+                personalTimetableCourses
+            } else {
+                courseArrangementCourses
+            }
+        }
     }
 
     private class FailIfPersonalOccurrencesAreAppliedParser(
