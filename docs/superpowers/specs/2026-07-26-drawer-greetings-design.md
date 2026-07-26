@@ -24,7 +24,7 @@
 
 `app-update-host/greetings.json` 通过 `https://update.999314.xyz/greetings.json` 发布。格式版本固定为 `schemaVersion = 1`，分类为 `greeting`、`examToday`、`examTomorrow`、`examUpcoming`、`semesterWeek` 和 `semesterEnding`。
 
-远程端只能控制文案，不能控制随机权重、考试时间窗、开关和动画参数。客户端仅接受 `{name}`、`{period}`、`{course}`、`{days}`、`{week}` 占位符。首次启动尝试获取，之后每 24 小时后台刷新；失败时保留上次有效缓存。
+远程端只能控制文案，不能控制随机权重、考试时间窗、开关和动画参数。客户端仅接受 `{name}`、`{period}`、`{course}`、`{days}`、`{week}` 占位符。首次启动尝试获取，之后每 2 小时后台刷新；失败时保留上次有效缓存。
 
 ## 发布与后续同步
 

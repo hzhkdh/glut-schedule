@@ -60,7 +60,8 @@ class GreetingTemplateRepository(
         }
 
     companion object {
-        const val SUCCESS_TTL_MILLIS = 24L * 60L * 60L * 1000L
+        // 文案体积很小，成功缓存保留 2 小时，在避免频繁联网的同时缩短运营文案生效延迟。
+        const val SUCCESS_TTL_MILLIS = 2L * 60L * 60L * 1000L
         const val FAILURE_RETRY_MILLIS = 60L * 60L * 1000L
     }
 }

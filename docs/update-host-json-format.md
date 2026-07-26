@@ -12,7 +12,7 @@
 
 问候语模板地址为 `https://update.999314.xyz/greetings.json`。当前格式版本为 `schemaVersion = 1`，支持 `greeting`、`examToday`、`examTomorrow`、`examUpcoming`、`semesterWeek`、`semesterEnding` 六类模板，以及 `{name}`、`{period}`、`{course}`、`{days}`、`{week}` 五个占位符。
 
-远程文件只控制文案，不控制随机权重、考试窗口、开关和动画。客户端每 24 小时后台刷新，按分类覆盖内置模板；分类无有效远程内容时回退该分类内置模板。姓名、课程和日期只在客户端本地填充，不上传。
+远程文件只控制文案，不控制随机权重、考试窗口、开关和动画。客户端每 2 小时后台刷新，按分类覆盖内置模板；分类无有效远程内容时回退该分类内置模板。姓名、课程和日期只在客户端本地填充，不上传。
 
 完整维护规则见 `app-update-host/greetingsJsonFormat.md`。
 

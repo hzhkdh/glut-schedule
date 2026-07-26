@@ -14,13 +14,13 @@ import org.junit.Test
 class GreetingTemplateRepositoryTest {
 
     @Test
-    fun successfulCacheYoungerThanTwentyFourHoursSkipsNetwork() = runTest {
+    fun successfulCacheYoungerThanTwoHoursSkipsNetwork() = runTest {
         val now = 100L * HOUR
         val cache = FakeCache(
             GreetingTemplateCacheSnapshot(
                 rawJson = validJson("缓存问候 {name}"),
-                lastSuccessEpochMillis = now - 23L * HOUR,
-                lastAttemptEpochMillis = now - 23L * HOUR
+                lastSuccessEpochMillis = now - 2L * HOUR + 1L,
+                lastAttemptEpochMillis = now - 2L * HOUR + 1L
             )
         )
         val remote = FakeRemote(validJson("远程问候 {name}"))
@@ -42,7 +42,7 @@ class GreetingTemplateRepositoryTest {
         val cache = FakeCache(
             GreetingTemplateCacheSnapshot(
                 rawJson = validJson("旧问候 {name}"),
-                lastSuccessEpochMillis = now - 24L * HOUR,
+                lastSuccessEpochMillis = now - 2L * HOUR,
                 lastAttemptEpochMillis = 0L
             )
         )
