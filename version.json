@@ -1,7 +1,7 @@
 {
-  "version": "v0.20.0",
-  "versionCode": 35,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.20.0",
-  "releaseNotes": "Release v0.20.0",
-  "publishedAt": "2026-07-24T14:57:52Z"
+  "version": "v0.21.0",
+  "versionCode": 36,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.21.0",
+  "releaseNotes": "## feature\n· 完善多学期课表导入、切换与离线查看\n· 侧边栏新增随机问候语，会结合时间、课程、考试与学期进度显示\n\n## fix\n· 修复主讲老师和实验课老师不同时，实验课卡片错误显示主讲老师的问题\n· 修复部分用户升级后课表数据库迁移崩溃问题\n· 修复二次导入可能导致历史学期课表丢失问题\n· 修复自定义上课时间保存、历史课表下载和校园地图显示等问题\n\n## chan,
+  "publishedAt": "2026-07-26T15:01:27Z"
 }
