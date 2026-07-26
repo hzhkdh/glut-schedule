@@ -46,6 +46,10 @@ __pycache__/
 
 # ===== Docs (personal notes, not for public repo) =====
 docs/
+!docs/
+docs/*
+!docs/code-review-2026-07-26.md
+!docs/code-review-fixes-2026-07-26.md
 findings.md
 progress.md
 task_plan.md

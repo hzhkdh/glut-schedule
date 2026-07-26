@@ -13,6 +13,7 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.guilinClassPeriods
 import com.glut.schedule.data.model.nanningClassPeriods
@@ -38,6 +39,42 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScheduleRepositoryTest {
+    @Test
+    fun replaceSemesterAdjustmentsWritesToExplicitTargetSemester() = runTest {
+        val firstSemester = AcademicSemester.create(
+            CampusType.GUILIN, 2025, "45", SemesterSeason.AUTUMN, "2", isCurrent = false
+        )
+        val currentSemester = AcademicSemester.create(
+            CampusType.GUILIN, 2026, "46", SemesterSeason.SPRING, "1", isCurrent = true
+        )
+        val dao = FakeScheduleDao(
+            initialSemesters = listOf(firstSemester.toEntity(), currentSemester.toEntity())
+        )
+        val repository = ScheduleRepository(dao = dao, campusType = flowOf(CampusType.GUILIN))
+        val adjustment = SemesterAdjustment(
+            id = "adjustment-1",
+            type = "调课",
+            title = "测试课程",
+            teacher = "教师",
+            originalWeek = 1,
+            originalDay = 1,
+            originalStartSection = 1,
+            originalEndSection = 2,
+            originalRoom = "A101",
+            makeupWeek = 2,
+            makeupDay = 2,
+            makeupStartSection = 3,
+            makeupEndSection = 4,
+            makeupRoom = "A102"
+        )
+
+        // 即使界面查看目标随后变化，本次写入仍必须落到请求开始时捕获的学期。
+        repository.selectSemester(currentSemester.id)
+        repository.replaceSemesterAdjustments(firstSemester.id, listOf(adjustment))
+
+        assertEquals(firstSemester.id, dao.adjustments.single().semesterId)
+    }
+
     @Test
     fun pingfengProfileUsesItsDefaultInsteadOfStoredYanshanPeriods() = runTest {
         val dao = FakeScheduleDao(initialSemesters = listOf(legacyCurrentSemester()))
@@ -511,6 +548,8 @@ class ScheduleRepositoryTest {
         private val occurrenceFlow = MutableStateFlow<List<CourseOccurrenceEntity>>(emptyList())
         private val periodFlow = MutableStateFlow<List<ClassPeriodEntity>>(emptyList())
         private val adjustmentFlow = MutableStateFlow<List<com.glut.schedule.data.local.SemesterAdjustmentEntity>>(emptyList())
+        val adjustments: List<com.glut.schedule.data.local.SemesterAdjustmentEntity>
+            get() = adjustmentFlow.value
 
         override fun observeSemesters(): Flow<List<AcademicSemesterEntity>> = semesterFlow
 

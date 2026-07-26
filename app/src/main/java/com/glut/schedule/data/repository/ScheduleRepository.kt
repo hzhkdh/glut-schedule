@@ -228,10 +228,14 @@ class ScheduleRepository(
         entities.filter { it.semesterId == semesterId }.map { it.toModel() }
     }
 
-    suspend fun replaceSemesterAdjustments(adjustments: List<SemesterAdjustment>) {
-        val semesterId = viewedSemesterId.value
-        dao.deleteSemesterAdjustmentsForSemester(semesterId)
-        dao.insertSemesterAdjustments(adjustments.map { it.toEntity(semesterId) })
+    suspend fun replaceSemesterAdjustments(
+        semesterId: String,
+        adjustments: List<SemesterAdjustment>
+    ) {
+        dao.replaceSemesterAdjustments(
+            semesterId = semesterId,
+            adjustments = adjustments.map { it.toEntity(semesterId) }
+        )
     }
 
     suspend fun replaceImportedCourses(courses: List<ScheduleCourse>) {

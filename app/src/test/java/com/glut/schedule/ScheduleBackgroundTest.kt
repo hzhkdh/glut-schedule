@@ -5,6 +5,7 @@ import com.glut.schedule.ui.components.BuiltInScheduleBackground
 import com.glut.schedule.ui.components.ImageCropRegion
 import com.glut.schedule.ui.components.calculateBackgroundDecodePlan
 import com.glut.schedule.ui.components.calculateBitmapSampleSize
+import com.glut.schedule.ui.components.backgroundBitmapByteSize
 import com.glut.schedule.ui.components.calculateDecodeTargetSize
 import com.glut.schedule.ui.components.shouldCommitCustomBackgroundUri
 import com.glut.schedule.ui.components.shouldUseCustomBackground
@@ -14,6 +15,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScheduleBackgroundTest {
+    @Test
+    fun bitmapCacheCostIsMeasuredInBytes() {
+        assertEquals(1080 * 2400 * 4, backgroundBitmapByteSize(1080, 2400))
+        assertEquals(Int.MAX_VALUE, backgroundBitmapByteSize(Int.MAX_VALUE, Int.MAX_VALUE))
+    }
+
     @Test
     fun customBackgroundRequiresNonBlankUri() {
         assertFalse(shouldUseCustomBackground(""))

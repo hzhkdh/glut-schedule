@@ -12,6 +12,8 @@ import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.StudyPlanParser
+import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
+import com.glut.schedule.service.network.readBytesLimited
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -171,7 +173,10 @@ class StudyPlanViewModel(
 
         val (selfBody, selfContentType) = withContext(Dispatchers.IO) {
             client.newCall(selfRequest).execute().use { response ->
-                Pair(response.body?.bytes() ?: ByteArray(0), response.header("Content-Type") ?: "")
+                Pair(
+                    response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES) ?: ByteArray(0),
+                    response.header("Content-Type") ?: ""
+                )
             }
         }
         val gbkCharset = try { Charset.forName("GBK") } catch (_: Exception) { Charsets.UTF_8 }
@@ -189,7 +194,10 @@ class StudyPlanViewModel(
 
         val (lineBody, lineContentType) = withContext(Dispatchers.IO) {
             client.newCall(lineRequest).execute().use { response ->
-                Pair(response.body?.bytes() ?: ByteArray(0), response.header("Content-Type") ?: "")
+                Pair(
+                    response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES) ?: ByteArray(0),
+                    response.header("Content-Type") ?: ""
+                )
             }
         }
         val utfCharset = if (lineContentType.contains("charset=", ignoreCase = true))
@@ -204,7 +212,6 @@ class StudyPlanViewModel(
         // Step 3: 框架模式 — 任选课组详情（best-effort，失败不影响主流程）
         try {
             val frameStudentId = studyPlanParser.parseFrameStudentId(selfHtml)
-            Log.d(TAG, "Frame studentId: ${frameStudentId ?: "NOT FOUND"}")
             if (frameStudentId != null) {
                 val frameHtml = fetchFrameHtml(cookie, campusBaseUrl, frameStudentId, classId, client)
                 if (frameHtml != null) {
@@ -247,7 +254,7 @@ class StudyPlanViewModel(
                     try { Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
                     catch (_: Exception) { Charsets.UTF_8 }
                 else Charsets.UTF_8
-                String(resp.body?.bytes() ?: ByteArray(0), cs)
+                String(resp.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES) ?: ByteArray(0), cs)
             }
         } catch (e: Exception) {
             Log.w(TAG, "Frame page failed: ${e.message}")
@@ -268,7 +275,10 @@ class StudyPlanViewModel(
                     try { Charset.forName(ct.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\"")) }
                     catch (_: Exception) { Charsets.UTF_8 }
                 else Charsets.UTF_8
-                val html = String(resp.body?.bytes() ?: ByteArray(0), cs)
+                val html = String(
+                    resp.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES) ?: ByteArray(0),
+                    cs
+                )
                 studyPlanParser.parseFreeGroupDetail(html)
             }
         } catch (e: Exception) {

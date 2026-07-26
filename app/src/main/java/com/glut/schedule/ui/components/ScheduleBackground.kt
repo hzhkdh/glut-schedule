@@ -24,7 +24,6 @@ import androidx.annotation.DrawableRes
 import com.glut.schedule.R
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
@@ -53,7 +52,10 @@ enum class BuiltInScheduleBackground(
 class ScheduleBackgroundStore(
     private val context: Context
 ) {
-    private val cache = object : LruCache<String, ImageBitmap>(2) {}
+    private val cache = object : LruCache<String, ImageBitmap>(MAX_BACKGROUND_CACHE_BYTES) {
+        override fun sizeOf(key: String, value: ImageBitmap): Int =
+            backgroundBitmapByteSize(value.width, value.height)
+    }
 
     fun get(uri: String): ImageBitmap? = cache.get(uri)
 
@@ -75,12 +77,6 @@ class ScheduleBackgroundStore(
         } else {
             Log.d(RecomposeTag, "background decode failed")
             false
-        }
-    }
-
-    fun preloadBlocking(uri: String, targetWidth: Int, targetHeight: Int): Boolean {
-        return runBlocking {
-            preload(uri, targetWidth, targetHeight)
         }
     }
 
@@ -142,6 +138,18 @@ class ScheduleBackgroundStore(
             }
         }
     }
+}
+
+private const val MAX_BACKGROUND_CACHE_BYTES = 24 * 1024 * 1024
+
+/**
+ * ARGB 位图按每像素 4 字节估算缓存成本，并对极端尺寸做饱和处理防止整数溢出。
+ */
+fun backgroundBitmapByteSize(width: Int, height: Int): Int {
+    if (width <= 0 || height <= 0) return 0
+    val pixels = width.toLong() * height.toLong()
+    if (pixels > Int.MAX_VALUE.toLong() / 4L) return Int.MAX_VALUE
+    return (pixels * 4L).toInt()
 }
 
 @Suppress("DEPRECATION")

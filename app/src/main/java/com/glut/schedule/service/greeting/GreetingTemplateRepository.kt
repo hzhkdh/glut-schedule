@@ -1,5 +1,6 @@
 package com.glut.schedule.service.greeting
 
+import com.glut.schedule.service.network.readStringLimited
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -83,11 +84,7 @@ class HttpGreetingTemplateRemote(
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext null
                 val body = response.body ?: return@withContext null
-                val declaredLength = body.contentLength()
-                if (declaredLength > GreetingTemplateParser.MAX_JSON_BYTES) return@withContext null
-                body.string().takeIf {
-                    it.toByteArray(Charsets.UTF_8).size <= GreetingTemplateParser.MAX_JSON_BYTES
-                }
+                body.readStringLimited(GreetingTemplateParser.MAX_JSON_BYTES)
             }
         }.getOrNull()
     }

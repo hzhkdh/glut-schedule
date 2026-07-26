@@ -17,6 +17,8 @@ import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.StudyPlanParser
+import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
+import com.glut.schedule.service.network.readBytesLimited
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -264,7 +266,8 @@ class ProfessionalScoreViewModel(
 
         val (body, contentType) = withContext(Dispatchers.IO) {
             client.newCall(request).execute().use { response ->
-                val rawBytes = response.body?.bytes() ?: ByteArray(0)
+                val rawBytes = response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES)
+                    ?: ByteArray(0)
                 val ct = response.header("Content-Type") ?: ""
                 Pair(rawBytes, ct)
             }
@@ -311,7 +314,7 @@ class ProfessionalScoreViewModel(
                     .get()
                     .build()
             ).execute().use { response ->
-                response.body?.bytes() ?: ByteArray(0)
+                response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES) ?: ByteArray(0)
             }
         }
         val selfHtml = String(selfBytes, Charset.forName("GBK"))
@@ -328,7 +331,8 @@ class ProfessionalScoreViewModel(
                     .get()
                     .build()
             ).execute().use { response ->
-                val rawBytes = response.body?.bytes() ?: ByteArray(0)
+                val rawBytes = response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES)
+                    ?: ByteArray(0)
                 val ct = response.header("Content-Type") ?: ""
                 Pair(rawBytes, ct)
             }
@@ -353,7 +357,7 @@ class ProfessionalScoreViewModel(
                     .get()
                     .build()
             ).execute().use { response ->
-                response.body?.bytes() ?: ByteArray(0)
+                response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES) ?: ByteArray(0)
             }
             val selfHtml = String(selfBody, Charset.forName("GBK"))
             val ids = studyPlanParser.parseStudentIds(selfHtml) ?: return@withContext emptyMap()
@@ -368,7 +372,7 @@ class ProfessionalScoreViewModel(
                     .get()
                     .build()
             ).execute().use { response ->
-                response.body?.bytes() ?: ByteArray(0)
+                response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES) ?: ByteArray(0)
             }
             val lineHtml = String(lineBody, Charsets.UTF_8)
             studyPlanParser.parseCourseAttributeMap(lineHtml)

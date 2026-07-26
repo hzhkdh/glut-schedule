@@ -26,6 +26,12 @@ import com.glut.schedule.service.academic.CapturingCookieJar
 import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.academic.NanningPasswordHash
 import com.glut.schedule.service.parser.AcademicScheduleParser
+import com.glut.schedule.service.network.MAX_BOOLEAN_RESPONSE_BYTES
+import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
+import com.glut.schedule.service.network.MAX_IMAGE_RESPONSE_BYTES
+import com.glut.schedule.service.network.readBytesLimited
+import com.glut.schedule.service.network.readStringLimited
+import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.parser.AcademicSemesterCatalogPlan
 import com.glut.schedule.service.parser.AcademicSemesterParser
 import com.glut.schedule.service.parser.GlutExamParser
@@ -51,6 +57,7 @@ data class DirectLoginUiState(
     val username: String = "",
     val password: String = "",
     val rememberPassword: Boolean = true,
+    val secureCredentialStorageAvailable: Boolean = true,
     val isNanning: Boolean = false,
     val isLoggingIn: Boolean = false,
     // Nanning captcha flow
@@ -87,8 +94,14 @@ class DirectLoginViewModel(
     private val gradeExamParser: GradeExamParser = GradeExamParser(),
     private val studyPlanParser: StudyPlanParser = StudyPlanParser()
 ) : ViewModel() {
+    private val loginGuard = SingleFlightGuard()
 
-    private val _uiState = MutableStateFlow(DirectLoginUiState())
+    private val _uiState = MutableStateFlow(
+        DirectLoginUiState(
+            rememberPassword = credentialStore.canPersistCredentials(),
+            secureCredentialStorageAvailable = credentialStore.canPersistCredentials()
+        )
+    )
     val uiState: StateFlow<DirectLoginUiState> = _uiState
 
     private var loginHttpClient = AcademicLoginHttpClient()
@@ -117,7 +130,10 @@ class DirectLoginViewModel(
                 _uiState.value = _uiState.value.copy(
                     username = savedUsername,
                     password = savedPassword,
-                    rememberPassword = savedUsername.isNotBlank()
+                    rememberPassword = effectiveRememberPassword(
+                        requested = savedUsername.isNotBlank(),
+                        secureStorageAvailable = credentialStore.canPersistCredentials()
+                    )
                 )
             }
         }
@@ -136,7 +152,14 @@ class DirectLoginViewModel(
         _uiState.value = _uiState.value.copy(username = username, isNanning = autoNanning)
     }
     fun updatePassword(password: String) { _uiState.value = _uiState.value.copy(password = password) }
-    fun updateRememberPassword(remember: Boolean) { _uiState.value = _uiState.value.copy(rememberPassword = remember) }
+    fun updateRememberPassword(remember: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            rememberPassword = effectiveRememberPassword(
+                requested = remember,
+                secureStorageAvailable = credentialStore.canPersistCredentials()
+            )
+        )
+    }
     fun toggleNanning() { _uiState.value = _uiState.value.copy(isNanning = !_uiState.value.isNanning) }
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
 
@@ -217,7 +240,10 @@ class DirectLoginViewModel(
         loginHttpClient = AcademicLoginHttpClient()
         nanningCaptchaBytes = null
         nanningCookieJar = null
-        _uiState.value = DirectLoginUiState(rememberPassword = false)
+        _uiState.value = DirectLoginUiState(
+            rememberPassword = false,
+            secureCredentialStorageAvailable = credentialStore.canPersistCredentials()
+        )
     }
 
     fun loginAndImport() {
@@ -226,6 +252,8 @@ class DirectLoginViewModel(
             _uiState.value = state.copy(message = "请输入学号和密码")
             return
         }
+        if (!loginGuard.tryStart()) return
+        _uiState.value = state.copy(isLoggingIn = true, message = "正在登录...")
 
         // Create fresh login client to clear any cookies from previous sessions.
         // Without this, the CapturingCookieJar from a prior login can cause the
@@ -233,13 +261,12 @@ class DirectLoginViewModel(
         loginHttpClient = AcademicLoginHttpClient()
 
         if (state.isNanning) {
-            startNanningLoginFlow()
+            startNanningLoginFlow(guardAlreadyStarted = true)
             return
         }
 
         // Guilin: direct HTTP login
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoggingIn = true, message = "正在登录...")
             try {
                 val result = loginHttpClient.login(state.username, state.password)
                 when (result) {
@@ -264,15 +291,18 @@ class DirectLoginViewModel(
                 }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "登录失败: ${e.message}")
+            } finally {
+                loginGuard.finish()
             }
         }
     }
 
     // ---- Nanning native captcha flow ----
 
-    private fun startNanningLoginFlow() {
+    private fun startNanningLoginFlow(guardAlreadyStarted: Boolean = false) {
+        if (!guardAlreadyStarted && !loginGuard.tryStart()) return
+        _uiState.value = _uiState.value.copy(isLoggingIn = true, message = "正在获取验证码...")
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoggingIn = true, message = "正在获取验证码...")
             try {
                 // Create fresh CookieJar for this login session (like a new browser tab)
                 val cj = CapturingCookieJar()
@@ -301,7 +331,7 @@ class DirectLoginViewModel(
                             .header("User-Agent", UA)
                             .header("Referer", "${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
                             .get().build()
-                        ).execute().use { it.body?.bytes() }
+                        ).execute().use { it.body?.readBytesLimited(MAX_IMAGE_RESPONSE_BYTES) }
                     }.getOrNull()
                 }
                 if (captchaBytes == null) {
@@ -320,6 +350,8 @@ class DirectLoginViewModel(
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "获取验证码失败: ${e.message}")
+            } finally {
+                loginGuard.finish()
             }
         }
     }
@@ -336,9 +368,10 @@ class DirectLoginViewModel(
             _uiState.value = state.copy(message = "会话已过期，请重新开始")
             return
         }
+        if (!loginGuard.tryStart()) return
+        _uiState.value = _uiState.value.copy(isLoggingIn = true, showCaptchaDialog = false, message = "正在登录...")
 
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoggingIn = true, showCaptchaDialog = false, message = "正在登录...")
             try {
                 val loginCookie = performNanningLogin(cj, state.username, state.password, captchaCode)
                 if (loginCookie != null) {
@@ -354,6 +387,8 @@ class DirectLoginViewModel(
                 }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "登录失败: ${e.message}")
+            } finally {
+                loginGuard.finish()
             }
         }
     }
@@ -377,7 +412,7 @@ class DirectLoginViewModel(
                             .header("User-Agent", UA)
                             .header("Referer", "${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
                             .get().build()
-                        ).execute().use { it.body?.bytes() }
+                        ).execute().use { it.body?.readBytesLimited(MAX_IMAGE_RESPONSE_BYTES) }
                     }.getOrNull()
                 }
                 if (bytes != null) {
@@ -450,7 +485,7 @@ class DirectLoginViewModel(
             .method("POST", ByteArray(0).toRequestBody(null))
             .build()
         ).execute().use { response ->
-            response.body?.string().orEmpty().trim() == "true"
+            response.body?.readStringLimited(MAX_BOOLEAN_RESPONSE_BYTES).orEmpty().trim() == "true"
         }
     }
 
@@ -479,33 +514,39 @@ class DirectLoginViewModel(
             .build()
         ).execute().use { response ->
             val location = response.header("Location") ?: ""
-            listOf("framePage", "index_new", "showTimetable", "personal", "manager").any {
-                location.contains(it, ignoreCase = true)
-            } || response.isSuccessful
+            val body = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
+            isAuthenticatedNanningResponse(response.code, location, body)
         }
     }
 
     // ---- Shared helpers ----
 
-    private fun onLoginSuccess(cookie: String, campusBaseUrl: String, remember: Boolean, studentNumber: String) {
-        if (remember) {
-            credentialStore.saveCredentials(_uiState.value.username, _uiState.value.password)
+    private suspend fun onLoginSuccess(cookie: String, campusBaseUrl: String, remember: Boolean, studentNumber: String) {
+        val username = _uiState.value.username
+        val password = _uiState.value.password
+        val shouldRemember = effectiveRememberPassword(remember, credentialStore.canPersistCredentials())
+        val previousStudent = sessionStore.authenticatedStudentNumber.first()
+        if (shouldClearAcademicData(previousStudent, studentNumber)) {
+            // 账号变化时先清空旧教务缓存，避免新账号短暂看到上一位学生的数据。
+            scheduleRepository.clearAllData()
+            sessionStore.clearAll()
+        }
+        if (shouldRemember) {
+            credentialStore.saveCredentials(username, password)
         } else {
             credentialStore.clearCredentials()
         }
-        viewModelScope.launch {
-            sessionStore.saveCookie(cookie)
-            sessionStore.saveCampusBaseUrl(campusBaseUrl)
-            sessionStore.saveAuthenticatedStudentNumber(studentNumber)
-            val campusType = if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
-                com.glut.schedule.data.settings.CampusType.NANNING
-            } else {
-                com.glut.schedule.data.settings.CampusType.GUILIN
-            }
-            settingsStore.setCampusType(campusType)
-            _uiState.value = _uiState.value.copy(message = "登录成功，正在导入数据...")
-            performImport(cookie, campusBaseUrl, studentNumber)
+        sessionStore.saveCookie(cookie)
+        sessionStore.saveCampusBaseUrl(campusBaseUrl)
+        sessionStore.saveAuthenticatedStudentNumber(studentNumber)
+        val campusType = if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
+            com.glut.schedule.data.settings.CampusType.NANNING
+        } else {
+            com.glut.schedule.data.settings.CampusType.GUILIN
         }
+        settingsStore.setCampusType(campusType)
+        _uiState.value = _uiState.value.copy(message = "登录成功，正在导入数据...")
+        performImport(cookie, campusBaseUrl, studentNumber)
     }
 
     private suspend fun performImport(cookie: String, campusBaseUrl: String, studentNumber: String) {
@@ -514,6 +555,7 @@ class DirectLoginViewModel(
         var scoreCount = 0
         var gradeExamCount = 0
         var studyPlanCount = 0
+        val failedModules = linkedSetOf<String>()
 
         try {
             val results = apiProbeService.probeAllEndpoints(cookie = cookie, baseUrl = campusBaseUrl)
@@ -625,33 +667,49 @@ class DirectLoginViewModel(
             )
             courseCount = currentPayload.courses.size
 
+            var examImported = false
             val examJsonResult = apiProbeService.findExamJsonResult(results)
             if (examJsonResult != null) {
-                val exams = runCatching { examParser.parseExamJson(examJsonResult.body) }.getOrDefault(emptyList())
-                scheduleRepository.replaceExams(exams)
-                examCount = exams.size
-            }
-            if (examCount == 0) {
-                val examHtmlResult = apiProbeService.findExamHtmlResult(results)
-                if (examHtmlResult != null) {
-                    val exams = runCatching { examParser.parseExamHtml(examHtmlResult.body) }.getOrDefault(emptyList())
+                val exams = runCatching { examParser.parseExamJson(examJsonResult.body) }.getOrNull()
+                if (exams != null) {
                     scheduleRepository.replaceExams(exams)
                     examCount = exams.size
+                    examImported = true
                 }
             }
+            if (!examImported) {
+                val examHtmlResult = apiProbeService.findExamHtmlResult(results)
+                if (examHtmlResult != null) {
+                    val exams = runCatching { examParser.parseExamHtml(examHtmlResult.body) }.getOrNull()
+                    if (exams != null) {
+                        scheduleRepository.replaceExams(exams)
+                        examCount = exams.size
+                        examImported = true
+                    }
+                }
+            }
+            if (!examImported) failedModules += "考试"
 
-            scoreCount = fetchAndSaveScores(cookie, campusBaseUrl)
+            fetchAndSaveScores(cookie, campusBaseUrl)
+                .onSuccess { scoreCount = it }
+                .onFailure { failedModules += "成绩" }
 
-            // Import grade exams from probe result
+            // 等级考试只有在响应可识别且解析成功时才替换缓存。
+            var gradeExamImported = false
             val gradeExamResult = apiProbeService.findGradeExamResult(results)
             if (gradeExamResult != null) {
                 val gradeExams = runCatching {
                     gradeExamParser.parse(gradeExamResult.body)
-                }.getOrDefault(emptyList())
-                scheduleRepository.replaceGradeExams(gradeExams)
-                gradeExamCount = gradeExams.size
+                }.getOrNull()
+                if (gradeExams != null) {
+                    scheduleRepository.replaceGradeExams(gradeExams)
+                    gradeExamCount = gradeExams.size
+                    gradeExamImported = true
+                }
             }
+            if (!gradeExamImported) failedModules += "等级考试"
 
+            var studyPlanImported = false
             try {
                 // Step 1: Use probed studentSelfSchedule.jsdo result (like exams/grade exams use probe results)
                 val selfResult = results.find {
@@ -699,13 +757,17 @@ class DirectLoginViewModel(
                         }
                         scheduleRepository.replaceStudyPlanData(groups, courses)
                         studyPlanCount = groups.size
+                        studyPlanImported = true
                     }
                 }
-            } catch (_: Exception) { }
+            } catch (_: Exception) {
+                // 单个模块失败不应阻断课表导入，但必须反馈且保留原缓存。
+            }
+            if (!studyPlanImported) failedModules += "教学计划"
 
             _uiState.value = _uiState.value.copy(
                 isLoggingIn = false,
-                message = "导入完成",
+                message = importCompletionMessage(failedModules),
                 importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount, studyPlanCount)
             )
         } catch (e: Exception) {
@@ -717,7 +779,10 @@ class DirectLoginViewModel(
         }
     }
 
-    private suspend fun fetchAndSaveScores(cookie: String, campusBaseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL): Int {
+    private suspend fun fetchAndSaveScores(
+        cookie: String,
+        campusBaseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL
+    ): Result<Int> {
         val scoreClient = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
@@ -743,7 +808,8 @@ class DirectLoginViewModel(
 
             val (body, contentType) = withContext(Dispatchers.IO) {
                 scoreClient.newCall(request).execute().use { response ->
-                    val rawBytes = response.body?.bytes() ?: ByteArray(0)
+                    val rawBytes = response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES)
+                        ?: ByteArray(0)
                     val ct = response.header("Content-Type") ?: ""
                     Pair(rawBytes, ct)
                 }
@@ -765,9 +831,9 @@ class DirectLoginViewModel(
 
             val scores = scoreParser.parseScoreHtml(html, isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL)
             scheduleRepository.replaceScores(scores)
-            return scores.size
-        } catch (_: Exception) {
-            return 0
+            return Result.success(scores.size)
+        } catch (error: Exception) {
+            return Result.failure(error)
         }
     }
 
@@ -801,6 +867,61 @@ class DirectLoginViewModel(
             }
             return map.entries.joinToString("; ") { "${it.key}=${it.value}" }
         }
+    }
+}
+
+/**
+ * 只有系统加密存储可用时才允许记住教务密码，避免任何明文降级路径。
+ */
+internal fun effectiveRememberPassword(
+    requested: Boolean,
+    secureStorageAvailable: Boolean
+): Boolean = requested && secureStorageAvailable
+
+/**
+ * 首次登录没有旧数据可清；只有切换到不同的已知学号时才隔离并清理教务缓存。
+ */
+internal fun shouldClearAcademicData(previousStudent: String, newStudent: String): Boolean {
+    val previous = previousStudent.trim()
+    val incoming = newStudent.trim()
+    return previous.isNotEmpty() && incoming.isNotEmpty() && previous != incoming
+}
+
+/**
+ * 南宁受保护页面必须包含明确的认证标记，普通 2xx 或返回登录表单都不能算成功。
+ */
+internal fun isAuthenticatedNanningResponse(
+    httpCode: Int,
+    location: String,
+    body: String
+): Boolean {
+    val redirectAuthenticated = listOf(
+        "framePage",
+        "index_new",
+        "showTimetable",
+        "/personal/",
+        "/manager/"
+    ).any { location.contains(it, ignoreCase = true) }
+    if (redirectAuthenticated) return true
+    if (httpCode !in 200..299) return false
+
+    val loginMarkers = listOf("affairLogin", "j_username", "j_password", "验证码", "loginForm")
+    if (loginMarkers.any { body.contains(it, ignoreCase = true) }) return false
+
+    return listOf(
+        "schoolCalendarStartDate",
+        "currentTodayPlan.do",
+        "moduleMenu.do",
+        "preGotoAffairFrame"
+    ).any { body.contains(it, ignoreCase = true) }
+}
+
+internal fun importCompletionMessage(failedModules: Collection<String>): String {
+    val uniqueModules = failedModules.distinct()
+    return if (uniqueModules.isEmpty()) {
+        "导入完成"
+    } else {
+        "部分导入失败：${uniqueModules.joinToString("、")}；已保留原缓存"
     }
 }
 

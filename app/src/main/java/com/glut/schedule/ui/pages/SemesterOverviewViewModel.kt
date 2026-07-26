@@ -19,6 +19,9 @@ import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.AcademicScheduleParser
+import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
+import com.glut.schedule.service.network.readStringLimited
+import com.glut.schedule.ui.SingleFlightGuard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,6 +70,31 @@ data class HolidayDisplay(
     val daysUntil: Long
 )
 
+data class SemesterProgress(
+    val elapsedDays: Long,
+    val remainingDays: Long,
+    val percent: Float
+)
+
+/**
+ * 进度必须基于正在查看的学期日期计算，不能回退到当前学期的设置日期。
+ */
+fun calculateSemesterProgress(
+    today: LocalDate,
+    semesterStartDate: LocalDate,
+    semesterEndDate: LocalDate
+): SemesterProgress {
+    val totalDays = (ChronoUnit.DAYS.between(semesterStartDate, semesterEndDate) + 1L)
+        .coerceAtLeast(1L)
+    val elapsedDays = ChronoUnit.DAYS.between(semesterStartDate, today)
+        .coerceIn(0L, totalDays)
+    return SemesterProgress(
+        elapsedDays = elapsedDays,
+        remainingDays = (totalDays - elapsedDays).coerceAtLeast(0L),
+        percent = elapsedDays.toFloat() / totalDays.toFloat()
+    )
+}
+
 private data class SemesterBase(
     val startMonday: LocalDate,
     val endDate: LocalDate,
@@ -84,6 +112,7 @@ class SemesterOverviewViewModel(
 ) : ViewModel() {
 
     private val _isRefreshing = MutableStateFlow(false)
+    private val refreshGuard = SingleFlightGuard()
     private val _message = MutableStateFlow("")
     private val _holidays = MutableStateFlow<List<HolidayDisplay>>(emptyList())
 
@@ -120,9 +149,7 @@ class SemesterOverviewViewModel(
             semesterEndDate = endDate
         )
         val currentWeek = if (isArchiveMode) 0 else academicWeekForDate(today, startDate, maxWeek)
-        val totalDays = ChronoUnit.DAYS.between(startDate, endDate) + 1
-        val elapsed = ChronoUnit.DAYS.between(base.startMonday, today).coerceIn(0, totalDays)
-        val remaining = (totalDays - elapsed).coerceAtLeast(0)
+        val progress = calculateSemesterProgress(today, startDate, endDate)
 
         val year = startDate.year
         val month = startDate.monthValue
@@ -155,9 +182,9 @@ class SemesterOverviewViewModel(
             semesterEndDate = endDate,
             currentWeek = currentWeek,
             totalWeeks = maxWeek,
-            progressPercent = if (totalDays > 0) (elapsed.toFloat() / totalDays.toFloat()) else 0f,
-            elapsedDays = elapsed,
-            remainingDays = remaining,
+            progressPercent = progress.percent,
+            elapsedDays = progress.elapsedDays,
+            remainingDays = progress.remainingDays,
             holidays = if (isArchiveMode) emptyList() else holidaysWithVacation,
             adjustmentsByWeek = base.adjustments.groupBy { adj ->
                 if (adj.originalWeek > 0) adj.originalWeek else adj.makeupWeek
@@ -181,8 +208,9 @@ class SemesterOverviewViewModel(
             _message.value = "历史学期归档为只读，无需刷新"
             return
         }
+        if (!refreshGuard.tryStart()) return
+        _isRefreshing.value = true
         viewModelScope.launch {
-            _isRefreshing.value = true
             _message.value = "正在刷新..."
             try {
                 loadHolidays()
@@ -191,6 +219,7 @@ class SemesterOverviewViewModel(
                 _message.value = "刷新失败: ${e.message}"
             } finally {
                 _isRefreshing.value = false
+                refreshGuard.finish()
                 delay(4000)
                 _message.value = ""
             }
@@ -202,8 +231,10 @@ class SemesterOverviewViewModel(
             _message.value = "历史学期调课记录来自缓存，无法刷新"
             return
         }
+        if (!refreshGuard.tryStart()) return
+        val targetSemesterId = repository.viewedSemesterId.value
+        _isRefreshing.value = true
         viewModelScope.launch {
-            _isRefreshing.value = true
             _message.value = "正在获取调课信息..."
             try {
                 val campusBaseUrl = sessionStore.campusBaseUrl.first()
@@ -261,7 +292,8 @@ class SemesterOverviewViewModel(
                     return@launch
                 }
                 val adjustments = scheduleParser.parseAdjustments(html)
-                repository.replaceSemesterAdjustments(adjustments)
+                // 使用请求开始时捕获的学期，防止网络等待期间切换学期导致写错缓存。
+                repository.replaceSemesterAdjustments(targetSemesterId, adjustments)
                 _message.value = if (adjustments.isNotEmpty()) "已更新 ${adjustments.size} 条调课记录"
                 else "当前无调课记录"
             } catch (e: Exception) {
@@ -269,6 +301,7 @@ class SemesterOverviewViewModel(
                 _message.value = "获取失败，请检查网络后重试"
             } finally {
                 _isRefreshing.value = false
+                refreshGuard.finish()
                 delay(4000)
                 _message.value = ""
             }
@@ -303,7 +336,9 @@ class SemesterOverviewViewModel(
                 .get()
                 .build()
             val body = client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) response.body?.string().orEmpty() else ""
+                if (response.isSuccessful) {
+                    response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
+                } else ""
             }
             Log.d(TAG, "Fetched timetable HTML: ${body.length} chars, adjustments found: ${body.contains("调课") || body.contains("补课")}")
             body
@@ -374,7 +409,9 @@ class SemesterOverviewViewModel(
                 .get()
                 .build()
             val body = client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) response.body?.string().orEmpty() else ""
+                if (response.isSuccessful) {
+                    response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
+                } else ""
             }
             if (body.isBlank()) return@withContext "" to emptyList()
             body to parseTimorHolidayJson(body, year)

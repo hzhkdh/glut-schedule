@@ -11,6 +11,8 @@ import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.StudyPlanParser
+import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
+import com.glut.schedule.service.network.readBytesLimited
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -174,11 +176,11 @@ class ScoreViewModel(
             .post(formBody)
             .build()
 
-        Log.d(TAG, "Fetching scores from: $campusBaseUrl")
 
         val (body, responseCode, contentType) = withContext(Dispatchers.IO) {
             scoreClient.newCall(request).execute().use { response ->
-                val rawBytes = response.body?.bytes() ?: ByteArray(0)
+                val rawBytes = response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES)
+                    ?: ByteArray(0)
                 val ct = response.header("Content-Type") ?: ""
                 val code = response.code
                 Triple(rawBytes, code, ct)
@@ -191,7 +193,6 @@ class ScoreViewModel(
         // Try to detect charset from Content-Type, fall back to GBK.
         val charset = detectCharset(contentType)
         val html = String(body, charset)
-        Log.d(TAG, "Score HTML preview (first 300 chars): ${html.take(300)}")
 
         scoreBlockedByEvaluation = isEvaluationBlocked(html)
         if (scoreBlockedByEvaluation) {
@@ -227,7 +228,7 @@ class ScoreViewModel(
             val selfBody = client.newCall(Request.Builder().url(selfUrl)
                 .header("Cookie", cookie).header("User-Agent", UA).get().build()
             ).execute().use { response ->
-                response.body?.bytes() ?: ByteArray(0)
+                response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES) ?: ByteArray(0)
             }
             val selfHtml = String(selfBody, Charset.forName("GBK"))
             val ids = studyPlanParser.parseStudentIds(selfHtml) ?: return@withContext emptyMap()
@@ -238,7 +239,7 @@ class ScoreViewModel(
             val lineBody = client.newCall(Request.Builder().url(lineUrl)
                 .header("Cookie", cookie).header("User-Agent", UA).get().build()
             ).execute().use { response ->
-                response.body?.bytes() ?: ByteArray(0)
+                response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES) ?: ByteArray(0)
             }
             val lineHtml = String(lineBody, Charsets.UTF_8)
 

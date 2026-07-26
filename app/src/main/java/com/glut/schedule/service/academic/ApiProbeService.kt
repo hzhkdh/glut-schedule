@@ -1,7 +1,10 @@
 package com.glut.schedule.service.academic
 
 import android.util.Log
+import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
+import com.glut.schedule.service.network.readStringLimited
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -10,7 +13,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
-class ApiProbeService {
+class ApiProbeService(
+    private val sessionUrlValidator: (String) -> Boolean = AcademicUrlPolicy::isAllowedSessionUrl
+) {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -35,8 +40,10 @@ class ApiProbeService {
     )
 
     /** Fetch a single URL with the given cookie, returning a ProbeResult or null. */
-    suspend fun probeUrl(cookie: String, url: String, method: String = "GET"): ProbeResult? = withContext(Dispatchers.IO) {
-        runCatching {
+    suspend fun probeUrl(cookie: String, url: String, method: String = "GET"): ProbeResult? {
+        if (!sessionUrlValidator(url)) return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
             val request = Request.Builder()
                 .url(url)
                 .header("Cookie", cookie)
@@ -49,14 +56,15 @@ class ApiProbeService {
                 }
                 .build()
             client.newCall(request).execute().use { response ->
-                val body = response.body?.string().orEmpty()
+                val body = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
                 ProbeResult(
                     url = url, method = method, httpCode = response.code,
                     contentType = response.header("Content-Type").orEmpty(),
                     body = body, bodyLength = body.length
                 )
             }
-        }.getOrNull()
+            }.getOrNull()
+        }
     }
 
     suspend fun probeForm(
@@ -64,8 +72,10 @@ class ApiProbeService {
         url: String,
         body: String,
         referer: String
-    ): ProbeResult? = withContext(Dispatchers.IO) {
-        runCatching {
+    ): ProbeResult? {
+        if (!sessionUrlValidator(url) || !sessionUrlValidator(referer)) return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
             val request = Request.Builder()
                 .url(url)
                 .header("Cookie", cookie)
@@ -75,7 +85,7 @@ class ApiProbeService {
                 .post(body.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
                 .build()
             client.newCall(request).execute().use { response ->
-                val responseBody = response.body?.string().orEmpty()
+                val responseBody = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
                 ProbeResult(
                     url = url,
                     method = "POST",
@@ -85,7 +95,8 @@ class ApiProbeService {
                     bodyLength = responseBody.length
                 )
             }
-        }.getOrNull()
+            }.getOrNull()
+        }
     }
 
     suspend fun probeScheduleEndpoints(
@@ -149,11 +160,12 @@ class ApiProbeService {
         )
 
         fun probeGet(url: String) {
+            if (!sessionUrlValidator(url)) return
             try {
                 val req = Request.Builder().url(url)
                 baseHeaders.forEach { (k, v) -> req.header(k, v) }
                 client.newCall(req.build()).execute().use { resp ->
-                    val body = resp.body?.string() ?: ""
+                    val body = resp.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES) ?: ""
                     results.add(ProbeResult(url, "GET", resp.code,
                         resp.header("content-type") ?: "", body.take(100000), body.length))
                 }
@@ -163,6 +175,7 @@ class ApiProbeService {
         }
 
         fun probePost(url: String, body: String = "") {
+            if (!sessionUrlValidator(url)) return
             try {
                 val req = Request.Builder().url(url)
                 baseHeaders.forEach { (k, v) -> req.header(k, v) }
@@ -173,7 +186,7 @@ class ApiProbeService {
                     req.post("".toRequestBody(null))
                 }
                 client.newCall(req.build()).execute().use { resp ->
-                    val respBody = resp.body?.string() ?: ""
+                    val respBody = resp.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES) ?: ""
                     results.add(ProbeResult(url, "POST", resp.code,
                         resp.header("content-type") ?: "", respBody.take(100000), respBody.length))
                 }
@@ -182,50 +195,42 @@ class ApiProbeService {
             }
         }
 
-        buildProbeUrls(capturedTimetableUrls).forEach(::probeGet)
+        val completed = withTimeoutOrNull(IMPORT_PROBE_TIMEOUT_MILLIS) {
+            buildProbeUrls(capturedTimetableUrls).forEach(::probeGet)
+            buildImportProbeRequests(baseUrl).forEach { (url, method) ->
+                if (method == "POST") probePost(url) else probeGet(url)
+            }
 
-        probePost("$baseUrl/academic/personal/framePage.do")
-        probeGet("$baseUrl/academic/manager/coursearrange/graphicalBasicInfo.do")
-        buildCurrentStudentTimetableUrls(results, baseUrl).forEach(::probeGet)
-        buildExamUrls(baseUrl).forEach(::probeGet)
-
-        // 登录后的传统"本学期课程安排"页面，只作为 showTimetable 网格页失败时的兜底。
-        probeGet("$baseUrl/academic/student/currcourse/currcourse.jsdo")
-
-        val today = LocalDate.now()
-        probePost("$baseUrl/academic/personal/currentTodayPlan.do?currentDate=${today.year}-${today.monthValue}-${today.dayOfMonth}")
-        probePost("$baseUrl/academic/personal/moduleMenu.do")
-        probePost("$baseUrl/academic/personal/myTodo.do")
-
-        probeGet("$baseUrl/academic/student/timetable/timetable.do")
-        probeGet("$baseUrl/academic/student/coursetable/coursetable.do")
-
-        // 考试安排接口 — 优先使用 glut 项目的可靠单一端点
-        probeGet("$baseUrl/academic/manager/examstu/studentQueryAllExam.do?pagingNumberPerVLID=1000")
-        probeGet("$baseUrl/academic/student/examination/studentExamQuery.do")
-        probePost("$baseUrl/academic/student/examination/queryExam.do")
-        probeGet("$baseUrl/academic/student/examination/examArrange.do")
-        probePost("$baseUrl/academic/manager/examarrange/examStudentQuery.do")
-        probeGet("$baseUrl/academic/student/examination/examinationForStudent.do")
-
-        // 等级考试 — moduleId=2090 (两校区通用)
-        probeGet("$baseUrl/academic/student/skilltest/skilltest.jsdo?moduleId=2090")
-
-        // 教学计划 — studentId/classId 提取
-        probeGet("$baseUrl/academic/manager/studyschedule/studentSelfSchedule.jsdo")
-
-        // 从 moduleMenu 响应中提取考试菜单的真实 URL 并探测
-        val menuResult = results.find { it.url.contains("moduleMenu.do") && it.httpCode == 200 }
-        if (menuResult != null) {
-            extractExamUrlsFromMenuResponse(menuResult.body, baseUrl).forEach { url ->
-                if (results.none { it.url == url }) probeGet(url)
+            // 菜单中的真实考试地址仅作一次动态补充，避免轮询大量历史猜测接口。
+            val menuResult = results.find { it.url.contains("moduleMenu.do") && it.httpCode == 200 }
+            if (menuResult != null) {
+                extractExamUrlsFromMenuResponse(menuResult.body, baseUrl).forEach { url ->
+                    if (results.none { it.url == url }) probeGet(url)
+                }
             }
         }
+        if (completed == null) Log.w(TAG, "Import endpoint probing timed out; returning partial results")
 
         results
     }
 
     companion object {
+        private const val TAG = "ApiProbeService"
+        private const val IMPORT_PROBE_TIMEOUT_MILLIS = 60_000L
+
+        /**
+         * 导入只探测后续解析确实会消费的端点，减少串行网络等待和无意义流量。
+         */
+        fun buildImportProbeRequests(baseUrl: String): List<Pair<String, String>> = listOf(
+            "$baseUrl/academic/personal/framePage.do" to "POST",
+            "$baseUrl/academic/manager/coursearrange/graphicalBasicInfo.do" to "GET",
+            "$baseUrl/academic/student/currcourse/currcourse.jsdo" to "GET",
+            "$baseUrl/academic/personal/moduleMenu.do" to "POST",
+            "$baseUrl/academic/manager/examstu/studentQueryAllExam.do?pagingNumberPerVLID=1000" to "GET",
+            "$baseUrl/academic/student/skilltest/skilltest.jsdo?moduleId=2090" to "GET",
+            "$baseUrl/academic/manager/studyschedule/studentSelfSchedule.jsdo" to "GET"
+        )
+
         fun buildProbeUrls(capturedTimetableUrls: List<String>): List<String> {
             return capturedTimetableUrls
                 .asSequence()
@@ -363,10 +368,7 @@ class ApiProbeService {
                         val isExam = examKeywords.any { kw -> name.contains(kw) }
                         if (isExam && url.isNotBlank()) {
                             val cleanUrl = url.removePrefix("./")
-                            val fullUrl = if (cleanUrl.startsWith("http")) cleanUrl
-                            else if (cleanUrl.startsWith("/")) "$baseUrl$cleanUrl"
-                            else "$baseUrl/$cleanUrl"
-                            urls.add(fullUrl)
+                            resolveMenuUrl(baseUrl, cleanUrl)?.let(urls::add)
                         }
                         // Recurse into children
                         val children = obj.optJSONArray("children")
@@ -409,14 +411,19 @@ class ApiProbeService {
                 val hrefPattern = Regex("""href\s*=\s*["']([^"']*(?:exam|考试|examination)[^"']*)["']""", RegexOption.IGNORE_CASE)
                 hrefPattern.findAll(body).forEach { match ->
                     val href = match.groupValues[1]
-                    val fullUrl = if (href.startsWith("http")) href
-                    else if (href.startsWith("/")) "$baseUrl$href"
-                    else "$baseUrl/$href"
-                    urls.add(fullUrl)
+                    resolveMenuUrl(baseUrl, href)?.let(urls::add)
                 }
             }
 
             return urls.distinct()
+        }
+
+        /**
+         * 菜单内容来自明文教务响应，必须在附加 Cookie 前把链接限制在官方会话域名。
+         */
+        private fun resolveMenuUrl(baseUrl: String, value: String): String? {
+            val currentUrl = "${baseUrl.trimEnd('/')}/academic/"
+            return AcademicUrlPolicy.resolveAllowedRedirect(currentUrl, value)
         }
 
         fun extractAcademicCalendar(results: List<ProbeResult>): AcademicCalendar? {

@@ -10,6 +10,8 @@ import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.GradeExamParser
+import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
+import com.glut.schedule.service.network.readBytesLimited
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -138,7 +140,6 @@ class GradeExamViewModel(
             .build()
 
         val url = "$campusBaseUrl/academic/student/skilltest/skilltest.jsdo?moduleId=2090"
-        Log.d(TAG, "Fetching grade exams from: $url")
 
         val request = Request.Builder()
             .url(url)
@@ -149,7 +150,8 @@ class GradeExamViewModel(
 
         val (body, contentType) = withContext(Dispatchers.IO) {
             client.newCall(request).execute().use { response ->
-                val rawBytes = response.body?.bytes() ?: ByteArray(0)
+                val rawBytes = response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES)
+                    ?: ByteArray(0)
                 val ct = response.header("Content-Type") ?: ""
                 Pair(rawBytes, ct)
             }
@@ -167,7 +169,6 @@ class GradeExamViewModel(
             try { Charset.forName("GBK") } catch (_: Exception) { Charsets.UTF_8 }
         }
         val html = String(body, charset)
-        Log.d(TAG, "Grade exam HTML preview: ${html.take(300)}")
 
         return gradeExamParser.parse(html)
     }

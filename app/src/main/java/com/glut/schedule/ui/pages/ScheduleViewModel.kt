@@ -33,6 +33,7 @@ import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.AcademicSemesterImportPayload
 import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
+import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.academic.shouldUseExistingAcademicCookie
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -107,6 +108,7 @@ class ScheduleViewModel(
     val uiState: StateFlow<ScheduleUiState>
     private var initialWeekSet = false
     private val isRefreshing = MutableStateFlow(false)
+    private val refreshGuard = SingleFlightGuard()
     private val message = MutableStateFlow("")
     private val needsInteractiveLogin = MutableStateFlow(false)
 
@@ -358,8 +360,9 @@ class ScheduleViewModel(
             message.value = "历史学期为只读缓存，无需刷新"
             return
         }
+        if (!refreshGuard.tryStart()) return
+        isRefreshing.value = true
         viewModelScope.launch {
-            isRefreshing.value = true
             message.value = "正在刷新课表..."
             needsInteractiveLogin.value = false
             try {
@@ -416,6 +419,7 @@ class ScheduleViewModel(
                 message.value = refreshFailureMessage(e, targetSemester)
             } finally {
                 isRefreshing.value = false
+                refreshGuard.finish()
             }
         }
     }

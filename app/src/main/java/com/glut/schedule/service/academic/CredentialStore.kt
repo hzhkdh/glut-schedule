@@ -5,11 +5,10 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
-class CredentialStore(context: Context) {
+class CredentialStore(private val context: Context) {
 
-    // 加密存储优先；密钥库不可用（部分设备/系统故障）时回退明文 SharedPreferences，
-    // 避免应用启动崩溃。
-    private val prefs: SharedPreferences = runCatching {
+    // 密钥库不可用时采用失败关闭：禁用持久化，而不是把教务密码降级为明文保存。
+    private val prefs: SharedPreferences? = runCatching {
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
@@ -20,26 +19,35 @@ class CredentialStore(context: Context) {
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
-    }.getOrElse {
-        android.util.Log.w("CredentialStore", "EncryptedSharedPreferences unavailable, falling back to plain storage", it)
-        context.getSharedPreferences("glut_credentials_fallback", Context.MODE_PRIVATE)
-    }
+    }.onFailure {
+        android.util.Log.w("CredentialStore", "EncryptedSharedPreferences unavailable; credential persistence disabled")
+    }.getOrNull()
 
     fun saveCredentials(username: String, password: String) {
-        prefs.edit()
-            .putString(KEY_USERNAME, username)
-            .putString(KEY_PASSWORD, password)
-            .apply()
+        prefs?.edit()
+            ?.putString(KEY_USERNAME, username)
+            ?.putString(KEY_PASSWORD, password)
+            ?.apply()
     }
 
-    fun getUsername(): String = prefs.getString(KEY_USERNAME, null).orEmpty()
+    fun getUsername(): String = prefs?.getString(KEY_USERNAME, null).orEmpty()
 
-    fun getPassword(): String = prefs.getString(KEY_PASSWORD, null).orEmpty()
+    fun getPassword(): String = prefs?.getString(KEY_PASSWORD, null).orEmpty()
 
     fun hasCredentials(): Boolean = getUsername().isNotBlank() && getPassword().isNotBlank()
 
+    fun canPersistCredentials(): Boolean = prefs != null
+
     fun clearCredentials() {
-        prefs.edit().remove(KEY_USERNAME).remove(KEY_PASSWORD).commit()
+        prefs?.edit()
+            ?.remove(KEY_USERNAME)
+            ?.remove(KEY_PASSWORD)
+            ?.apply()
+        // 清理旧版本可能创建的明文回退文件，避免升级后继续遗留密码。
+        context.getSharedPreferences("glut_credentials_fallback", Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .apply()
     }
 
     companion object {

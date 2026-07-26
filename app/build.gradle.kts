@@ -1,4 +1,6 @@
 import com.android.build.gradle.internal.api.BaseVariantOutputImpl
+import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -136,32 +138,55 @@ tasks.register("publishUpdate") {
         val versionCode = android.defaultConfig.versionCode
         val versionName = android.defaultConfig.versionName
         val apkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
-        val apkFile = apkDir.listFiles()?.find { it.name.endsWith(".apk") }
-            ?: error("Release APK not found in $apkDir")
+        val apkFile = File(apkDir, "glutShedule_$versionName.apk")
+            .takeIf(File::isFile)
+            ?: error("Release APK not found: ${File(apkDir, "glutShedule_$versionName.apk")}")
         val rootDir = file("${rootProject.projectDir}")
         val updateDir = file("$rootDir/../app-update-host")
         val apkName = apkFile.name
-
-        // ── 1. Create GitHub Release ──
-        try {
-            exec {
-                workingDir = rootDir
-                commandLine("gh", "release", "create", "v$versionName", apkFile.absolutePath,
-                    "--title", "v$versionName",
-                    "--notes", "Release v$versionName")
-            }
-            println("Created GitHub Release: v$versionName")
-        } catch (e: Exception) {
-            println("WARNING: GitHub Release creation failed: ${e.message}")
-            println("CF Pages sync will still proceed.")
-        }
-
-        // ── 2. Sync to Cloudflare Pages ──
         if (!updateDir.exists()) {
             throw GradleException("app-update-host directory not found at ${updateDir.absolutePath}. " +
                 "Clone it: git clone https://github.com/hzhkdh/app-update-host.git ${updateDir.absolutePath}")
         }
 
+        fun gitStatus(directory: File): String {
+            val output = ByteArrayOutputStream()
+            exec {
+                workingDir = directory
+                commandLine("git", "status", "--porcelain")
+                standardOutput = output
+            }
+            return output.toString(Charsets.UTF_8).trim()
+        }
+
+        if (gitStatus(rootDir).isNotBlank()) {
+            throw GradleException("scheduleApp 工作区存在未提交修改，拒绝发布")
+        }
+        if (gitStatus(updateDir).isNotBlank()) {
+            throw GradleException("app-update-host 工作区存在未提交修改，拒绝覆盖或推送")
+        }
+
+        val digest = MessageDigest.getInstance("SHA-256")
+        apkFile.inputStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        val apkSha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+
+        // ── 1. Create GitHub Release ──
+        exec {
+            workingDir = rootDir
+            commandLine("gh", "release", "create", "v$versionName", apkFile.absolutePath,
+                "--title", "v$versionName",
+                "--notes", "Release v$versionName")
+        }
+        println("Created GitHub Release: v$versionName")
+
+        // ── 2. Sync to Cloudflare Pages ──
         apkFile.copyTo(File(updateDir, apkName), overwrite = true)
         println("Copied $apkName to app-update-host/")
 
@@ -170,6 +195,8 @@ tasks.register("publishUpdate") {
             "versionCode" to versionCode,
             "versionName" to versionName,
             "downloadUrl" to "https://update.999314.xyz/$apkName",
+            "apkSha256" to apkSha256,
+            "apkSize" to apkFile.length(),
             "updateDesc" to "",
             "forceUpdate" to false
         ))
@@ -178,7 +205,7 @@ tasks.register("publishUpdate") {
 
         exec {
             workingDir = updateDir
-            commandLine("git", "-C", updateDir.absolutePath, "add", "-A")
+            commandLine("git", "add", "--", apkName, "update.json")
         }
         exec {
             workingDir = updateDir

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 默认禁止明文，仅对校方当前仍未提供 HTTPS 的三个教务域名例外放行。 -->
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">jw.glut.edu.cn</domain>
+        <domain includeSubdomains="false">jw.glutnn.cn</domain>
+        <domain includeSubdomains="false">ca.glut.edu.cn</domain>
+    </domain-config>
+</network-security-config>

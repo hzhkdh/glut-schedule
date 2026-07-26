@@ -81,6 +81,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
@@ -152,6 +153,7 @@ import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.components.BuiltInScheduleBackground
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
+import com.glut.schedule.ui.components.shouldUseCustomBackground
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
@@ -167,14 +169,12 @@ import com.glut.schedule.ui.pages.StudyPlanViewModel
 import com.glut.schedule.ui.pages.StudyPlanViewModelFactory
 import com.glut.schedule.ui.theme.GlutScheduleTheme
 import com.glut.schedule.data.settings.CampusType
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.time.LocalDateTime
 
@@ -189,16 +189,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as ScheduleApplication).appContainer
-        val (bgW, bgH) = backgroundTargetSize()
-        val initialBgUri = runBlocking(Dispatchers.IO) {
-            container.settingsStore.customBackgroundUri.first()
-        }
-        if (initialBgUri.isNotBlank()) {
-            val loaded = container.backgroundStore.preloadBlocking(initialBgUri, bgW, bgH)
-            if (!loaded) {
-                runBlocking(Dispatchers.IO) { container.settingsStore.setCustomBackgroundUri("") }
-            }
-        }
 
         setContent {
             @OptIn(ExperimentalMaterial3Api::class)
@@ -898,10 +888,6 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
         }
     }
 
-    private fun backgroundTargetSize(): Pair<Int, Int> {
-        val metrics = resources.displayMetrics
-        return metrics.widthPixels to metrics.heightPixels
-    }
 }
 
 // ---- Drawer Components ----
@@ -915,10 +901,23 @@ private fun ScheduleDestination(
     onDrawerOpen: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val backgroundBitmap = if (uiState.customBackgroundUri.isNotBlank()) {
-        backgroundStore.get(uiState.customBackgroundUri)
-    } else {
-        null
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var backgroundCacheRevision by remember(uiState.customBackgroundUri) { mutableIntStateOf(0) }
+    LaunchedEffect(uiState.customBackgroundUri) {
+        val uri = uiState.customBackgroundUri
+        if (shouldUseCustomBackground(uri) && backgroundStore.get(uri) == null) {
+            val metrics = context.resources.displayMetrics
+            val loaded = backgroundStore.preload(uri, metrics.widthPixels, metrics.heightPixels)
+            if (!loaded) viewModel.clearCustomBackground()
+            backgroundCacheRevision++
+        }
+    }
+    val backgroundBitmap = remember(uiState.customBackgroundUri, backgroundCacheRevision) {
+        if (shouldUseCustomBackground(uiState.customBackgroundUri)) {
+            backgroundStore.get(uiState.customBackgroundUri)
+        } else {
+            null
+        }
     }
     ScheduleScreen(
         viewModel = viewModel,
@@ -1837,7 +1836,7 @@ private fun UpdateDialog(
                 )
             )
             try {
-                val apkFile = appUpdater.downloadApk(info.apkDownloadUrl) { downloaded, total ->
+                val apkFile = appUpdater.downloadApk(info) { downloaded, total ->
                     val progress = if (total > 0) downloaded.toFloat() / total else 0f
                     val dMB = "%.1f".format(downloaded / 1_000_000.0)
                     val tMB = if (total > 0) "%.1f".format(total / 1_000_000.0) else "?"

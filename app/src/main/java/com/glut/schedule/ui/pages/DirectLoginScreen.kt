@@ -43,7 +43,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,7 +76,7 @@ fun DirectLoginScreen(
     viewModel: DirectLoginViewModel,
     modifier: Modifier = Modifier
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var passwordVisible by remember { mutableStateOf(false) }
 
     Column(
@@ -91,7 +91,17 @@ fun DirectLoginScreen(
 
             Text("登录教务系统，一键导入课程和考试", color = LoginSecondary, fontSize = 14.sp, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = "安全提示：校方教务目前仅支持 HTTP，登录信息无法获得端到端加密保护。",
+                color = Color(0xFFB45309),
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Student ID
             OutlinedTextField(
@@ -131,9 +141,14 @@ fun DirectLoginScreen(
                 Checkbox(
                     checked = uiState.rememberPassword,
                     onCheckedChange = viewModel::updateRememberPassword,
+                    enabled = uiState.secureCredentialStorageAvailable,
                     colors = CheckboxDefaults.colors(checkedColor = LoginAccent, uncheckedColor = Color(0xFF9CA3AF))
                 )
-                Text("记住密码", color = LoginSecondary, fontSize = 13.sp)
+                Text(
+                    if (uiState.secureCredentialStorageAvailable) "记住密码" else "系统加密存储不可用，已禁止记住密码",
+                    color = LoginSecondary,
+                    fontSize = 13.sp
+                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))

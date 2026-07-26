@@ -26,7 +26,9 @@
   "updateDesc": "优化假期显示逻辑",
   "versionName": "0.14.10",
   "forceUpdate": false,
-  "downloadUrl": "https://update.999314.xyz/glutShedule_0.14.10.apk"
+  "downloadUrl": "https://update.999314.xyz/glutShedule_0.14.10.apk",
+  "apkSha256": "64位小写SHA-256",
+  "apkSize": 9651537
 }
 ```
 
@@ -37,6 +39,8 @@
 | `versionCode` | number | 是 | 内部版本号，应和 `app/build.gradle.kts` 中的 `versionCode` 对应。 |
 | `versionName` | string | 是 | 展示给用户看的版本号，例如 `"0.14.10"`。App 用它和当前版本比较。 |
 | `downloadUrl` | string | 是 | APK 下载地址。通常是 `https://update.999314.xyz/<apk文件名>`。 |
+| `apkSha256` | string | 是 | APK 文件的 64 位小写 SHA-256；不匹配时客户端拒绝安装。 |
+| `apkSize` | number | 是 | APK 的准确字节数；下载超限或不一致时客户端删除临时文件。 |
 | `updateDesc` | string | 否 | 更新说明，会显示在更新弹窗中。没有内容时填空字符串 `""`。 |
 | `forceUpdate` | boolean | 否 | 当前 App 代码暂未强制执行此字段。建议保留，默认填 `false`。 |
 
@@ -44,6 +48,8 @@
 
 - 发布新 APK 时，`versionCode` 和 `versionName` 要和 App 构建配置保持一致。
 - `downloadUrl` 指向的 APK 文件必须已经放在 `app-update-host` 仓库并成功发布。
+- `downloadUrl` 必须使用客户端白名单内的 HTTPS 域名，且路径以 `.apk` 结尾。
+- 不要手工猜测 `apkSha256` 或 `apkSize`；统一由 `publishUpdate` 从最终签名 APK 生成。
 - `versionName` 建议使用纯数字点号格式，例如 `0.14.11`，避免写成 `v0.14.11`。
 - 不要把通知公告写进 `update.json`，通知使用独立的 `notices.json`。
 

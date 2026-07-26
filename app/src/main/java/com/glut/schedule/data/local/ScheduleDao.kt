@@ -204,10 +204,18 @@ interface ScheduleDao {
     @Query("DELETE FROM semester_adjustments")
     suspend fun deleteAllSemesterAdjustments()
 
-    // 已移除 replaceSemesterAdjustments() DAO 事务方法。
-    // 原实现硬编码 LEGACY_CURRENT_ID，与多学期模型不兼容。
-    // 调用方应使用 Repository.replaceSemesterAdjustments()，由 Repository
-    // 根据 viewedSemesterId 动态确定目标学期。
+    /**
+     * 原子替换指定学期的调课记录，避免“先删后插”之间发生异常时留下空缓存。
+     * 学期 ID 必须由请求发起方显式传入，不能在写入阶段重新读取可变化的界面状态。
+     */
+    @Transaction
+    suspend fun replaceSemesterAdjustments(
+        semesterId: String,
+        adjustments: List<SemesterAdjustmentEntity>
+    ) {
+        deleteSemesterAdjustmentsForSemester(semesterId)
+        insertSemesterAdjustments(adjustments)
+    }
 
     @Transaction
     suspend fun clearAll() {

@@ -1,5 +1,7 @@
 package com.glut.schedule.service.academic
 
+import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
+import com.glut.schedule.service.network.readStringLimited
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
@@ -76,7 +78,7 @@ class AcademicLoginHttpClient(
                 .build()
 
             client.newCall(request).execute().use { response ->
-                val body = response.body?.string().orEmpty()
+                val body = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
                 val cookie = extractCookie(response.headers("Set-Cookie")).ifBlank {
                     cookieJar.cookieHeader().ifBlank { loginPage.cookie }
                 }
@@ -110,7 +112,7 @@ class AcademicLoginHttpClient(
             .build()
 
         return client.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
+            val body = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
             val cookie = extractCookie(response.headers("Set-Cookie")).ifBlank { cookieJar.cookieHeader() }
             val sessionId = Regex(""";jsessionid=([^"'?;>\s]+)""", RegexOption.IGNORE_CASE)
                 .find(body)
@@ -149,7 +151,7 @@ class AcademicLoginHttpClient(
             .build()
 
         return client.newCall(verifyRequest).execute().use { response ->
-            val body = response.body?.string().orEmpty()
+            val body = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
             when {
                 response.code == 401 || response.code == 403 -> AcademicLoginResult.InvalidCredentials
                 looksLikeLoginPage(body) -> AcademicLoginResult.CaptchaOrInteractiveLoginRequired
@@ -259,7 +261,7 @@ class AcademicOALoginClient(
             .build()
 
         client.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
+            val body = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
             val cookie = response.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
             val lt = Regex("""name="lt"\s+value="([^"]+)"""").find(body)?.groupValues?.get(1).orEmpty()
                 .ifBlank { Regex("""name="lt"\s+value='([^']+)'"""").find(body)?.groupValues?.get(1).orEmpty() }
@@ -309,15 +311,12 @@ class AcademicOALoginClient(
                 val location = response.header("Location") ?: ""
                 val newCookies = response.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
                 if (newCookies.isNotBlank()) currentCookie = mergeCookies(currentCookie, newCookies)
-                when {
-                    location.isBlank() -> return currentCookie.takeIf { it.contains("JSESSIONID", ignoreCase = true) } ?: ""
-                    location.startsWith("http") -> currentUrl = location
-                    location.startsWith("/") -> {
-                        val domain = Regex("""https?://[^/]+""").find(currentUrl)?.value ?: baseUrl
-                        currentUrl = "$domain$location"
-                    }
-                    else -> currentUrl = currentUrl.substringBeforeLast("/") + "/$location"
+                if (location.isBlank()) {
+                    return currentCookie.takeIf { it.contains("JSESSIONID", ignoreCase = true) } ?: ""
                 }
+                // OA 响应来自明文链路，任何非校方主机或异常端口的跳转都立即终止。
+                currentUrl = AcademicUrlPolicy.resolveAllowedRedirect(currentUrl, location)
+                    ?: return ""
             }
         }
         return currentCookie.takeIf { it.contains("JSESSIONID", ignoreCase = true) } ?: ""

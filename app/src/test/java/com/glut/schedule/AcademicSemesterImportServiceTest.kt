@@ -105,7 +105,10 @@ class AcademicSemesterImportServiceTest {
             server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
             val progress = mutableListOf<Pair<Int, Int>>()
 
-            val result = AcademicSemesterImportService(ApiProbeService(), FixedParser(listOf(course())))
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                FixedParser(listOf(course()))
+            )
                 .importSemester(
                     cookie = "JSESSIONID=test",
                     baseUrl = server.url("/").toString(),
@@ -162,7 +165,10 @@ class AcademicSemesterImportServiceTest {
                 }
             }
 
-            val result = AcademicSemesterImportService(ApiProbeService(), FixedParser(listOf(course())))
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                FixedParser(listOf(course()))
+            )
                 .importSemester(
                     cookie = "JSESSIONID=test",
                     baseUrl = server.url("/").toString(),
@@ -202,7 +208,10 @@ class AcademicSemesterImportServiceTest {
                 }
             }
 
-            val result = AcademicSemesterImportService(ApiProbeService(), FixedParser(listOf(course())))
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                FixedParser(listOf(course()))
+            )
                 .importSemester(
                     cookie = "JSESSIONID=test",
                     baseUrl = server.url("/").toString(),
@@ -234,7 +243,10 @@ class AcademicSemesterImportServiceTest {
             server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml(term = "2")))
             val parser = FailIfPersonalOccurrencesAreAppliedParser(listOf(course()))
 
-            val result = AcademicSemesterImportService(ApiProbeService(), parser)
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                parser
+            )
                 .importSemester(
                     cookie = "JSESSIONID=test",
                     baseUrl = server.url("/").toString(),
@@ -264,7 +276,10 @@ class AcademicSemesterImportServiceTest {
                     .setBody(weeklyWeekHtml().replace("星期二", "未知星期"))
             )
 
-            val result = AcademicSemesterImportService(ApiProbeService(), FixedParser(listOf(course())))
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                FixedParser(listOf(course()))
+            )
                 .importSemester(
                     cookie = "JSESSIONID=test",
                     baseUrl = server.url("/").toString(),
@@ -285,7 +300,10 @@ class AcademicSemesterImportServiceTest {
         courses: List<ScheduleCourse> = emptyList()
     ) = MockWebServer().use { server ->
         server.enqueue(MockResponse().setResponseCode(200).setBody(body))
-        AcademicSemesterImportService(ApiProbeService(), FixedParser(courses)).importSemester(
+        AcademicSemesterImportService(
+            ApiProbeService(sessionUrlValidator = { true }),
+            FixedParser(courses)
+        ).importSemester(
             cookie = "JSESSIONID=test",
             baseUrl = server.url("/").toString(),
             semester = semester(),

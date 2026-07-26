@@ -2,6 +2,8 @@ package com.glut.schedule.service
 
 import com.glut.schedule.data.model.NoticeAttachment
 import com.glut.schedule.data.model.NoticeInfo
+import com.glut.schedule.service.network.MAX_JSON_RESPONSE_BYTES
+import com.glut.schedule.service.network.readStringLimited
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -33,7 +35,8 @@ class NoticeChecker(
 
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext null
-                val body = response.body?.string() ?: return@withContext null
+                val body = response.body?.readStringLimited(MAX_JSON_RESPONSE_BYTES)
+                    ?: return@withContext null
                 NoticeFetchResult(
                     notices = parseNotices(body),
                     rawJson = body
