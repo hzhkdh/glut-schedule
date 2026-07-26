@@ -119,6 +119,8 @@ import com.glut.schedule.data.model.hasUnreadNotices
 import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.UpdateInfo
+import com.glut.schedule.ui.NoticeLoadState
+import com.glut.schedule.ui.resolveNoticeLoadState
 import com.glut.schedule.service.greeting.DrawerGreeting
 import com.glut.schedule.service.greeting.DrawerGreetingContext
 import com.glut.schedule.service.greeting.DrawerGreetingPlanner
@@ -201,6 +203,9 @@ class MainActivity : ComponentActivity() {
                 var showNoticePopup by remember { mutableStateOf<NoticeInfo?>(null) }
                 var noticePopupSessionDismissedIds by remember { mutableStateOf(emptySet<String>()) }
                 var initialNoticeCheckFinished by remember { mutableStateOf(false) }
+                var refreshedNotices by remember { mutableStateOf<List<NoticeInfo>?>(null) }
+                var noticeRefreshFailed by remember { mutableStateOf(false) }
+                var noticeRefreshRequestId by remember { mutableIntStateOf(0) }
                 var showResetConfirm by remember { mutableStateOf(false) }
                 var settingsSubPage by remember { mutableStateOf(SettingsSubPage.ROOT) }
                 var drawerGestureBlocked by remember { mutableStateOf(false) }
@@ -283,8 +288,8 @@ class MainActivity : ComponentActivity() {
                         scheduleRepository = container.scheduleRepository,
                         settingsStore = container.settingsStore,
                         apiProbeService = container.apiProbeService,
+                        academicExamService = container.academicExamService,
                         scheduleParser = container.academicScheduleParser,
-                        examParser = container.examParser,
                         scoreParser = container.scoreParser,
                         gradeExamParser = container.gradeExamParser,
                         studyPlanParser = container.studyPlanParser,
@@ -434,13 +439,18 @@ class MainActivity : ComponentActivity() {
                 val cachedNoticesJson by container.settingsStore.cachedNoticesJson.collectAsStateWithLifecycle(initialValue = "")
                 val readNoticeIds by container.settingsStore.readNoticeIds.collectAsStateWithLifecycle(initialValue = emptySet())
                 val dismissedNoticePopupIds by container.settingsStore.dismissedNoticePopupIds.collectAsStateWithLifecycle(initialValue = emptySet())
-                var notices by remember { mutableStateOf(NoticeChecker.parseNotices(cachedNoticesJson)) }
+                val cachedNotices = remember(cachedNoticesJson) {
+                    NoticeChecker.parseNotices(cachedNoticesJson)
+                }
+                val noticeLoadState = resolveNoticeLoadState(
+                    cachedNotices = cachedNotices,
+                    refreshedNotices = refreshedNotices,
+                    refreshFinished = initialNoticeCheckFinished,
+                    refreshFailed = noticeRefreshFailed
+                )
+                val notices = (noticeLoadState as? NoticeLoadState.Content)?.notices.orEmpty()
                 val currentNoticeIds = notices.map { it.id }.toSet()
                 val showNoticeDot = hasUnreadNotices(currentNoticeIds, readNoticeIds)
-
-                LaunchedEffect(cachedNoticesJson) {
-                    notices = NoticeChecker.parseNotices(cachedNoticesJson)
-                }
 
                 LaunchedEffect(Unit) {
                     val info = container.updateChecker.check(BuildConfig.VERSION_NAME)
@@ -453,10 +463,18 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                }
+
+                LaunchedEffect(noticeRefreshRequestId) {
+                    // 通知刷新与版本检查相互独立，避免任一服务超时阻塞另一个入口。
+                    initialNoticeCheckFinished = false
+                    noticeRefreshFailed = false
                     val result = container.noticeChecker.check()
                     if (result != null) {
-                        notices = result.notices
+                        refreshedNotices = result.notices
                         container.settingsStore.setCachedNoticesJson(result.rawJson)
+                    } else {
+                        noticeRefreshFailed = true
                     }
                     initialNoticeCheckFinished = true
                 }
@@ -781,7 +799,12 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     onSubPageChange = { settingsSubPage = it },
                                     onReset = { showResetConfirm = true }
                                 )
-                                DrawerItem.Notice -> NoticeScreen(notices = notices)
+                                DrawerItem.Notice -> NoticeScreen(
+                                    state = noticeLoadState,
+                                    onRetry = {
+                                        noticeRefreshRequestId++
+                                    }
+                                )
                                 DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
                                 DrawerItem.FAQ -> FaqScreen()
                                 DrawerItem.About -> {
@@ -999,24 +1022,25 @@ private fun DrawerHeader(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Image(
-                    painter = painterResource(R.drawable.brand_menu_logo),
-                    contentDescription = "桂系一站式标志",
-                    modifier = Modifier.size(38.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text("桂系一站式", color = Color(0xFF141821), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    TypewriterGreetingText(
-                        fullText = greeting.text,
-                        animate = greeting.animate,
-                        animationRunId = animationRunId
-                    )
-                }
-            }
+            Image(
+                painter = painterResource(R.drawable.brand_menu_logo),
+                contentDescription = "桂系一站式标志",
+                modifier = Modifier.size(38.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                "桂系一站式",
+                color = Color(0xFF141821),
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
+        Spacer(modifier = Modifier.height(8.dp))
+        TypewriterGreetingText(
+            fullText = greeting.text,
+            animate = greeting.animate,
+            animationRunId = animationRunId
+        )
     }
 }
 
@@ -1281,11 +1305,11 @@ private fun TypewriterGreetingText(
         color = Color(0xFF667085),
         fontSize = 13.sp,
         lineHeight = 20.sp,
-        maxLines = 1,
+        maxLines = 2,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier
             .fillMaxWidth()
-            .height(20.dp)
+            .height(40.dp)
             .clearAndSetSemantics {
                 contentDescription = fullText
             }

@@ -91,16 +91,6 @@ fun DirectLoginScreen(
 
             Text("登录教务系统，一键导入课程和考试", color = LoginSecondary, fontSize = 14.sp, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Text(
-                text = "安全提示：校方教务目前仅支持 HTTP，登录信息无法获得端到端加密保护。",
-                color = Color(0xFFB45309),
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-                modifier = Modifier.fillMaxWidth()
-            )
-
             Spacer(modifier = Modifier.height(20.dp))
 
             // Student ID

@@ -22,7 +22,7 @@ class AcademicSecurityPolicyTest {
                 url.contains("/student/coursetable/")
         })
         assertTrue(requests.any { (url, _) -> url.contains("currcourse.jsdo") })
-        assertTrue(requests.any { (url, _) -> url.contains("studentQueryAllExam.do") })
+        assertFalse(requests.any { (url, _) -> url.contains("studentQueryAllExam.do") })
     }
 
 

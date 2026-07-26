@@ -19,8 +19,10 @@ import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,25 +35,37 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.NoticeAttachment
 import com.glut.schedule.data.model.NoticeInfo
+import com.glut.schedule.ui.NoticeLoadState
 
 @Composable
 fun NoticeScreen(
-    notices: List<NoticeInfo>,
+    state: NoticeLoadState,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uriHandler = LocalUriHandler.current
-
-    if (notices.isEmpty()) {
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .background(Color(0xFFF6F4EF)),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text("暂无通知", color = Color(0xFF667085), fontSize = 15.sp)
+    val notices = when (state) {
+        is NoticeLoadState.Content -> state.notices
+        NoticeLoadState.Loading -> {
+            NoticeStatus(
+                message = "正在加载通知",
+                modifier = modifier,
+                showProgress = true
+            )
+            return
         }
-        return
+        NoticeLoadState.Empty -> {
+            NoticeStatus(message = "暂无通知", modifier = modifier)
+            return
+        }
+        NoticeLoadState.Error -> {
+            NoticeStatus(
+                message = "通知加载失败",
+                modifier = modifier,
+                onRetry = onRetry
+            )
+            return
+        }
     }
 
     LazyColumn(
@@ -68,6 +82,38 @@ fun NoticeScreen(
                     if (isSafeNoticeUrl(url)) uriHandler.openUri(url)
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun NoticeStatus(
+    message: String,
+    modifier: Modifier,
+    showProgress: Boolean = false,
+    onRetry: (() -> Unit)? = null
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFFF6F4EF)),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        if (showProgress) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(28.dp),
+                color = Color(0xFF3F7DF6),
+                strokeWidth = 2.dp
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+        Text(message, color = Color(0xFF667085), fontSize = 15.sp)
+        if (onRetry != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = onRetry) {
+                Text("重新加载", color = Color(0xFF3F7DF6))
+            }
         }
     }
 }

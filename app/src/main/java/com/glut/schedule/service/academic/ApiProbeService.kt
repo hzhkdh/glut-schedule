@@ -226,7 +226,6 @@ class ApiProbeService(
             "$baseUrl/academic/manager/coursearrange/graphicalBasicInfo.do" to "GET",
             "$baseUrl/academic/student/currcourse/currcourse.jsdo" to "GET",
             "$baseUrl/academic/personal/moduleMenu.do" to "POST",
-            "$baseUrl/academic/manager/examstu/studentQueryAllExam.do?pagingNumberPerVLID=1000" to "GET",
             "$baseUrl/academic/student/skilltest/skilltest.jsdo?moduleId=2090" to "GET",
             "$baseUrl/academic/manager/studyschedule/studentSelfSchedule.jsdo" to "GET"
         )

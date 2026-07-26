@@ -1,5 +1,6 @@
 package com.glut.schedule.service
 
+import android.util.Log
 import com.glut.schedule.data.model.NoticeAttachment
 import com.glut.schedule.data.model.NoticeInfo
 import com.glut.schedule.service.network.MAX_JSON_RESPONSE_BYTES
@@ -42,10 +43,15 @@ class NoticeChecker(
                     rawJson = body
                 )
             }
+        }.onFailure { error ->
+            // 不记录 URL 参数或响应内容，只保留异常类型，便于定位覆盖升级后的网络失败。
+            Log.w(TAG, "通知刷新失败：${error.javaClass.simpleName}")
         }.getOrNull()
     }
 
     companion object {
+        private const val TAG = "NoticeChecker"
+
         fun parseNotices(json: String, today: LocalDate = LocalDate.now()): List<NoticeInfo> {
             if (json.isBlank()) return emptyList()
 

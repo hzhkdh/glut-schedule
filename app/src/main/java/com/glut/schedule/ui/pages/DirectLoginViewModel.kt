@@ -8,9 +8,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.ScheduleSettingsStore
+import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginHttpClient
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
@@ -34,7 +36,6 @@ import com.glut.schedule.service.network.readStringLimited
 import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.parser.AcademicSemesterCatalogPlan
 import com.glut.schedule.service.parser.AcademicSemesterParser
-import com.glut.schedule.service.parser.GlutExamParser
 import com.glut.schedule.service.parser.GradeExamParser
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.StudyPlanParser
@@ -80,6 +81,29 @@ data class ImportResult(
     val studyPlanCount: Int = 0
 )
 
+internal data class InitialExamImportData(
+    val successfulUrl: String,
+    val exams: List<ExamInfo>
+)
+
+/**
+ * 首次导入考试的持久化边界：空结果必须视为失败，避免覆盖用户已有的考试缓存。
+ */
+internal suspend fun importInitialExams(
+    fetch: suspend () -> Result<InitialExamImportData>,
+    replaceExams: suspend (List<ExamInfo>) -> Unit,
+    saveSuccessfulUrl: suspend (String) -> Unit
+): Result<Int> {
+    return fetch().mapCatching { data ->
+        check(data.exams.isNotEmpty()) { "未获取到考试安排" }
+        replaceExams(data.exams)
+        if (data.successfulUrl.isNotBlank()) {
+            saveSuccessfulUrl(data.successfulUrl)
+        }
+        data.exams.size
+    }
+}
+
 class DirectLoginViewModel(
     private val loginService: AcademicLoginService,
     private val sessionStore: AcademicSessionStore,
@@ -87,9 +111,9 @@ class DirectLoginViewModel(
     private val scheduleRepository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val apiProbeService: ApiProbeService,
+    private val academicExamService: AcademicExamService,
     private val semesterImportService: AcademicSemesterImportService,
     private val scheduleParser: AcademicScheduleParser,
-    private val examParser: GlutExamParser,
     private val scoreParser: ScoreParser,
     private val gradeExamParser: GradeExamParser = GradeExamParser(),
     private val studyPlanParser: StudyPlanParser = StudyPlanParser()
@@ -667,28 +691,28 @@ class DirectLoginViewModel(
             )
             courseCount = currentPayload.courses.size
 
-            var examImported = false
-            val examJsonResult = apiProbeService.findExamJsonResult(results)
-            if (examJsonResult != null) {
-                val exams = runCatching { examParser.parseExamJson(examJsonResult.body) }.getOrNull()
-                if (exams != null) {
-                    scheduleRepository.replaceExams(exams)
-                    examCount = exams.size
-                    examImported = true
-                }
-            }
-            if (!examImported) {
-                val examHtmlResult = apiProbeService.findExamHtmlResult(results)
-                if (examHtmlResult != null) {
-                    val exams = runCatching { examParser.parseExamHtml(examHtmlResult.body) }.getOrNull()
-                    if (exams != null) {
-                        scheduleRepository.replaceExams(exams)
-                        examCount = exams.size
-                        examImported = true
+            // 与考试页共用多接口兜底链路，桂林首选接口返回空结构时仍会继续探测。
+            val storedExamApiUrl = sessionStore.examApiUrl.first()
+            importInitialExams(
+                fetch = {
+                    academicExamService.fetchExamData(
+                        cookie = cookie,
+                        storedExamApiUrl = storedExamApiUrl,
+                        baseUrl = campusBaseUrl
+                    ).map { exams ->
+                        InitialExamImportData(
+                            successfulUrl = academicExamService.lastSuccessfulExamUrl,
+                            exams = exams
+                        )
                     }
-                }
+                },
+                replaceExams = scheduleRepository::replaceExams,
+                saveSuccessfulUrl = sessionStore::saveExamApiUrl
+            ).onSuccess {
+                examCount = it
+            }.onFailure {
+                failedModules += "考试"
             }
-            if (!examImported) failedModules += "考试"
 
             fetchAndSaveScores(cookie, campusBaseUrl)
                 .onSuccess { scoreCount = it }
@@ -932,9 +956,9 @@ class DirectLoginViewModelFactory(
     private val scheduleRepository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val apiProbeService: ApiProbeService,
+    private val academicExamService: AcademicExamService,
     private val semesterImportService: AcademicSemesterImportService,
     private val scheduleParser: AcademicScheduleParser,
-    private val examParser: GlutExamParser,
     private val scoreParser: ScoreParser,
     private val gradeExamParser: GradeExamParser = GradeExamParser(),
     private val studyPlanParser: StudyPlanParser = StudyPlanParser()
@@ -944,7 +968,8 @@ class DirectLoginViewModelFactory(
         return DirectLoginViewModel(
             loginService, sessionStore, credentialStore,
             scheduleRepository, settingsStore, apiProbeService,
-            semesterImportService, scheduleParser, examParser, scoreParser, gradeExamParser, studyPlanParser
+            academicExamService, semesterImportService, scheduleParser,
+            scoreParser, gradeExamParser, studyPlanParser
         ) as T
     }
 }

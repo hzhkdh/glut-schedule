@@ -26,6 +26,15 @@ class DrawerGreetingIntegrationContractTest {
         assertTrue(main.contains("ValueAnimator.areAnimatorsEnabled()"))
         assertTrue(main.contains("clearAndSetSemantics"))
         assertTrue(main.contains("contentDescription = fullText"))
+        assertTrue(main.contains("maxLines = 2"))
+        assertTrue(main.contains(".height(40.dp)"))
+    }
+
+    @Test
+    fun directLoginDoesNotShowPersistentHttpWarning() {
+        val loginScreen = source("app/src/main/java/com/glut/schedule/ui/pages/DirectLoginScreen.kt")
+
+        assertTrue(!loginScreen.contains("安全提示："))
     }
 
     private fun source(relativePath: String): String {
