@@ -110,6 +110,24 @@ class DrawerGreetingPlannerTest {
     }
 
     @Test
+    fun ordinaryAccessibilityServiceDoesNotDisableTypewriter() {
+        assertTrue(
+            shouldRunDrawerGreetingAnimation(
+                requested = true,
+                animatorsEnabled = true,
+                touchExplorationEnabled = false
+            )
+        )
+        assertFalse(
+            shouldRunDrawerGreetingAnimation(
+                requested = true,
+                animatorsEnabled = true,
+                touchExplorationEnabled = true
+            )
+        )
+    }
+
+    @Test
     fun timePeriodBoundariesAreStable() {
         val planner = DrawerGreetingPlanner(Random(0))
 

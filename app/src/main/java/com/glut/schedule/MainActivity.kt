@@ -1262,12 +1262,15 @@ private fun TypewriterGreetingText(
     animationRunId: Int
 ) {
     val context = LocalContext.current
-    val accessibilityEnabled = remember {
-        context.getSystemService(AccessibilityManager::class.java)?.isEnabled == true
+    val touchExplorationEnabled = remember {
+        context.getSystemService(AccessibilityManager::class.java)
+            ?.isTouchExplorationEnabled == true
     }
-    val canAnimate = animate &&
-        ValueAnimator.areAnimatorsEnabled() &&
-        !accessibilityEnabled
+    val canAnimate = shouldRunDrawerGreetingAnimation(
+        requested = animate,
+        animatorsEnabled = ValueAnimator.areAnimatorsEnabled(),
+        touchExplorationEnabled = touchExplorationEnabled
+    )
     var visibleText by remember(fullText, animationRunId, canAnimate) {
         mutableStateOf(if (canAnimate) "" else fullText)
     }
@@ -1308,6 +1311,15 @@ private fun TypewriterGreetingText(
             }
     )
 }
+
+/**
+ * 仅在读屏常用的触摸探索开启时停用打字机，避免 GKD 等普通无障碍服务误伤动画。
+ */
+internal fun shouldRunDrawerGreetingAnimation(
+    requested: Boolean,
+    animatorsEnabled: Boolean,
+    touchExplorationEnabled: Boolean
+): Boolean = requested && animatorsEnabled && !touchExplorationEnabled
 
 @Composable
 private fun BuiltInBackgroundsPage(
