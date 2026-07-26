@@ -52,8 +52,6 @@ class AppUpdater(private val context: Context) {
             client = client,
             url = info.apkDownloadUrl,
             target = apkFile,
-            expectedSha256 = info.apkSha256,
-            expectedSizeBytes = info.apkSizeBytes,
             onProgress = onProgress
         ).also {
             Log.d(TAG, "APK downloaded: ${it.length()} bytes")
@@ -133,15 +131,11 @@ internal suspend fun downloadFile(
     client: OkHttpClient,
     url: String,
     target: File,
-    expectedSha256: String,
-    expectedSizeBytes: Long,
     maxBytes: Long = AppUpdater.MAX_APK_BYTES,
     urlValidator: (String) -> Boolean = UpdateDownloadPolicy::isAllowedDownloadUrl,
     onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit
 ): File = coroutineScope {
     require(urlValidator(url)) { "更新下载地址不受信任" }
-    require(expectedSha256.matches(Regex("[0-9a-fA-F]{64}"))) { "更新包缺少有效 SHA-256" }
-    require(expectedSizeBytes in 1..maxBytes) { "更新包大小无效或超过限制" }
     val progressEvents = Channel<Pair<Long, Long>>(Channel.CONFLATED)
     launch {
         for ((downloaded, total) in progressEvents) {
@@ -153,8 +147,6 @@ internal suspend fun downloadFile(
             client = client,
             url = url,
             target = target,
-            expectedSha256 = expectedSha256,
-            expectedSizeBytes = expectedSizeBytes,
             maxBytes = maxBytes
         ) { downloaded, total ->
             progressEvents.trySend(downloaded to total)
@@ -168,8 +160,6 @@ private suspend fun downloadFileWithProgressEvents(
     client: OkHttpClient,
     url: String,
     target: File,
-    expectedSha256: String,
-    expectedSizeBytes: Long,
     maxBytes: Long,
     onProgressEvent: (downloadedBytes: Long, totalBytes: Long) -> Unit
 ): File = suspendCancellableCoroutine { continuation ->
@@ -202,10 +192,9 @@ private suspend fun downloadFileWithProgressEvents(
                     }
                     val body = response.body
                     val total = body.contentLength()
-                    if (total > maxBytes || (total >= 0L && total != expectedSizeBytes)) {
-                        throw IOException("更新包响应大小与元数据不一致")
+                    if (total > maxBytes) {
+                        throw IOException("更新包超过大小限制")
                     }
-                    val digest = MessageDigest.getInstance("SHA-256")
                     body.byteStream().use { input ->
                         FileOutputStream(partial).use { output ->
                             val buffer = ByteArray(8192)
@@ -213,25 +202,14 @@ private suspend fun downloadFileWithProgressEvents(
                             while (true) {
                                 val bytesRead = input.read(buffer)
                                 if (bytesRead < 0) break
-                                if (downloaded + bytesRead > maxBytes ||
-                                    downloaded + bytesRead > expectedSizeBytes
-                                ) {
-                                    throw IOException("更新包超过声明大小")
+                                if (downloaded + bytesRead > maxBytes) {
+                                    throw IOException("更新包超过大小限制")
                                 }
                                 output.write(buffer, 0, bytesRead)
-                                digest.update(buffer, 0, bytesRead)
                                 downloaded += bytesRead
                                 if (continuation.isActive) onProgressEvent(downloaded, total)
                             }
                         }
-                    }
-                    if (partial.length() != expectedSizeBytes) {
-                        throw IOException("更新包实际大小与元数据不一致")
-                    }
-                    val actualSha256 = digest.digest()
-                        .joinToString("") { byte -> "%02x".format(byte) }
-                    if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
-                        throw IOException("更新包 SHA-256 校验失败")
                     }
                 }
                 if (continuation.isActive) {

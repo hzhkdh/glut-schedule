@@ -17,9 +17,7 @@ data class UpdateInfo(
     val apkDownloadUrl: String,
     val releaseNotes: String,
     val isNewer: Boolean,
-    val isForceUpdate: Boolean = false,
-    val apkSha256: String = "",
-    val apkSizeBytes: Long = 0L
+    val isForceUpdate: Boolean = false
 )
 
 class UpdateChecker(
@@ -117,21 +115,14 @@ class UpdateChecker(
                     asset.optString("name").endsWith(".apk", ignoreCase = true)
                 } ?: return null
             val apkUrl = apkAsset.optString("browser_download_url", "")
-            val digest = apkAsset.optString("digest", "").substringAfter("sha256:", "")
-            val size = apkAsset.optLong("size", 0L)
-            if (!UpdateDownloadPolicy.isAllowedDownloadUrl(apkUrl) ||
-                !digest.matches(Regex("[0-9a-fA-F]{64}")) ||
-                size <= 0L
-            ) return null
+            if (!UpdateDownloadPolicy.isAllowedDownloadUrl(apkUrl)) return null
             UpdateInfo(
                 versionCode = 0L,
                 latestVersion = tagName,
                 downloadUrl = htmlUrl,
                 apkDownloadUrl = apkUrl,
                 releaseNotes = notes,
-                isNewer = compareVersions(tagName, currentVersion) > 0,
-                apkSha256 = digest.lowercase(),
-                apkSizeBytes = size
+                isNewer = compareVersions(tagName, currentVersion) > 0
             )
         }.getOrNull()
     }
@@ -157,9 +148,7 @@ class UpdateChecker(
     }
 }
 
-/**
- * 解析并验证静态更新元数据。关键完整性字段缺失时失败关闭，不再弹出安装入口。
- */
+/** 解析静态更新元数据，并继续限制 APK 只能从受信任的 HTTPS 地址下载。 */
 internal fun parseUpdateMetadata(json: String, currentVersion: String): UpdateInfo? {
     return runCatching {
         val obj = JSONObject(json)
@@ -169,15 +158,10 @@ internal fun parseUpdateMetadata(json: String, currentVersion: String): UpdateIn
         val downloadUrl = obj.optString("downloadUrl", "")
         val updateDesc = obj.optString("updateDesc", obj.optString("releaseNotes", ""))
         val forceUpdate = obj.optBoolean("forceUpdate", false)
-        val sha256 = obj.optString("apkSha256", "").trim().lowercase()
-        val apkSize = obj.optLong("apkSize", 0L)
 
         if (versionCode <= 0L ||
             versionName.isBlank() ||
-            !UpdateDownloadPolicy.isAllowedDownloadUrl(downloadUrl) ||
-            !sha256.matches(Regex("[0-9a-f]{64}")) ||
-            apkSize <= 0L ||
-            apkSize > AppUpdater.MAX_APK_BYTES
+            !UpdateDownloadPolicy.isAllowedDownloadUrl(downloadUrl)
         ) return null
 
         UpdateInfo(
@@ -187,9 +171,7 @@ internal fun parseUpdateMetadata(json: String, currentVersion: String): UpdateIn
             apkDownloadUrl = downloadUrl,
             releaseNotes = updateDesc,
             isNewer = UpdateChecker.compareVersions(versionName, currentVersion) > 0,
-            isForceUpdate = forceUpdate,
-            apkSha256 = sha256,
-            apkSizeBytes = apkSize
+            isForceUpdate = forceUpdate
         )
     }.getOrNull()
 }

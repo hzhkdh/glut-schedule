@@ -2,7 +2,6 @@ package com.glut.schedule
 
 import com.glut.schedule.service.downloadFile
 import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -46,10 +45,6 @@ class AppUpdaterDownloadTest {
                     client = OkHttpClient(),
                     url = server.url("/update.apk").toString(),
                     target = target,
-                    expectedSha256 = MessageDigest.getInstance("SHA-256")
-                        .digest(payload)
-                        .joinToString("") { "%02x".format(it) },
-                    expectedSizeBytes = payload.size.toLong(),
                     urlValidator = { true }
                 ) { downloaded, _ ->
                     if (downloaded > 0) firstProgress.complete(Unit)
