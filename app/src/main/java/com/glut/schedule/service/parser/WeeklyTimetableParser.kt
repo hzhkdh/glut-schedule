@@ -92,7 +92,8 @@ class WeeklyTimetableParser {
 
     fun mergeWithMetadata(
         baseCourses: List<ScheduleCourse>,
-        pages: List<WeeklyTimetablePage>
+        pages: List<WeeklyTimetablePage>,
+        preferredMetadataCourses: List<ScheduleCourse> = emptyList()
     ): List<ScheduleCourse> {
         val finalRows = pages.flatMap { page ->
             page.rows.filterNot { it.status == "停课" }.map { page.selectedWeek to it }
@@ -109,7 +110,15 @@ class WeeklyTimetableParser {
             val titleCandidates = baseCourses.filter {
                 normalizeTitle(it.title) == normalizeTitle(sample.title)
             }
-            val metadata = titleCandidates.firstOrNull {
+            // 个人课表能够把实验教师精确绑定到教室，优先级高于课程安排页的教师集合。
+            val preferredMetadata = preferredMetadataCourses.firstOrNull {
+                normalizeTitle(it.title) == normalizeTitle(sample.title) &&
+                    (it.room.trim() == sample.room.trim() ||
+                        it.occurrences.any { occurrence ->
+                            occurrence.note.trim() == sample.room.trim()
+                        })
+            }
+            val metadata = preferredMetadata ?: titleCandidates.firstOrNull {
                 it.room.trim() == sample.room.trim() ||
                     it.occurrences.any { occurrence -> occurrence.note.trim() == sample.room.trim() }
             } ?: titleCandidates.firstOrNull()

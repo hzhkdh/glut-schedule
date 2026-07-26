@@ -252,6 +252,49 @@ class WeeklyTimetableParserTest {
         assertTrue(cLanguage.flatMap { it.occurrences }.all { it.dayOfWeek == 5 })
     }
 
+    @Test
+    fun preferredExactRoomMetadataOverridesBaseTeacher() {
+        val mainTeacherCourse = course(
+            title = "微机原理与接口技术",
+            teacher = "蒋志军",
+            room = "014102S",
+            weekText = "第11周",
+            day = 3,
+            start = 7,
+            end = 8
+        )
+        val experimentTeacherCourse = course(
+            title = "微机原理与接口技术",
+            teacher = "陈守学",
+            room = "014102S",
+            weekText = "第11周",
+            day = 3,
+            start = 7,
+            end = 8
+        )
+        val week11Page = parser.parsePage(
+            weeklyHtml(
+                week = 11,
+                rows = """
+                    <tr><td>2024-11-20</td><td>微机原理与接口技术</td><td>必修</td><td>正常考试</td>
+                    <td>下午第七节</td><td>星期三</td><td>第7、8节</td><td>16:20</td><td>18:00</td>
+                    <td>雁山14号楼</td><td>014102S</td><td></td></tr>
+                """.trimIndent()
+            ),
+            hasNoon = true
+        )
+
+        val merged = parser.mergeWithMetadata(
+            baseCourses = listOf(mainTeacherCourse),
+            pages = listOf(week11Page),
+            preferredMetadataCourses = listOf(experimentTeacherCourse)
+        )
+
+        assertEquals("陈守学", merged.single().teacher)
+        assertEquals("014102S", merged.single().room)
+        assertEquals("第11周", merged.single().occurrences.single().weekText)
+    }
+
     private fun course(
         title: String,
         teacher: String,
