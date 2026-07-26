@@ -178,7 +178,7 @@ class CampusImageServiceTest {
     }
 
     @Test
-    fun fileCacheWritesTheCurrentParserRevision() {
+    fun fileCacheWritesTheAtomicCurrentFormat() {
         val directory = temporaryFolder.newFolder("current-campus-cache")
         val cache = CampusImageFileCache(directory)
         cache.save(
@@ -190,12 +190,12 @@ class CampusImageServiceTest {
             )
         )
 
-        val metadata = Properties().apply {
-            directory.resolve("class_time.properties").inputStream().use(::load)
-        }
         val document = cache.load(CampusImageType.CLASS_TIME)
 
-        assertEquals("2", metadata.getProperty("parserVersion"))
+        // 当前缓存把元数据与图片放进同一个原子文件，旧的双文件格式应被清理。
+        assertTrue(directory.resolve("class_time.cache").isFile)
+        assertFalse(directory.resolve("class_time.properties").exists())
+        assertFalse(directory.resolve("class_time.img").exists())
         assertEquals("https://jwc.glut.edu.cn/class-time.png", document?.imageUrl)
         assertTrue(document?.fromCache == true)
     }

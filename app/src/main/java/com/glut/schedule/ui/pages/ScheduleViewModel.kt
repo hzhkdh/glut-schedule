@@ -23,6 +23,7 @@ import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.ClassPeriodProfile
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
 import com.glut.schedule.data.settings.ScheduleSettingsStore
@@ -55,6 +56,7 @@ data class ScheduleUiState(
     val campusType: CampusType = CampusType.GUILIN,
     val guilinSubCampus: String = GUILIN_SUB_CAMPUS_DEFAULT,
     val classPeriods: List<ClassPeriod> = emptyList(),
+    val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>> = emptyMap(),
     val courses: List<ScheduleCourse> = emptyList(),
     val courseBlocks: List<CourseBlock> = emptyList(),
     val showWeekend: Boolean = false,
@@ -78,7 +80,8 @@ private data class ScheduleSettingsUiState(
     val semesterEndDate: LocalDate,
     val customBackgroundUri: String,
     val campusType: CampusType,
-    val guilinSubCampus: String = GUILIN_SUB_CAMPUS_DEFAULT
+    val guilinSubCampus: String = GUILIN_SUB_CAMPUS_DEFAULT,
+    val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>> = emptyMap()
 )
 
 private data class ScheduleCalendarSettings(
@@ -135,8 +138,9 @@ class ScheduleViewModel(
             },
             settingsStore.customBackgroundUri,
             settingsStore.campusType,
-            settingsStore.guilinSubCampus
-        ) { base, customBackgroundUri, campusType, guilinSubCampus ->
+            settingsStore.guilinSubCampus,
+            settingsStore.classPeriodProfileOverrides
+        ) { base, customBackgroundUri, campusType, guilinSubCampus, profileOverrides ->
             ScheduleSettingsUiState(
                 weekNumber = base.weekNumber,
                 showWeekend = base.showWeekend,
@@ -145,7 +149,8 @@ class ScheduleViewModel(
                 semesterEndDate = base.semesterEndDate,
                 customBackgroundUri = customBackgroundUri,
                 campusType = campusType,
-                guilinSubCampus = guilinSubCampus
+                guilinSubCampus = guilinSubCampus,
+                classPeriodProfileOverrides = profileOverrides
             )
         }
 
@@ -206,6 +211,7 @@ class ScheduleViewModel(
                 campusType = settings.campusType,
                 guilinSubCampus = settings.guilinSubCampus,
                 classPeriods = periods,
+                classPeriodProfileOverrides = settings.classPeriodProfileOverrides,
                 courses = coloredCourses,
                 courseBlocks = coloredCourses.flatMap { course ->
                     course.occurrences
@@ -324,15 +330,15 @@ class ScheduleViewModel(
         viewModelScope.launch { settingsStore.clearCourseColorOverrides() }
     }
 
-    fun setClassPeriods(periods: List<ClassPeriod>) {
+    fun setClassPeriods(profile: ClassPeriodProfile, periods: List<ClassPeriod>) {
         viewModelScope.launch {
-            settingsStore.setClassPeriods(uiState.value.campusType, periods)
+            settingsStore.setClassPeriods(profile, periods)
         }
     }
 
-    fun resetClassPeriods() {
+    fun resetClassPeriods(profile: ClassPeriodProfile) {
         viewModelScope.launch {
-            settingsStore.resetClassPeriods(uiState.value.campusType)
+            settingsStore.resetClassPeriods(profile)
         }
     }
 

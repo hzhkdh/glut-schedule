@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -23,6 +24,32 @@ import java.time.LocalDate
 
 enum class CampusType { GUILIN, NANNING }
 
+enum class GuilinSubCampus(val storageValue: String) {
+    YANSHAN(GUILIN_SUB_CAMPUS_DEFAULT),
+    PINGFENG(GUILIN_SUB_CAMPUS_PINGFENG);
+
+    companion object {
+        fun fromStorageValue(value: String?): GuilinSubCampus =
+            entries.firstOrNull { it.storageValue == value } ?: YANSHAN
+    }
+}
+
+/** 上课时间的持久化作用域；桂林两个教学区必须互不覆盖。 */
+enum class ClassPeriodProfile {
+    GUILIN_YANSHAN,
+    GUILIN_PINGFENG,
+    NANNING
+}
+
+fun classPeriodProfile(campus: CampusType, subCampus: String): ClassPeriodProfile = when (campus) {
+    CampusType.NANNING -> ClassPeriodProfile.NANNING
+    CampusType.GUILIN -> if (subCampus == GUILIN_SUB_CAMPUS_PINGFENG) {
+        ClassPeriodProfile.GUILIN_PINGFENG
+    } else {
+        ClassPeriodProfile.GUILIN_YANSHAN
+    }
+}
+
 /** 桂林子校区标识 */
 const val GUILIN_SUB_CAMPUS_DEFAULT = "yanshan"
 const val GUILIN_SUB_CAMPUS_PINGFENG = "pingfeng"
@@ -40,6 +67,8 @@ class ScheduleSettingsStore(
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
     private val courseColorOverridesKey = stringSetPreferencesKey("course_color_overrides")
     private val guilinClassPeriodsKey = stringSetPreferencesKey("guilin_class_periods")
+    private val guilinYanshanClassPeriodsKey = stringSetPreferencesKey("guilin_yanshan_class_periods")
+    private val guilinPingfengClassPeriodsKey = stringSetPreferencesKey("guilin_pingfeng_class_periods")
     private val nanningClassPeriodsKey = stringSetPreferencesKey("nanning_class_periods")
     private val campusTypeKey = stringPreferencesKey("campus_type")
     private val updateAvailableVersionKey = stringPreferencesKey("update_available_version")
@@ -97,6 +126,17 @@ class ScheduleSettingsStore(
             }
         }.distinctUntilChanged()
 
+    val classPeriodProfileOverrides: Flow<Map<ClassPeriodProfile, List<ClassPeriod>>> =
+        context.scheduleSettings.data.map { preferences ->
+            decodeClassPeriodOverrides(
+                selectedSubCampus = GuilinSubCampus.fromStorageValue(preferences[guilinSubCampusKey]),
+                legacyGuilinEntries = preferences[guilinClassPeriodsKey].orEmpty(),
+                yanshanEntries = preferences[guilinYanshanClassPeriodsKey].orEmpty(),
+                pingfengEntries = preferences[guilinPingfengClassPeriodsKey].orEmpty(),
+                nanningEntries = preferences[nanningClassPeriodsKey].orEmpty()
+            )
+        }.distinctUntilChanged()
+
     val campusType: Flow<CampusType> = context.scheduleSettings.data.map { preferences ->
         val name = preferences[campusTypeKey] ?: CampusType.GUILIN.name
         runCatching { CampusType.valueOf(name) }.getOrDefault(CampusType.GUILIN)
@@ -121,6 +161,7 @@ class ScheduleSettingsStore(
 
     suspend fun setGuilinSubCampus(subCampus: String) {
         context.scheduleSettings.edit { preferences ->
+            migrateLegacyGuilinClassPeriods(preferences)
             if (subCampus == GUILIN_SUB_CAMPUS_DEFAULT) {
                 preferences.remove(guilinSubCampusKey)
             } else {
@@ -239,9 +280,25 @@ class ScheduleSettingsStore(
         return true
     }
 
+    suspend fun setClassPeriods(profile: ClassPeriodProfile, periods: List<ClassPeriod>): Boolean {
+        if (!com.glut.schedule.data.model.validateClassPeriods(profile, periods)) return false
+        context.scheduleSettings.edit { preferences ->
+            migrateLegacyGuilinClassPeriods(preferences)
+            preferences[classPeriodsKey(profile)] = encodeClassPeriods(periods)
+        }
+        return true
+    }
+
     suspend fun resetClassPeriods(campus: CampusType) {
         context.scheduleSettings.edit { preferences ->
             preferences.remove(classPeriodsKey(campus))
+        }
+    }
+
+    suspend fun resetClassPeriods(profile: ClassPeriodProfile) {
+        context.scheduleSettings.edit { preferences ->
+            migrateLegacyGuilinClassPeriods(preferences)
+            preferences.remove(classPeriodsKey(profile))
         }
     }
 
@@ -335,6 +392,29 @@ class ScheduleSettingsStore(
         CampusType.GUILIN -> guilinClassPeriodsKey
         CampusType.NANNING -> nanningClassPeriodsKey
     }
+
+    private fun classPeriodsKey(profile: ClassPeriodProfile) = when (profile) {
+        ClassPeriodProfile.GUILIN_YANSHAN -> guilinYanshanClassPeriodsKey
+        ClassPeriodProfile.GUILIN_PINGFENG -> guilinPingfengClassPeriodsKey
+        ClassPeriodProfile.NANNING -> nanningClassPeriodsKey
+    }
+
+    /**
+     * 在更改 pill 之前，把旧桂林配置固定到旧选择对应的档案，避免配置随选择漂移。
+     */
+    private fun migrateLegacyGuilinClassPeriods(preferences: MutablePreferences) {
+        val legacy = preferences[guilinClassPeriodsKey] ?: return
+        val targetKey = when (
+            GuilinSubCampus.fromStorageValue(preferences[guilinSubCampusKey])
+        ) {
+            GuilinSubCampus.YANSHAN -> guilinYanshanClassPeriodsKey
+            GuilinSubCampus.PINGFENG -> guilinPingfengClassPeriodsKey
+        }
+        if (preferences[targetKey].isNullOrEmpty()) {
+            preferences[targetKey] = legacy
+        }
+        preferences.remove(guilinClassPeriodsKey)
+    }
 }
 
 internal fun encodeClassPeriods(periods: List<ClassPeriod>): Set<String> {
@@ -360,4 +440,29 @@ internal fun decodeClassPeriods(
     if (periods.size != entries.size) return null
     val sorted = periods.sortedBy { it.section }
     return sorted.takeIf { validateClassPeriods(campus, it) }
+}
+
+internal fun decodeClassPeriodOverrides(
+    selectedSubCampus: GuilinSubCampus,
+    legacyGuilinEntries: Set<String>,
+    yanshanEntries: Set<String>,
+    pingfengEntries: Set<String>,
+    nanningEntries: Set<String>
+): Map<ClassPeriodProfile, List<ClassPeriod>> = buildMap {
+    decodeClassPeriods(CampusType.GUILIN, yanshanEntries)
+        ?.let { put(ClassPeriodProfile.GUILIN_YANSHAN, it) }
+    decodeClassPeriods(CampusType.GUILIN, pingfengEntries)
+        ?.let { put(ClassPeriodProfile.GUILIN_PINGFENG, it) }
+    decodeClassPeriods(CampusType.NANNING, nanningEntries)
+        ?.let { put(ClassPeriodProfile.NANNING, it) }
+
+    // 旧版只有一份桂林配置；仅在目标档案没有新值时归入升级前选中的子校区。
+    val legacyProfile = when (selectedSubCampus) {
+        GuilinSubCampus.YANSHAN -> ClassPeriodProfile.GUILIN_YANSHAN
+        GuilinSubCampus.PINGFENG -> ClassPeriodProfile.GUILIN_PINGFENG
+    }
+    if (legacyProfile !in this) {
+        decodeClassPeriods(CampusType.GUILIN, legacyGuilinEntries)
+            ?.let { put(legacyProfile, it) }
+    }
 }

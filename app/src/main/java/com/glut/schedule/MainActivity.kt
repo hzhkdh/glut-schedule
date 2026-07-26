@@ -1,5 +1,7 @@
 package com.glut.schedule
 
+import android.content.Context
+import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.view.View
@@ -41,6 +43,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
@@ -86,7 +89,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.text.TextRange
@@ -98,6 +103,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glut.schedule.data.model.NoticeInfo
 import com.glut.schedule.data.model.CourseColorMapper
@@ -106,7 +112,6 @@ import com.glut.schedule.data.model.hasUnreadNotices
 import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.UpdateInfo
-import com.glut.schedule.service.campus.CampusImageType
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.navigation.campusDrawerItems
 import com.glut.schedule.ui.navigation.otherDrawerItems
@@ -133,8 +138,10 @@ import com.glut.schedule.ui.pages.CampusImageScreen
 import com.glut.schedule.ui.pages.CampusImageViewModel
 import com.glut.schedule.ui.pages.CampusImageViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
+import com.glut.schedule.ui.pages.ClassPeriodSettingsScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
+import com.glut.schedule.ui.components.BuiltInScheduleBackground
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
@@ -157,6 +164,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.io.File
+
+private enum class SettingsSubPage(val title: String) {
+    ROOT("设置"),
+    COURSE_COLORS("课程卡片颜色"),
+    CLASS_PERIODS("上课时间"),
+    BUILT_IN_BACKGROUNDS("内置背景")
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -185,14 +200,14 @@ class MainActivity : ComponentActivity() {
                 var noticePopupSessionDismissedIds by remember { mutableStateOf(emptySet<String>()) }
                 var initialNoticeCheckFinished by remember { mutableStateOf(false) }
                 var showResetConfirm by remember { mutableStateOf(false) }
-                var showCourseColors by remember { mutableStateOf(false) }
+                var settingsSubPage by remember { mutableStateOf(SettingsSubPage.ROOT) }
                 var drawerGestureBlocked by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
                     when {
                         drawerState.isOpen -> scope.launch { drawerState.close() }
-                        showCourseColors -> showCourseColors = false
+                        settingsSubPage != SettingsSubPage.ROOT -> settingsSubPage = SettingsSubPage.ROOT
                         selectedItem != DrawerItem.Schedule -> selectedItem = DrawerItem.Schedule
                         else -> finish()
                     }
@@ -204,8 +219,7 @@ class MainActivity : ComponentActivity() {
                         settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
-                        apiProbeService = container.apiProbeService,
-                        parser = container.academicScheduleParser
+                        semesterImportService = container.academicSemesterImportService
                     )
                 )
                 val examViewModel: ExamViewModel = viewModel(
@@ -271,7 +285,8 @@ class MainActivity : ComponentActivity() {
                         examParser = container.examParser,
                         scoreParser = container.scoreParser,
                         gradeExamParser = container.gradeExamParser,
-                        studyPlanParser = container.studyPlanParser
+                        studyPlanParser = container.studyPlanParser,
+                        semesterImportService = container.academicSemesterImportService
                     )
                 )
                 val fitnessScoreViewModel: FitnessScoreViewModel = viewModel(
@@ -282,24 +297,11 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
-                val calendarViewModel: CampusImageViewModel? =
-                    if (selectedItem == DrawerItem.AcademicCalendar) {
+                val campusInfoViewModel: CampusImageViewModel? =
+                    if (selectedItem == DrawerItem.CampusInfo) {
                         viewModel(
-                            key = "campus-calendar",
-                            factory = CampusImageViewModelFactory(
-                                container.campusImageService,
-                                CampusImageType.ACADEMIC_CALENDAR
-                            )
-                        )
-                    } else null
-                val shuttleViewModel: CampusImageViewModel? =
-                    if (selectedItem == DrawerItem.ShuttleBus) {
-                        viewModel(
-                            key = "campus-shuttle",
-                            factory = CampusImageViewModelFactory(
-                                container.campusImageService,
-                                CampusImageType.SHUTTLE_BUS
-                            )
+                            key = "campus-info",
+                            factory = CampusImageViewModelFactory(container.campusImageService)
                         )
                     } else null
                 val financeViewModels = remember { FinanceViewModelRegistry() }
@@ -317,7 +319,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(campusType) {
                     if (
                         campusType != CampusType.GUILIN &&
-                        selectedItem in listOf(DrawerItem.AcademicCalendar, DrawerItem.ShuttleBus)
+                        selectedItem == DrawerItem.CampusInfo
                     ) {
                         selectedItem = DrawerItem.Schedule
                     }
@@ -417,7 +419,7 @@ class MainActivity : ComponentActivity() {
                     gesturesEnabled = !drawerGestureBlocked,
                     drawerContent = {
                         ModalDrawerSheet(
-                            modifier = Modifier.fillMaxWidth(0.60f),
+                            modifier = Modifier.fillMaxWidth(0.75f),
                             drawerContainerColor = Color(0xFFE8E4D6),
                             drawerContentColor = Color(0xFF141821)
                         ) {
@@ -448,7 +450,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             showDot = item == DrawerItem.About && showUpdateDot,
                                             onClick = {
                                                 selectedItem = item
-                                                showCourseColors = false
+                                                settingsSubPage = SettingsSubPage.ROOT
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -473,7 +475,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     target = item,
                                                     onProfessionalScoreEntered = professionalScoreViewModel::resetAcademicYearSelection
                                                 )
-                                                showCourseColors = false
+                                                settingsSubPage = SettingsSubPage.ROOT
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -494,7 +496,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             isSelected = selectedItem == item,
                                             onClick = {
                                                 selectedItem = item
-                                                showCourseColors = false
+                                                settingsSubPage = SettingsSubPage.ROOT
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -517,7 +519,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                 || (item == DrawerItem.Notice && showNoticeDot),
                                             onClick = {
                                                 selectedItem = item
-                                                showCourseColors = false
+                                                settingsSubPage = SettingsSubPage.ROOT
                                                 scope.launch { drawerState.close() }
                                             }
                                         )
@@ -534,19 +536,21 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 TopAppBar(
                                     title = {
                                         Text(
-                                            if (showCourseColors) "课程卡片颜色" else selectedItem.title,
+                                            if (selectedItem == DrawerItem.Settings) settingsSubPage.title else selectedItem.title,
                                             color = Color(0xFF141821),
                                             fontWeight = FontWeight.SemiBold
                                         )
                                     },
                                     navigationIcon = {
                                         IconButton(onClick = {
-                                            if (showCourseColors) showCourseColors = false
+                                            if (settingsSubPage != SettingsSubPage.ROOT) {
+                                                settingsSubPage = SettingsSubPage.ROOT
+                                            }
                                             else scope.launch { drawerState.open() }
                                         }) {
                                             Icon(
-                                                imageVector = if (showCourseColors) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
-                                                contentDescription = if (showCourseColors) "返回" else "菜单",
+                                                imageVector = if (settingsSubPage != SettingsSubPage.ROOT) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
+                                                contentDescription = if (settingsSubPage != SettingsSubPage.ROOT) "返回" else "菜单",
                                                 tint = Color(0xFF141821),
                                                 modifier = Modifier.size(26.dp)
                                             )
@@ -599,22 +603,15 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
-                                            DrawerItem.AcademicCalendar -> calendarViewModel?.let { viewModel ->
+                                            DrawerItem.CampusInfo -> campusInfoViewModel?.let { viewModel ->
                                                 val campusImageState by viewModel.uiState.collectAsStateWithLifecycle()
-                                                IconButton(
-                                                    onClick = viewModel::refresh,
-                                                    enabled = !campusImageState.isLoading
-                                                ) {
-                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新校历")
-                                                }
-                                            }
-                                            DrawerItem.ShuttleBus -> shuttleViewModel?.let { viewModel ->
-                                                val campusImageState by viewModel.uiState.collectAsStateWithLifecycle()
-                                                IconButton(
-                                                    onClick = viewModel::refresh,
-                                                    enabled = !campusImageState.isLoading
-                                                ) {
-                                                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新校车路线")
+                                                if (campusImageState.selectedType.isRemote) {
+                                                    IconButton(
+                                                        onClick = viewModel::refreshCurrent,
+                                                        enabled = !campusImageState.isLoading
+                                                    ) {
+                                                        Icon(Icons.Outlined.Refresh, contentDescription = "刷新校园信息")
+                                                    }
                                                 }
                                             }
                                             DrawerItem.Finance -> {
@@ -672,16 +669,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     viewModel = fitnessScoreViewModel,
                                     onTableGestureActive = { drawerGestureBlocked = it }
                                 )
-                                DrawerItem.AcademicCalendar -> calendarViewModel?.let {
+                                DrawerItem.CampusInfo -> campusInfoViewModel?.let {
                                     CampusImageScreen(
-                                        title = DrawerItem.AcademicCalendar.title,
-                                        viewModel = it,
-                                        onImageGestureActive = { active -> drawerGestureBlocked = active }
-                                    )
-                                }
-                                DrawerItem.ShuttleBus -> shuttleViewModel?.let {
-                                    CampusImageScreen(
-                                        title = DrawerItem.ShuttleBus.title,
                                         viewModel = it,
                                         onImageGestureActive = { active -> drawerGestureBlocked = active }
                                     )
@@ -700,21 +689,25 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
                                     viewModel = scheduleViewModel,
-                                    showCourseColors = showCourseColors,
+                                    subPage = settingsSubPage,
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
-                                    onShowCourseColors = { showCourseColors = true },
+                                    onSubPageChange = { settingsSubPage = it },
                                     onReset = { showResetConfirm = true }
                                 )
                                 DrawerItem.Notice -> NoticeScreen(notices = notices)
                                 DrawerItem.SemesterOverview -> SemesterOverviewScreen(viewModel = semesterOverviewViewModel)
                                 DrawerItem.FAQ -> FaqScreen()
-                                DrawerItem.About -> AboutScreen(
-                                    updateChecker = container.updateChecker,
-                                    updateAvailableVersion = updateAvailableVersion,
-                                    onShowUpdateDialog = { info ->
-                                        showUpdateDialog = UpdateDialogState.Idle(info)
-                                    }
-                                )
+                                DrawerItem.About -> {
+                                    val shareContext = LocalContext.current
+                                    AboutScreen(
+                                        updateChecker = container.updateChecker,
+                                        updateAvailableVersion = updateAvailableVersion,
+                                        onShowUpdateDialog = { info ->
+                                            showUpdateDialog = UpdateDialogState.Idle(info)
+                                        },
+                                        onShare = { shareApk(shareContext) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -844,22 +837,38 @@ private fun ScheduleDestination(
 @Composable
 private fun ScheduleSettingsDestination(
     viewModel: ScheduleViewModel,
-    showCourseColors: Boolean,
+    subPage: SettingsSubPage,
     onPickBackground: () -> Unit,
-    onShowCourseColors: () -> Unit,
+    onSubPageChange: (SettingsSubPage) -> Unit,
     onReset: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    if (showCourseColors) {
-        CourseColorsPage(
+    when (subPage) {
+        SettingsSubPage.COURSE_COLORS -> CourseColorsPage(
             courses = uiState.courses,
             overrides = uiState.courseColorOverrides,
             onSetColor = viewModel::setCourseColorOverride,
             onRemoveColor = viewModel::removeCourseColorOverride,
             onResetAll = viewModel::clearCourseColorOverrides
         )
-    } else {
-        SettingsPage(
+        SettingsSubPage.CLASS_PERIODS -> ClassPeriodSettingsScreen(
+            campusType = uiState.campusType,
+            guilinSubCampus = uiState.guilinSubCampus,
+            overrides = uiState.classPeriodProfileOverrides,
+            onSetPeriods = viewModel::setClassPeriods,
+            onResetPeriods = viewModel::resetClassPeriods,
+            onSetGuilinSubCampus = viewModel::setGuilinSubCampus
+        )
+        SettingsSubPage.BUILT_IN_BACKGROUNDS -> BuiltInBackgroundsPage(
+            selectedBackground = BuiltInScheduleBackground.fromStorageValue(uiState.customBackgroundUri)
+                ?: if (uiState.customBackgroundUri.isBlank()) BuiltInScheduleBackground.STARRY else null,
+            onSelectBackground = { background ->
+                // 内置背景使用稳定标识持久化，默认星空以空值兼容旧设置。
+                viewModel.setCustomBackgroundUri(background.storageValue)
+                onSubPageChange(SettingsSubPage.ROOT)
+            }
+        )
+        SettingsSubPage.ROOT -> SettingsPage(
             showWeekend = uiState.showWeekend,
             onShowWeekendChange = viewModel::setShowWeekend,
             showNoon = uiState.showNoon,
@@ -867,7 +876,9 @@ private fun ScheduleSettingsDestination(
             hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
             onPickBackground = onPickBackground,
             onClearBackground = viewModel::clearCustomBackground,
-            onCourseColors = onShowCourseColors,
+            onBuiltInBackgrounds = { onSubPageChange(SettingsSubPage.BUILT_IN_BACKGROUNDS) },
+            onCourseColors = { onSubPageChange(SettingsSubPage.COURSE_COLORS) },
+            onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
             onReset = onReset
         )
     }
@@ -945,7 +956,9 @@ private fun SettingsPage(
     hasCustomBackground: Boolean = false,
     onPickBackground: () -> Unit = {},
     onClearBackground: () -> Unit = {},
+    onBuiltInBackgrounds: () -> Unit = {},
     onCourseColors: () -> Unit = {},
+    onClassPeriods: () -> Unit = {},
     onReset: () -> Unit = {}
 ) {
     val settingsBg = Color(0xFFF6F4EF)
@@ -957,6 +970,7 @@ private fun SettingsPage(
         modifier = Modifier
             .fillMaxSize()
             .background(settingsBg)
+            .verticalScroll(rememberScrollState())
     ) {
         Column(
             modifier = Modifier.padding(24.dp),
@@ -1008,6 +1022,22 @@ private fun SettingsPage(
                     Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
                 }
             }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onClassPeriods)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("上课时间", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
+                }
+            }
 
             // Background section
             Text("背景", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -1017,6 +1047,22 @@ private fun SettingsPage(
                 shape = RoundedCornerShape(14.dp)
             ) {
                 Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onBuiltInBackgrounds)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("内置背景", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Icon(
+                            Icons.Outlined.ChevronRight,
+                            contentDescription = null,
+                            tint = settingsSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    HorizontalDivider(color = Color(0xFFEDE8DE))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1063,6 +1109,81 @@ private fun SettingsPage(
                 ) {
                     Text("重置应用", color = Color(0xFFDC2626), fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Text("恢复初次使用状态", color = settingsSecondary, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BuiltInBackgroundsPage(
+    selectedBackground: BuiltInScheduleBackground?,
+    onSelectBackground: (BuiltInScheduleBackground) -> Unit
+) {
+    val settingsBg = Color(0xFFF6F4EF)
+    val settingsPrimary = Color(0xFF141821)
+    val settingsCardBg = Color(0xFFFFFEFB)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(settingsBg)
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        BuiltInBackgroundsCard(
+            background = BuiltInScheduleBackground.STARRY,
+            selected = selectedBackground == BuiltInScheduleBackground.STARRY,
+            onClick = { onSelectBackground(BuiltInScheduleBackground.STARRY) },
+            cardColor = settingsCardBg,
+            textColor = settingsPrimary
+        )
+        BuiltInBackgroundsCard(
+            background = BuiltInScheduleBackground.FLOWER,
+            selected = selectedBackground == BuiltInScheduleBackground.FLOWER,
+            onClick = { onSelectBackground(BuiltInScheduleBackground.FLOWER) },
+            cardColor = settingsCardBg,
+            textColor = settingsPrimary
+        )
+    }
+}
+
+@Composable
+private fun BuiltInBackgroundsCard(
+    background: BuiltInScheduleBackground,
+    selected: Boolean,
+    onClick: () -> Unit,
+    cardColor: Color,
+    textColor: Color
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = cardColor,
+        shape = RoundedCornerShape(14.dp),
+        shadowElevation = if (selected) 2.dp else 0.dp
+    ) {
+        Column(modifier = Modifier.clickable(onClick = onClick)) {
+            Image(
+                painter = painterResource(background.drawableRes),
+                contentDescription = "${background.displayName}背景预览",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp),
+                contentScale = ContentScale.Crop
+            )
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(background.displayName, color = textColor, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                if (selected) {
+                    Icon(
+                        Icons.Outlined.Check,
+                        contentDescription = "已选择",
+                        tint = Color(0xFF2563EB),
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
@@ -1704,5 +1825,32 @@ private fun UpdateDialog(
                 }
             )
         }
+    }
+}
+
+/** 复制已安装的 APK 到缓存目录，并通过系统选择器分享给用户指定的应用。 */
+private fun shareApk(context: Context) {
+    try {
+        val sourceApk = File(context.packageCodePath)
+        // 清理旧分享文件，避免系统选择器展示带重复后缀的 APK。
+        context.cacheDir.listFiles()?.filter {
+            it.name.startsWith("桂系一站式_v") && it.name.endsWith(".apk")
+        }?.forEach { it.delete() }
+        val sharedApk = File(context.cacheDir, "桂系一站式_v${BuildConfig.VERSION_NAME}.apk")
+        sourceApk.copyTo(sharedApk, overwrite = true)
+        val contentUri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            sharedApk
+        )
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/vnd.android.package-archive"
+            putExtra(Intent.EXTRA_STREAM, contentUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra(Intent.EXTRA_TEXT, "桂系一站式 — 查课表、成绩、考试安排超方便！")
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "分享到"))
+    } catch (_: Exception) {
+        // 分享属于辅助功能，异常时不影响 About 页和应用主流程。
     }
 }

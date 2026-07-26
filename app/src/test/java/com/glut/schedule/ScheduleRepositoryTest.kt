@@ -16,8 +16,12 @@ import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.guilinClassPeriods
 import com.glut.schedule.data.model.nanningClassPeriods
+import com.glut.schedule.data.model.pingfengClassPeriods
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.ClassPeriodProfile
+import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
+import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
 import kotlinx.coroutines.async
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -34,6 +38,48 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScheduleRepositoryTest {
+    @Test
+    fun pingfengProfileUsesItsDefaultInsteadOfStoredYanshanPeriods() = runTest {
+        val dao = FakeScheduleDao(initialSemesters = listOf(legacyCurrentSemester()))
+        dao.insertClassPeriods(
+            guilinClassPeriods().map { it.toEntity(AcademicSemester.LEGACY_CURRENT_ID) }
+        )
+        val repository = ScheduleRepository(
+            dao = dao,
+            campusType = flowOf(CampusType.GUILIN),
+            guilinSubCampus = flowOf(GUILIN_SUB_CAMPUS_PINGFENG)
+        )
+
+        assertEquals("08:20", repository.classPeriods.first().first().startsAt)
+        assertEquals(pingfengClassPeriods(), repository.currentClassPeriods.first())
+    }
+
+    @Test
+    fun guilinSubCampusProfilesKeepIndependentOverrides() = runTest {
+        val yanshanCustom = guilinClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "08:10", endsAt = "08:55") else it
+        }
+        val pingfengCustom = pingfengClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "08:00", endsAt = "08:45") else it
+        }
+        val selectedSubCampus = MutableStateFlow(GUILIN_SUB_CAMPUS_DEFAULT)
+        val repository = ScheduleRepository(
+            dao = FakeScheduleDao(initialSemesters = listOf(legacyCurrentSemester())),
+            campusType = flowOf(CampusType.GUILIN),
+            classPeriodProfileOverrides = flowOf(
+                mapOf(
+                    ClassPeriodProfile.GUILIN_YANSHAN to yanshanCustom,
+                    ClassPeriodProfile.GUILIN_PINGFENG to pingfengCustom
+                )
+            ),
+            guilinSubCampus = selectedSubCampus
+        )
+
+        assertEquals("08:10", repository.classPeriods.first().first().startsAt)
+        selectedSubCampus.value = GUILIN_SUB_CAMPUS_PINGFENG
+        assertEquals("08:00", repository.classPeriods.first().first().startsAt)
+    }
+
     @Test
     fun classPeriodsUseViewedSemesterCampusOverrideWhileCurrentPeriodsUseCurrentCampusOverride() = runTest {
         val historical = AcademicSemester.create(
@@ -70,7 +116,7 @@ class ScheduleRepositoryTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun classPeriodOverrideFlowUpdatesLiveAndMissingOverrideFallsBackToStoredPeriods() = runTest {
+    fun classPeriodOverrideFlowUpdatesLiveAndMissingOverrideFallsBackToProfileDefault() = runTest {
         val historical = AcademicSemester.create(
             CampusType.GUILIN, 2024, "44", SemesterSeason.AUTUMN, "2", isCurrent = false
         )
@@ -95,7 +141,7 @@ class ScheduleRepositoryTest {
 
         overrides.value = mapOf(CampusType.GUILIN to override)
 
-        assertEquals(listOf(stored, override), emissions.await())
+        assertEquals(listOf(guilinClassPeriods(), override), emissions.await())
     }
 
     @Test
@@ -155,7 +201,7 @@ class ScheduleRepositoryTest {
     }
 
     @Test
-    fun legacyCurrentKeepsValidStoredPeriodsForSelectedGuilinCampus() = runTest {
+    fun legacyCurrentIgnoresStoredPeriodsInFavorOfSelectedProfileDefault() = runTest {
         val stored = guilinClassPeriods().map {
             if (it.section == 1) it.copy(startsAt = "08:10", endsAt = "08:55") else it
         }
@@ -168,8 +214,8 @@ class ScheduleRepositoryTest {
             campusType = flowOf(CampusType.GUILIN)
         )
 
-        assertEquals(stored, repository.currentClassPeriods.first())
-        assertEquals(stored, repository.classPeriods.first())
+        assertEquals(guilinClassPeriods(), repository.currentClassPeriods.first())
+        assertEquals(guilinClassPeriods(), repository.classPeriods.first())
     }
 
     @Test

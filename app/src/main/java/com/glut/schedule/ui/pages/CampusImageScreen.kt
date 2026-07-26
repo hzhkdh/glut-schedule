@@ -70,7 +70,6 @@ private fun decodeCampusImage(bytes: ByteArray): Bitmap? {
 }
 
 private data class CampusBitmapState(val bitmap: Bitmap? = null, val isComplete: Boolean = false)
->>>>>>> fix/modal-explicit-actions-impl
 
 private val CampusPageBackground = Color(0xFFF6F4EF)
 private val CampusMessageBackground = Color(0xFFFFFEFB)
@@ -90,20 +89,12 @@ fun CampusImageScreen(
     onImageGestureActive: (Boolean) -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-<<<<<<< HEAD
     val onSelectType = viewModel::selectType
-    val bitmap = remember(state.selectedType, state.document?.fetchedAt) {
-        state.document?.bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-    }
-    val painter = if (state.selectedType != CampusImageType.CAMPUS_MAP) {
-        remember(bitmap) { bitmap?.asImageBitmap()?.let(::BitmapPainter) }
-    } else null
-    var scale by remember(state.selectedType, state.document?.fetchedAt) { mutableFloatStateOf(1f) }
-    var offset by remember(state.selectedType, state.document?.fetchedAt) { mutableStateOf(Offset.Zero) }
-=======
+    // 远程大图在后台线程按像素上限解码，避免阻塞 Compose 主线程或触发内存峰值。
     val bitmapState by produceState(
         initialValue = CampusBitmapState(),
-        key1 = state.document?.fetchedAt
+        key1 = state.selectedType,
+        key2 = state.document?.fetchedAt
     ) {
         val bitmap = withContext(Dispatchers.Default) {
             state.document?.bytes?.let(::decodeCampusImage)
@@ -111,9 +102,11 @@ fun CampusImageScreen(
         value = CampusBitmapState(bitmap = bitmap, isComplete = true)
     }
     val bitmap = bitmapState.bitmap
-    var scale by remember(state.document?.fetchedAt) { mutableFloatStateOf(1f) }
-    var offset by remember(state.document?.fetchedAt) { mutableStateOf(Offset.Zero) }
->>>>>>> fix/modal-explicit-actions-impl
+    val painter = if (state.selectedType != CampusImageType.CAMPUS_MAP) {
+        remember(bitmap) { bitmap?.asImageBitmap()?.let(::BitmapPainter) }
+    } else null
+    var scale by remember(state.selectedType, state.document?.fetchedAt) { mutableFloatStateOf(1f) }
+    var offset by remember(state.selectedType, state.document?.fetchedAt) { mutableStateOf(Offset.Zero) }
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         scale = (scale * zoomChange).coerceIn(1f, 5f)
         offset = if (scale == 1f) Offset.Zero else offset + panChange
@@ -131,7 +124,6 @@ fun CampusImageScreen(
             .fillMaxSize()
             .background(CampusPageBackground)
     ) {
-<<<<<<< HEAD
         PrimaryTabRow(
             selectedTabIndex = CampusImageTabs.indexOfFirst { it.first == state.selectedType }
                 .coerceAtLeast(0),
@@ -194,7 +186,7 @@ fun CampusImageScreen(
                             translationY = offset.y
                         }
                 )
-            } else if (!state.isLoading) {
+            } else if (!state.isLoading && bitmapState.isComplete) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -208,7 +200,7 @@ fun CampusImageScreen(
                 }
             }
 
-            if (state.isLoading) {
+            if (state.isLoading || (state.selectedType != CampusImageType.CAMPUS_MAP && !bitmapState.isComplete)) {
                 CircularProgressIndicator()
             }
             if (painter != null && state.message.isNotBlank()) {
@@ -221,47 +213,6 @@ fun CampusImageScreen(
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
-=======
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = title,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    }
-                    .transformable(transformState)
-            )
-        } else if (!state.isLoading && bitmapState.isComplete) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(24.dp)
-            ) {
-                Text(state.message.ifBlank { "校园信息暂时无法加载" })
-                TextButton(onClick = viewModel::refresh) { Text("重试") }
-            }
-        }
-
-        if (state.isLoading || !bitmapState.isComplete) {
-            CircularProgressIndicator()
-        }
-        if (bitmap != null && state.message.isNotBlank()) {
-            Text(
-                text = state.message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-            )
->>>>>>> fix/modal-explicit-actions-impl
         }
     }
 }

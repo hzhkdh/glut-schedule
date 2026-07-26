@@ -108,7 +108,7 @@ class AcademicSemesterCatalogTest {
     }
 
     @Test
-    fun legacyCachedSemesterIsNormalizedWithoutClearingAppData() {
+    fun cachedSemesterKeepsPersistedPortalMetadataAndDisplayName() {
         val semester = AcademicSemesterEntity(
             id = "guilin:2026:autumn",
             campus = "GUILIN",
@@ -124,9 +124,10 @@ class AcademicSemesterCatalogTest {
             semesterEndDate = null
         ).toModel()
 
-        assertEquals("46", semester.portalYearId)
-        assertEquals("2", semester.portalTermId)
-        assertEquals("2026·秋", semester.displayName)
+        // Room 映射必须忠实保留缓存字段，目录同步负责补齐旧数据，避免读取时悄悄改写身份。
+        assertEquals("", semester.portalYearId)
+        assertEquals("", semester.portalTermId)
+        assertEquals("2025-2026 学年 · 秋", semester.displayName)
     }
 
     @Test

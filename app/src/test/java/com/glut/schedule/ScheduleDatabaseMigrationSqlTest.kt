@@ -87,7 +87,8 @@ class ScheduleDatabaseMigrationSqlTest {
         assertTrue(statements.any {
             it.contains("ALTER TABLE academic_semesters ADD COLUMN portalMaxWeek INTEGER")
         })
-        assertTrue(statements.any {
+        // v9→v10 已清理未完成缓存，10→11 只增列，不能再次重置历史学期。
+        assertTrue(statements.none {
             it.contains("`cacheStatus` = 'NOT_CACHED'") && it.contains("`isCurrent` = 0")
         })
         val module = File("src/main/java/com/glut/schedule/ScheduleApplication.kt")

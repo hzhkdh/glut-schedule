@@ -21,6 +21,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,13 +36,53 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.defaultClassPeriods
-import com.glut.schedule.data.model.pingfengClassPeriods
-import com.glut.schedule.data.model.yanshanClassPeriods
 import com.glut.schedule.data.model.validateClassPeriods
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.ClassPeriodProfile
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
+import com.glut.schedule.data.settings.classPeriodProfile
 import java.time.LocalTime
+
+internal data class ClassPeriodEditorState(
+    val profile: ClassPeriodProfile,
+    val overrides: Map<ClassPeriodProfile, List<ClassPeriod>>,
+    val draft: List<ClassPeriod>,
+    val saved: List<ClassPeriod>
+) {
+    val defaults: List<ClassPeriod>
+        get() = defaultClassPeriods(profile)
+    val isDirty: Boolean
+        get() = draft != saved
+    val modifiedSections: Set<Int>
+        get() = draft.zip(defaults).mapNotNull { (period, default) ->
+            period.section.takeIf {
+                period.startsAt != default.startsAt || period.endsAt != default.endsAt
+            }
+        }.toSet()
+
+    fun switchTo(target: ClassPeriodProfile): ClassPeriodEditorState =
+        create(target, overrides)
+
+    fun replaceDraft(periods: List<ClassPeriod>): ClassPeriodEditorState =
+        copy(draft = periods)
+
+    fun markSaved(periods: List<ClassPeriod>?): ClassPeriodEditorState {
+        val updatedOverrides = if (periods == null) overrides - profile else overrides + (profile to periods)
+        val effective = periods ?: defaultClassPeriods(profile)
+        return copy(overrides = updatedOverrides, draft = effective, saved = effective)
+    }
+
+    companion object {
+        fun create(
+            profile: ClassPeriodProfile,
+            overrides: Map<ClassPeriodProfile, List<ClassPeriod>>
+        ): ClassPeriodEditorState {
+            val effective = overrides[profile] ?: defaultClassPeriods(profile)
+            return ClassPeriodEditorState(profile, overrides, effective, effective)
+        }
+    }
+}
 
 internal fun classPeriodSettingsLabels(campusType: CampusType): List<String> = when (campusType) {
     CampusType.GUILIN -> buildList {
@@ -56,40 +97,44 @@ internal fun classPeriodSettingsLabels(campusType: CampusType): List<String> = w
 @Composable
 fun ClassPeriodSettingsScreen(
     campusType: CampusType,
-    periods: List<ClassPeriod>,
     guilinSubCampus: String,
-    onSetPeriods: (List<ClassPeriod>) -> Unit,
-    onResetPeriods: () -> Unit,
-    onSetGuilinSubCampus: (String) -> Unit,
-    onSaved: () -> Unit
+    overrides: Map<ClassPeriodProfile, List<ClassPeriod>>,
+    onSetPeriods: (ClassPeriodProfile, List<ClassPeriod>) -> Unit,
+    onResetPeriods: (ClassPeriodProfile) -> Unit,
+    onSetGuilinSubCampus: (String) -> Unit
 ) {
     val context = LocalContext.current
     val isGuilin = campusType == CampusType.GUILIN
-
-    fun subCampusDefaults(): List<ClassPeriod> = if (isGuilin) {
-        when (guilinSubCampus) {
-            GUILIN_SUB_CAMPUS_PINGFENG -> pingfengClassPeriods()
-            else -> yanshanClassPeriods()
-        }
-    } else {
-        defaultClassPeriods(campusType)
+    val selectedProfile = classPeriodProfile(campusType, guilinSubCampus)
+    var editor by remember(campusType) {
+        mutableStateOf(ClassPeriodEditorState.create(selectedProfile, overrides))
     }
-
-    var draft by remember(campusType, periods) {
-        mutableStateOf(
-            periods.takeIf { validateClassPeriods(campusType, it) }
-                ?: defaultClassPeriods(campusType)
-        )
-    }
-    var validationMessage by remember(campusType, periods) { mutableStateOf("") }
+    var validationMessage by remember(campusType) { mutableStateOf("") }
     var showSwitchConfirm by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
-    var pendingSubCampus by remember { mutableStateOf<String?>(null) }
-    // 手动编辑标记：仅当用户实际修改过时间后才为 true，保存后重置
-    var isDirty by remember { mutableStateOf(false) }
-    // 默认时间基准：用于标记被修改过的节次
-    val defaults = remember(campusType, guilinSubCampus) { subCampusDefaults() }
+    var pendingProfile by remember { mutableStateOf<ClassPeriodProfile?>(null) }
     val labels = classPeriodSettingsLabels(campusType)
+
+    // DataStore 回写期间保持当前编辑档案稳定，避免校区、默认值和星号跨帧错配。
+    LaunchedEffect(selectedProfile, overrides) {
+        if (!editor.isDirty && editor.profile == selectedProfile) {
+            editor = ClassPeriodEditorState.create(selectedProfile, overrides)
+        } else {
+            editor = editor.copy(overrides = overrides)
+        }
+    }
+
+    fun switchProfile(target: ClassPeriodProfile) {
+        if (target == editor.profile) return
+        if (editor.isDirty) {
+            pendingProfile = target
+            showSwitchConfirm = true
+        } else {
+            editor = editor.switchTo(target)
+            onSetGuilinSubCampus(target.guilinSubCampusValue())
+            validationMessage = ""
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -115,51 +160,35 @@ fun ClassPeriodSettingsScreen(
                 ) {
                     SubCampusPill(
                         label = "雁山校区",
-                        selected = guilinSubCampus != GUILIN_SUB_CAMPUS_PINGFENG,
-                        onClick = {
-                            if (isDirty) {
-                                pendingSubCampus = GUILIN_SUB_CAMPUS_DEFAULT
-                                showSwitchConfirm = true
-                            } else {
-                                onSetGuilinSubCampus(GUILIN_SUB_CAMPUS_DEFAULT)
-                                draft = yanshanClassPeriods()
-                            }
-                        },
+                        selected = editor.profile == ClassPeriodProfile.GUILIN_YANSHAN,
+                        onClick = { switchProfile(ClassPeriodProfile.GUILIN_YANSHAN) },
                         modifier = Modifier.weight(1f)
                     )
                     SubCampusPill(
                         label = "屏风校区",
-                        selected = guilinSubCampus == GUILIN_SUB_CAMPUS_PINGFENG,
-                        onClick = {
-                            if (isDirty) {
-                                pendingSubCampus = GUILIN_SUB_CAMPUS_PINGFENG
-                                showSwitchConfirm = true
-                            } else {
-                                onSetGuilinSubCampus(GUILIN_SUB_CAMPUS_PINGFENG)
-                                draft = pingfengClassPeriods()
-                            }
-                        },
+                        selected = editor.profile == ClassPeriodProfile.GUILIN_PINGFENG,
+                        onClick = { switchProfile(ClassPeriodProfile.GUILIN_PINGFENG) },
                         modifier = Modifier.weight(1f)
                     )
                 }
             }
         }
 
-        itemsIndexed(draft, key = { _, period -> period.section }) { index, period ->
-            val defaultPeriod = defaults.getOrNull(index)
-            val modified = defaultPeriod != null && (period.startsAt != defaultPeriod.startsAt || period.endsAt != defaultPeriod.endsAt)
-            val label = if (modified) "${labels[index]}*" else labels[index]
+        itemsIndexed(editor.draft, key = { _, period -> period.section }) { index, period ->
+            val label = if (period.section in editor.modifiedSections) "${labels[index]}*" else labels[index]
             ClassPeriodRow(
                 label = label,
                 period = period,
                 onStartSelected = { selected ->
-                    draft = draft.replaceAt(index, period.copy(startsAt = selected))
-                    isDirty = true
+                    editor = editor.replaceDraft(
+                        editor.draft.replaceAt(index, period.copy(startsAt = selected))
+                    )
                     validationMessage = ""
                 },
                 onEndSelected = { selected ->
-                    draft = draft.replaceAt(index, period.copy(endsAt = selected))
-                    isDirty = true
+                    editor = editor.replaceDraft(
+                        editor.draft.replaceAt(index, period.copy(endsAt = selected))
+                    )
                     validationMessage = ""
                 },
                 showPicker = { initial, onSelected ->
@@ -191,16 +220,17 @@ fun ClassPeriodSettingsScreen(
             ) {
                 Button(
                     onClick = {
-                        if (!validateClassPeriods(campusType, draft)) {
+                        if (!validateClassPeriods(editor.profile, editor.draft)) {
                             validationMessage = "请检查时间格式、先后顺序和相邻课时是否重叠"
                             return@Button
                         }
-                        if (draft == subCampusDefaults()) {
-                            onResetPeriods()
+                        if (editor.draft == editor.defaults) {
+                            onResetPeriods(editor.profile)
+                            editor = editor.markSaved(null)
                         } else {
-                            onSetPeriods(draft)
+                            onSetPeriods(editor.profile, editor.draft)
+                            editor = editor.markSaved(editor.draft)
                         }
-                        isDirty = false
                         Toast.makeText(context, "上课时间已保存", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -214,8 +244,8 @@ fun ClassPeriodSettingsScreen(
                 ) {
                     Text(
                         text = if (isGuilin) {
-                            when (guilinSubCampus) {
-                                GUILIN_SUB_CAMPUS_PINGFENG -> "恢复屏风校区默认时间"
+                            when (editor.profile) {
+                                ClassPeriodProfile.GUILIN_PINGFENG -> "恢复屏风校区默认时间"
                                 else -> "恢复雁山校区默认时间"
                             }
                         } else "恢复默认时间",
@@ -227,13 +257,13 @@ fun ClassPeriodSettingsScreen(
     }
 
     // 切换校区确认弹窗
-    if (showSwitchConfirm && pendingSubCampus != null) {
+    if (showSwitchConfirm && pendingProfile != null) {
         AlertDialog(
             onDismissRequest = { showSwitchConfirm = false },
             title = { Text("切换校区") },
             text = {
                 Text(
-                    if (pendingSubCampus == GUILIN_SUB_CAMPUS_PINGFENG)
+                    if (pendingProfile == ClassPeriodProfile.GUILIN_PINGFENG)
                         "切换到屏风校区将丢弃当前未保存的编辑，确定继续？"
                     else "切换到雁山校区将丢弃当前未保存的编辑，确定继续？"
                 )
@@ -241,18 +271,18 @@ fun ClassPeriodSettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showSwitchConfirm = false
-                    pendingSubCampus?.let { sub ->
-                        onSetGuilinSubCampus(sub)
-                        draft = if (sub == GUILIN_SUB_CAMPUS_PINGFENG) pingfengClassPeriods() else yanshanClassPeriods()
-                        isDirty = false
+                    pendingProfile?.let { target ->
+                        editor = editor.switchTo(target)
+                        onSetGuilinSubCampus(target.guilinSubCampusValue())
+                        validationMessage = ""
                     }
-                    pendingSubCampus = null
+                    pendingProfile = null
                 }) { Text("确定", color = Color(0xFFDC2626)) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showSwitchConfirm = false
-                    pendingSubCampus = null
+                    pendingProfile = null
                 }) { Text("取消") }
             }
         )
@@ -266,8 +296,8 @@ fun ClassPeriodSettingsScreen(
             text = {
                 Text(
                     if (isGuilin) {
-                        when (guilinSubCampus) {
-                            GUILIN_SUB_CAMPUS_PINGFENG -> "将替换为屏风校区默认上课时间，确定继续？"
+                        when (editor.profile) {
+                            ClassPeriodProfile.GUILIN_PINGFENG -> "将替换为屏风校区默认上课时间，确定继续？"
                             else -> "将替换为雁山校区默认上课时间，确定继续？"
                         }
                     } else "将替换为南宁分校默认上课时间，确定继续？"
@@ -276,9 +306,8 @@ fun ClassPeriodSettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showResetConfirm = false
-                    draft = subCampusDefaults()
-                    onResetPeriods()
-                    isDirty = false
+                    editor = editor.markSaved(null)
+                    onResetPeriods(editor.profile)
                     validationMessage = ""
                     Toast.makeText(context, "已恢复默认时间", Toast.LENGTH_SHORT).show()
                 }) { Text("确定", color = Color(0xFFDC2626)) }
@@ -372,3 +401,9 @@ private fun TimeValue(value: String, onClick: () -> Unit) {
 
 private fun List<ClassPeriod>.replaceAt(index: Int, value: ClassPeriod): List<ClassPeriod> =
     toMutableList().also { it[index] = value }
+
+private fun ClassPeriodProfile.guilinSubCampusValue(): String = when (this) {
+    ClassPeriodProfile.GUILIN_PINGFENG -> GUILIN_SUB_CAMPUS_PINGFENG
+    ClassPeriodProfile.GUILIN_YANSHAN -> GUILIN_SUB_CAMPUS_DEFAULT
+    ClassPeriodProfile.NANNING -> error("南宁课时档案不支持桂林子校区切换")
+}

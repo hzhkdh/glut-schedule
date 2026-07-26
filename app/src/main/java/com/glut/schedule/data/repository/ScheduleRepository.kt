@@ -22,8 +22,10 @@ import com.glut.schedule.data.model.pingfengClassPeriods
 import com.glut.schedule.data.model.yanshanClassPeriods
 import com.glut.schedule.data.model.validateClassPeriods
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.ClassPeriodProfile
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
+import com.glut.schedule.data.settings.classPeriodProfile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,11 +34,18 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
+private data class ClassPeriodConfig(
+    val legacyOverrides: Map<CampusType, List<ClassPeriod>>,
+    val profileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>>,
+    val guilinSubCampus: String
+)
+
 class ScheduleRepository(
     private val dao: ScheduleDao,
     private val campusType: Flow<CampusType>,
     private val courseColorOverrides: Flow<Map<String, String>> = flowOf(emptyMap()),
     private val classPeriodOverrides: Flow<Map<CampusType, List<ClassPeriod>>> = flowOf(emptyMap()),
+    private val classPeriodProfileOverrides: Flow<Map<ClassPeriodProfile, List<ClassPeriod>>> = flowOf(emptyMap()),
     private val guilinSubCampus: Flow<String> = flowOf(GUILIN_SUB_CAMPUS_DEFAULT)
 ) {
     private val _viewedSemesterId = MutableStateFlow(AcademicSemester.LEGACY_CURRENT_ID)
@@ -72,16 +81,28 @@ class ScheduleRepository(
         mapCourses(courses, occurrences, semester?.id ?: AcademicSemester.LEGACY_CURRENT_ID)
     }
 
+    private val classPeriodConfig = combine(
+        classPeriodOverrides, classPeriodProfileOverrides, guilinSubCampus
+    ) { legacyOverrides, profileOverrides, subCampus ->
+        ClassPeriodConfig(legacyOverrides, profileOverrides, subCampus)
+    }
+
     val classPeriods: Flow<List<ClassPeriod>> = combine(
-        dao.observeClassPeriods(), viewedSemester, campusType, classPeriodOverrides, guilinSubCampus
-    ) { stored, semester, selectedCampus, overrides, subCampus ->
-        resolveClassPeriods(stored, semester, selectedCampus, overrides, subCampus)
+        viewedSemester, campusType, classPeriodConfig
+    ) { semester, selectedCampus, config ->
+        resolveClassPeriods(
+            semester, selectedCampus,
+            config.legacyOverrides, config.profileOverrides, config.guilinSubCampus
+        )
     }
 
     val currentClassPeriods: Flow<List<ClassPeriod>> = combine(
-        dao.observeClassPeriods(), currentSemester, campusType, classPeriodOverrides, guilinSubCampus
-    ) { stored, semester, selectedCampus, overrides, subCampus ->
-        resolveClassPeriods(stored, semester, selectedCampus, overrides, subCampus)
+        currentSemester, campusType, classPeriodConfig
+    ) { semester, selectedCampus, config ->
+        resolveClassPeriods(
+            semester, selectedCampus,
+            config.legacyOverrides, config.profileOverrides, config.guilinSubCampus
+        )
     }
 
     suspend fun seedIfEmpty() {
@@ -324,10 +345,10 @@ class ScheduleRepository(
         }
 
         fun resolveClassPeriods(
-            stored: List<com.glut.schedule.data.local.ClassPeriodEntity>,
             semester: AcademicSemester?,
             selectedCampus: CampusType,
-            overrides: Map<CampusType, List<ClassPeriod>>,
+            legacyOverrides: Map<CampusType, List<ClassPeriod>>,
+            profileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>>,
             guilinSubCampus: String = GUILIN_SUB_CAMPUS_DEFAULT
         ): List<ClassPeriod> {
             val campus = if (semester?.id == AcademicSemester.LEGACY_CURRENT_ID) {
@@ -335,21 +356,11 @@ class ScheduleRepository(
             } else {
                 semester?.campus ?: selectedCampus
             }
-            val storedPeriods = stored
-                .filter {
-                    it.semesterId ==
-                        (semester?.id ?: AcademicSemester.LEGACY_CURRENT_ID)
-                }
-                .map { it.toModel() }
-                .takeIf { validateClassPeriods(campus, it) }
-            // 桂林校区根据子校区偏好选择默认时间；有自定义覆盖时优先自定义
-            val defaultForCampus = when {
-                overrides[campus] != null -> overrides[campus]!!
-                campus == CampusType.GUILIN && guilinSubCampus == GUILIN_SUB_CAMPUS_PINGFENG ->
-                    pingfengClassPeriods()
-                else -> defaultClassPeriods(campus)
-            }
-            return overrides[campus] ?: storedPeriods ?: defaultForCampus
+            val profile = classPeriodProfile(campus, guilinSubCampus)
+            // 展示时间只由当前档案控制，避免学期表中的旧雁山时间压过屏风配置。
+            return profileOverrides[profile]
+                ?: legacyOverrides[campus]
+                ?: defaultClassPeriods(profile)
         }
 
         fun legacySemesterEntity() = com.glut.schedule.data.local.AcademicSemesterEntity(

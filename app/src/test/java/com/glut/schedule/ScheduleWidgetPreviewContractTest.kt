@@ -88,7 +88,7 @@ class ScheduleWidgetPreviewContractTest {
             "src/main/java/com/glut/schedule/widget/ScheduleWidgetUpdater.kt"
         ).readText()
 
-        assertTrue(gradle.contains("androidx.work:work-runtime-ktx:2.7.1"))
+        assertTrue(gradle.contains("androidx.work:work-runtime-ktx:2.10.0"))
         assertTrue(worker.isFile)
         val workerSource = worker.readText()
         assertTrue(workerSource.contains("enqueueUniqueWork"))

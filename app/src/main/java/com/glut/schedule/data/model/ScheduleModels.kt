@@ -1,6 +1,7 @@
 package com.glut.schedule.data.model
 
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.ClassPeriodProfile
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
@@ -214,6 +215,18 @@ fun defaultClassPeriods(campus: CampusType): List<ClassPeriod> = when (campus) {
     CampusType.GUILIN -> guilinClassPeriods()
     CampusType.NANNING -> nanningClassPeriods()
 }
+
+fun defaultClassPeriods(profile: ClassPeriodProfile): List<ClassPeriod> = when (profile) {
+    ClassPeriodProfile.GUILIN_YANSHAN -> yanshanClassPeriods()
+    ClassPeriodProfile.GUILIN_PINGFENG -> pingfengClassPeriods()
+    ClassPeriodProfile.NANNING -> nanningClassPeriods()
+}
+
+fun validateClassPeriods(profile: ClassPeriodProfile, periods: List<ClassPeriod>): Boolean =
+    validateClassPeriods(
+        campus = if (profile == ClassPeriodProfile.NANNING) CampusType.NANNING else CampusType.GUILIN,
+        periods = periods
+    )
 
 fun validateClassPeriods(campus: CampusType, periods: List<ClassPeriod>): Boolean {
     val expectedSections = defaultClassPeriods(campus).map { it.section }

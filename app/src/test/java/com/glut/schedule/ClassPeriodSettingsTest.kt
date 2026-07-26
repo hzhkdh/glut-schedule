@@ -6,7 +6,10 @@ import com.glut.schedule.data.model.guilinClassPeriods
 import com.glut.schedule.data.model.nanningClassPeriods
 import com.glut.schedule.data.model.validateClassPeriods
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.ClassPeriodProfile
+import com.glut.schedule.data.settings.GuilinSubCampus
 import com.glut.schedule.data.settings.decodeClassPeriods
+import com.glut.schedule.data.settings.decodeClassPeriodOverrides
 import com.glut.schedule.data.settings.encodeClassPeriods
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -91,5 +94,48 @@ class ClassPeriodSettingsTest {
         }
 
         assertNull(decodeClassPeriods(CampusType.NANNING, entries))
+    }
+
+    @Test
+    fun eachClassPeriodProfileUsesItsOwnDefaultTemplate() {
+        assertEquals("08:30", defaultClassPeriods(ClassPeriodProfile.GUILIN_YANSHAN).first().startsAt)
+        assertEquals("08:20", defaultClassPeriods(ClassPeriodProfile.GUILIN_PINGFENG).first().startsAt)
+        assertEquals("08:40", defaultClassPeriods(ClassPeriodProfile.NANNING).first().startsAt)
+    }
+
+    @Test
+    fun legacyGuilinOverrideBelongsOnlyToTheSelectedSubCampus() {
+        val legacy = guilinClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "08:10", endsAt = "08:55") else it
+        }
+
+        val overrides = decodeClassPeriodOverrides(
+            selectedSubCampus = GuilinSubCampus.PINGFENG,
+            legacyGuilinEntries = encodeClassPeriods(legacy),
+            yanshanEntries = emptySet(),
+            pingfengEntries = emptySet(),
+            nanningEntries = emptySet()
+        )
+
+        assertNull(overrides[ClassPeriodProfile.GUILIN_YANSHAN])
+        assertEquals(legacy, overrides[ClassPeriodProfile.GUILIN_PINGFENG])
+    }
+
+    @Test
+    fun explicitProfileOverrideWinsOverLegacyGuilinValue() {
+        val legacy = guilinClassPeriods()
+        val explicitPingfeng = defaultClassPeriods(ClassPeriodProfile.GUILIN_PINGFENG).map {
+            if (it.section == 1) it.copy(startsAt = "08:00", endsAt = "08:45") else it
+        }
+
+        val overrides = decodeClassPeriodOverrides(
+            selectedSubCampus = GuilinSubCampus.PINGFENG,
+            legacyGuilinEntries = encodeClassPeriods(legacy),
+            yanshanEntries = emptySet(),
+            pingfengEntries = encodeClassPeriods(explicitPingfeng),
+            nanningEntries = emptySet()
+        )
+
+        assertEquals(explicitPingfeng, overrides[ClassPeriodProfile.GUILIN_PINGFENG])
     }
 }

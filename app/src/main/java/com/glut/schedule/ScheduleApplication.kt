@@ -92,6 +92,7 @@ class AppContainer(application: Application) {
         settingsStore.campusType,
         settingsStore.courseColorOverrides,
         settingsStore.classPeriodOverrides,
+        classPeriodProfileOverrides = settingsStore.classPeriodProfileOverrides,
         guilinSubCampus = settingsStore.guilinSubCampus
     )
     val backgroundStore = ScheduleBackgroundStore(application)
