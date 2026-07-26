@@ -27,9 +27,7 @@ class DrawerGreetingPlanner(
     fun next(
         context: DrawerGreetingContext,
         templates: GreetingTemplateSet,
-        previousText: String = "",
-        lastAnimatedAtEpochMillis: Long? = null,
-        nowEpochMillis: Long = System.currentTimeMillis()
+        previousText: String = ""
     ): DrawerGreeting {
         val categories = eligibleCategories(context, templates)
         if (categories.isEmpty()) {
@@ -55,7 +53,8 @@ class DrawerGreetingPlanner(
         return DrawerGreeting(
             text = texts[random.nextInt(texts.size)],
             category = category,
-            animate = shouldAnimate(nowEpochMillis, lastAnimatedAtEpochMillis)
+            // 动态问候在每次打开侧边栏时都重新播放，运行 ID 负责重启动画协程。
+            animate = true
         )
     }
 
@@ -104,10 +103,6 @@ class DrawerGreetingPlanner(
             }
         }
     }
-
-    fun shouldAnimate(nowEpochMillis: Long, lastAnimatedAtEpochMillis: Long?): Boolean =
-        lastAnimatedAtEpochMillis == null ||
-            nowEpochMillis - lastAnimatedAtEpochMillis >= ANIMATION_COOLDOWN_MILLIS
 
     fun periodFor(now: LocalDateTime): String = when (now.hour) {
         in 5..10 -> "早上"
@@ -185,6 +180,5 @@ class DrawerGreetingPlanner(
 
     companion object {
         const val STATIC_SLOGAN = "简单 高效 纯粹"
-        const val ANIMATION_COOLDOWN_MILLIS = 15_000L
     }
 }

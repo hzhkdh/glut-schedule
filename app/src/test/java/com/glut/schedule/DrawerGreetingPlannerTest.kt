@@ -99,13 +99,14 @@ class DrawerGreetingPlannerTest {
     }
 
     @Test
-    fun animationOnlyReplaysAfterFifteenSeconds() {
+    fun dynamicGreetingAnimatesOnEveryOpen() {
         val planner = DrawerGreetingPlanner(Random(0))
-        val nowMillis = 1_000_000L
+        val greetingContext = context(LocalDateTime.of(2026, 7, 26, 8, 0), name = "张三")
+        val first = planner.next(greetingContext, templates)
+        val second = planner.next(greetingContext, templates, previousText = first.text)
 
-        assertTrue(planner.shouldAnimate(nowMillis, null))
-        assertFalse(planner.shouldAnimate(nowMillis, nowMillis - 14_999L))
-        assertTrue(planner.shouldAnimate(nowMillis, nowMillis - 15_000L))
+        assertTrue(first.animate)
+        assertTrue(second.animate)
     }
 
     @Test

@@ -327,7 +327,6 @@ class MainActivity : ComponentActivity() {
                     )
                 }
                 var greetingAnimationRunId by remember { mutableStateOf(0) }
-                var lastGreetingAnimationAt by remember { mutableStateOf<Long?>(null) }
                 val campusInfoViewModel: CampusImageViewModel? =
                     if (selectedItem == DrawerItem.CampusInfo) {
                         viewModel(
@@ -404,7 +403,6 @@ class MainActivity : ComponentActivity() {
                                 )
                                 return@collect
                             }
-                            val nowMillis = System.currentTimeMillis()
                             val nextGreeting = greetingPlanner.next(
                                 context = DrawerGreetingContext(
                                     studentName = latestStudentName,
@@ -416,14 +414,9 @@ class MainActivity : ComponentActivity() {
                                         .takeIf { latestAuthenticatedStudentNumber.isNotBlank() }
                                 ),
                                 templates = latestGreetingTemplates,
-                                previousText = drawerGreeting.text,
-                                lastAnimatedAtEpochMillis = lastGreetingAnimationAt,
-                                nowEpochMillis = nowMillis
+                                previousText = drawerGreeting.text
                             )
                             drawerGreeting = nextGreeting
-                            if (nextGreeting.animate) {
-                                lastGreetingAnimationAt = nowMillis
-                            }
                         }
                 }
 
