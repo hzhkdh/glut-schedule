@@ -8,7 +8,10 @@ enum class GreetingCategory(val jsonKey: String) {
     EXAM_TOMORROW("examTomorrow"),
     EXAM_UPCOMING("examUpcoming"),
     SEMESTER_WEEK("semesterWeek"),
-    SEMESTER_ENDING("semesterEnding")
+    SEMESTER_ENDING("semesterEnding"),
+    WEEKEND("weekend"),
+    HOLIDAY("holiday"),
+    LATE_NIGHT("lateNight")
 }
 
 data class GreetingTemplateSet(
@@ -40,7 +43,7 @@ object GreetingTemplateParser {
     private const val MAX_TEMPLATE_LENGTH = 60
     // Android ICU 对未转义的右花括号比桌面 JVM 更严格，两端都使用显式转义写法。
     private val placeholderRegex = Regex("""\{([A-Za-z]+)\}""")
-    private val allowedPlaceholders = setOf("name", "period", "course", "days", "week")
+    private val allowedPlaceholders = setOf("name", "period", "course", "days", "week", "holiday")
 
     fun parse(json: String): GreetingTemplateDocument? {
         if (json.isBlank() || json.toByteArray(Charsets.UTF_8).size > MAX_JSON_BYTES) return null
@@ -54,7 +57,7 @@ object GreetingTemplateParser {
                 buildList {
                     for (index in 0 until minOf(array.length(), MAX_TEMPLATES_PER_CATEGORY)) {
                         val template = array.optString(index).trim()
-                        if (isValidTemplate(template)) add(template)
+                        if (isValidTemplate(template, category)) add(template)
                     }
                 }.distinct()
             }
@@ -66,10 +69,14 @@ object GreetingTemplateParser {
         }.getOrNull()
     }
 
-    private fun isValidTemplate(template: String): Boolean {
+    private fun isValidTemplate(template: String, category: GreetingCategory): Boolean {
         if (template.isBlank() || template.length > MAX_TEMPLATE_LENGTH) return false
         if (template.any { it == '\n' || it == '\r' || it.isISOControl() }) return false
-        return placeholderRegex.findAll(template).all { it.groupValues[1] in allowedPlaceholders }
+        return placeholderRegex.findAll(template).all { match ->
+            val placeholder = match.groupValues[1]
+            placeholder in allowedPlaceholders &&
+                (placeholder != "holiday" || category == GreetingCategory.HOLIDAY)
+        }
     }
 }
 
@@ -104,6 +111,21 @@ fun builtInGreetingTemplates(): GreetingTemplateSet = GreetingTemplateSet(
             "学期还剩{days}天，稳稳收尾",
             "学期余额不多啦，从容收官",
             "还有{days}天，给这个学期收好尾"
+        ),
+        GreetingCategory.WEEKEND to listOf(
+            "周末啦，记得好好休息",
+            "给忙碌的自己放个小假",
+            "今天适合做点喜欢的事"
+        ),
+        GreetingCategory.HOLIDAY to listOf(
+            "今天是{holiday}，享受属于你的时间",
+            "{holiday}到了，放慢脚步，好好生活",
+            "愿你在{holiday}收获快乐和惊喜"
+        ),
+        GreetingCategory.LATE_NIGHT to listOf(
+            "夜深啦，今天也辛苦了，早点休息吧",
+            "先把今天放下，明天再慢慢继续",
+            "照顾好自己，也是一件很重要的事"
         )
     )
 )

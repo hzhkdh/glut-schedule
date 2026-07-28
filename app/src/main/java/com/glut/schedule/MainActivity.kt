@@ -102,6 +102,7 @@ import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -124,6 +125,7 @@ import com.glut.schedule.ui.resolveNoticeLoadState
 import com.glut.schedule.service.greeting.DrawerGreeting
 import com.glut.schedule.service.greeting.DrawerGreetingContext
 import com.glut.schedule.service.greeting.DrawerGreetingPlanner
+import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.navigation.campusDrawerItems
 import com.glut.schedule.ui.navigation.otherDrawerItems
@@ -226,7 +228,8 @@ class MainActivity : ComponentActivity() {
                         settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
-                        semesterImportService = container.academicSemesterImportService
+                        semesterImportService = container.academicSemesterImportService,
+                        apiProbeService = container.apiProbeService
                     )
                 )
                 val examViewModel: ExamViewModel = viewModel(
@@ -315,6 +318,8 @@ class MainActivity : ComponentActivity() {
                     .collectAsStateWithLifecycle(initialValue = com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY)
                 val greetingSemesterEnd by container.settingsStore.semesterEndDate
                     .collectAsStateWithLifecycle(initialValue = com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE)
+                val greetingHolidayCache by container.settingsStore.holidaysCache
+                    .collectAsStateWithLifecycle(initialValue = "" to "")
                 val greetingTemplates by container.greetingTemplateRepository.templates.collectAsStateWithLifecycle()
                 val greetingPlanner = remember { DrawerGreetingPlanner() }
                 var drawerGreeting by remember {
@@ -387,6 +392,7 @@ class MainActivity : ComponentActivity() {
                 val latestGreetingExams by rememberUpdatedState(greetingExams)
                 val latestSemesterStart by rememberUpdatedState(greetingSemesterStart)
                 val latestSemesterEnd by rememberUpdatedState(greetingSemesterEnd)
+                val latestGreetingHolidayCache by rememberUpdatedState(greetingHolidayCache)
                 val latestGreetingTemplates by rememberUpdatedState(greetingTemplates)
 
                 LaunchedEffect(drawerState) {
@@ -403,15 +409,22 @@ class MainActivity : ComponentActivity() {
                                 )
                                 return@collect
                             }
+                            // 打开抽屉时统一捕获当前时间，避免跨分钟或跨日期时各字段使用不同时间点。
+                            val greetingNow = LocalDateTime.now()
                             val nextGreeting = greetingPlanner.next(
                                 context = DrawerGreetingContext(
                                     studentName = latestStudentName,
                                     exams = latestGreetingExams,
-                                    now = LocalDateTime.now(),
+                                    now = greetingNow,
                                     semesterStart = latestSemesterStart
                                         .takeIf { latestAuthenticatedStudentNumber.isNotBlank() },
                                     semesterEnd = latestSemesterEnd
-                                        .takeIf { latestAuthenticatedStudentNumber.isNotBlank() }
+                                        .takeIf { latestAuthenticatedStudentNumber.isNotBlank() },
+                                    calendarDay = TimorHolidayCalendarParser.resolveCachedDay(
+                                        json = latestGreetingHolidayCache.first,
+                                        cacheDate = latestGreetingHolidayCache.second,
+                                        date = greetingNow.toLocalDate()
+                                    )
                                 ),
                                 templates = latestGreetingTemplates,
                                 previousText = drawerGreeting.text
@@ -505,6 +518,7 @@ class MainActivity : ComponentActivity() {
                             drawerContentColor = Color(0xFF141821)
                         ) {
                             DrawerHeader(
+                                greetingEnabled = greetingEnabled,
                                 greeting = if (greetingEnabled) {
                                     drawerGreeting
                                 } else {
@@ -1002,6 +1016,7 @@ private fun ScheduleSettingsDestination(
 
 @Composable
 private fun DrawerHeader(
+    greetingEnabled: Boolean,
     greeting: DrawerGreeting,
     animationRunId: Int
 ) {
@@ -1011,31 +1026,77 @@ private fun DrawerHeader(
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(horizontal = 20.dp, vertical = 24.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Image(
-                painter = painterResource(R.drawable.brand_menu_logo),
-                contentDescription = "桂系一站式标志",
-                modifier = Modifier.size(38.dp)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                "桂系一站式",
-                color = Color(0xFF141821),
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
-            )
+        when (drawerHeaderLayoutMode(greetingEnabled)) {
+            DrawerHeaderLayoutMode.FULL_WIDTH_GREETING -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.brand_menu_logo),
+                        contentDescription = "桂系一站式标志",
+                        modifier = Modifier.size(38.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        "桂系一站式",
+                        color = Color(0xFF141821),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                TypewriterGreetingText(
+                    fullText = greeting.text,
+                    animate = greeting.animate,
+                    animationRunId = animationRunId
+                )
+            }
+
+            DrawerHeaderLayoutMode.BRAND_TEXT_COLUMN -> Row(
+                modifier = Modifier.fillMaxWidth(),
+                // 与微信端保持一致：图标对齐品牌标题，而不是相对“标题＋标语”整列居中。
+                verticalAlignment = Alignment.Top
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.brand_menu_logo),
+                    contentDescription = "桂系一站式标志",
+                    modifier = Modifier.size(38.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                // 关闭问候语后，品牌名与静态标语共用右侧文字列，避免标语落到图标下方。
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "桂系一站式",
+                        color = Color(0xFF141821),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    TypewriterGreetingText(
+                        fullText = greeting.text,
+                        animate = false,
+                        animationRunId = animationRunId,
+                        modifier = Modifier,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        TypewriterGreetingText(
-            fullText = greeting.text,
-            animate = greeting.animate,
-            animationRunId = animationRunId
-        )
     }
 }
+
+internal enum class DrawerHeaderLayoutMode {
+    FULL_WIDTH_GREETING,
+    BRAND_TEXT_COLUMN
+}
+
+internal fun drawerHeaderLayoutMode(greetingEnabled: Boolean): DrawerHeaderLayoutMode =
+    if (greetingEnabled) {
+        DrawerHeaderLayoutMode.FULL_WIDTH_GREETING
+    } else {
+        DrawerHeaderLayoutMode.BRAND_TEXT_COLUMN
+    }
 
 @Composable
 private fun DrawerMenuItem(
@@ -1259,7 +1320,9 @@ private fun SettingsPage(
 private fun TypewriterGreetingText(
     fullText: String,
     animate: Boolean,
-    animationRunId: Int
+    animationRunId: Int,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    textAlign: TextAlign = TextAlign.Start
 ) {
     val context = LocalContext.current
     val touchExplorationEnabled = remember {
@@ -1303,8 +1366,8 @@ private fun TypewriterGreetingText(
         lineHeight = 20.sp,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier
-            .fillMaxWidth()
+        textAlign = textAlign,
+        modifier = modifier
             .height(40.dp)
             .clearAndSetSemantics {
                 contentDescription = fullText

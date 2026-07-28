@@ -115,7 +115,8 @@ data class AcademicSemesterImportPayload(
     val currcourseHtml: String,
     val timetableHtml: String,
     val responseKind: AcademicSemesterResponseKind,
-    val portalMaxWeek: Int? = null
+    val portalMaxWeek: Int? = null,
+    val semesterStartMonday: LocalDate? = null
 )
 
 class AcademicSemesterImportService(
@@ -183,6 +184,7 @@ class AcademicSemesterImportService(
         }
         var resolvedTimetableHtml = if (useWeeklyTimetable) "" else timetableHtml
         var portalMaxWeek: Int? = null
+        var semesterStartMonday: LocalDate? = null
         if (useWeeklyTimetable) {
             val landingUrl = AcademicSemesterRequestBuilder.weeklyTimetableUrl(baseUrl, semester)
             val landing = apiProbeService.probeUrl(cookie, landingUrl)
@@ -199,7 +201,6 @@ class AcademicSemesterImportService(
             }
             require(landingPage.availableWeeks.isNotEmpty()) { "周次课表未提供可下载周次" }
             portalMaxWeek = landingPage.availableWeeks.maxOrNull()
-            var expectedSemesterMonday: LocalDate? = null
             val pages = buildList {
                 landingPage.availableWeeks.sorted().forEach { week ->
                     val response = apiProbeService.probeForm(
@@ -215,10 +216,10 @@ class AcademicSemesterImportService(
                         response.body,
                         hasNoon = semester.campus != CampusType.NANNING
                     )
-                    expectedSemesterMonday = page.validateFor(
+                    semesterStartMonday = page.validateFor(
                         expectedWeek = week,
                         expectedSemesterLabel = semesterPortalLabel(semester),
-                        expectedSemesterMonday = expectedSemesterMonday
+                        expectedSemesterMonday = semesterStartMonday
                     )
                     add(page)
                     onProgress(size, landingPage.availableWeeks.size)
@@ -246,7 +247,8 @@ class AcademicSemesterImportService(
             currcourseHtml = currcourse.body,
             timetableHtml = resolvedTimetableHtml,
             responseKind = responseKind,
-            portalMaxWeek = portalMaxWeek
+            portalMaxWeek = portalMaxWeek,
+            semesterStartMonday = semesterStartMonday
         )
     }
 

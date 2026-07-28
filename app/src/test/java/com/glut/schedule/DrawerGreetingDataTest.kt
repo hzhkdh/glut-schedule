@@ -45,8 +45,9 @@ class DrawerGreetingDataTest {
               "contentVersion": 7,
               "updatedAt": "2026-07-26T12:00:00+08:00",
               "templates": {
-                "greeting": ["Hi～{name}，{period}好", "坏模板 {unknown}", ""],
+                "greeting": ["Hi～{name}，{period}好", "错误节日 {holiday}", "坏模板 {unknown}", ""],
                 "examTomorrow": ["{course}明天登场，准备接招"],
+                "holiday": ["今天是{holiday}，享受属于你的时间"],
                 "notSupported": ["不应进入结果"]
               }
             }
@@ -62,6 +63,10 @@ class DrawerGreetingDataTest {
         assertEquals(
             listOf("{course}明天登场，准备接招"),
             document?.templates?.forCategory(GreetingCategory.EXAM_TOMORROW)
+        )
+        assertEquals(
+            listOf("今天是{holiday}，享受属于你的时间"),
+            document?.templates?.forCategory(GreetingCategory.HOLIDAY)
         )
         assertTrue(document?.templates?.forCategory(GreetingCategory.EXAM_TODAY).isNullOrEmpty())
     }
@@ -108,6 +113,36 @@ class DrawerGreetingDataTest {
             .forCategory(GreetingCategory.GREETING)
         assertEquals(listOf("你好 {name}"), templates)
         assertFalse(templates.contains(oversized))
+    }
+
+    @Test
+    fun builtInCalendarGreetingsMatchTheOfflineContract() {
+        val templates = builtInGreetingTemplates()
+
+        assertEquals(
+            listOf(
+                "周末啦，记得好好休息",
+                "给忙碌的自己放个小假",
+                "今天适合做点喜欢的事"
+            ),
+            templates.forCategory(GreetingCategory.WEEKEND)
+        )
+        assertEquals(
+            listOf(
+                "今天是{holiday}，享受属于你的时间",
+                "{holiday}到了，放慢脚步，好好生活",
+                "愿你在{holiday}收获快乐和惊喜"
+            ),
+            templates.forCategory(GreetingCategory.HOLIDAY)
+        )
+        assertEquals(
+            listOf(
+                "夜深啦，今天也辛苦了，早点休息吧",
+                "先把今天放下，明天再慢慢继续",
+                "照顾好自己，也是一件很重要的事"
+            ),
+            templates.forCategory(GreetingCategory.LATE_NIGHT)
+        )
     }
 
     @Test

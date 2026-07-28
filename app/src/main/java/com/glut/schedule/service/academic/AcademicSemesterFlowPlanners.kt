@@ -17,6 +17,92 @@ data class AcademicSemesterCalendarEstimate(
     val currentWeekNumber: Int
 )
 
+enum class AcademicSemesterCalendarSource {
+    PORTAL,
+    WEEKLY,
+    ESTIMATED
+}
+
+data class ResolvedAcademicSemesterCalendar(
+    val startMonday: LocalDate,
+    val endDate: LocalDate,
+    val currentWeekNumber: Int,
+    val source: AcademicSemesterCalendarSource
+)
+
+object AcademicSemesterCalendarResolver {
+    fun resolve(
+        semester: AcademicSemester,
+        today: LocalDate,
+        directCalendar: ApiProbeService.AcademicCalendar?,
+        weeklyStartMonday: LocalDate?,
+        portalMaxWeek: Int?
+    ): ResolvedAcademicSemesterCalendar {
+        val directEnd = directCalendar?.semesterEndDate
+        if (directCalendar != null &&
+            directEnd != null &&
+            directEnd >= directCalendar.semesterStartMonday &&
+            matchesSemester(directCalendar.semesterStartMonday, semester)
+        ) {
+            return resolved(
+                directCalendar.semesterStartMonday,
+                directEnd,
+                today,
+                AcademicSemesterCalendarSource.PORTAL
+            )
+        }
+
+        if (weeklyStartMonday != null &&
+            portalMaxWeek != null &&
+            portalMaxWeek > 0 &&
+            matchesSemester(weeklyStartMonday, semester)
+        ) {
+            return resolved(
+                weeklyStartMonday,
+                weeklyStartMonday.plusDays(portalMaxWeek * 7L - 1L),
+                today,
+                AcademicSemesterCalendarSource.WEEKLY
+            )
+        }
+
+        val estimate = AcademicSemesterCalendarEstimator.estimate(semester, today)
+        return ResolvedAcademicSemesterCalendar(
+            startMonday = estimate.startMonday,
+            endDate = estimate.endDate,
+            currentWeekNumber = estimate.currentWeekNumber,
+            source = AcademicSemesterCalendarSource.ESTIMATED
+        )
+    }
+
+    /**
+     * 门户校历只描述“当前学期”，提前晋升下一学期时仍可能返回上一学期。
+     * 因此必须同时匹配学年和春秋季，避免把完整但属于旧学期的一对日期写入新学期。
+     */
+    private fun matchesSemester(startMonday: LocalDate, semester: AcademicSemester): Boolean {
+        if (startMonday.year != semester.portalYear) return false
+        return when (semester.season) {
+            SemesterSeason.SPRING -> startMonday.monthValue in 1..7
+            SemesterSeason.AUTUMN -> startMonday.monthValue in 8..12
+        }
+    }
+
+    private fun resolved(
+        startMonday: LocalDate,
+        endDate: LocalDate,
+        today: LocalDate,
+        source: AcademicSemesterCalendarSource
+    ) = ResolvedAcademicSemesterCalendar(
+        startMonday = startMonday,
+        endDate = endDate,
+        currentWeekNumber = academicWeekForDate(
+            today,
+            startMonday,
+            academicMaxWeekForCalendar(startMonday, endDate)
+        ),
+        source = source
+    )
+}
+
 object AcademicSemesterCalendarEstimator {
     fun estimate(semester: AcademicSemester, today: LocalDate): AcademicSemesterCalendarEstimate {
         val startMonth = if (semester.season == SemesterSeason.AUTUMN) 9 else 3

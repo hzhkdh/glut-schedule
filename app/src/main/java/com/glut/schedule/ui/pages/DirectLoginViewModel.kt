@@ -11,6 +11,7 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
+import com.glut.schedule.data.model.countDistinctCourseTitles
 import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginHttpClient
@@ -19,7 +20,7 @@ import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicOALoginClient
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.AcademicSemesterImportService
-import com.glut.schedule.service.academic.AcademicSemesterCalendarEstimator
+import com.glut.schedule.service.academic.AcademicSemesterCalendarResolver
 import com.glut.schedule.service.academic.AcademicSemesterCurrentImportPlanner
 import com.glut.schedule.service.academic.AcademicSemesterProbePlanner
 import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
@@ -652,13 +653,6 @@ class DirectLoginViewModel(
             val decision = AcademicSemesterProbePlanner.decide(catalogPlan, nextProbeResult)
             val semesterCatalog = decision.catalog
             val currentSemester = decision.currentSemester
-            val promotedPayload = decision.promotedPayload
-            val estimatedCalendar = if (promotedPayload != null) {
-                AcademicSemesterCalendarEstimator.estimate(
-                    currentSemester,
-                    LocalDate.now()
-                )
-            } else null
 
             _uiState.value = _uiState.value.copy(message = "正在下载${currentSemester.displayName}周次课表...")
             val currentPayload = semesterImportService.importSemester(
@@ -682,24 +676,25 @@ class DirectLoginViewModel(
             scheduleRepository.saveSemesterCatalog(semesterCatalog)
             settingsStore.setCurrentSemesterId(currentSemester.id)
             scheduleRepository.selectSemester(currentSemester.id)
-            if (estimatedCalendar != null) {
-                settingsStore.setSemesterStartMonday(estimatedCalendar.startMonday)
-                settingsStore.setSemesterEndDate(estimatedCalendar.endDate)
-                settingsStore.setCurrentWeekNumber(estimatedCalendar.currentWeekNumber)
-            } else if (calendar != null) {
-                settingsStore.setSemesterStartMonday(calendar.semesterStartMonday)
-                calendar.semesterEndDate?.let { settingsStore.setSemesterEndDate(it) }
-                settingsStore.setCurrentWeekNumber(calendar.currentWeekNumber)
-            }
+            val resolvedCalendar = AcademicSemesterCalendarResolver.resolve(
+                semester = currentSemester,
+                today = LocalDate.now(),
+                directCalendar = calendar,
+                weeklyStartMonday = currentPayload.semesterStartMonday,
+                portalMaxWeek = currentPayload.portalMaxWeek
+            )
+            settingsStore.setSemesterStartMonday(resolvedCalendar.startMonday)
+            settingsStore.setSemesterEndDate(resolvedCalendar.endDate)
+            settingsStore.setCurrentWeekNumber(resolvedCalendar.currentWeekNumber)
             scheduleRepository.replaceSemesterSchedule(
                 semester = currentSemester,
                 courses = currentPayload.courses,
                 adjustments = currentPayload.adjustments,
-                semesterStartDate = if (promotedPayload == null) calendar?.semesterStartMonday else null,
-                semesterEndDate = if (promotedPayload == null) calendar?.semesterEndDate else null,
+                semesterStartDate = resolvedCalendar.startMonday,
+                semesterEndDate = resolvedCalendar.endDate,
                 portalMaxWeek = currentPayload.portalMaxWeek
             )
-            courseCount = currentPayload.courses.size
+            courseCount = currentPayload.courses.countDistinctCourseTitles()
 
             // 与考试页共用多接口兜底链路，桂林首选接口返回空结构时仍会继续探测。
             val storedExamApiUrl = sessionStore.examApiUrl.first()

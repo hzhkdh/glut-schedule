@@ -123,6 +123,7 @@ class AcademicSemesterImportServiceTest {
             assertEquals(2, occurrence.dayOfWeek)
             assertEquals("第1周", occurrence.weekText)
             assertEquals(1, result.getOrThrow().portalMaxWeek)
+            assertEquals(LocalDate.of(2025, 3, 3), result.getOrThrow().semesterStartMonday)
             assertEquals(listOf(1 to 1), progress)
             val currcourseRequest = server.takeRequest()
             val timetableRequest = server.takeRequest()

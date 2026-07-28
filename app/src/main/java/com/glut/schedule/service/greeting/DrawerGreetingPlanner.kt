@@ -1,6 +1,9 @@
 package com.glut.schedule.service.greeting
 
 import com.glut.schedule.data.model.ExamInfo
+import com.glut.schedule.service.holiday.CalendarDayInfo
+import com.glut.schedule.service.holiday.CalendarDayKind
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -12,7 +15,8 @@ data class DrawerGreetingContext(
     val exams: List<ExamInfo>,
     val now: LocalDateTime,
     val semesterStart: LocalDate?,
-    val semesterEnd: LocalDate?
+    val semesterEnd: LocalDate?,
+    val calendarDay: CalendarDayInfo = CalendarDayInfo(CalendarDayKind.UNKNOWN)
 )
 
 data class DrawerGreeting(
@@ -80,6 +84,21 @@ class DrawerGreetingPlanner(
         if (unfinished.any { it.examDate == today.plusDays(1) }) {
             return categoryIfAvailable(GreetingCategory.EXAM_TOMORROW, templates)
         }
+        if (context.now.hour in 0..4) {
+            return categoryIfAvailable(GreetingCategory.LATE_NIGHT, templates)
+        }
+        if (
+            context.calendarDay.kind == CalendarDayKind.HOLIDAY &&
+            context.calendarDay.holidayName.isNotBlank()
+        ) {
+            return categoryIfAvailable(GreetingCategory.HOLIDAY, templates)
+        }
+        if (
+            today.dayOfWeek in setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY) &&
+            context.calendarDay.kind != CalendarDayKind.ADJUSTED_WORKDAY
+        ) {
+            return categoryIfAvailable(GreetingCategory.WEEKEND, templates)
+        }
 
         return buildList {
             if (context.studentName.isNotBlank()) {
@@ -105,7 +124,8 @@ class DrawerGreetingPlanner(
     }
 
     fun periodFor(now: LocalDateTime): String = when (now.hour) {
-        in 5..10 -> "早上"
+        in 5..7 -> "清晨"
+        in 8..10 -> "早上"
         in 11..13 -> "中午"
         in 14..17 -> "下午"
         else -> "晚上"
@@ -132,6 +152,7 @@ class DrawerGreetingPlanner(
             .replace("{course}", exam?.courseName.orEmpty().abbreviate(14))
             .replace("{days}", days?.toString().orEmpty())
             .replace("{week}", week?.toString().orEmpty())
+            .replace("{holiday}", context.calendarDay.holidayName.abbreviate(10))
             .trim()
     }
 

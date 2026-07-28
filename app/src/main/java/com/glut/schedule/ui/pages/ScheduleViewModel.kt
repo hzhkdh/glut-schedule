@@ -18,6 +18,7 @@ import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.academicMaxWeekForSemester
 import com.glut.schedule.data.model.clampAcademicWeek
+import com.glut.schedule.data.model.countDistinctCourseTitles
 import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import com.glut.schedule.data.model.scheduleWeekForNumber
@@ -32,7 +33,9 @@ import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.AcademicSemesterImportPayload
 import com.glut.schedule.service.academic.AcademicSemesterImportService
+import com.glut.schedule.service.academic.AcademicSemesterCalendarResolver
 import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
+import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.academic.shouldUseExistingAcademicCookie
 import kotlinx.coroutines.Dispatchers
@@ -73,6 +76,15 @@ data class ScheduleUiState(
     val hasAuthoritativeCalendar: Boolean = true
 )
 
+internal fun selectedWeekAfterCalendarRefresh(
+    selectedWeek: Int,
+    semesterStartMonday: LocalDate,
+    semesterEndDate: LocalDate
+): Int = clampAcademicWeek(
+    selectedWeek,
+    academicMaxWeekForCalendar(semesterStartMonday, semesterEndDate)
+)
+
 private data class ScheduleSettingsUiState(
     val weekNumber: Int,
     val showWeekend: Boolean,
@@ -103,7 +115,8 @@ class ScheduleViewModel(
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
-    private val semesterImportService: AcademicSemesterImportService
+    private val semesterImportService: AcademicSemesterImportService,
+    private val apiProbeService: ApiProbeService
 ) : ViewModel() {
     val uiState: StateFlow<ScheduleUiState>
     private var initialWeekSet = false
@@ -366,13 +379,19 @@ class ScheduleViewModel(
             message.value = "正在刷新课表..."
             needsInteractiveLogin.value = false
             try {
-                val oldCourseCount = repository.courses.first().size
+                val oldCourseCount = repository.courses.first().countDistinctCourseTitles()
                 val existingCookie = sessionStore.academicCookie.first()
+                var refreshCookie = existingCookie
                 var importResult: Result<AcademicSemesterImportPayload>? = null
                 if (shouldUseExistingAcademicCookie(existingCookie)) {
                     importResult = importExactSemester(existingCookie, targetSemester)
                     if (importResult.isSuccess) {
-                        saveExactSemester(targetSemester, importResult.getOrThrow(), oldCourseCount)
+                        saveExactSemester(
+                            targetSemester,
+                            importResult.getOrThrow(),
+                            oldCourseCount,
+                            existingCookie
+                        )
                         return@launch
                     }
                     if (!isAuthenticationFailure(importResult.exceptionOrNull())) {
@@ -383,6 +402,7 @@ class ScheduleViewModel(
 
                 when (val loginResult = loginService.silentLogin()) {
                     is AcademicLoginResult.Success -> {
+                        refreshCookie = loginResult.cookie
                         importResult = importExactSemester(loginResult.cookie, targetSemester)
                     }
                     AcademicLoginResult.MissingCredentials -> {
@@ -414,7 +434,7 @@ class ScheduleViewModel(
                     needsInteractiveLogin.value = isAuthenticationFailure(failure)
                     return@launch
                 }
-                saveExactSemester(targetSemester, payload, oldCourseCount)
+                saveExactSemester(targetSemester, payload, oldCourseCount, refreshCookie)
             } catch (e: Exception) {
                 message.value = refreshFailureMessage(e, targetSemester)
             } finally {
@@ -446,20 +466,50 @@ class ScheduleViewModel(
     private suspend fun saveExactSemester(
         targetSemester: AcademicSemester,
         payload: AcademicSemesterImportPayload,
-        oldCourseCount: Int
+        oldCourseCount: Int,
+        cookie: String
     ) {
         require(payload.courses.isNotEmpty()) {
             "${targetSemester.displayName}未获取到课程，已保留现有缓存"
         }
+        val campusBaseUrl = sessionStore.campusBaseUrl.first()
+            .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
+        // 普通刷新也读取门户当前校历；正式切换学期后，它会覆盖提前晋升阶段的推导或估算日期。
+        // 若门户仍停留在上一学期，统一解析器会拒绝跨学期日期，并整对回退到周次数据。
+        val directCalendar = runCatching {
+            ApiProbeService.extractAcademicCalendar(
+                apiProbeService.probeScheduleEndpoints(
+                    cookie = cookie,
+                    baseUrl = campusBaseUrl
+                )
+            )
+        }.getOrNull()
+        val resolvedCalendar = AcademicSemesterCalendarResolver.resolve(
+            semester = targetSemester,
+            today = LocalDate.now(),
+            directCalendar = directCalendar,
+            weeklyStartMonday = payload.semesterStartMonday,
+            portalMaxWeek = payload.portalMaxWeek
+        )
         repository.replaceSemesterSchedule(
             semester = targetSemester,
             courses = payload.courses,
             adjustments = payload.adjustments,
-            semesterStartDate = targetSemester.semesterStartDate,
-            semesterEndDate = targetSemester.semesterEndDate,
+            semesterStartDate = resolvedCalendar.startMonday,
+            semesterEndDate = resolvedCalendar.endDate,
             portalMaxWeek = payload.portalMaxWeek
         )
-        val newCourseCount = payload.courses.size
+        settingsStore.setSemesterStartMonday(resolvedCalendar.startMonday)
+        settingsStore.setSemesterEndDate(resolvedCalendar.endDate)
+        // 刷新校历只校正有效范围，不把用户正在浏览的周次重置为今天所在周。
+        settingsStore.setCurrentWeekNumber(
+            selectedWeekAfterCalendarRefresh(
+                selectedWeek = settingsStore.currentWeekNumber.first(),
+                semesterStartMonday = resolvedCalendar.startMonday,
+                semesterEndDate = resolvedCalendar.endDate
+            )
+        )
+        val newCourseCount = payload.courses.countDistinctCourseTitles()
         message.value = if (newCourseCount != oldCourseCount) {
             "${targetSemester.displayName}课表已更新：$oldCourseCount → $newCourseCount 门课程"
         } else {
@@ -496,10 +546,18 @@ class ScheduleViewModelFactory(
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
-    private val semesterImportService: AcademicSemesterImportService
+    private val semesterImportService: AcademicSemesterImportService,
+    private val apiProbeService: ApiProbeService
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return ScheduleViewModel(repository, settingsStore, sessionStore, loginService, semesterImportService) as T
+        return ScheduleViewModel(
+            repository,
+            settingsStore,
+            sessionStore,
+            loginService,
+            semesterImportService,
+            apiProbeService
+        ) as T
     }
 }

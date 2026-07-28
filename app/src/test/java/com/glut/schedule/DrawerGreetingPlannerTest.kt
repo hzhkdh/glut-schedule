@@ -5,6 +5,8 @@ import com.glut.schedule.service.greeting.DrawerGreetingContext
 import com.glut.schedule.service.greeting.DrawerGreetingPlanner
 import com.glut.schedule.service.greeting.GreetingCategory
 import com.glut.schedule.service.greeting.builtInGreetingTemplates
+import com.glut.schedule.service.holiday.CalendarDayInfo
+import com.glut.schedule.service.holiday.CalendarDayKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -36,6 +38,85 @@ class DrawerGreetingPlannerTest {
     }
 
     @Test
+    fun urgentExamStillWinsDuringLateNightAndHoliday() {
+        val now = LocalDateTime.of(2026, 10, 1, 1, 0)
+        val result = DrawerGreetingPlanner(Random(0)).next(
+            context = context(
+                now = now,
+                exams = listOf(exam("高等数学", now.toLocalDate(), "08:00", "10:00")),
+                calendarDay = CalendarDayInfo(CalendarDayKind.HOLIDAY, "国庆节")
+            ),
+            templates = templates
+        )
+
+        assertEquals(GreetingCategory.EXAM_TODAY, result.category)
+    }
+
+    @Test
+    fun tomorrowExamStillWinsDuringLateNightAndHoliday() {
+        val now = LocalDateTime.of(2026, 7, 27, 1, 0)
+        val result = DrawerGreetingPlanner(Random(0)).next(
+            context = context(
+                now = now,
+                exams = listOf(exam("大学英语", now.toLocalDate().plusDays(1))),
+                calendarDay = CalendarDayInfo(CalendarDayKind.HOLIDAY, "测试节日")
+            ),
+            templates = templates
+        )
+
+        assertEquals(GreetingCategory.EXAM_TOMORROW, result.category)
+    }
+
+    @Test
+    fun lateNightIsExclusiveWhenThereIsNoUrgentExam() {
+        val now = LocalDateTime.of(2026, 7, 26, 4, 59)
+        val result = DrawerGreetingPlanner(Random(0)).next(
+            context = context(now),
+            templates = templates
+        )
+
+        assertEquals(GreetingCategory.LATE_NIGHT, result.category)
+        assertTrue(result.text in templates.forCategory(GreetingCategory.LATE_NIGHT))
+    }
+
+    @Test
+    fun namedHolidayWinsOverWeekendAndRendersItsName() {
+        val now = LocalDateTime.of(2026, 10, 3, 12, 0)
+        val result = DrawerGreetingPlanner(Random(0)).next(
+            context = context(
+                now = now,
+                calendarDay = CalendarDayInfo(CalendarDayKind.HOLIDAY, "国庆节")
+            ),
+            templates = templates
+        )
+
+        assertEquals(GreetingCategory.HOLIDAY, result.category)
+        assertTrue(result.text.contains("国庆节"))
+    }
+
+    @Test
+    fun adjustedWorkdaySuppressesWeekendButUnknownCalendarFallsBackToWeekday() {
+        val saturday = LocalDateTime.of(2026, 8, 1, 12, 0)
+        val adjusted = DrawerGreetingPlanner(Random(0)).eligibleCategories(
+            context(
+                now = saturday,
+                calendarDay = CalendarDayInfo(CalendarDayKind.ADJUSTED_WORKDAY)
+            ),
+            templates
+        )
+        val unknown = DrawerGreetingPlanner(Random(0)).eligibleCategories(
+            context(
+                now = saturday,
+                calendarDay = CalendarDayInfo(CalendarDayKind.UNKNOWN)
+            ),
+            templates
+        )
+
+        assertFalse(GreetingCategory.WEEKEND in adjusted)
+        assertEquals(listOf(GreetingCategory.WEEKEND), unknown)
+    }
+
+    @Test
     fun endedTodayExamIsSkippedAndTomorrowExamWins() {
         val now = LocalDateTime.of(2026, 7, 26, 18, 0)
         val planner = DrawerGreetingPlanner(Random(2))
@@ -56,7 +137,7 @@ class DrawerGreetingPlannerTest {
 
     @Test
     fun examBetweenTwoAndSevenDaysCanEnterOrdinaryPoolButDayEightCannot() {
-        val now = LocalDateTime.of(2026, 7, 26, 18, 0)
+        val now = LocalDateTime.of(2026, 7, 27, 18, 0)
         val near = DrawerGreetingPlanner(Random(0)).eligibleCategories(
             context(now, exams = listOf(exam("近代史", now.toLocalDate().plusDays(7)))),
             templates
@@ -131,16 +212,19 @@ class DrawerGreetingPlannerTest {
     fun timePeriodBoundariesAreStable() {
         val planner = DrawerGreetingPlanner(Random(0))
 
-        assertEquals("早上", planner.periodFor(LocalDateTime.of(2026, 7, 26, 5, 0)))
+        assertEquals("晚上", planner.periodFor(LocalDateTime.of(2026, 7, 26, 4, 59)))
+        assertEquals("清晨", planner.periodFor(LocalDateTime.of(2026, 7, 26, 5, 0)))
+        assertEquals("清晨", planner.periodFor(LocalDateTime.of(2026, 7, 26, 7, 59)))
+        assertEquals("早上", planner.periodFor(LocalDateTime.of(2026, 7, 26, 8, 0)))
         assertEquals("中午", planner.periodFor(LocalDateTime.of(2026, 7, 26, 11, 0)))
         assertEquals("下午", planner.periodFor(LocalDateTime.of(2026, 7, 26, 14, 0)))
         assertEquals("晚上", planner.periodFor(LocalDateTime.of(2026, 7, 26, 18, 0)))
-        assertEquals("晚上", planner.periodFor(LocalDateTime.of(2026, 7, 26, 4, 59)))
+        assertEquals("晚上", planner.periodFor(LocalDateTime.of(2026, 7, 26, 23, 59)))
     }
 
     @Test
     fun missingPersonalAndSemesterDataFallsBackToBrandSlogan() {
-        val now = LocalDateTime.of(2026, 7, 26, 9, 0)
+        val now = LocalDateTime.of(2026, 7, 27, 9, 0)
         val result = DrawerGreetingPlanner(Random(0)).next(
             context = DrawerGreetingContext(
                 studentName = "",
@@ -161,13 +245,15 @@ class DrawerGreetingPlannerTest {
         now: LocalDateTime,
         name: String = "",
         exams: List<ExamInfo> = emptyList(),
-        semesterEnd: LocalDate = now.toLocalDate().plusDays(60)
+        semesterEnd: LocalDate = now.toLocalDate().plusDays(60),
+        calendarDay: CalendarDayInfo = CalendarDayInfo(CalendarDayKind.UNKNOWN)
     ) = DrawerGreetingContext(
         studentName = name,
         exams = exams,
         now = now,
         semesterStart = now.toLocalDate().minusDays(28),
-        semesterEnd = semesterEnd
+        semesterEnd = semesterEnd,
+        calendarDay = calendarDay
     )
 
     private fun exam(

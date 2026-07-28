@@ -1,10 +1,33 @@
 package com.glut.schedule
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
 class DrawerGreetingIntegrationContractTest {
+    @Test
+    fun disabledGreetingUsesBrandTextColumnWithoutChangingEnabledLayout() {
+        assertEquals(
+            DrawerHeaderLayoutMode.BRAND_TEXT_COLUMN,
+            drawerHeaderLayoutMode(greetingEnabled = false)
+        )
+        assertEquals(
+            DrawerHeaderLayoutMode.FULL_WIDTH_GREETING,
+            drawerHeaderLayoutMode(greetingEnabled = true)
+        )
+    }
+
+    @Test
+    fun disabledGreetingAlignsLogoWithBrandTitle() {
+        val mainActivity = source("app/src/main/java/com/glut/schedule/MainActivity.kt")
+        val disabledHeader = mainActivity
+            .substringAfter("DrawerHeaderLayoutMode.BRAND_TEXT_COLUMN -> Row(")
+            .substringBefore("Image(")
+
+        // 微信端的品牌图标与大标题同排，因此关闭问候语分支不能相对两行文字整体垂直居中。
+        assertTrue(disabledHeader.contains("verticalAlignment = Alignment.Top"))
+    }
 
     @Test
     fun appStartupAndAcademicImportFeedGreetingData() {

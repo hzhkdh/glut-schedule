@@ -7,9 +7,13 @@ import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.service.academic.AcademicSemesterImportPayload
 import com.glut.schedule.service.academic.AcademicSemesterCalendarEstimator
+import com.glut.schedule.service.academic.AcademicSemesterCalendarResolver
+import com.glut.schedule.service.academic.AcademicSemesterCalendarSource
 import com.glut.schedule.service.academic.AcademicSemesterProbePlanner
 import com.glut.schedule.service.academic.AcademicSemesterResponseKind
+import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.parser.AcademicSemesterCatalogPlan
+import com.glut.schedule.service.parser.AcademicSemesterParser
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -18,6 +22,85 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AcademicSemesterProbePlannerTest {
+    @Test
+    fun nanningUnreadableLabelsStillPromoteImmediateAutumnWithRealCourses() {
+        val plan = AcademicSemesterParser.parseCatalogPlan(
+            html = """
+                <select name="year">
+                  <option value="46" selected>2026</option>
+                  <option value="47">2027</option>
+                </select>
+                <select name="term">
+                  <option value="1" selected>��</option>
+                  <option value="3">��</option>
+                </select>
+            """.trimIndent(),
+            campus = CampusType.NANNING,
+            enrollmentDate = LocalDate.of(2024, 9, 1),
+            today = LocalDate.of(2026, 8, 20)
+        )
+        val payload = payload(listOf(course()))
+
+        val decision = AcademicSemesterProbePlanner.decide(plan, Result.success(payload))
+
+        assertEquals("nanning:2026:autumn", decision.currentSemester.id)
+        assertEquals("3", decision.currentSemester.portalTermId)
+        assertEquals(1, decision.catalog.count { it.isCurrent })
+        assertSame(payload, decision.promotedPayload)
+    }
+
+    @Test
+    fun completeMatchingPortalCalendarWinsForBothCampuses() {
+        CampusType.entries.forEach { campus ->
+            val resolved = AcademicSemesterCalendarResolver.resolve(
+                semester = semester(2026, SemesterSeason.AUTUMN, true, campus),
+                today = LocalDate.of(2026, 7, 28),
+                directCalendar = ApiProbeService.AcademicCalendar(
+                    currentWeekNumber = 1,
+                    semesterStartMonday = LocalDate.of(2026, 9, 7),
+                    semesterEndDate = LocalDate.of(2027, 1, 17)
+                ),
+                weeklyStartMonday = LocalDate.of(2026, 9, 7),
+                portalMaxWeek = 20
+            )
+
+            assertEquals(AcademicSemesterCalendarSource.PORTAL, resolved.source)
+            assertEquals(LocalDate.of(2026, 9, 7), resolved.startMonday)
+            assertEquals(LocalDate.of(2027, 1, 17), resolved.endDate)
+        }
+    }
+
+    @Test
+    fun incompleteOrMismatchedPortalCalendarFallsBackAsWholePair() {
+        val autumn = semester(2026, SemesterSeason.AUTUMN, true)
+        val weeklyStart = LocalDate.of(2026, 9, 7)
+        val cases = listOf(
+            ApiProbeService.AcademicCalendar(
+                currentWeekNumber = 21,
+                semesterStartMonday = LocalDate.of(2026, 3, 9),
+                semesterEndDate = null
+            ),
+            ApiProbeService.AcademicCalendar(
+                currentWeekNumber = 21,
+                semesterStartMonday = LocalDate.of(2026, 3, 9),
+                semesterEndDate = LocalDate.of(2026, 7, 19)
+            )
+        )
+
+        cases.forEach { direct ->
+            val resolved = AcademicSemesterCalendarResolver.resolve(
+                semester = autumn,
+                today = LocalDate.of(2026, 7, 28),
+                directCalendar = direct,
+                weeklyStartMonday = weeklyStart,
+                portalMaxWeek = 19
+            )
+            assertEquals(AcademicSemesterCalendarSource.WEEKLY, resolved.source)
+            assertEquals(weeklyStart, resolved.startMonday)
+            assertEquals(LocalDate.of(2027, 1, 17), resolved.endDate)
+        }
+    }
+
     @Test
     fun futureCalendarEstimateUsesPromotedSemesterInsteadOfPreviousCalendar() {
         val next = semester(2025, SemesterSeason.AUTUMN, isCurrent = true)
@@ -75,8 +158,13 @@ class AcademicSemesterProbePlannerTest {
         assertTrue(empty.currentSemester.isCurrent)
     }
 
-    private fun semester(year: Int, season: SemesterSeason, isCurrent: Boolean) = AcademicSemester.create(
-        campus = CampusType.GUILIN,
+    private fun semester(
+        year: Int,
+        season: SemesterSeason,
+        isCurrent: Boolean,
+        campus: CampusType = CampusType.GUILIN
+    ) = AcademicSemester.create(
+        campus = campus,
         portalYear = year,
         portalYearId = (year - 1980).toString(),
         season = season,

@@ -13,6 +13,7 @@ import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.academicMaxWeekForSemester
 import com.glut.schedule.data.model.academicWeekForDate
+import com.glut.schedule.data.model.countDistinctCourseTitles
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicLoginResult
@@ -21,6 +22,7 @@ import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.AcademicScheduleParser
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readStringLimited
+import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
 import com.glut.schedule.ui.SingleFlightGuard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -35,7 +37,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONObject
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
@@ -194,7 +195,7 @@ class SemesterOverviewViewModel(
             hasNoon = base.viewedSemester?.campus?.let { it != CampusType.NANNING }
                 ?: (campusBaseUrl != AcademicLoginResult.NANNING_URL),
             isArchiveMode = isArchiveMode,
-            courseCount = base.courses.size,
+            courseCount = base.courses.countDistinctCourseTitles(),
             calendarAvailable = calendarAvailable
         )
     }.stateIn(
@@ -359,7 +360,7 @@ class SemesterOverviewViewModel(
         val cacheYear = cacheDate.take(4).toIntOrNull() ?: 0
         val allHolidays = if (cacheYear == year && cachedJson.isNotBlank()) {
             Log.d(TAG, "Using cached holidays (year $year)")
-            parseTimorHolidayJson(cachedJson, year)
+            TimorHolidayCalendarParser.parse(cachedJson, year)?.holidays.orEmpty()
         } else {
             Log.d(TAG, "Fetching holidays from API (cache year: $cacheYear, current: $year)")
             val (raw, parsed) = fetchHolidays(year)
@@ -414,54 +415,16 @@ class SemesterOverviewViewModel(
                 } else ""
             }
             if (body.isBlank()) return@withContext "" to emptyList()
-            body to parseTimorHolidayJson(body, year)
+            body to TimorHolidayCalendarParser.parse(body, year)?.holidays.orEmpty()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch holidays", e)
             "" to emptyList()
         }
     }
 
-    private fun parseTimorHolidayJson(json: String, year: Int): List<HolidayInfo> {
-        val raw = mutableListOf<Pair<String, String>>() // name -> date (MM-dd)
-        try {
-            val root = JSONObject(json)
-            if (root.optInt("code") != 0) return emptyList()
-            val holidayObj = root.optJSONObject("holiday") ?: return emptyList()
-            val keys = holidayObj.keys()
-            while (keys.hasNext()) {
-                val dateKey = keys.next()
-                val info = holidayObj.optJSONObject(dateKey) ?: continue
-                if (!info.optBoolean("holiday", false)) continue
-                var name = info.optString("name", "")
-                if (name.isBlank()) continue
-                if (name in springFestivalSubNames) name = "春节"
-                raw.add(name to dateKey)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse timor holiday JSON", e)
-            return emptyList()
-        }
-
-        val grouped = linkedMapOf<String, MutableList<String>>()
-        for ((name, date) in raw) {
-            grouped.getOrPut(name) { mutableListOf() }.add(date)
-        }
-
-        return grouped.map { (name, dates) ->
-            dates.sort()
-            val start = "$year-${dates.first()}"
-            val end = "$year-${dates.last()}"
-            HolidayInfo(name = name, startDate = start, endDate = end, daysOff = dates.size)
-        }.sortedBy { it.startDate }
-    }
-
     companion object {
         private const val TAG = "SemesterOverviewVM"
         private const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
-        private val springFestivalSubNames = setOf(
-            "除夕", "初一", "初二", "初三", "初四", "初五", "初六", "初七",
-            "春节前补班", "春节后补班"
-        )
     }
 }
 

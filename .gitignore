@@ -36,6 +36,7 @@ login.html
 .codegraph/
 .superpowers/
 .worktrees/
+.playwright-mcp
 CLAUDE.md
 AGENTS.md
 

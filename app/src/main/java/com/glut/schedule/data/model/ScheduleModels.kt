@@ -175,6 +175,21 @@ data class ScheduleCourse(
     val occurrences: List<CourseOccurrence>
 )
 
+/**
+ * 面向用户的“课程门数”只按课程名称判定。
+ * 课表内部可按教师、教室和时段拆成多个实体，但这些拆分不能重复增加课程门数。
+ */
+fun Iterable<ScheduleCourse>.countDistinctCourseTitles(): Int =
+    asSequence()
+        // 与课程配色共用名称键：末尾 @班级代码不是课程名称的一部分。
+        .map { course ->
+            CourseColorMapper.colorKey(courseId = "", title = course.title)
+                .replace(Regex("""\s+"""), " ")
+        }
+        .filter { title -> title.isNotEmpty() }
+        .distinct()
+        .count()
+
 fun historicalAcademicMaxWeek(
     portalMaxWeek: Int?,
     courses: List<ScheduleCourse>

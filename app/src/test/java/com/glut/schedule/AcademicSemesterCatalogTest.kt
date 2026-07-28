@@ -17,6 +17,32 @@ import java.time.LocalDate
 
 class AcademicSemesterCatalogTest {
     @Test
+    fun nanningUsesStableTermValuesWhenChineseLabelsAreUnreadable() {
+        val html = """
+            <select name="year">
+              <option value="46" selected>2026</option>
+              <option value="47">2027</option>
+            </select>
+            <select name="term">
+              <option value="1" selected>��</option>
+              <option value="3">��</option>
+            </select>
+        """.trimIndent()
+
+        val plan = AcademicSemesterParser.parseCatalogPlan(
+            html = html,
+            campus = CampusType.NANNING,
+            enrollmentDate = LocalDate.of(2024, 9, 1),
+            // 即使系统日期已到八月，也必须服从门户选中的 term=1，不能按月份误判为秋季。
+            today = LocalDate.of(2026, 8, 20)
+        )
+
+        assertEquals(SemesterSeason.SPRING, plan.semesters.single { it.isCurrent }.season)
+        assertEquals(SemesterSeason.AUTUMN, plan.nextSemester?.season)
+        assertEquals("3", plan.nextSemester?.portalTermId)
+    }
+
+    @Test
     fun nextSemesterAfterSpringUsesEachCampusActualAutumnTermWithoutFarFutureExposure() {
         listOf(CampusType.GUILIN to "2", CampusType.NANNING to "3").forEach { (campus, autumnTerm) ->
             val plan = AcademicSemesterParser.parseCatalogPlan(

@@ -89,7 +89,7 @@ class MultiSemesterUiContractTest {
 
         assertTrue(importBody.contains("AcademicSemesterParser.parseCatalogPlan("))
         assertTrue(importBody.contains("AcademicSemesterProbePlanner.decide("))
-        assertTrue(importBody.contains("decision.promotedPayload"))
+        assertTrue(importBody.contains("val currentSemester = decision.currentSemester"))
         assertTrue(importBody.split("semesterImportService.importSemester(").size - 1 == 2)
         assertTrue(importBody.contains("useWeeklyTimetable = false"))
         assertTrue(importBody.contains("semester = currentSemester"))
@@ -99,10 +99,11 @@ class MultiSemesterUiContractTest {
             importBody.indexOf("val currentPayload") <
                 importBody.indexOf("scheduleRepository.saveSemesterCatalog(semesterCatalog)")
         )
-        assertTrue(importBody.contains("AcademicSemesterCalendarEstimator.estimate("))
-        assertTrue(importBody.contains("settingsStore.setSemesterStartMonday(estimatedCalendar.startMonday)"))
-        assertTrue(importBody.contains("settingsStore.setSemesterEndDate(estimatedCalendar.endDate)"))
-        assertTrue(importBody.contains("settingsStore.setCurrentWeekNumber(estimatedCalendar.currentWeekNumber)"))
+        assertTrue(importBody.contains("AcademicSemesterCalendarResolver.resolve("))
+        assertTrue(importBody.contains("weeklyStartMonday = currentPayload.semesterStartMonday"))
+        assertTrue(importBody.contains("settingsStore.setSemesterStartMonday(resolvedCalendar.startMonday)"))
+        assertTrue(importBody.contains("settingsStore.setSemesterEndDate(resolvedCalendar.endDate)"))
+        assertTrue(importBody.contains("settingsStore.setCurrentWeekNumber(resolvedCalendar.currentWeekNumber)"))
         assertFalse(importBody.contains("AcademicSemesterCurrentImportPlanner.parse("))
     }
 
@@ -172,7 +173,7 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
-    fun currentSemesterRefreshUsesExactSemesterImportWithoutGlobalProbeFallback() {
+    fun currentSemesterRefreshUsesExactSemesterImportAndLightweightCalendarProbe() {
         val viewModel = page("ScheduleViewModel.kt")
         val refreshBody = viewModel.substringAfter("fun refreshSchedule(")
             .substringBefore("fun clearMessage(")
@@ -182,7 +183,8 @@ class MultiSemesterUiContractTest {
         assertTrue(refreshBody.contains("useWeeklyTimetable = true"))
         assertTrue(refreshBody.contains("repository.replaceSemesterSchedule("))
         assertTrue(refreshBody.contains("portalMaxWeek = payload.portalMaxWeek"))
-        assertFalse(refreshBody.contains("probeScheduleEndpoints("))
+        assertTrue(refreshBody.contains("probeScheduleEndpoints("))
+        assertTrue(refreshBody.contains("AcademicSemesterCalendarResolver.resolve("))
         assertFalse(refreshBody.contains("replaceImportedCourses("))
         assertFalse(refreshBody.contains("sessionStore.timetableUrl"))
         assertFalse(refreshBody.contains("repository.selectSemester("))

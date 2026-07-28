@@ -109,11 +109,8 @@ object AcademicSemesterParser {
         if (years.isEmpty()) return AcademicSemesterCatalogPlan(emptyList(), null)
 
         val parsedTerms = selects["term"].orEmpty().mapNotNull { option ->
-            val season = when {
-                option.text.contains("春") -> SemesterSeason.SPRING
-                option.text.contains("秋") -> SemesterSeason.AUTUMN
-                else -> null
-            } ?: return@mapNotNull null
+            val season = seasonForTerm(campus, option.value, option.text)
+                ?: return@mapNotNull null
             PortalTerm(season, option.value, option.selected)
         }
         val terms = if (parsedTerms.isNotEmpty()) parsedTerms else defaultTerms(campus)
@@ -189,6 +186,22 @@ object AcademicSemesterParser {
         PortalTerm(SemesterSeason.SPRING, "1", false),
         PortalTerm(SemesterSeason.AUTUMN, if (campus == CampusType.GUILIN) "2" else "3", false)
     )
+
+    /**
+     * 南宁学期页使用 GBK，中文标签经过不同网络链路时可能不可读；门户值则保持稳定。
+     * 因此先按校区识别 1/2/3，再用中文标签兼容未来可能出现的其他值。
+     */
+    private fun seasonForTerm(campus: CampusType, value: String, text: String): SemesterSeason? {
+        val normalizedValue = value.trim()
+        return when {
+            normalizedValue == "1" -> SemesterSeason.SPRING
+            campus == CampusType.GUILIN && normalizedValue == "2" -> SemesterSeason.AUTUMN
+            campus == CampusType.NANNING && normalizedValue == "3" -> SemesterSeason.AUTUMN
+            text.contains("春") -> SemesterSeason.SPRING
+            text.contains("秋") -> SemesterSeason.AUTUMN
+            else -> null
+        }
+    }
 
     private fun seasonForDate(date: LocalDate): SemesterSeason =
         if (date.monthValue >= 8) SemesterSeason.AUTUMN else SemesterSeason.SPRING
