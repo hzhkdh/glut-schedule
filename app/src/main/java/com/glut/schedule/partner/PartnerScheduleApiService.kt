@@ -28,7 +28,10 @@ fun inviteCodeFromInput(input: String): String {
     return code
 }
 
-fun inviteQrPayload(code: String): String = QR_PREFIX + inviteCodeFromInput(code)
+/**
+ * 系统分享只发送可直接粘贴导入的纯邀请码，避免暴露已经没有扫码入口的旧二维码载荷。
+ */
+fun partnerInviteShareText(code: String): String = inviteCodeFromInput(code)
 
 interface PartnerScheduleGateway {
     suspend fun createInvite(snapshot: PartnerScheduleSnapshot): PartnerInvite

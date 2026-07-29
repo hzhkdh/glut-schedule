@@ -783,8 +783,10 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     onExamClick = { selectedItem = DrawerItem.Exam },
                                     onDrawerOpen = { scope.launch { drawerState.open() } }
                                 )
-                                DrawerItem.PartnerSchedule -> PartnerScheduleScreen(
+                                DrawerItem.PartnerSchedule -> PartnerScheduleDestination(
                                     viewModel = partnerScheduleViewModel,
+                                    scheduleViewModel = scheduleViewModel,
+                                    backgroundStore = container.backgroundStore,
                                     onDrawerOpen = { scope.launch { drawerState.open() } }
                                 )
                                 DrawerItem.Score -> ScoreScreen(viewModel = scoreViewModel)
@@ -975,6 +977,42 @@ private fun ScheduleDestination(
         customBackgroundBitmap = backgroundBitmap,
         onImportClick = onImportClick,
         onExamClick = onExamClick,
+        onDrawerOpen = onDrawerOpen
+    )
+}
+
+@Composable
+private fun PartnerScheduleDestination(
+    viewModel: PartnerScheduleViewModel,
+    scheduleViewModel: ScheduleViewModel,
+    backgroundStore: ScheduleBackgroundStore,
+    onDrawerOpen: () -> Unit
+) {
+    val scheduleState by scheduleViewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var backgroundCacheRevision by remember(scheduleState.customBackgroundUri) { mutableIntStateOf(0) }
+
+    LaunchedEffect(scheduleState.customBackgroundUri) {
+        val uri = scheduleState.customBackgroundUri
+        if (shouldUseCustomBackground(uri) && backgroundStore.get(uri) == null) {
+            val metrics = context.resources.displayMetrics
+            val loaded = backgroundStore.preload(uri, metrics.widthPixels, metrics.heightPixels)
+            if (!loaded) scheduleViewModel.clearCustomBackground()
+            backgroundCacheRevision++
+        }
+    }
+    val backgroundBitmap = remember(scheduleState.customBackgroundUri, backgroundCacheRevision) {
+        if (shouldUseCustomBackground(scheduleState.customBackgroundUri)) {
+            backgroundStore.get(scheduleState.customBackgroundUri)
+        } else {
+            null
+        }
+    }
+
+    PartnerScheduleScreen(
+        viewModel = viewModel,
+        customBackgroundUri = scheduleState.customBackgroundUri,
+        customBackgroundBitmap = backgroundBitmap,
         onDrawerOpen = onDrawerOpen
     )
 }

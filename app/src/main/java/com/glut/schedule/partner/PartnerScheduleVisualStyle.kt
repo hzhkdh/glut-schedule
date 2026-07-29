@@ -21,13 +21,14 @@ internal object PartnerScheduleVisualStyle {
     val blueSurface = Color(0xFFD5E8FB)
     val blueContent = Color(0xFF174A7A)
 
-    val pageBackground = Color(0xFFFFFAF8)
-    val pagePrimaryText = Color(0xFF202127)
-    val emptyCell = Color(0xFFF1F1F3)
+    val pagePrimaryText = Color.White
+    val pageSecondaryText = Color.White.copy(alpha = 0.72f)
 
     val inviteSurface = Color.White
     val inviteContent = Color(0xFF202127)
     val inviteAction = blueContent
+    val feedbackSurface = Color(0xFFFCECF2)
+    val feedbackContent = Color(0xFF6F2944)
 
     val overlapBadgeSize = 22.dp
 

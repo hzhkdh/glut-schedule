@@ -15,11 +15,7 @@ import kotlin.math.pow
 class PartnerScheduleVisualStyleTest {
 
     @Test
-    fun `浅色页面和邀请码卡片的文字满足普通文本对比度`() {
-        assertReadable(
-            PartnerScheduleVisualStyle.pagePrimaryText,
-            PartnerScheduleVisualStyle.pageBackground
-        )
+    fun `邀请码卡片和页面提示的文字满足普通文本对比度`() {
         assertReadable(
             PartnerScheduleVisualStyle.inviteContent,
             PartnerScheduleVisualStyle.inviteSurface
@@ -27,6 +23,10 @@ class PartnerScheduleVisualStyleTest {
         assertReadable(
             PartnerScheduleVisualStyle.inviteAction,
             PartnerScheduleVisualStyle.inviteSurface
+        )
+        assertReadable(
+            PartnerScheduleVisualStyle.feedbackContent,
+            PartnerScheduleVisualStyle.feedbackSurface
         )
     }
 

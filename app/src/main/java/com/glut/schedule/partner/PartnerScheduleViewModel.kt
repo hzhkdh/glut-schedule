@@ -163,6 +163,10 @@ class PartnerScheduleViewModel(
         selectedWeek.value = clampAcademicWeek(uiState.value.week + 1, uiState.value.maxWeek)
     }
 
+    fun setWeek(week: Int) {
+        selectedWeek.value = clampAcademicWeek(week, uiState.value.maxWeek)
+    }
+
     fun setMyColor(color: PartnerIdentityColor) {
         storage.setMyColor(color)
     }

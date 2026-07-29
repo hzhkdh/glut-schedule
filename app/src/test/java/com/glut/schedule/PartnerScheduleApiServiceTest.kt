@@ -5,7 +5,7 @@ import com.glut.schedule.partner.PartnerIdentityColor
 import com.glut.schedule.partner.PartnerScheduleApiService
 import com.glut.schedule.partner.PartnerScheduleSnapshot
 import com.glut.schedule.partner.inviteCodeFromInput
-import com.glut.schedule.partner.inviteQrPayload
+import com.glut.schedule.partner.partnerInviteShareText
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -57,7 +57,6 @@ class PartnerScheduleApiServiceTest {
             val invite = service.createInvite(snapshot)
 
             assertEquals("ABCD2345EFGH6789", invite.code)
-            assertEquals("GLUT-SCHEDULE:V1:ABCD2345EFGH6789", inviteQrPayload(invite.code))
             val request = server.takeRequest()
             assertEquals("/v1/invites", request.path)
             assertEquals("POST", request.method)
@@ -91,6 +90,14 @@ class PartnerScheduleApiServiceTest {
         assertThrows(IllegalArgumentException::class.java) {
             inviteCodeFromInput("1234")
         }
+    }
+
+    @Test
+    fun shareTextContainsOnlyTheImportableInviteCode() {
+        assertEquals(
+            "ABCD2345EFGH6789",
+            partnerInviteShareText("abcd2345efgh6789")
+        )
     }
 
     @Test

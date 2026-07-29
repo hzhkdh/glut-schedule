@@ -4,10 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,7 +22,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerSnapDistance
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -54,6 +54,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -62,13 +65,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -78,61 +84,76 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.google.zxing.qrcode.QRCodeWriter
+import com.glut.schedule.ui.components.StarryScheduleBackground
 import java.time.Duration
 import java.time.LocalTime
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
-private val PartnerPink = PartnerScheduleVisualStyle.pink
 private val PartnerPinkSurface = PartnerScheduleVisualStyle.pinkSurface
 private val PartnerPinkText = PartnerScheduleVisualStyle.pinkContent
-private val PartnerBlue = PartnerScheduleVisualStyle.blue
 private val PartnerBlueSurface = PartnerScheduleVisualStyle.blueSurface
 private val PartnerBlueText = PartnerScheduleVisualStyle.blueContent
-private val PartnerBackground = PartnerScheduleVisualStyle.pageBackground
-private val EmptyCell = PartnerScheduleVisualStyle.emptyCell
-
 @Composable
 fun PartnerScheduleScreen(
     viewModel: PartnerScheduleViewModel,
+    customBackgroundUri: String,
+    customBackgroundBitmap: ImageBitmap?,
     onDrawerOpen: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     var showManage by remember { mutableStateOf(false) }
     var detailGroup by remember { mutableStateOf<PartnerDisplayGroup?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(state.message) {
         if (state.message.isNotBlank()) {
-            Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
+            snackbarHostState.showSnackbar(state.message)
             viewModel.clearMessage()
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(PartnerBackground)
-            .statusBarsPadding()
-    ) {
-        PartnerHeader(
-            week = state.week,
-            commonFreeCount = state.commonFreeCountToday,
-            onDrawerOpen = onDrawerOpen,
-            onManage = { showManage = true }
+    Box(modifier = Modifier.fillMaxSize()) {
+        StarryScheduleBackground(
+            customBackgroundUri = customBackgroundUri,
+            customBackgroundBitmap = customBackgroundBitmap
         )
-        if (state.partnerSnapshot == null) {
-            PartnerEmptyState(
-                isBusy = state.isBusy,
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+        ) {
+            PartnerHeader(
+                commonFreeCount = state.commonFreeCountToday,
+                onDrawerOpen = onDrawerOpen,
                 onManage = { showManage = true }
             )
-        } else {
-            PartnerScheduleContent(
-                state = state,
-                onPreviousWeek = viewModel::previousWeek,
-                onNextWeek = viewModel::nextWeek,
-                onGroupClick = { detailGroup = it }
+            if (state.partnerSnapshot == null) {
+                PartnerEmptyState(
+                    isBusy = state.isBusy,
+                    onManage = { showManage = true }
+                )
+            } else {
+                PartnerScheduleContent(
+                    state = state,
+                    onWeekSelected = viewModel::setWeek,
+                    onGroupClick = { detailGroup = it }
+                )
+            }
+        }
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 20.dp, vertical = 18.dp)
+                .navigationBarsPadding()
+        ) { data ->
+            Snackbar(
+                snackbarData = data,
+                shape = RoundedCornerShape(14.dp),
+                containerColor = PartnerScheduleVisualStyle.feedbackSurface,
+                contentColor = PartnerScheduleVisualStyle.feedbackContent
             )
         }
     }
@@ -145,7 +166,10 @@ fun PartnerScheduleScreen(
             onGenerate = viewModel::generateInvite,
             onImport = viewModel::importInvite,
             onRevoke = viewModel::revokeInvite,
-            onDeletePartner = viewModel::deletePartnerSnapshot
+            onDeletePartner = viewModel::deletePartnerSnapshot,
+            onFeedback = { message ->
+                scope.launch { snackbarHostState.showSnackbar(message) }
+            }
         )
     }
     detailGroup?.let { group ->
@@ -155,7 +179,6 @@ fun PartnerScheduleScreen(
 
 @Composable
 private fun PartnerHeader(
-    week: Int,
     commonFreeCount: Int,
     onDrawerOpen: () -> Unit,
     onManage: () -> Unit
@@ -167,19 +190,23 @@ private fun PartnerHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onDrawerOpen, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Outlined.Menu, contentDescription = "打开菜单")
+            Icon(
+                Icons.Outlined.Menu,
+                contentDescription = "打开菜单",
+                tint = PartnerScheduleVisualStyle.pagePrimaryText
+            )
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = "TA课表",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF202127)
+                color = PartnerScheduleVisualStyle.pagePrimaryText
             )
             Text(
-                text = "第 $week 周 · 今天有 $commonFreeCount 段共同空闲",
+                text = "今天有 $commonFreeCount 段共同空闲",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF82777B)
+                color = PartnerScheduleVisualStyle.pageSecondaryText
             )
         }
         IconButton(onClick = onManage, modifier = Modifier.size(48.dp)) {
@@ -217,7 +244,7 @@ private fun PartnerEmptyState(isBusy: Boolean, onManage: () -> Unit) {
         Spacer(Modifier.height(8.dp))
         Text(
             "生成自己的邀请码，或输入TA发来的16位邀请码。",
-            color = Color(0xFF756D70),
+            color = PartnerScheduleVisualStyle.pageSecondaryText,
             style = MaterialTheme.typography.bodyMedium
         )
         Spacer(Modifier.height(24.dp))
@@ -232,52 +259,112 @@ private fun PartnerEmptyState(isBusy: Boolean, onManage: () -> Unit) {
 @Composable
 private fun PartnerScheduleContent(
     state: PartnerScheduleUiState,
-    onPreviousWeek: () -> Unit,
-    onNextWeek: () -> Unit,
+    onWeekSelected: (Int) -> Unit,
     onGroupClick: (PartnerDisplayGroup) -> Unit
 ) {
+    val pagerState = rememberPagerState(
+        initialPage = partnerPagerPageForWeek(state.week, state.maxWeek),
+        pageCount = { state.maxWeek.coerceAtLeast(1) }
+    )
+    val scope = rememberCoroutineScope()
+    val latestWeek by rememberUpdatedState(state.week)
+    val latestMaxWeek by rememberUpdatedState(state.maxWeek)
+
+    LaunchedEffect(state.week, state.maxWeek) {
+        val targetPage = partnerPagerPageForWeek(state.week, state.maxWeek)
+        if (pagerState.currentPage != targetPage && pagerState.settledPage != targetPage) {
+            // ViewModel 可能因导入或日期恢复而改变周次，Pager 必须同步到同一页。
+            pagerState.scrollToPage(targetPage)
+        }
+    }
+
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { page ->
+                val week = partnerWeekForPagerPage(page, latestMaxWeek)
+                if (week != latestWeek) onWeekSelected(week)
+            }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp)
             .navigationBarsPadding()
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.Center
         ) {
-            IconButton(onClick = onPreviousWeek, enabled = state.week > 1, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "上一周")
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                PartnerLegendDot(color = PartnerPink, text = "粉色")
-                PartnerLegendDot(color = PartnerBlue, text = "蓝色")
-            }
             IconButton(
-                onClick = onNextWeek,
-                enabled = state.week < state.maxWeek,
+                onClick = {
+                    scope.launch {
+                        pagerState.animateScrollToPage((pagerState.settledPage - 1).coerceAtLeast(0))
+                    }
+                },
+                enabled = pagerState.settledPage > 0,
                 modifier = Modifier.size(48.dp)
             ) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = "下一周")
+                Icon(
+                    Icons.AutoMirrored.Outlined.ArrowBack,
+                    contentDescription = "上一周",
+                    tint = PartnerScheduleVisualStyle.pagePrimaryText
+                )
+            }
+            Text(
+                text = "第 ${partnerWeekForPagerPage(pagerState.settledPage, state.maxWeek)} 周",
+                modifier = Modifier.width(96.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                color = PartnerScheduleVisualStyle.pagePrimaryText,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            IconButton(
+                onClick = {
+                    scope.launch {
+                        pagerState.animateScrollToPage(
+                            (pagerState.settledPage + 1).coerceAtMost(state.maxWeek - 1)
+                        )
+                    }
+                },
+                enabled = pagerState.settledPage < state.maxWeek - 1,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.ArrowForward,
+                    contentDescription = "下一周",
+                    tint = PartnerScheduleVisualStyle.pagePrimaryText
+                )
             }
         }
-        PartnerTimeGrid(
-            groups = partnerDisplayGroups(state.week, state.combinedCourses),
-            classPeriods = state.classPeriods,
-            onGroupClick = onGroupClick
-        )
-        Spacer(Modifier.height(20.dp))
-    }
-}
-
-@Composable
-private fun PartnerLegendDot(color: Color, text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(10.dp).clip(CircleShape).background(color))
-        Spacer(Modifier.width(6.dp))
-        Text(text, fontSize = 12.sp, color = Color(0xFF756D70))
+        HorizontalPager(
+            state = pagerState,
+            key = { page -> page },
+            flingBehavior = PagerDefaults.flingBehavior(
+                state = pagerState,
+                pagerSnapDistance = PagerSnapDistance.atMost(1)
+            ),
+            beyondViewportPageCount = 1,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) { page ->
+            val week = partnerWeekForPagerPage(page, state.maxWeek)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp)
+            ) {
+                PartnerTimeGrid(
+                    groups = partnerDisplayGroups(week, state.combinedCourses),
+                    classPeriods = state.classPeriods,
+                    onGroupClick = onGroupClick
+                )
+                Spacer(Modifier.height(20.dp))
+            }
+        }
     }
 }
 
@@ -304,25 +391,13 @@ private fun PartnerTimeGrid(
                         text = day,
                         modifier = Modifier.width(dayWidth),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        color = Color(0xFF756D70),
+                        color = PartnerScheduleVisualStyle.pageSecondaryText,
                         fontSize = 13.sp
                     )
                 }
             }
             Spacer(Modifier.height(8.dp))
             Box(modifier = Modifier.fillMaxWidth().height(gridHeight)) {
-                Row(modifier = Modifier.offset(x = timeWidth)) {
-                    repeat(dayCount) {
-                        Box(
-                            Modifier
-                                .width(dayWidth)
-                                .height(gridHeight)
-                                .padding(horizontal = 2.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(EmptyCell.copy(alpha = 0.72f))
-                        )
-                    }
-                }
                 classPeriods.forEach { period ->
                     val minute = Duration.between(startTime, LocalTime.parse(period.startsAt)).toMinutes()
                     val y = gridHeight * (minute.toFloat() / totalMinutes.toFloat())
@@ -331,7 +406,7 @@ private fun PartnerTimeGrid(
                         modifier = Modifier.offset(y = y - 2.dp).width(timeWidth),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         fontSize = 10.sp,
-                        color = Color(0xFF958B8E)
+                        color = PartnerScheduleVisualStyle.pageSecondaryText
                     )
                 }
                 groups.filter { it.dayOfWeek <= dayCount }.forEach { group ->
@@ -473,7 +548,8 @@ private fun PartnerManageSheet(
     onGenerate: (Boolean, Boolean) -> Unit,
     onImport: (String) -> Unit,
     onRevoke: () -> Unit,
-    onDeletePartner: () -> Unit
+    onDeletePartner: () -> Unit,
+    onFeedback: (String) -> Unit
 ) {
     val context = LocalContext.current
     var shareRoom by remember { mutableStateOf(true) }
@@ -525,7 +601,11 @@ private fun PartnerManageSheet(
                 else Text(if (state.activeInvite == null) "生成24小时邀请码" else "请先撤销当前邀请码")
             }
             state.activeInvite?.let { invite ->
-                InviteCard(invite = invite, context = context)
+                InviteCard(
+                    invite = invite,
+                    context = context,
+                    onFeedback = onFeedback
+                )
                 OutlinedButton(
                     onClick = onRevoke,
                     enabled = !state.isBusy,
@@ -539,8 +619,8 @@ private fun PartnerManageSheet(
                 value = inviteInput,
                 onValueChange = { inviteInput = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("TA的邀请码或二维码内容") },
-                supportingText = { Text("支持16位邀请码和 GLUT-SCHEDULE:V1:…") },
+                label = { Text("TA的邀请码") },
+                supportingText = { Text("支持16位邀请码") },
                 singleLine = true
             )
             Button(
@@ -605,9 +685,11 @@ private fun PartnerManageSheet(
 }
 
 @Composable
-private fun InviteCard(invite: StoredPartnerInvite, context: Context) {
-    val payload = inviteQrPayload(invite.code)
-    val qrBitmap = remember(payload) { createQrBitmap(payload, 560) }
+private fun InviteCard(
+    invite: StoredPartnerInvite,
+    context: Context,
+    onFeedback: (String) -> Unit
+) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = PartnerScheduleVisualStyle.inviteSurface,
@@ -619,11 +701,6 @@ private fun InviteCard(invite: StoredPartnerInvite, context: Context) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Image(
-                bitmap = qrBitmap.asImageBitmap(),
-                contentDescription = "课表邀请码二维码",
-                modifier = Modifier.size(190.dp)
-            )
             Text(invite.code.chunked(4).joinToString(" "), fontWeight = FontWeight.Bold, fontSize = 18.sp)
             Text("有效至 ${invite.expiresAt}", fontSize = 12.sp, color = Color(0xFF756D70))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -631,7 +708,7 @@ private fun InviteCard(invite: StoredPartnerInvite, context: Context) {
                     onClick = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("TA课表邀请码", invite.code))
-                        Toast.makeText(context, "邀请码已复制", Toast.LENGTH_SHORT).show()
+                        onFeedback("邀请码已复制")
                     },
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = PartnerScheduleVisualStyle.inviteAction
@@ -648,7 +725,7 @@ private fun InviteCard(invite: StoredPartnerInvite, context: Context) {
                             Intent.createChooser(
                                 Intent(Intent.ACTION_SEND).apply {
                                     type = "text/plain"
-                                    putExtra(Intent.EXTRA_TEXT, "TA课表邀请码：${invite.code}\n$payload")
+                                    putExtra(Intent.EXTRA_TEXT, partnerInviteShareText(invite.code))
                                 },
                                 "分享TA课表邀请码"
                             )
@@ -709,19 +786,8 @@ private fun PartnerCourseDetailSheet(group: PartnerDisplayGroup, onDismiss: () -
     }
 }
 
-private fun createQrBitmap(content: String, size: Int): Bitmap {
-    val matrix = QRCodeWriter().encode(
-        content,
-        BarcodeFormat.QR_CODE,
-        size,
-        size,
-        mapOf(EncodeHintType.MARGIN to 1)
-    )
-    return Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).apply {
-        for (y in 0 until size) {
-            for (x in 0 until size) {
-                setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
-            }
-        }
-    }
-}
+internal fun partnerWeekForPagerPage(page: Int, maxWeek: Int): Int =
+    (page + 1).coerceIn(1, maxWeek.coerceAtLeast(1))
+
+internal fun partnerPagerPageForWeek(week: Int, maxWeek: Int): Int =
+    week.coerceIn(1, maxWeek.coerceAtLeast(1)) - 1

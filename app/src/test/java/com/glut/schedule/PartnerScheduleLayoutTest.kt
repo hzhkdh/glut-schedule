@@ -7,6 +7,8 @@ import com.glut.schedule.partner.classifyPartnerOverlap
 import com.glut.schedule.partner.commonFreeSegments
 import com.glut.schedule.partner.partnerDisplayGroups
 import com.glut.schedule.partner.partnerCardTimeRange
+import com.glut.schedule.partner.partnerPagerPageForWeek
+import com.glut.schedule.partner.partnerWeekForPagerPage
 import com.glut.schedule.partner.canGeneratePartnerInvite
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -107,5 +109,14 @@ class PartnerScheduleLayoutTest {
         assertEquals(true, canGeneratePartnerInvite(hasCourses = true, isBusy = false, hasActiveInvite = false))
         assertEquals(false, canGeneratePartnerInvite(hasCourses = true, isBusy = false, hasActiveInvite = true))
         assertEquals(false, canGeneratePartnerInvite(hasCourses = false, isBusy = false, hasActiveInvite = false))
+    }
+
+    @Test
+    fun partnerPagerClampsWeeksAtBothEdges() {
+        assertEquals(1, partnerWeekForPagerPage(page = -1, maxWeek = 20))
+        assertEquals(8, partnerWeekForPagerPage(page = 7, maxWeek = 20))
+        assertEquals(20, partnerWeekForPagerPage(page = 99, maxWeek = 20))
+        assertEquals(0, partnerPagerPageForWeek(week = 1, maxWeek = 20))
+        assertEquals(19, partnerPagerPageForWeek(week = 99, maxWeek = 20))
     }
 }
