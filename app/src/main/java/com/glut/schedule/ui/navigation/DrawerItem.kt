@@ -14,6 +14,7 @@ import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.PeopleAlt
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -30,6 +31,7 @@ enum class DrawerItem(
     GradeExam("考级成绩", Icons.Outlined.EmojiEvents),
     FitnessScore("体测成绩", Icons.Outlined.FitnessCenter),
     CampusInfo("校园信息", Icons.Outlined.AccountBalance),
+    PartnerSchedule("TA课表", Icons.Outlined.PeopleAlt),
     Finance("财务", Icons.Outlined.AccountBalanceWallet),
     StudyPlan("教学计划", Icons.Outlined.MenuBook),
     Import("导入课表", Icons.Outlined.Download),
@@ -43,9 +45,10 @@ enum class DrawerItem(
 internal fun campusDrawerItems(campus: CampusType): List<DrawerItem> = when (campus) {
     CampusType.GUILIN -> listOf(
         DrawerItem.CampusInfo,
+        DrawerItem.PartnerSchedule,
         DrawerItem.Finance
     )
-    CampusType.NANNING -> listOf(DrawerItem.Finance)
+    CampusType.NANNING -> listOf(DrawerItem.PartnerSchedule, DrawerItem.Finance)
 }
 
 internal val otherDrawerItems = listOf(

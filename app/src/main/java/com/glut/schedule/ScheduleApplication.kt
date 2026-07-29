@@ -31,6 +31,8 @@ import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.greeting.GreetingTemplateRepository
 import com.glut.schedule.service.greeting.HttpGreetingTemplateRemote
+import com.glut.schedule.partner.PartnerScheduleApiService
+import com.glut.schedule.partner.PartnerScheduleStore
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.widget.ScheduleWidgetUpdater
 import kotlinx.coroutines.CoroutineScope
@@ -131,4 +133,6 @@ class AppContainer(application: Application) {
     val updateChecker = UpdateChecker()
     val noticeChecker = NoticeChecker()
     val appUpdater = AppUpdater(application)
+    val partnerScheduleStore = PartnerScheduleStore(application)
+    val partnerScheduleApiService = PartnerScheduleApiService()
 }

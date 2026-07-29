@@ -155,6 +155,9 @@ import com.glut.schedule.ui.pages.CampusImageScreen
 import com.glut.schedule.ui.pages.CampusImageViewModel
 import com.glut.schedule.ui.pages.CampusImageViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
+import com.glut.schedule.partner.PartnerScheduleScreen
+import com.glut.schedule.partner.PartnerScheduleViewModel
+import com.glut.schedule.partner.PartnerScheduleViewModelFactory
 import com.glut.schedule.ui.pages.ClassPeriodSettingsScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
@@ -309,6 +312,14 @@ class MainActivity : ComponentActivity() {
                         parser = container.fitnessParser
                     )
                 )
+                val partnerScheduleViewModel: PartnerScheduleViewModel = viewModel(
+                    factory = PartnerScheduleViewModelFactory(
+                        repository = container.scheduleRepository,
+                        settingsStore = container.settingsStore,
+                        storage = container.partnerScheduleStore,
+                        gateway = container.partnerScheduleApiService
+                    )
+                )
                 val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
                 val greetingEnabled by container.settingsStore.greetingEnabled.collectAsStateWithLifecycle(initialValue = true)
                 val studentName by container.academicSessionStore.authenticatedStudentName
@@ -388,7 +399,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                val isSchedulePage = selectedItem == DrawerItem.Schedule
+                val isSchedulePage =
+                    selectedItem == DrawerItem.Schedule || selectedItem == DrawerItem.PartnerSchedule
                 val latestGreetingEnabled by rememberUpdatedState(greetingEnabled)
                 val latestStudentName by rememberUpdatedState(studentName)
                 val latestAuthenticatedStudentNumber by rememberUpdatedState(authenticatedStudentNumber)
@@ -769,6 +781,10 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     backgroundStore = container.backgroundStore,
                                     onImportClick = { selectedItem = DrawerItem.Import },
                                     onExamClick = { selectedItem = DrawerItem.Exam },
+                                    onDrawerOpen = { scope.launch { drawerState.open() } }
+                                )
+                                DrawerItem.PartnerSchedule -> PartnerScheduleScreen(
+                                    viewModel = partnerScheduleViewModel,
                                     onDrawerOpen = { scope.launch { drawerState.open() } }
                                 )
                                 DrawerItem.Score -> ScoreScreen(viewModel = scoreViewModel)
