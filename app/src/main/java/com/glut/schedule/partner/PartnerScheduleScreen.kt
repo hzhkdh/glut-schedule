@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.outlined.PersonAddAlt
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -82,14 +84,14 @@ import com.google.zxing.qrcode.QRCodeWriter
 import java.time.Duration
 import java.time.LocalTime
 
-private val PartnerPink = Color(0xFFF7B6CA)
-private val PartnerPinkSurface = Color(0xFFFFDDE7)
-private val PartnerPinkText = Color(0xFF7A2947)
-private val PartnerBlue = Color(0xFF91BDEB)
-private val PartnerBlueSurface = Color(0xFFD5E8FB)
-private val PartnerBlueText = Color(0xFF174A7A)
-private val PartnerBackground = Color(0xFFFFFAF8)
-private val EmptyCell = Color(0xFFF1F1F3)
+private val PartnerPink = PartnerScheduleVisualStyle.pink
+private val PartnerPinkSurface = PartnerScheduleVisualStyle.pinkSurface
+private val PartnerPinkText = PartnerScheduleVisualStyle.pinkContent
+private val PartnerBlue = PartnerScheduleVisualStyle.blue
+private val PartnerBlueSurface = PartnerScheduleVisualStyle.blueSurface
+private val PartnerBlueText = PartnerScheduleVisualStyle.blueContent
+private val PartnerBackground = PartnerScheduleVisualStyle.pageBackground
+private val EmptyCell = PartnerScheduleVisualStyle.emptyCell
 
 @Composable
 fun PartnerScheduleScreen(
@@ -206,7 +208,12 @@ private fun PartnerEmptyState(isBusy: Boolean, onManage: () -> Unit) {
             }
         }
         Spacer(Modifier.height(24.dp))
-        Text("还没有TA的课表", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(
+            "还没有TA的课表",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = PartnerScheduleVisualStyle.pagePrimaryText
+        )
         Spacer(Modifier.height(8.dp))
         Text(
             "生成自己的邀请码，或输入TA发来的16位邀请码。",
@@ -389,8 +396,16 @@ private fun PartnerGroupCard(
             PartnerOverlapKind.EXACT -> DualCourseContent(ordered)
             PartnerOverlapKind.SAME_COURSE -> FullCourseContent(ordered.first())
             PartnerOverlapKind.PARTIAL -> {
-                FullCourseContent(ordered.first())
-                OverlapBadge(group.courses.size)
+                FullCourseContent(
+                    course = ordered.first(),
+                    modifier = Modifier.padding(
+                        end = PartnerScheduleVisualStyle.cardContentEndPadding(group.kind)
+                    )
+                )
+                OverlapBadge(
+                    count = group.courses.size,
+                    modifier = Modifier.align(Alignment.TopEnd)
+                )
             }
             PartnerOverlapKind.NONE -> FullCourseContent(ordered.first())
         }
@@ -398,9 +413,9 @@ private fun PartnerGroupCard(
 }
 
 @Composable
-private fun FullCourseContent(course: PartnerCourse) {
+private fun FullCourseContent(course: PartnerCourse, modifier: Modifier = Modifier) {
     val textColor = if (course.ownerColor == PartnerIdentityColor.PINK) PartnerPinkText else PartnerBlueText
-    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(1.dp)) {
         Text(
             course.title,
             color = textColor,
@@ -437,9 +452,9 @@ private fun DualCourseContent(courses: List<PartnerCourse>) {
 }
 
 @Composable
-private fun OverlapBadge(count: Int) {
+private fun OverlapBadge(count: Int, modifier: Modifier = Modifier) {
     Surface(
-        modifier = Modifier.size(22.dp),
+        modifier = modifier.size(PartnerScheduleVisualStyle.overlapBadgeSize),
         shape = CircleShape,
         color = Color(0xFF34333A)
     ) {
@@ -593,7 +608,12 @@ private fun PartnerManageSheet(
 private fun InviteCard(invite: StoredPartnerInvite, context: Context) {
     val payload = inviteQrPayload(invite.code)
     val qrBitmap = remember(payload) { createQrBitmap(payload, 560) }
-    Surface(shape = RoundedCornerShape(16.dp), color = Color.White, tonalElevation = 2.dp) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = PartnerScheduleVisualStyle.inviteSurface,
+        contentColor = PartnerScheduleVisualStyle.inviteContent,
+        tonalElevation = 2.dp
+    ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -607,26 +627,38 @@ private fun InviteCard(invite: StoredPartnerInvite, context: Context) {
             Text(invite.code.chunked(4).joinToString(" "), fontWeight = FontWeight.Bold, fontSize = 18.sp)
             Text("有效至 ${invite.expiresAt}", fontSize = 12.sp, color = Color(0xFF756D70))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("TA课表邀请码", invite.code))
-                    Toast.makeText(context, "邀请码已复制", Toast.LENGTH_SHORT).show()
-                }) {
+                OutlinedButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("TA课表邀请码", invite.code))
+                        Toast.makeText(context, "邀请码已复制", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = PartnerScheduleVisualStyle.inviteAction
+                    ),
+                    border = BorderStroke(1.dp, PartnerScheduleVisualStyle.inviteAction)
+                ) {
                     Icon(Icons.Outlined.ContentCopy, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("复制")
                 }
-                OutlinedButton(onClick = {
-                    context.startActivity(
-                        Intent.createChooser(
-                            Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_TEXT, "TA课表邀请码：${invite.code}\n$payload")
-                            },
-                            "分享TA课表邀请码"
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(
+                            Intent.createChooser(
+                                Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, "TA课表邀请码：${invite.code}\n$payload")
+                                },
+                                "分享TA课表邀请码"
+                            )
                         )
-                    )
-                }) {
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = PartnerScheduleVisualStyle.inviteAction
+                    ),
+                    border = BorderStroke(1.dp, PartnerScheduleVisualStyle.inviteAction)
+                ) {
                     Icon(Icons.Outlined.IosShare, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("分享")
@@ -653,15 +685,17 @@ private fun PartnerCourseDetailSheet(group: PartnerDisplayGroup, onDismiss: () -
                 fontWeight = FontWeight.Bold
             )
             group.courses.forEach { course ->
+                val cardStyle = PartnerScheduleVisualStyle.courseCard(course.ownerColor)
                 Surface(
-                    color = if (course.ownerColor == PartnerIdentityColor.PINK) PartnerPinkSurface else PartnerBlueSurface,
+                    color = cardStyle.surface,
+                    contentColor = cardStyle.content,
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
                             if (course.ownerColor == PartnerIdentityColor.PINK) "粉色课程" else "蓝色课程",
                             fontSize = 12.sp,
-                            color = Color(0xFF756D70)
+                            color = cardStyle.content
                         )
                         Text(course.title, fontWeight = FontWeight.Bold)
                         course.room?.let { Text("教室：$it") }
