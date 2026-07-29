@@ -105,7 +105,7 @@ class PartnerScheduleApiService(
     }
 
     companion object {
-        const val DEFAULT_BASE_URL = "https://share-schedule-999314.xyz"
+        const val DEFAULT_BASE_URL = "https://share-schedule.999314.xyz"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private const val MAX_RESPONSE_BYTES = 512 * 1024
     }

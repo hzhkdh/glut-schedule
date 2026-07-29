@@ -48,7 +48,7 @@ android {
 
     buildTypes {
         debug {
-            // 正式根域尚未注册时，Debug 包使用已部署的联调 Worker，便于功能验收。
+            // Debug 包保留 Workers.dev 联调入口，正式包使用自定义域名。
             buildConfigField(
                 "String",
                 "SCHEDULE_SHARE_BASE_URL",
@@ -62,7 +62,7 @@ android {
             buildConfigField(
                 "String",
                 "SCHEDULE_SHARE_BASE_URL",
-                "\"https://share-schedule-999314.xyz\""
+                "\"https://share-schedule.999314.xyz\""
             )
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
