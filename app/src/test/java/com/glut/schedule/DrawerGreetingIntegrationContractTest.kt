@@ -3,6 +3,7 @@ package com.glut.schedule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import androidx.compose.ui.graphics.Color
 import java.io.File
 
 class DrawerGreetingIntegrationContractTest {
@@ -42,6 +43,8 @@ class DrawerGreetingIntegrationContractTest {
     @Test
     fun drawerAndSettingsExposeAccessibleGreetingBehavior() {
         val main = source("app/src/main/java/com/glut/schedule/MainActivity.kt")
+        val typewriter = main.substringAfter("private fun TypewriterGreetingText(")
+            .substringBefore("\n}")
 
         assertTrue(main.contains("Text(\"问候语\""))
         assertTrue(main.contains("snapshotFlow { drawerState.targetValue }"))
@@ -49,8 +52,19 @@ class DrawerGreetingIntegrationContractTest {
         assertTrue(main.contains("ValueAnimator.areAnimatorsEnabled()"))
         assertTrue(main.contains("clearAndSetSemantics"))
         assertTrue(main.contains("contentDescription = fullText"))
-        assertTrue(main.contains("maxLines = 2"))
-        assertTrue(main.contains(".height(40.dp)"))
+        assertTrue(!typewriter.contains("TextOverflow.Ellipsis"))
+        assertTrue(typewriter.contains(".heightIn(min = 40.dp)"))
+    }
+
+    @Test
+    fun hiddenTypewriterCursorKeepsTheSameTextLayout() {
+        val typing = typewriterGreetingLayoutText("愿你今天顺利", cursorVisible = true)
+        val finished = typewriterGreetingLayoutText("愿你今天顺利", cursorVisible = false)
+
+        assertEquals("愿你今天顺利▌", typing.text)
+        assertEquals(typing.text, finished.text)
+        assertEquals(Color.Unspecified, typing.spanStyles.single().item.color)
+        assertEquals(Color.Transparent, finished.spanStyles.single().item.color)
     }
 
     @Test

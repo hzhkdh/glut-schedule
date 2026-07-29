@@ -112,6 +112,16 @@ fun ScheduleScreen(
             }
         }
     }
+    if (!uiState.isInitialized) {
+        // DataStore 与 Room 都完成首轮恢复后再创建 Pager，避免默认春季周次短暂参与同步。
+        Box(modifier = modifier.fillMaxSize()) {
+            StarryScheduleBackground(
+                customBackgroundUri = uiState.customBackgroundUri,
+                customBackgroundBitmap = customBackgroundBitmap
+            )
+        }
+        return
+    }
     val blocksByWeek = remember(uiState.courses, uiState.maxAcademicWeek) {
         courseBlocksByWeek(uiState.courses, uiState.maxAcademicWeek)
     }
@@ -123,11 +133,13 @@ fun ScheduleScreen(
     }
     val latestWeekNumber by rememberUpdatedState(uiState.week.number)
     val latestMaxAcademicWeek by rememberUpdatedState(uiState.maxAcademicWeek)
+    var animatedPagerScrollInProgress by remember(pagerState) { mutableStateOf(false) }
 
     LaunchedEffect(uiState.week.number, uiState.maxAcademicWeek) {
         val targetPage = pagerPageForWeekNumber(uiState.week.number, uiState.maxAcademicWeek)
         if (pagerState.currentPage != targetPage && pagerState.settledPage != targetPage) {
-            pagerState.animateScrollToPage(targetPage)
+            // 状态驱动的跳周必须瞬时对齐；动画经过的中间页会被 settledPage 监听器误当作用户选择。
+            pagerState.scrollToPage(targetPage)
         }
     }
 
@@ -136,7 +148,7 @@ fun ScheduleScreen(
             .distinctUntilChanged()
             .collect { page ->
                 val targetWeekNumber = weekNumberForPagerPage(page, latestMaxAcademicWeek)
-                if (targetWeekNumber != latestWeekNumber) {
+                if (!animatedPagerScrollInProgress && targetWeekNumber != latestWeekNumber) {
                     viewModel.setWeekNumber(targetWeekNumber)
                 }
             }
@@ -157,7 +169,30 @@ fun ScheduleScreen(
                 week = uiState.week,
                 today = uiState.today,
                 currentWeekNumber = uiState.currentWeekNumber,
-                onWeekTitleClick = viewModel::returnToCurrentWeek,
+                onWeekTitleClick = {
+                    val currentWeekPage = pagerPageForWeekNumber(
+                        uiState.currentWeekNumber,
+                        uiState.maxAcademicWeek
+                    )
+                    coroutineScope.launch {
+                        if (
+                            pagerState.currentPage == currentWeekPage &&
+                            pagerState.settledPage == currentWeekPage
+                        ) {
+                            viewModel.returnToCurrentWeek()
+                            return@launch
+                        }
+
+                        // 用户主动点击标题时保留快速滚回动画；动画中间页不得反写为新的选中周。
+                        animatedPagerScrollInProgress = true
+                        try {
+                            pagerState.animateScrollToPage(currentWeekPage)
+                            viewModel.returnToCurrentWeek()
+                        } finally {
+                            animatedPagerScrollInProgress = false
+                        }
+                    }
+                },
                 onRefreshClick = {
                     showAddActions = false
                     viewModel.refreshSchedule()

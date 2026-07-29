@@ -8,6 +8,7 @@ import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
+import com.glut.schedule.service.academic.scorePageUnavailableReason
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.StudyPlanParser
@@ -49,6 +50,7 @@ class ScoreViewModel(
     private val _message = MutableStateFlow("")
     private val _selectedYear = MutableStateFlow<String?>(null)
     private var scoreBlockedByEvaluation = false
+    private var scorePageErrorMessage: String? = null
 
     val uiState: StateFlow<ScoreUiState> = combine(
         repository.scores,
@@ -130,6 +132,9 @@ class ScoreViewModel(
                 if (scoreBlockedByEvaluation) {
                     _message.value = "你有课程未完成评教，必须完成全部评教才能查看成绩，可以在微信小程序中搜索【教学质量管理平台】并完成全部的评教，等待1-2天即可查看成绩"
                     scoreBlockedByEvaluation = false
+                } else if (scorePageErrorMessage != null) {
+                    _message.value = scorePageErrorMessage.orEmpty()
+                    scorePageErrorMessage = null
                 } else if (allScores.isNotEmpty()) {
                     repository.replaceScores(allScores)
                     _message.value = "已获取 ${allScores.size} 条成绩记录"
@@ -194,9 +199,15 @@ class ScoreViewModel(
         val charset = detectCharset(contentType)
         val html = String(body, charset)
 
+        val unavailableReason = scorePageUnavailableReason(html)
         scoreBlockedByEvaluation = isEvaluationBlocked(html)
+        scorePageErrorMessage = unavailableReason?.takeUnless { scoreBlockedByEvaluation }
         if (scoreBlockedByEvaluation) {
             Log.w(TAG, "Scores blocked by teaching evaluation")
+            return emptyList()
+        }
+        if (scorePageErrorMessage != null) {
+            Log.w(TAG, "Academic score endpoint returned an error page")
             return emptyList()
         }
 

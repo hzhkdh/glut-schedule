@@ -14,6 +14,7 @@ import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
+import com.glut.schedule.service.academic.scorePageUnavailableReason
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.StudyPlanParser
@@ -274,7 +275,7 @@ class ProfessionalScoreViewModel(
         }
 
         val html = String(body, detectCharset(contentType))
-        val blockedReason = scoreAccessBlockReason(html)
+        val blockedReason = scorePageUnavailableReason(html)
         if (blockedReason != null) {
             return ScoreFetchResult(scores = emptyList(), unavailableReason = blockedReason)
         }
@@ -381,15 +382,6 @@ class ProfessionalScoreViewModel(
         } catch (error: Exception) {
             Log.e(TAG, "Failed to fetch Nanning attribute map", error)
             emptyMap()
-        }
-    }
-
-    private fun scoreAccessBlockReason(html: String): String? {
-        val compact = html.replace(Regex("""\s+"""), "")
-        return when {
-            compact.contains("没有参加评教") && compact.contains("不能查看成绩") ->
-                "教务系统提示：有课程未参加评教，暂时不能查看成绩"
-            else -> null
         }
     }
 

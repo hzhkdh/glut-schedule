@@ -170,6 +170,11 @@ class MultiSemesterUiContractTest {
 
         assertTrue(screen.contains("key(uiState.viewedSemester?.id)"))
         assertTrue(screen.contains("rememberPagerState("))
+        assertTrue(screen.contains("if (!uiState.isInitialized)"))
+        assertTrue(screen.contains("pagerState.scrollToPage(targetPage)"))
+        assertFalse(screen.contains("pagerState.animateScrollToPage(targetPage)"))
+        assertTrue(screen.contains("pagerState.animateScrollToPage(currentWeekPage)"))
+        assertTrue(screen.contains("animatedPagerScrollInProgress"))
     }
 
     @Test

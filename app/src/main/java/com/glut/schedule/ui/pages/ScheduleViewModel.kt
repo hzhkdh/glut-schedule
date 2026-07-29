@@ -73,7 +73,8 @@ data class ScheduleUiState(
     val semesters: List<AcademicSemester> = emptyList(),
     val viewedSemester: AcademicSemester? = null,
     val isHistoricalSemester: Boolean = false,
-    val hasAuthoritativeCalendar: Boolean = true
+    val hasAuthoritativeCalendar: Boolean = true,
+    val isInitialized: Boolean = false
 )
 
 internal fun selectedWeekAfterCalendarRefresh(
@@ -240,7 +241,8 @@ class ScheduleViewModel(
                 semesters = semesters,
                 viewedSemester = viewedSemester,
                 isHistoricalSemester = isHistorical,
-                hasAuthoritativeCalendar = hasAuthoritativeCalendar
+                hasAuthoritativeCalendar = hasAuthoritativeCalendar,
+                isInitialized = true
             )
         }
 

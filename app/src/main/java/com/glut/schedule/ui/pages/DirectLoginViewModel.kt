@@ -17,6 +17,7 @@ import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginHttpClient
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
+import com.glut.schedule.service.academic.scorePageUnavailableReason
 import com.glut.schedule.service.academic.AcademicOALoginClient
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.AcademicSemesterImportService
@@ -857,6 +858,10 @@ class DirectLoginViewModel(
                 java.nio.charset.Charset.forName("UTF-8")
             }
             val html = String(body, charset)
+            scorePageUnavailableReason(html)?.let { reason ->
+                // HTTP 200 的教务提示页不是权威空成绩，必须按失败处理并保留原缓存。
+                return Result.failure(IllegalStateException(reason))
+            }
 
             val scores = scoreParser.parseScoreHtml(html, isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL)
             scheduleRepository.replaceScores(scores)

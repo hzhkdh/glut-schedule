@@ -100,10 +100,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
@@ -1360,19 +1363,33 @@ private fun TypewriterGreetingText(
     }
 
     Text(
-        text = visibleText + if (typing) "▌" else "",
+        text = typewriterGreetingLayoutText(visibleText, cursorVisible = typing),
         color = Color(0xFF667085),
         fontSize = 13.sp,
         lineHeight = 20.sp,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
         textAlign = textAlign,
         modifier = modifier
-            .height(40.dp)
+            // 保留双行问候的基准高度，同时允许窄屏或长姓名自然扩展到更多行。
+            .heightIn(min = 40.dp)
             .clearAndSetSemantics {
                 contentDescription = fullText
             }
     )
+}
+
+/**
+ * 光标隐藏时仍保留同一个字符占位，只改变颜色，避免打字结束触发重新换行和基线跳动。
+ */
+internal fun typewriterGreetingLayoutText(
+    visibleText: String,
+    cursorVisible: Boolean
+) = buildAnnotatedString {
+    append(visibleText)
+    withStyle(
+        SpanStyle(color = if (cursorVisible) Color.Unspecified else Color.Transparent)
+    ) {
+        append("▌")
+    }
 }
 
 /**
