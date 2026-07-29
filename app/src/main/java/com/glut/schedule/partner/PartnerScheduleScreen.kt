@@ -399,7 +399,7 @@ private fun PartnerGroupCard(
                 FullCourseContent(
                     course = ordered.first(),
                     modifier = Modifier.padding(
-                        end = PartnerScheduleVisualStyle.cardContentEndPadding(group.kind)
+                        top = PartnerScheduleVisualStyle.cardContentTopPadding(group.kind)
                     )
                 )
                 OverlapBadge(

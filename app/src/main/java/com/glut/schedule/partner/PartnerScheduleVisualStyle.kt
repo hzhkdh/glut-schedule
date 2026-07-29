@@ -39,9 +39,8 @@ internal object PartnerScheduleVisualStyle {
         }
 
     /**
-     * 部分重合角标固定在右上角，正文必须留出完整角标宽度和最小间距。
+     * 部分重合角标固定在右上角，仅在顶部留位，避免持续压缩窄卡片的正文宽度。
      */
-    fun cardContentEndPadding(kind: PartnerOverlapKind): Dp =
+    fun cardContentTopPadding(kind: PartnerOverlapKind): Dp =
         if (kind == PartnerOverlapKind.PARTIAL) overlapBadgeSize + 2.dp else 0.dp
 }
-

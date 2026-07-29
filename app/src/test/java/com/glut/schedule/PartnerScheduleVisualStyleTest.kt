@@ -39,16 +39,16 @@ class PartnerScheduleVisualStyleTest {
     }
 
     @Test
-    fun `部分重合为右上角角标预留完整宽度`() {
-        val partialPadding = PartnerScheduleVisualStyle.cardContentEndPadding(PartnerOverlapKind.PARTIAL)
+    fun `部分重合只在顶部为右上角角标留位`() {
+        val partialPadding = PartnerScheduleVisualStyle.cardContentTopPadding(PartnerOverlapKind.PARTIAL)
 
         assertTrue(
-            "课程内容右侧留位必须大于角标直径",
+            "课程内容顶部留位必须大于角标直径",
             partialPadding >= PartnerScheduleVisualStyle.overlapBadgeSize + 2.dp
         )
         assertEquals(
             0.dp,
-            PartnerScheduleVisualStyle.cardContentEndPadding(PartnerOverlapKind.EXACT)
+            PartnerScheduleVisualStyle.cardContentTopPadding(PartnerOverlapKind.EXACT)
         )
     }
 

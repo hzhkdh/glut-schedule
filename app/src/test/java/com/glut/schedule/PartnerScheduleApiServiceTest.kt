@@ -92,4 +92,22 @@ class PartnerScheduleApiServiceTest {
             inviteCodeFromInput("1234")
         }
     }
+
+    @Test
+    fun revokeInviteTreatsMissingRemoteInviteAsAlreadyRevoked() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(404))
+            val service = PartnerScheduleApiService(
+                client = OkHttpClient(),
+                baseUrl = server.url("/").toString()
+            )
+
+            service.revokeInvite("ABCD2345EFGH6789", "expired-invite-token")
+
+            val request = server.takeRequest()
+            assertEquals("DELETE", request.method)
+            assertEquals("/v1/invites/ABCD2345EFGH6789", request.path)
+            assertEquals("Bearer expired-invite-token", request.getHeader("Authorization"))
+        }
+    }
 }

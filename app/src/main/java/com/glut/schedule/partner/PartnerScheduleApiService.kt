@@ -80,7 +80,9 @@ class PartnerScheduleApiService(
             .delete()
             .build()
         client.newCall(request).execute().use { response ->
-            if (response.code != 204) {
+            // 远端邀请码已过期、已撤销或 KV 尚未同步时，404 与 204 的最终状态相同：
+            // 都不应阻止客户端清除本地撤销令牌。
+            if (response.code != 204 && response.code != 404) {
                 throw IOException(apiErrorMessage(response.code))
             }
         }
