@@ -142,18 +142,10 @@ fun PartnerScheduleScreen(
                 )
             }
         }
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 20.dp, vertical = 18.dp)
-                .navigationBarsPadding()
-        ) { data ->
-            Snackbar(
-                snackbarData = data,
-                shape = RoundedCornerShape(14.dp),
-                containerColor = PartnerScheduleVisualStyle.feedbackSurface,
-                contentColor = PartnerScheduleVisualStyle.feedbackContent
+        if (!showManage) {
+            PartnerFeedbackHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
     }
@@ -167,6 +159,7 @@ fun PartnerScheduleScreen(
             onImport = viewModel::importInvite,
             onRevoke = viewModel::revokeInvite,
             onDeletePartner = viewModel::deletePartnerSnapshot,
+            snackbarHostState = snackbarHostState,
             onFeedback = { message ->
                 scope.launch { snackbarHostState.showSnackbar(message) }
             }
@@ -549,6 +542,7 @@ private fun PartnerManageSheet(
     onImport: (String) -> Unit,
     onRevoke: () -> Unit,
     onDeletePartner: () -> Unit,
+    snackbarHostState: SnackbarHostState,
     onFeedback: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -559,6 +553,7 @@ private fun PartnerManageSheet(
     var pendingReplacementInput by remember { mutableStateOf<String?>(null) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        Box(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -648,6 +643,12 @@ private fun PartnerManageSheet(
             }
             Spacer(Modifier.height(16.dp))
         }
+            // ModalBottomSheet 位于页面根 Snackbar 之上，提示必须在面板层内承载才可见。
+            PartnerFeedbackHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+        }
     }
 
     if (confirmDelete) {
@@ -680,6 +681,26 @@ private fun PartnerManageSheet(
             dismissButton = {
                 TextButton(onClick = { pendingReplacementInput = null }) { Text("取消") }
             }
+        )
+    }
+}
+
+@Composable
+private fun PartnerFeedbackHost(
+    hostState: SnackbarHostState,
+    modifier: Modifier = Modifier
+) {
+    SnackbarHost(
+        hostState = hostState,
+        modifier = modifier
+            .padding(horizontal = 20.dp, vertical = 18.dp)
+            .navigationBarsPadding()
+    ) { data ->
+        Snackbar(
+            snackbarData = data,
+            shape = RoundedCornerShape(14.dp),
+            containerColor = PartnerScheduleVisualStyle.feedbackSurface,
+            contentColor = PartnerScheduleVisualStyle.feedbackContent
         )
     }
 }
