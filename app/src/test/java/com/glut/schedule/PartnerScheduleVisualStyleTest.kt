@@ -3,6 +3,7 @@ package com.glut.schedule
 import androidx.compose.ui.graphics.Color
 import com.glut.schedule.partner.PartnerIdentityColor
 import com.glut.schedule.partner.PartnerScheduleVisualStyle
+import com.glut.schedule.partner.partnerSplitCardStops
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +35,24 @@ class PartnerScheduleVisualStyleTest {
             val cardStyle = PartnerScheduleVisualStyle.courseCard(identityColor)
             assertReadable(cardStyle.content, cardStyle.surface)
         }
+    }
+
+    @Test
+    fun `重合卡片主体等分且羽化只发生在中线窄带`() {
+        val first = Color(0xFFFFDDE7)
+        val second = Color(0xFFD5E8FB)
+
+        val stops = partnerSplitCardStops(first, second)
+
+        assertEquals(0f, stops.first().position)
+        assertEquals(first, stops.first().color)
+        assertEquals(0.48f, stops[1].position)
+        assertEquals(first, stops[1].color)
+        assertEquals(0.52f, stops[stops.lastIndex - 1].position)
+        assertEquals(second, stops[stops.lastIndex - 1].color)
+        assertEquals(1f, stops.last().position)
+        assertEquals(second, stops.last().color)
+        assertTrue(stops.any { it.position == 0.5f && it.color != first && it.color != second })
     }
 
     private fun assertReadable(foreground: Color, background: Color) {

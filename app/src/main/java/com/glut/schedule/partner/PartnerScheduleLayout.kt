@@ -4,6 +4,7 @@ import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.NOON_SECTIONS
 import com.glut.schedule.data.settings.PartnerScheduleViewMode
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -26,25 +27,33 @@ data class PartnerDisplayGroup(
     val endTime: String
 )
 
-fun classifyPartnerOverlap(first: PartnerCourse, second: PartnerCourse): PartnerOverlapKind {
+fun classifyPartnerOverlap(
+    first: PartnerCourse,
+    second: PartnerCourse,
+    firstCampus: String = GUILIN_DEFAULT_CAMPUS,
+    secondCampus: String = GUILIN_DEFAULT_CAMPUS
+): PartnerOverlapKind {
     if (first.ownerColor == second.ownerColor || first.dayOfWeek != second.dayOfWeek) {
         return PartnerOverlapKind.NONE
     }
-    val firstStart = LocalTime.parse(first.startTime)
-    val firstEnd = LocalTime.parse(first.endTime)
-    val secondStart = LocalTime.parse(second.startTime)
-    val secondEnd = LocalTime.parse(second.endTime)
-    if (firstStart >= secondEnd || secondStart >= firstEnd) return PartnerOverlapKind.NONE
+    val firstRange = partnerCanonicalSectionRange(first, firstCampus)
+    val secondRange = partnerCanonicalSectionRange(second, secondCampus)
+    if (firstRange.last < secondRange.first || secondRange.last < firstRange.first) {
+        return PartnerOverlapKind.NONE
+    }
 
-    val exactTime = firstStart == secondStart && firstEnd == secondEnd
-    if (!exactTime) return PartnerOverlapKind.PARTIAL
+    if (firstRange != secondRange) return PartnerOverlapKind.PARTIAL
 
     val sameTitle = first.title.normalizedCourseText() == second.title.normalizedCourseText()
     val sameRoom = first.room.orEmpty().normalizedCourseText() == second.room.orEmpty().normalizedCourseText()
     return if (sameTitle && sameRoom) PartnerOverlapKind.SAME_COURSE else PartnerOverlapKind.EXACT
 }
 
-fun partnerDisplayGroups(week: Int, courses: List<PartnerCourse>): List<PartnerDisplayGroup> {
+fun partnerDisplayGroups(
+    week: Int,
+    courses: List<PartnerCourse>,
+    campusByOwner: Map<PartnerIdentityColor, String> = emptyMap()
+): List<PartnerDisplayGroup> {
     return courses
         .filter { week in it.weeks }
         .groupBy { it.dayOfWeek }
@@ -65,8 +74,16 @@ fun partnerDisplayGroups(week: Int, courses: List<PartnerCourse>): List<PartnerD
                         val iterator = remaining.iterator()
                         while (iterator.hasNext()) {
                             val candidate = iterator.next()
-                            // 所有真实时间相交课程都必须组成一个可见卡片，否则绝对定位会互相遮挡。
-                            if (component.any { coursesOverlapInTime(it, candidate) }) {
+                            // 双方校区钟点可以不同，组合课表只按标准化后的逻辑节次判断相交。
+                            if (component.any { existing ->
+                                    coursesOverlapInLogicalSections(
+                                        existing,
+                                        campusByOwner.campusFor(existing),
+                                        candidate,
+                                        campusByOwner.campusFor(candidate)
+                                    )
+                                }
+                            ) {
                                 component += candidate
                                 iterator.remove()
                                 expanded = true
@@ -81,15 +98,23 @@ fun partnerDisplayGroups(week: Int, courses: List<PartnerCourse>): List<PartnerD
                     group.size == 1 -> PartnerOverlapKind.NONE
                     group.size == 2 && group.map { it.ownerColor }.distinct().size == 1 ->
                         PartnerOverlapKind.SAME_OWNER_CONFLICT
-                    group.size == 2 -> classifyPartnerOverlap(group[0], group[1])
-                    else -> multiCourseGroupKind(group)
+                    group.size == 2 -> classifyPartnerOverlap(
+                        group[0],
+                        group[1],
+                        campusByOwner.campusFor(group[0]),
+                        campusByOwner.campusFor(group[1])
+                    )
+                    else -> multiCourseGroupKind(group, campusByOwner)
+                }
+                val canonicalRanges = group.map { course ->
+                    partnerCanonicalSectionRange(course, campusByOwner.campusFor(course))
                 }
                 PartnerDisplayGroup(
                     courses = group,
                     kind = groupKind,
                     dayOfWeek = day,
-                    startSection = group.minOf { it.startSection },
-                    endSection = group.maxOf { it.endSection },
+                    startSection = canonicalRanges.minOf { it.first },
+                    endSection = canonicalRanges.maxOf { it.last },
                     startTime = group.minOf { it.startTime },
                     endTime = group.maxOf { it.endTime }
                 )
@@ -142,6 +167,25 @@ fun canGeneratePartnerInvite(
     hasActiveInvite: Boolean
 ): Boolean = hasCourses && !isBusy && !hasActiveInvite
 
+fun isPartnerSemesterCompatible(
+    localStart: LocalDate,
+    localEnd: LocalDate,
+    snapshot: PartnerScheduleSnapshot
+): Boolean = snapshot.semesterStartMonday == localStart && snapshot.semesterEndDate == localEnd
+
+/**
+ * 学校各校区共用统一校历。导入前严格校验学期，避免旧快照覆盖当前 TA 课表。
+ */
+fun requirePartnerSemesterCompatible(
+    localStart: LocalDate,
+    localEnd: LocalDate,
+    snapshot: PartnerScheduleSnapshot
+) {
+    require(isPartnerSemesterCompatible(localStart, localEnd, snapshot)) {
+        "该邀请码不是当前学期的课表，请让TA重新生成"
+    }
+}
+
 /**
  * TA 页面沿用首页的紧凑标题规则，同时保留页面身份，避免再占用一整行展示周次。
  */
@@ -182,18 +226,47 @@ fun partnerCoursesForMode(
 fun partnerShouldShowOverlapBadge(courseCount: Int): Boolean = courseCount >= 3
 
 /** 组合课表拥有独立开关；南宁 11 节课表没有独立午间节次，必须保持全部可见。 */
-fun partnerVisibleSections(periods: List<ClassPeriod>, showNoon: Boolean): List<Int> {
-    val effectiveShowNoon = showNoon || periods.size <= 11
+fun partnerVisibleSections(
+    periods: List<ClassPeriod>,
+    showNoon: Boolean,
+    campus: String = GUILIN_DEFAULT_CAMPUS
+): List<Int> {
     return periods
-        .filter { effectiveShowNoon || it.section !in NOON_SECTIONS }
-        .map { it.section }
+        .map { partnerCanonicalSection(campus, it.section) }
+        .filter { showNoon || it !in NOON_SECTIONS }
 }
 
 fun partnerGridRowIndex(
     section: Int,
     periods: List<ClassPeriod>,
-    showNoon: Boolean
-): Int? = partnerVisibleSections(periods, showNoon).indexOf(section).takeIf { it >= 0 }
+    showNoon: Boolean,
+    campus: String = GUILIN_DEFAULT_CAMPUS
+): Int? = partnerVisibleSections(periods, showNoon, campus).indexOf(section).takeIf { it >= 0 }
+
+/**
+ * 将不同校区的原始节次统一到桂林 14 行课表坐标：
+ * 1–4 为上午，5–6 为午间，7–14 为下午和晚上。
+ * 南宁没有午间行，所以其原始 5–11 节整体后移两行。
+ */
+fun partnerCanonicalSection(campus: String, rawSection: Int): Int =
+    if (campus == NANNING_CAMPUS && rawSection >= 5) rawSection + 2 else rawSection
+
+fun partnerRawSectionForCanonical(campus: String, canonicalSection: Int): Int? =
+    if (campus == NANNING_CAMPUS) {
+        when (canonicalSection) {
+            in 1..4 -> canonicalSection
+            in 7..13 -> canonicalSection - 2
+            else -> null
+        }
+    } else {
+        canonicalSection.takeIf { it in 1..14 }
+    }
+
+private fun partnerCanonicalSectionRange(
+    course: PartnerCourse,
+    campus: String
+): IntRange = partnerCanonicalSection(campus, course.startSection)..
+    partnerCanonicalSection(campus, course.endSection)
 
 fun partnerCardShowsMetadata(kind: PartnerOverlapKind): Boolean =
     kind == PartnerOverlapKind.NONE
@@ -234,7 +307,10 @@ fun partnerMixedCardCourses(courses: List<PartnerCourse>): List<PartnerCourse> =
 /**
  * 单色冲突卡展示前两门课；跨身份卡仍优先保证双方各出现一门，避免同色课程挤掉另一方。
  */
-fun partnerCardVisibleCourses(courses: List<PartnerCourse>): List<PartnerCourse> =
+fun partnerCardVisibleCourses(
+    courses: List<PartnerCourse>,
+    campusByOwner: Map<PartnerIdentityColor, String> = emptyMap()
+): List<PartnerCourse> =
     if (courses.map { it.ownerColor }.distinct().size == 1) {
         courses.take(2)
     } else {
@@ -244,19 +320,33 @@ fun partnerCardVisibleCourses(courses: List<PartnerCourse>): List<PartnerCourse>
                 val first = courses[firstIndex]
                 val second = courses[secondIndex]
                 listOf(first, second).takeIf {
-                    first.ownerColor != second.ownerColor && coursesOverlapInTime(first, second)
+                    first.ownerColor != second.ownerColor &&
+                        coursesOverlapInLogicalSections(
+                            first,
+                            campusByOwner.campusFor(first),
+                            second,
+                            campusByOwner.campusFor(second)
+                        )
                 }
             }
         } ?: partnerMixedCardCourses(courses)
     }
 
-private fun multiCourseGroupKind(group: List<PartnerCourse>): PartnerOverlapKind {
+private fun multiCourseGroupKind(
+    group: List<PartnerCourse>,
+    campusByOwner: Map<PartnerIdentityColor, String>
+): PartnerOverlapKind {
     if (group.map { it.ownerColor }.distinct().size == 1) {
         return PartnerOverlapKind.SAME_OWNER_CONFLICT
     }
     val crossOwnerKinds = group.indices.flatMap { first ->
         ((first + 1) until group.size).map { second ->
-            classifyPartnerOverlap(group[first], group[second])
+            classifyPartnerOverlap(
+                group[first],
+                group[second],
+                campusByOwner.campusFor(group[first]),
+                campusByOwner.campusFor(group[second])
+            )
         }
     }.filter { it != PartnerOverlapKind.NONE }
     return when {
@@ -267,14 +357,23 @@ private fun multiCourseGroupKind(group: List<PartnerCourse>): PartnerOverlapKind
     }
 }
 
-private fun coursesOverlapInTime(first: PartnerCourse, second: PartnerCourse): Boolean {
+private fun coursesOverlapInLogicalSections(
+    first: PartnerCourse,
+    firstCampus: String,
+    second: PartnerCourse,
+    secondCampus: String
+): Boolean {
     if (first.dayOfWeek != second.dayOfWeek) return false
-    val firstStart = LocalTime.parse(first.startTime)
-    val firstEnd = LocalTime.parse(first.endTime)
-    val secondStart = LocalTime.parse(second.startTime)
-    val secondEnd = LocalTime.parse(second.endTime)
-    return firstStart < secondEnd && secondStart < firstEnd
+    val firstRange = partnerCanonicalSectionRange(first, firstCampus)
+    val secondRange = partnerCanonicalSectionRange(second, secondCampus)
+    return firstRange.first <= secondRange.last && secondRange.first <= firstRange.last
 }
 
 private fun String.normalizedCourseText(): String =
     trim().replace(Regex("""\s+"""), " ").lowercase()
+
+private fun Map<PartnerIdentityColor, String>.campusFor(course: PartnerCourse): String =
+    get(course.ownerColor) ?: GUILIN_DEFAULT_CAMPUS
+
+private const val NANNING_CAMPUS = "nanning"
+private const val GUILIN_DEFAULT_CAMPUS = "guilin-yanshan"

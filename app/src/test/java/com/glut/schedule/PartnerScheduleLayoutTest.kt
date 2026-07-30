@@ -21,9 +21,13 @@ import com.glut.schedule.partner.partnerViewModeIcon
 import com.glut.schedule.partner.partnerCoursesForMode
 import com.glut.schedule.partner.partnerInviteExpiryText
 import com.glut.schedule.partner.partnerImportLocalColor
+import com.glut.schedule.partner.isPartnerSemesterCompatible
+import com.glut.schedule.partner.requirePartnerSemesterCompatible
 import com.glut.schedule.partner.partnerMixedCardCourses
 import com.glut.schedule.partner.partnerCardVisibleCourses
+import com.glut.schedule.partner.partnerCanonicalSection
 import com.glut.schedule.partner.partnerOverlapDetailTitle
+import com.glut.schedule.partner.partnerRawSectionForCanonical
 import com.glut.schedule.partner.partnerVisibleSections
 import com.glut.schedule.partner.resolveDistinctPartnerColor
 import com.glut.schedule.data.model.ClassPeriod
@@ -72,11 +76,31 @@ class PartnerScheduleLayoutTest {
         )
         assertEquals(
             PartnerOverlapKind.PARTIAL,
-            classifyPartnerOverlap(mine, course("概率论", PartnerIdentityColor.PINK, "09:00", "10:30"))
+            classifyPartnerOverlap(
+                mine,
+                course(
+                    "概率论",
+                    PartnerIdentityColor.PINK,
+                    "09:00",
+                    "10:30",
+                    startSection = 2,
+                    endSection = 3
+                )
+            )
         )
         assertEquals(
             PartnerOverlapKind.NONE,
-            classifyPartnerOverlap(mine, course("体育", PartnerIdentityColor.PINK, "09:40", "10:30"))
+            classifyPartnerOverlap(
+                mine,
+                course(
+                    "体育",
+                    PartnerIdentityColor.PINK,
+                    "09:40",
+                    "10:30",
+                    startSection = 3,
+                    endSection = 4
+                )
+            )
         )
     }
 
@@ -84,7 +108,14 @@ class PartnerScheduleLayoutTest {
     fun exactOverlapBecomesOneDualCardWhileSeparateCoursesRemainSingles() {
         val exactMine = course("数据库", PartnerIdentityColor.BLUE, "08:00", "09:40")
         val exactPartner = course("大学英语", PartnerIdentityColor.PINK, "08:00", "09:40")
-        val separate = course("体育", PartnerIdentityColor.BLUE, "10:00", "11:00")
+        val separate = course(
+            "体育",
+            PartnerIdentityColor.BLUE,
+            "10:00",
+            "11:00",
+            startSection = 3,
+            endSection = 4
+        )
 
         val groups = partnerDisplayGroups(
             week = 8,
@@ -101,7 +132,14 @@ class PartnerScheduleLayoutTest {
     @Test
     fun partialOverlapCardKeepsTheDisplayedCourseRealTimeRange() {
         val first = course("数据库", PartnerIdentityColor.BLUE, "08:00", "09:40")
-        val second = course("概率论", PartnerIdentityColor.PINK, "09:00", "10:30")
+        val second = course(
+            "概率论",
+            PartnerIdentityColor.PINK,
+            "09:00",
+            "10:30",
+            startSection = 2,
+            endSection = 3
+        )
         val group = partnerDisplayGroups(8, listOf(first, second)).single()
 
         assertEquals("08:00" to "09:40", partnerCardTimeRange(group))
@@ -278,6 +316,83 @@ class PartnerScheduleLayoutTest {
     }
 
     @Test
+    fun nanningRegularSectionsAlignWithGuilinSectionsAfterTheNoonRows() {
+        assertEquals(1, partnerCanonicalSection("guilin-yanshan", 1))
+        assertEquals(5, partnerCanonicalSection("guilin-yanshan", 5))
+        assertEquals(7, partnerCanonicalSection("guilin-yanshan", 7))
+        assertEquals(7, partnerCanonicalSection("nanning", 5))
+        assertEquals(13, partnerCanonicalSection("nanning", 11))
+
+        assertEquals(7, partnerRawSectionForCanonical("guilin-pingfeng", 7))
+        assertEquals(5, partnerRawSectionForCanonical("nanning", 7))
+        assertEquals(null, partnerRawSectionForCanonical("nanning", 5))
+    }
+
+    @Test
+    fun nanningAfternoonCoursesStayVisibleWhenGuilinNoonRowsAreHidden() {
+        val nanningPeriods = listOf(
+            ClassPeriod(1, "08:40", "09:20"),
+            ClassPeriod(2, "09:25", "10:05"),
+            ClassPeriod(3, "10:25", "11:05"),
+            ClassPeriod(4, "11:10", "11:50"),
+            ClassPeriod(5, "14:30", "15:10"),
+            ClassPeriod(6, "15:15", "15:55")
+        )
+
+        assertEquals(
+            listOf(1, 2, 3, 4, 7, 8),
+            partnerVisibleSections(
+                periods = nanningPeriods,
+                showNoon = false,
+                campus = "nanning"
+            )
+        )
+        assertEquals(
+            4,
+            partnerGridRowIndex(
+                section = 7,
+                periods = nanningPeriods,
+                showNoon = false,
+                campus = "nanning"
+            )
+        )
+    }
+
+    @Test
+    fun crossCampusCoursesOverlapByLogicalSectionInsteadOfClockTime() {
+        val guilin = course(
+            title = "桂林课程",
+            owner = PartnerIdentityColor.BLUE,
+            start = "18:30",
+            end = "19:15",
+            startSection = 11,
+            endSection = 11
+        )
+        val nanning = course(
+            title = "南宁课程",
+            owner = PartnerIdentityColor.PINK,
+            start = "19:30",
+            end = "20:10",
+            startSection = 9,
+            endSection = 9
+        )
+
+        val group = partnerDisplayGroups(
+            week = 8,
+            courses = listOf(guilin, nanning),
+            campusByOwner = mapOf(
+                PartnerIdentityColor.BLUE to "guilin-yanshan",
+                PartnerIdentityColor.PINK to "nanning"
+            )
+        ).single()
+
+        assertEquals(PartnerOverlapKind.EXACT, group.kind)
+        assertEquals(11, group.startSection)
+        assertEquals(11, group.endSection)
+        assertEquals(listOf("桂林课程", "南宁课程"), group.courses.map { it.title })
+    }
+
+    @Test
     fun partnerIdentityColorCannotDuplicateImportedPartnerColor() {
         val purple = PartnerIdentityColor.fromStorage("purple")
 
@@ -325,6 +440,43 @@ class PartnerScheduleLayoutTest {
     }
 
     @Test
+    fun partnerSnapshotMustBelongToTheCurrentSemesterBeforeImport() {
+        val snapshot = com.glut.schedule.partner.PartnerScheduleSnapshot(
+            identityColor = PartnerIdentityColor.PINK,
+            campus = "guilin-yanshan",
+            semesterStartMonday = LocalDate.of(2026, 9, 7),
+            semesterEndDate = LocalDate.of(2027, 1, 17),
+            courses = emptyList()
+        )
+
+        assertEquals(
+            true,
+            isPartnerSemesterCompatible(
+                localStart = LocalDate.of(2026, 9, 7),
+                localEnd = LocalDate.of(2027, 1, 17),
+                snapshot = snapshot
+            )
+        )
+        assertEquals(
+            false,
+            isPartnerSemesterCompatible(
+                localStart = LocalDate.of(2026, 3, 9),
+                localEnd = LocalDate.of(2026, 7, 19),
+                snapshot = snapshot
+            )
+        )
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            requirePartnerSemesterCompatible(
+                localStart = LocalDate.of(2026, 3, 9),
+                localEnd = LocalDate.of(2026, 7, 19),
+                snapshot = snapshot
+            )
+        }
+        assertEquals("该邀请码不是当前学期的课表，请让TA重新生成", error.message)
+    }
+
+    @Test
     fun mixedCardAlwaysKeepsOneCourseFromEachIdentity() {
         val pinkFirst = course("粉方第一门", PartnerIdentityColor.PINK, "08:00", "09:40")
         val pinkSecond = course("粉方第二门", PartnerIdentityColor.PINK, "09:00", "10:30")
@@ -353,9 +505,30 @@ class PartnerScheduleLayoutTest {
 
     @Test
     fun mixedCardChoosesATrulyOverlappingCrossOwnerPair() {
-        val pinkEarly = course("粉方早课", PartnerIdentityColor.PINK, "08:00", "09:00")
-        val pinkBridge = course("粉方桥接课", PartnerIdentityColor.PINK, "08:30", "09:30")
-        val blueLate = course("蓝方晚课", PartnerIdentityColor.BLUE, "09:15", "10:00")
+        val pinkEarly = course(
+            "粉方早课",
+            PartnerIdentityColor.PINK,
+            "08:00",
+            "09:00",
+            startSection = 1,
+            endSection = 1
+        )
+        val pinkBridge = course(
+            "粉方桥接课",
+            PartnerIdentityColor.PINK,
+            "08:30",
+            "09:30",
+            startSection = 1,
+            endSection = 2
+        )
+        val blueLate = course(
+            "蓝方晚课",
+            PartnerIdentityColor.BLUE,
+            "09:15",
+            "10:00",
+            startSection = 2,
+            endSection = 2
+        )
 
         assertEquals(
             listOf("粉方桥接课", "蓝方晚课"),

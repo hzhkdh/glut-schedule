@@ -142,15 +142,16 @@ fun PartnerScheduleScreen(
                 weekNumber = state.week,
                 today = state.today,
                 viewMode = state.viewMode,
-                showViewMode = state.partnerSnapshot != null,
+                showViewMode = state.activePartnerSnapshot != null,
                 onDrawerOpen = onDrawerOpen,
                 onWeekTitleClick = viewModel::returnToCurrentWeek,
                 onViewModeChange = viewModel::setViewMode,
                 onManage = { showManage = true }
             )
-            if (state.partnerSnapshot == null) {
+            if (state.activePartnerSnapshot == null) {
                 PartnerEmptyState(
                     isBusy = state.isBusy,
+                    hasStaleSnapshot = state.hasStalePartnerSnapshot,
                     onManage = { showManage = true }
                 )
             } else {
@@ -282,7 +283,11 @@ private fun PartnerViewModeButton(
 }
 
 @Composable
-private fun PartnerEmptyState(isBusy: Boolean, onManage: () -> Unit) {
+private fun PartnerEmptyState(
+    isBusy: Boolean,
+    hasStaleSnapshot: Boolean,
+    onManage: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -306,14 +311,18 @@ private fun PartnerEmptyState(isBusy: Boolean, onManage: () -> Unit) {
         }
         Spacer(Modifier.height(24.dp))
         Text(
-            "还没有TA的课表",
+            if (hasStaleSnapshot) "TA的课表属于其他学期" else "还没有TA的课表",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = PartnerScheduleVisualStyle.pagePrimaryText
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            "生成自己的邀请码，或输入TA的邀请码。",
+            if (hasStaleSnapshot) {
+                "旧课表已暂停显示，请导入TA当前学期的邀请码。"
+            } else {
+                "生成自己的邀请码，或输入TA的邀请码。"
+            },
             color = PartnerScheduleVisualStyle.pageSecondaryText,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -332,6 +341,12 @@ private fun PartnerScheduleContent(
     onWeekSelected: (Int) -> Unit,
     onGroupClick: (PartnerDisplayGroup) -> Unit
 ) {
+    val campusByOwner = buildMap {
+        put(state.myColor, state.campusKey)
+        state.activePartnerSnapshot?.let { snapshot ->
+            put(snapshot.identityColor, snapshot.campus)
+        }
+    }
     val pagerState = rememberPagerState(
         initialPage = partnerPagerPageForWeek(state.week, state.maxWeek),
         pageCount = { state.maxWeek.coerceAtLeast(1) }
@@ -383,8 +398,14 @@ private fun PartnerScheduleContent(
                 PartnerTimeGrid(
                     week = scheduleWeekForNumber(week, state.semesterStartMonday, state.maxWeek),
                     today = state.today,
-                    groups = partnerDisplayGroups(week, state.displayedCourses),
+                    groups = partnerDisplayGroups(
+                        week = week,
+                        courses = state.displayedCourses,
+                        campusByOwner = campusByOwner
+                    ),
                     classPeriods = state.classPeriods,
+                    localCampus = state.campusKey,
+                    campusByOwner = campusByOwner,
                     showWeekend = state.showWeekend,
                     showNoon = state.showNoon,
                     onGroupClick = onGroupClick
@@ -401,15 +422,18 @@ private fun PartnerTimeGrid(
     today: java.time.LocalDate,
     groups: List<PartnerDisplayGroup>,
     classPeriods: List<com.glut.schedule.data.model.ClassPeriod>,
+    localCampus: String,
+    campusByOwner: Map<PartnerIdentityColor, String>,
     showWeekend: Boolean,
     showNoon: Boolean,
     onGroupClick: (PartnerDisplayGroup) -> Unit
 ) {
     if (classPeriods.isEmpty()) return
     val dayCount = visibleDayCount(showWeekend)
-    val effectiveShowNoon = showNoon || classPeriods.size <= 11
-    val visibleSections = partnerVisibleSections(classPeriods, effectiveShowNoon)
-    val visiblePeriods = classPeriods.filter { it.section in visibleSections }
+    val visibleSections = partnerVisibleSections(classPeriods, showNoon, localCampus)
+    val visiblePeriods = classPeriods.filter {
+        partnerCanonicalSection(localCampus, it.section) in visibleSections
+    }
     val rowHeight = 74.dp
     val gridHeight = rowHeight * visiblePeriods.size
 
@@ -462,13 +486,15 @@ private fun PartnerTimeGrid(
                     val startRow = partnerGridRowIndex(
                         group.startSection,
                         classPeriods,
-                        effectiveShowNoon
+                        showNoon,
+                        localCampus
                     ) ?: return@forEach
                     val visibleSpan = visibleSections.count {
                         it in group.startSection..group.endSection
                     }.coerceAtLeast(1)
                     PartnerGroupCard(
                         group = group,
+                        campusByOwner = campusByOwner,
                         modifier = Modifier
                             .offset(
                                 x = timeWidth + dayWidth * (group.dayOfWeek - 1) + 3.dp,
@@ -487,11 +513,12 @@ private fun PartnerTimeGrid(
 @Composable
 private fun PartnerGroupCard(
     group: PartnerDisplayGroup,
+    campusByOwner: Map<PartnerIdentityColor, String>,
     modifier: Modifier,
     onClick: () -> Unit
 ) {
     val ordered = group.courses.sortedBy { PartnerIdentityColor.entries.indexOf(it.ownerColor) }
-    val mixedRepresentatives = partnerCardVisibleCourses(ordered)
+    val mixedRepresentatives = partnerCardVisibleCourses(ordered, campusByOwner)
     val firstStyle = PartnerScheduleVisualStyle.courseCard(mixedRepresentatives.first().ownerColor)
     val secondStyle = mixedRepresentatives.getOrNull(1)?.let {
         PartnerScheduleVisualStyle.courseCard(it.ownerColor)
@@ -499,14 +526,10 @@ private fun PartnerGroupCard(
     val background = if (group.kind == PartnerOverlapKind.NONE) {
         Brush.verticalGradient(listOf(firstStyle.surface, firstStyle.surface))
     } else {
-        Brush.verticalGradient(
-            listOf(
-                firstStyle.surface,
-                firstStyle.surface,
-                secondStyle.surface,
-                secondStyle.surface
-            )
-        )
+        val colorStops = partnerSplitCardStops(firstStyle.surface, secondStyle.surface)
+            .map { stop -> stop.position to stop.color }
+            .toTypedArray()
+        Brush.verticalGradient(colorStops = colorStops)
     }
     val semanticText = ordered.joinToString("；") { course ->
         "${course.ownerColor.displayName}课程${course.title}" +
@@ -682,11 +705,11 @@ private fun PartnerManageSheet(
                 PartnerManageSection(title = "我的身份色") {
                     IdentityColorSelector(
                         selected = state.myColor,
-                        partnerColor = state.partnerSnapshot?.identityColor,
+                        partnerColor = state.activePartnerSnapshot?.identityColor,
                         locked = state.activeInvite != null || state.isBusy,
                         onColorChange = onColorChange
                     )
-                    state.partnerSnapshot?.identityColor?.let { partnerColor ->
+                    state.activePartnerSnapshot?.identityColor?.let { partnerColor ->
                         Text(
                             "TA的颜色是${partnerColor.displayName}，该颜色不可重复使用",
                             fontSize = 12.sp,

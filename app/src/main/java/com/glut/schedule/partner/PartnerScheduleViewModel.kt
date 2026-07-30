@@ -42,11 +42,19 @@ data class PartnerScheduleUiState(
     val isBusy: Boolean = false,
     val message: String = ""
 ) {
+    val activePartnerSnapshot: PartnerScheduleSnapshot?
+        get() = partnerSnapshot?.takeIf {
+            isPartnerSemesterCompatible(semesterStartMonday, semesterEndDate, it)
+        }
+
+    val hasStalePartnerSnapshot: Boolean
+        get() = partnerSnapshot != null && activePartnerSnapshot == null
+
     val combinedCourses: List<PartnerCourse>
-        get() = ownCourses + partnerSnapshot.orEmptyCourses()
+        get() = ownCourses + activePartnerSnapshot.orEmptyCourses()
 
     val displayedCourses: List<PartnerCourse>
-        get() = partnerCoursesForMode(viewMode, ownCourses, partnerSnapshot.orEmptyCourses())
+        get() = partnerCoursesForMode(viewMode, ownCourses, activePartnerSnapshot.orEmptyCourses())
 }
 
 private fun PartnerScheduleSnapshot?.orEmptyCourses(): List<PartnerCourse> = this?.courses.orEmpty()
@@ -191,7 +199,7 @@ class PartnerScheduleViewModel(
             message.value = "请先完成当前操作并撤销邀请码，再修改身份色"
             return
         }
-        if (color == uiState.value.partnerSnapshot?.identityColor) {
+        if (color == uiState.value.activePartnerSnapshot?.identityColor) {
             message.value = "这是TA的颜色，请选择其他颜色"
             return
         }
@@ -249,6 +257,13 @@ class PartnerScheduleViewModel(
         if (isBusy.value) return
         launchOperation("TA的课表已导入") {
             val snapshot = gateway.fetchInvite(input)
+            val currentState = uiState.value
+            // 必须先校验再修改身份色或快照，失败导入不能破坏当前单槽位数据。
+            requirePartnerSemesterCompatible(
+                localStart = currentState.semesterStartMonday,
+                localEnd = currentState.semesterEndDate,
+                snapshot = snapshot
+            )
             storage.setMyColor(
                 partnerImportLocalColor(
                     current = storage.myColor.value,

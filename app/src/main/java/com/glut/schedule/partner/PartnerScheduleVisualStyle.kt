@@ -1,11 +1,34 @@
 package com.glut.schedule.partner
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
 
 internal data class PartnerCourseCardStyle(
     val surface: Color,
     val content: Color
+)
+
+internal data class PartnerCardColorStop(
+    val position: Float,
+    val color: Color
+)
+
+/**
+ * 上下主体各保留 48% 纯色，仅在中线 4% 高度内做轻微羽化。
+ * 这样既避免硬切，也不会像整卡渐变那样削弱双方身份色。
+ */
+internal fun partnerSplitCardStops(
+    first: Color,
+    second: Color
+): List<PartnerCardColorStop> = listOf(
+    PartnerCardColorStop(0f, first),
+    PartnerCardColorStop(0.48f, first),
+    PartnerCardColorStop(0.49f, lerp(first, second, 0.25f)),
+    PartnerCardColorStop(0.5f, lerp(first, second, 0.5f)),
+    PartnerCardColorStop(0.51f, lerp(first, second, 0.75f)),
+    PartnerCardColorStop(0.52f, second),
+    PartnerCardColorStop(1f, second)
 )
 
 /**
