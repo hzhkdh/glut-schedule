@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.GlutSchedule" parent="@style/BaseThemeGlutSchedule">
+        <!-- 允许背景延伸至水滴/刘海短边；Compose 交互层仍使用状态栏 inset。 -->
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

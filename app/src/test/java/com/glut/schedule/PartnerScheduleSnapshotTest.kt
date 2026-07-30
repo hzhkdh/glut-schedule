@@ -58,6 +58,7 @@ class PartnerScheduleSnapshotTest {
         val shared = snapshot.courses.single()
         assertEquals("雁山 04105", shared.room)
         assertNull(shared.teacher)
+        assertEquals("shared-1", shared.id)
         assertEquals("10:00", shared.startTime)
         assertEquals("11:40", shared.endTime)
         assertEquals(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16), shared.weeks)
@@ -65,6 +66,7 @@ class PartnerScheduleSnapshotTest {
         val encoded = PartnerScheduleSnapshotCodec.encode(snapshot)
         assertFalse(encoded.contains("不应共享的本地备注"))
         assertFalse(encoded.contains("张老师"))
+        assertFalse(encoded.contains("occurrence-1"))
     }
 
     @Test
@@ -88,5 +90,76 @@ class PartnerScheduleSnapshotTest {
         assertEquals(PartnerIdentityColor.BLUE, decoded.identityColor)
         assertTrue(decoded.courses.single().room == null)
         assertEquals("张老师", decoded.courses.single().teacher)
+    }
+
+    @Test
+    fun snapshotCodecAcceptsEveryPublishedIdentityColor() {
+        val original = createPartnerScheduleSnapshot(
+            identityColor = PartnerIdentityColor.BLUE,
+            campus = "guilin-yanshan",
+            semesterStartMonday = LocalDate.of(2026, 3, 9),
+            semesterEndDate = LocalDate.of(2026, 7, 19),
+            courses = listOf(course),
+            classPeriods = periods,
+            shareRoom = false,
+            shareTeacher = false
+        )
+        val blueSnapshot = PartnerScheduleSnapshotCodec.encode(original)
+        val publishedColors = listOf(
+            "pink",
+            "blue",
+            "purple",
+            "teal",
+            "green",
+            "orange",
+            "red",
+            "gold"
+        )
+
+        publishedColors.forEach { color ->
+            val raw = blueSnapshot.replace(
+                "\"identityColor\":\"blue\"",
+                "\"identityColor\":\"$color\""
+            )
+            assertEquals(
+                color,
+                PartnerScheduleSnapshotCodec.decode(raw).identityColor.storageValue
+            )
+        }
+    }
+
+    @Test
+    fun snapshotCodecAcceptsTheCanonicalWechatV1Payload() {
+        // 此向量同步写入微信端交接文档，用于保证两端不依赖平台私有字段。
+        val wechatPayload = """
+            {
+              "schemaVersion": 1,
+              "identityColor": "pink",
+              "campus": "guilin-yanshan",
+              "semesterStartMonday": "2026-03-09",
+              "semesterEndDate": "2026-07-19",
+              "courses": [{
+                "id": "occ-1",
+                "title": "数据库系统",
+                "room": null,
+                "teacher": null,
+                "dayOfWeek": 2,
+                "startSection": 3,
+                "endSection": 4,
+                "weeks": [8],
+                "startTime": "10:00",
+                "endTime": "11:40"
+              }]
+            }
+        """.trimIndent()
+
+        val decoded = PartnerScheduleSnapshotCodec.decode(wechatPayload)
+
+        assertEquals(PartnerIdentityColor.PINK, decoded.identityColor)
+        assertEquals("guilin-yanshan", decoded.campus)
+        assertEquals("10:00", decoded.courses.single().startTime)
+        assertEquals("11:40", decoded.courses.single().endTime)
+        assertNull(decoded.courses.single().room)
+        assertNull(decoded.courses.single().teacher)
     }
 }

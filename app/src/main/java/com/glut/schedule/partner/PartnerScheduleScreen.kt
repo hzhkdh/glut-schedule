@@ -11,17 +11,20 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
@@ -31,33 +34,35 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.PersonAddAlt
+import androidx.compose.material.icons.outlined.PersonOutline
+import androidx.compose.material.icons.outlined.PeopleAlt
+import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -79,21 +84,30 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.glut.schedule.data.model.periodLabel
+import com.glut.schedule.data.model.scheduleWeekForNumber
+import com.glut.schedule.data.model.visibleDayCount
+import com.glut.schedule.data.settings.PartnerScheduleViewMode
+import com.glut.schedule.ui.components.ScheduleCalendarHeader
 import com.glut.schedule.ui.components.StarryScheduleBackground
-import java.time.Duration
-import java.time.LocalTime
+import com.glut.schedule.ui.components.courseCardRoomLineHeight
+import com.glut.schedule.ui.components.courseCardRoomTextSize
+import com.glut.schedule.ui.components.periodColumnTextStyle
+import com.glut.schedule.ui.components.courseCardTeacherLineHeight
+import com.glut.schedule.ui.components.courseCardTeacherTextSize
+import com.glut.schedule.ui.components.courseCardTitleLineHeight
+import com.glut.schedule.ui.components.courseCardTitleMaxLines
+import com.glut.schedule.ui.components.courseCardTitleTextSize
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
-private val PartnerPinkSurface = PartnerScheduleVisualStyle.pinkSurface
-private val PartnerPinkText = PartnerScheduleVisualStyle.pinkContent
-private val PartnerBlueSurface = PartnerScheduleVisualStyle.blueSurface
-private val PartnerBlueText = PartnerScheduleVisualStyle.blueContent
 @Composable
 fun PartnerScheduleScreen(
     viewModel: PartnerScheduleViewModel,
@@ -125,8 +139,13 @@ fun PartnerScheduleScreen(
                 .statusBarsPadding()
         ) {
             PartnerHeader(
-                commonFreeCount = state.commonFreeCountToday,
+                weekNumber = state.week,
+                today = state.today,
+                viewMode = state.viewMode,
+                showViewMode = state.partnerSnapshot != null,
                 onDrawerOpen = onDrawerOpen,
+                onWeekTitleClick = viewModel::returnToCurrentWeek,
+                onViewModeChange = viewModel::setViewMode,
                 onManage = { showManage = true }
             )
             if (state.partnerSnapshot == null) {
@@ -155,6 +174,8 @@ fun PartnerScheduleScreen(
             state = state,
             onDismiss = { showManage = false },
             onColorChange = viewModel::setMyColor,
+            onShowWeekendChange = viewModel::setShowWeekend,
+            onShowNoonChange = viewModel::setShowNoon,
             onGenerate = viewModel::generateInvite,
             onImport = viewModel::importInvite,
             onRevoke = viewModel::revokeInvite,
@@ -172,39 +193,91 @@ fun PartnerScheduleScreen(
 
 @Composable
 private fun PartnerHeader(
-    commonFreeCount: Int,
+    weekNumber: Int,
+    today: java.time.LocalDate,
+    viewMode: PartnerScheduleViewMode,
+    showViewMode: Boolean,
     onDrawerOpen: () -> Unit,
+    onWeekTitleClick: () -> Unit,
+    onViewModeChange: (PartnerScheduleViewMode) -> Unit,
     onManage: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onDrawerOpen, modifier = Modifier.size(48.dp)) {
             Icon(
                 Icons.Outlined.Menu,
                 contentDescription = "打开菜单",
+                modifier = Modifier.size(22.dp),
                 tint = PartnerScheduleVisualStyle.pagePrimaryText
             )
         }
-        Column(modifier = Modifier.weight(1f)) {
+        Spacer(Modifier.width(8.dp))
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 48.dp)
+                .widthIn(min = 0.dp)
+                .clickable(onClick = onWeekTitleClick),
+            verticalArrangement = Arrangement.Center
+        ) {
             Text(
-                text = "TA课表",
-                style = MaterialTheme.typography.headlineSmall,
+                text = partnerHeaderPrimaryText(weekNumber),
+                fontSize = 21.sp,
                 fontWeight = FontWeight.Bold,
-                color = PartnerScheduleVisualStyle.pagePrimaryText
+                color = PartnerScheduleVisualStyle.pagePrimaryText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = "今天有 $commonFreeCount 段共同空闲",
-                style = MaterialTheme.typography.bodyMedium,
-                color = PartnerScheduleVisualStyle.pageSecondaryText
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = today.format(DateTimeFormatter.ofPattern("yyyy/M/d")),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = PartnerScheduleVisualStyle.pagePrimaryText
+                )
+            }
+        }
+        if (showViewMode) {
+            PartnerViewModeButton(
+                mode = viewMode,
+                onToggle = {
+                    onViewModeChange(
+                        if (viewMode == PartnerScheduleViewMode.PARTNER) {
+                            PartnerScheduleViewMode.COMBINED
+                        } else {
+                            PartnerScheduleViewMode.PARTNER
+                        }
+                    )
+                }
             )
         }
         IconButton(onClick = onManage, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Outlined.Share, contentDescription = "分享与导入", tint = Color(0xFFD94F78))
         }
+    }
+}
+
+@Composable
+private fun PartnerViewModeButton(
+    mode: PartnerScheduleViewMode,
+    onToggle: () -> Unit
+) {
+    val isPartnerOnly = partnerViewModeIcon(mode) == PartnerViewModeIcon.SINGLE_PERSON
+    IconButton(onClick = onToggle, modifier = Modifier.size(48.dp)) {
+        Icon(
+            imageVector = if (isPartnerOnly) Icons.Outlined.PersonOutline else Icons.Outlined.PeopleAlt,
+            contentDescription = if (isPartnerOnly) {
+                "当前显示TA的课表，点击切换到一起"
+            } else {
+                "当前显示一起的课表，点击切换到TA的课表"
+            },
+            tint = Color(0xFFD94F78)
+        )
     }
 }
 
@@ -217,7 +290,11 @@ private fun PartnerEmptyState(isBusy: Boolean, onManage: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Surface(shape = CircleShape, color = PartnerPinkSurface, modifier = Modifier.size(88.dp)) {
+        Surface(
+            shape = CircleShape,
+            color = PartnerScheduleVisualStyle.courseCard(PartnerIdentityColor.PINK).surface,
+            modifier = Modifier.size(88.dp)
+        ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     Icons.Outlined.Group,
@@ -236,7 +313,7 @@ private fun PartnerEmptyState(isBusy: Boolean, onManage: () -> Unit) {
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            "生成自己的邀请码，或输入TA发来的16位邀请码。",
+            "生成自己的邀请码，或输入TA的邀请码。",
             color = PartnerScheduleVisualStyle.pageSecondaryText,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -259,7 +336,6 @@ private fun PartnerScheduleContent(
         initialPage = partnerPagerPageForWeek(state.week, state.maxWeek),
         pageCount = { state.maxWeek.coerceAtLeast(1) }
     )
-    val scope = rememberCoroutineScope()
     val latestWeek by rememberUpdatedState(state.week)
     val latestMaxWeek by rememberUpdatedState(state.maxWeek)
 
@@ -285,52 +361,6 @@ private fun PartnerScheduleContent(
             .fillMaxSize()
             .navigationBarsPadding()
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            IconButton(
-                onClick = {
-                    scope.launch {
-                        pagerState.animateScrollToPage((pagerState.settledPage - 1).coerceAtLeast(0))
-                    }
-                },
-                enabled = pagerState.settledPage > 0,
-                modifier = Modifier.size(48.dp)
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = "上一周",
-                    tint = PartnerScheduleVisualStyle.pagePrimaryText
-                )
-            }
-            Text(
-                text = "第 ${partnerWeekForPagerPage(pagerState.settledPage, state.maxWeek)} 周",
-                modifier = Modifier.width(96.dp),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                color = PartnerScheduleVisualStyle.pagePrimaryText,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
-            IconButton(
-                onClick = {
-                    scope.launch {
-                        pagerState.animateScrollToPage(
-                            (pagerState.settledPage + 1).coerceAtMost(state.maxWeek - 1)
-                        )
-                    }
-                },
-                enabled = pagerState.settledPage < state.maxWeek - 1,
-                modifier = Modifier.size(48.dp)
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Outlined.ArrowForward,
-                    contentDescription = "下一周",
-                    tint = PartnerScheduleVisualStyle.pagePrimaryText
-                )
-            }
-        }
         HorizontalPager(
             state = pagerState,
             key = { page -> page },
@@ -351,8 +381,12 @@ private fun PartnerScheduleContent(
                     .padding(horizontal = 8.dp)
             ) {
                 PartnerTimeGrid(
-                    groups = partnerDisplayGroups(week, state.combinedCourses),
+                    week = scheduleWeekForNumber(week, state.semesterStartMonday, state.maxWeek),
+                    today = state.today,
+                    groups = partnerDisplayGroups(week, state.displayedCourses),
                     classPeriods = state.classPeriods,
+                    showWeekend = state.showWeekend,
+                    showNoon = state.showNoon,
                     onGroupClick = onGroupClick
                 )
                 Spacer(Modifier.height(20.dp))
@@ -363,61 +397,85 @@ private fun PartnerScheduleContent(
 
 @Composable
 private fun PartnerTimeGrid(
+    week: com.glut.schedule.data.model.ScheduleWeek,
+    today: java.time.LocalDate,
     groups: List<PartnerDisplayGroup>,
     classPeriods: List<com.glut.schedule.data.model.ClassPeriod>,
+    showWeekend: Boolean,
+    showNoon: Boolean,
     onGroupClick: (PartnerDisplayGroup) -> Unit
 ) {
     if (classPeriods.isEmpty()) return
-    val dayCount = if (groups.any { it.dayOfWeek > 5 }) 7 else 5
-    val startTime = classPeriods.minOf { LocalTime.parse(it.startsAt) }
-    val endTime = classPeriods.maxOf { LocalTime.parse(it.endsAt) }
-    val totalMinutes = Duration.between(startTime, endTime).toMinutes().coerceAtLeast(1)
-    val gridHeight = (totalMinutes / 60f * 58f).dp.coerceAtLeast(480.dp)
+    val dayCount = visibleDayCount(showWeekend)
+    val effectiveShowNoon = showNoon || classPeriods.size <= 11
+    val visibleSections = partnerVisibleSections(classPeriods, effectiveShowNoon)
+    val visiblePeriods = classPeriods.filter { it.section in visibleSections }
+    val rowHeight = 74.dp
+    val gridHeight = rowHeight * visiblePeriods.size
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val timeWidth = 42.dp
+        val timeWidth = 52.dp
         val dayWidth = (maxWidth - timeWidth) / dayCount
         Column {
-            Row(modifier = Modifier.padding(start = timeWidth)) {
-                listOf("一", "二", "三", "四", "五", "六", "日").take(dayCount).forEach { day ->
-                    Text(
-                        text = day,
-                        modifier = Modifier.width(dayWidth),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        color = PartnerScheduleVisualStyle.pageSecondaryText,
-                        fontSize = 13.sp
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
+            ScheduleCalendarHeader(
+                week = week,
+                today = today,
+                leftWidth = timeWidth,
+                dayWidth = dayWidth,
+                dayCount = dayCount
+            )
             Box(modifier = Modifier.fillMaxWidth().height(gridHeight)) {
-                classPeriods.forEach { period ->
-                    val minute = Duration.between(startTime, LocalTime.parse(period.startsAt)).toMinutes()
-                    val y = gridHeight * (minute.toFloat() / totalMinutes.toFloat())
-                    Text(
-                        text = period.section.toString(),
-                        modifier = Modifier.offset(y = y - 2.dp).width(timeWidth),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        fontSize = 10.sp,
-                        color = PartnerScheduleVisualStyle.pageSecondaryText
-                    )
+                visiblePeriods.forEachIndexed { rowIndex, period ->
+                    Column(
+                        modifier = Modifier
+                            .offset(y = rowHeight * rowIndex)
+                            .width(timeWidth)
+                            .height(rowHeight)
+                            .padding(start = 6.dp, top = 7.dp)
+                    ) {
+                        Text(
+                            text = if (classPeriods.size <= 11) {
+                                period.section.toString()
+                            } else {
+                                period.periodLabel()
+                            },
+                            style = periodColumnTextStyle(fontSize = 14.sp, lineHeight = 16.sp),
+                            maxLines = 1,
+                            fontWeight = FontWeight.Bold,
+                            color = PartnerScheduleVisualStyle.pagePrimaryText
+                        )
+                        Text(
+                            text = period.startsAt,
+                            style = periodColumnTextStyle(fontSize = 9.sp, lineHeight = 11.sp),
+                            maxLines = 1,
+                            color = PartnerScheduleVisualStyle.pageSecondaryText
+                        )
+                        Text(
+                            text = period.endsAt,
+                            style = periodColumnTextStyle(fontSize = 9.sp, lineHeight = 11.sp),
+                            maxLines = 1,
+                            color = PartnerScheduleVisualStyle.pageSecondaryText
+                        )
+                    }
                 }
                 groups.filter { it.dayOfWeek <= dayCount }.forEach { group ->
-                    val (cardStartTime, cardEndTime) = partnerCardTimeRange(group)
-                    val startMinute = Duration.between(startTime, LocalTime.parse(cardStartTime)).toMinutes()
-                    val endMinute = Duration.between(startTime, LocalTime.parse(cardEndTime)).toMinutes()
-                    val y = gridHeight * (startMinute.toFloat() / totalMinutes.toFloat())
-                    val height = (gridHeight * ((endMinute - startMinute).toFloat() / totalMinutes.toFloat()))
-                        .coerceAtLeast(42.dp)
+                    val startRow = partnerGridRowIndex(
+                        group.startSection,
+                        classPeriods,
+                        effectiveShowNoon
+                    ) ?: return@forEach
+                    val visibleSpan = visibleSections.count {
+                        it in group.startSection..group.endSection
+                    }.coerceAtLeast(1)
                     PartnerGroupCard(
                         group = group,
                         modifier = Modifier
                             .offset(
                                 x = timeWidth + dayWidth * (group.dayOfWeek - 1) + 3.dp,
-                                y = y + 2.dp
+                                y = rowHeight * startRow + 3.dp
                             )
                             .width(dayWidth - 6.dp)
-                            .height(height - 4.dp),
+                            .height(rowHeight * visibleSpan - 6.dp),
                         onClick = { onGroupClick(group) }
                     )
                 }
@@ -432,23 +490,26 @@ private fun PartnerGroupCard(
     modifier: Modifier,
     onClick: () -> Unit
 ) {
-    val ordered = group.courses.sortedBy { if (it.ownerColor == PartnerIdentityColor.PINK) 0 else 1 }
-    val background = when (group.kind) {
-        PartnerOverlapKind.EXACT, PartnerOverlapKind.SAME_COURSE -> Brush.verticalGradient(
-            listOf(PartnerPinkSurface, PartnerPinkSurface, PartnerBlueSurface, PartnerBlueSurface)
-        )
-        else -> {
-            val owner = ordered.first().ownerColor
-            Brush.verticalGradient(
-                listOf(
-                    if (owner == PartnerIdentityColor.PINK) PartnerPinkSurface else PartnerBlueSurface,
-                    if (owner == PartnerIdentityColor.PINK) PartnerPinkSurface else PartnerBlueSurface
-                )
+    val ordered = group.courses.sortedBy { PartnerIdentityColor.entries.indexOf(it.ownerColor) }
+    val mixedRepresentatives = partnerCardVisibleCourses(ordered)
+    val firstStyle = PartnerScheduleVisualStyle.courseCard(mixedRepresentatives.first().ownerColor)
+    val secondStyle = mixedRepresentatives.getOrNull(1)?.let {
+        PartnerScheduleVisualStyle.courseCard(it.ownerColor)
+    } ?: firstStyle
+    val background = if (group.kind == PartnerOverlapKind.NONE) {
+        Brush.verticalGradient(listOf(firstStyle.surface, firstStyle.surface))
+    } else {
+        Brush.verticalGradient(
+            listOf(
+                firstStyle.surface,
+                firstStyle.surface,
+                secondStyle.surface,
+                secondStyle.surface
             )
-        }
+        )
     }
     val semanticText = ordered.joinToString("；") { course ->
-        "${if (course.ownerColor == PartnerIdentityColor.PINK) "粉色" else "蓝色"}课程${course.title}" +
+        "${course.ownerColor.displayName}课程${course.title}" +
             course.room?.let { "，教室$it" }.orEmpty() +
             course.teacher?.let { "，教师$it" }.orEmpty()
     }
@@ -458,63 +519,104 @@ private fun PartnerGroupCard(
             .background(background)
             .clickable(onClick = onClick)
             .semantics { contentDescription = semanticText }
-            .padding(6.dp)
+            .padding(4.dp)
     ) {
-        when (group.kind) {
-            PartnerOverlapKind.EXACT -> DualCourseContent(ordered)
-            PartnerOverlapKind.SAME_COURSE -> FullCourseContent(ordered.first())
-            PartnerOverlapKind.PARTIAL -> {
-                FullCourseContent(
-                    course = ordered.first(),
-                    modifier = Modifier.padding(
-                        top = PartnerScheduleVisualStyle.cardContentTopPadding(group.kind)
-                    )
-                )
+        if (partnerCardShowsMetadata(group.kind)) {
+            FullCourseContent(
+                course = ordered.first(),
+                sectionSpan = group.endSection - group.startSection + 1
+            )
+        } else {
+            val showBadge = partnerShouldShowOverlapBadge(group.courses.size)
+            MixedCourseContent(
+                courses = mixedRepresentatives,
+                reserveBadgeWidth = showBadge
+            )
+            if (showBadge) {
                 OverlapBadge(
                     count = group.courses.size,
                     modifier = Modifier.align(Alignment.TopEnd)
                 )
             }
-            PartnerOverlapKind.NONE -> FullCourseContent(ordered.first())
         }
     }
 }
 
 @Composable
-private fun FullCourseContent(course: PartnerCourse, modifier: Modifier = Modifier) {
-    val textColor = if (course.ownerColor == PartnerIdentityColor.PINK) PartnerPinkText else PartnerBlueText
+private fun FullCourseContent(
+    course: PartnerCourse,
+    sectionSpan: Int,
+    modifier: Modifier = Modifier
+) {
+    val textColor = PartnerScheduleVisualStyle.courseCard(course.ownerColor).content
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(1.dp)) {
         Text(
             course.title,
             color = textColor,
             fontWeight = FontWeight.Bold,
-            fontSize = 11.sp,
-            lineHeight = 12.sp,
-            maxLines = 4,
+            fontSize = courseCardTitleTextSize(course.title),
+            lineHeight = courseCardTitleLineHeight(),
+            maxLines = courseCardTitleMaxLines(sectionSpan),
             overflow = TextOverflow.Ellipsis
         )
         course.room?.let {
-            Text("@$it", color = textColor, fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                "@$it",
+                color = textColor,
+                fontSize = courseCardRoomTextSize(),
+                lineHeight = courseCardRoomLineHeight(),
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
         course.teacher?.let {
-            Text(it, color = textColor.copy(alpha = 0.88f), fontSize = 9.sp, maxLines = 1)
+            Text(
+                it,
+                color = textColor.copy(alpha = 0.95f),
+                fontSize = courseCardTeacherTextSize(),
+                lineHeight = courseCardTeacherLineHeight(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
 
 @Composable
-private fun DualCourseContent(courses: List<PartnerCourse>) {
-    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
-        courses.take(2).forEach { course ->
-            Text(
-                course.title,
-                color = if (course.ownerColor == PartnerIdentityColor.PINK) PartnerPinkText else PartnerBlueText,
-                fontWeight = FontWeight.Bold,
-                fontSize = 10.sp,
-                lineHeight = 11.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+private fun MixedCourseContent(
+    courses: List<PartnerCourse>,
+    reserveBadgeWidth: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Top
+    ) {
+        courses.take(2).forEachIndexed { index, course ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(
+                        end = if (index == 0 && reserveBadgeWidth) {
+                            PartnerScheduleVisualStyle.overlapBadgeSize + 2.dp
+                        } else {
+                            0.dp
+                        }
+                    ),
+                contentAlignment = if (index == 0) Alignment.TopStart else Alignment.BottomStart
+            ) {
+                Text(
+                    course.title,
+                    color = PartnerScheduleVisualStyle.courseCard(course.ownerColor).content,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    lineHeight = 12.sp,
+                    maxLines = Int.MAX_VALUE,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
@@ -538,6 +640,8 @@ private fun PartnerManageSheet(
     state: PartnerScheduleUiState,
     onDismiss: () -> Unit,
     onColorChange: (PartnerIdentityColor) -> Unit,
+    onShowWeekendChange: (Boolean) -> Unit,
+    onShowNoonChange: (Boolean) -> Unit,
     onGenerate: (Boolean, Boolean) -> Unit,
     onImport: (String) -> Unit,
     onRevoke: () -> Unit,
@@ -546,103 +650,174 @@ private fun PartnerManageSheet(
     onFeedback: (String) -> Unit
 ) {
     val context = LocalContext.current
-    var shareRoom by remember { mutableStateOf(true) }
-    var shareTeacher by remember { mutableStateOf(false) }
+    val defaultShareOptions = remember { partnerDefaultShareOptions() }
+    var shareRoom by remember { mutableStateOf(defaultShareOptions.shareRoom) }
+    var shareTeacher by remember { mutableStateOf(defaultShareOptions.shareTeacher) }
     var inviteInput by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmRevoke by remember { mutableStateOf(false) }
     var pendingReplacementInput by remember { mutableStateOf<String?>(null) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = PartnerScheduleVisualStyle.manageSheetSurface,
+        contentColor = PartnerScheduleVisualStyle.managePrimaryText
+    ) {
         Box(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text("分享与导入", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("我的身份色", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FilterChip(
-                    selected = state.myColor == PartnerIdentityColor.PINK,
-                    onClick = { onColorChange(PartnerIdentityColor.PINK) },
-                    label = { Text("粉色") }
-                )
-                FilterChip(
-                    selected = state.myColor == PartnerIdentityColor.BLUE,
-                    onClick = { onColorChange(PartnerIdentityColor.BLUE) },
-                    label = { Text("蓝色") }
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = shareRoom, onCheckedChange = { shareRoom = it })
-                Text("分享教室")
-                Spacer(Modifier.width(16.dp))
-                Checkbox(checked = shareTeacher, onCheckedChange = { shareTeacher = it })
-                Text("分享教师")
-            }
-            Button(
-                onClick = { onGenerate(shareRoom, shareTeacher) },
-                enabled = canGeneratePartnerInvite(
-                    hasCourses = state.ownCourses.isNotEmpty(),
-                    isBusy = state.isBusy,
-                    hasActiveInvite = state.activeInvite != null
-                ),
-                modifier = Modifier.fillMaxWidth().height(48.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                if (state.isBusy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else Text(if (state.activeInvite == null) "生成24小时邀请码" else "请先撤销当前邀请码")
-            }
-            state.activeInvite?.let { invite ->
-                InviteCard(
-                    invite = invite,
-                    context = context,
-                    onFeedback = onFeedback
+                Text(
+                    "分享与导入",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = PartnerScheduleVisualStyle.managePrimaryText
                 )
-                OutlinedButton(
-                    onClick = onRevoke,
-                    enabled = !state.isBusy,
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                ) {
-                    Text("撤销当前邀请码")
-                }
-            }
-            HorizontalDivider()
-            OutlinedTextField(
-                value = inviteInput,
-                onValueChange = { inviteInput = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("TA的邀请码") },
-                supportingText = { Text("支持16位邀请码") },
-                singleLine = true
-            )
-            Button(
-                onClick = {
-                    if (state.partnerSnapshot == null) {
-                        onImport(inviteInput)
-                    } else {
-                        pendingReplacementInput = inviteInput
+
+                PartnerManageSection(title = "我的身份色") {
+                    IdentityColorSelector(
+                        selected = state.myColor,
+                        partnerColor = state.partnerSnapshot?.identityColor,
+                        locked = state.activeInvite != null || state.isBusy,
+                        onColorChange = onColorChange
+                    )
+                    state.partnerSnapshot?.identityColor?.let { partnerColor ->
+                        Text(
+                            "TA的颜色是${partnerColor.displayName}，该颜色不可重复使用",
+                            fontSize = 12.sp,
+                            color = PartnerScheduleVisualStyle.manageSecondaryText
+                        )
                     }
-                },
-                enabled = !state.isBusy && inviteInput.isNotBlank(),
-                modifier = Modifier.fillMaxWidth().height(48.dp)
-            ) {
-                Text(if (state.partnerSnapshot == null) "导入TA课表" else "覆盖现有TA课表")
-            }
-            if (state.partnerSnapshot != null) {
-                TextButton(
-                    onClick = { confirmDelete = true },
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                ) {
-                    Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("删除本地TA课表", color = MaterialTheme.colorScheme.error)
+                    if (state.activeInvite != null) {
+                        Text(
+                            "当前邀请码有效期间身份色保持不变，撤销后可重新选择",
+                            fontSize = 12.sp,
+                            color = PartnerScheduleVisualStyle.manageSecondaryText
+                        )
+                    }
+                    PartnerSettingRow(
+                        title = "显示周末",
+                        description = "仅影响情侣/基友课表",
+                        checked = state.showWeekend,
+                        onCheckedChange = onShowWeekendChange
+                    )
+                    PartnerSettingRow(
+                        title = "显示中午",
+                        description = "仅影响情侣/基友课表",
+                        checked = state.showNoon,
+                        onCheckedChange = onShowNoonChange
+                    )
                 }
+
+                PartnerManageSection(title = "分享我的课表") {
+                    if (state.activeInvite == null) {
+                        PartnerSettingRow(
+                            title = "分享教室",
+                            description = "对方可在课程详情中查看教室",
+                            checked = shareRoom,
+                            onCheckedChange = { shareRoom = it }
+                        )
+                        PartnerSettingRow(
+                            title = "分享教师",
+                            description = "对方可在课程详情中查看教师",
+                            checked = shareTeacher,
+                            onCheckedChange = { shareTeacher = it }
+                        )
+                        Button(
+                            onClick = { onGenerate(shareRoom, shareTeacher) },
+                            enabled = canGeneratePartnerInvite(
+                                hasCourses = state.ownCourses.isNotEmpty(),
+                                isBusy = state.isBusy,
+                                hasActiveInvite = false
+                            ),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = PartnerScheduleVisualStyle.manageAccent,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier.fillMaxWidth().height(48.dp)
+                        ) {
+                            if (state.isBusy) {
+                                CircularProgressIndicator(
+                                    Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color.White
+                                )
+                            } else {
+                                Text("生成24小时邀请码")
+                            }
+                        }
+                    } else {
+                        InviteCard(
+                            invite = state.activeInvite,
+                            context = context,
+                            onFeedback = onFeedback
+                        )
+                        Button(
+                            onClick = { confirmRevoke = true },
+                            enabled = !state.isBusy,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFFFE3E0),
+                                contentColor = Color(0xFFB3261E),
+                                disabledContainerColor = Color(0xFFFFE3E0).copy(alpha = 0.55f),
+                                disabledContentColor = Color(0xFFB3261E).copy(alpha = 0.45f)
+                            ),
+                            border = BorderStroke(1.dp, Color(0xFFB3261E).copy(alpha = 0.55f)),
+                            modifier = Modifier.fillMaxWidth().height(48.dp)
+                        ) {
+                            Icon(Icons.Outlined.LinkOff, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("撤销当前邀请码")
+                        }
+                    }
+                }
+
+                PartnerManageSection(title = "导入TA的课表") {
+                    OutlinedTextField(
+                        value = inviteInput,
+                        onValueChange = { inviteInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("TA的邀请码") },
+                        singleLine = true,
+                        colors = partnerManageTextFieldColors()
+                    )
+                    Button(
+                        onClick = {
+                            if (state.partnerSnapshot == null) {
+                                onImport(inviteInput)
+                            } else {
+                                pendingReplacementInput = inviteInput
+                            }
+                        },
+                        enabled = !state.isBusy && inviteInput.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = PartnerScheduleVisualStyle.manageAccent,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    ) {
+                        Text(if (state.partnerSnapshot == null) "导入TA的课表" else "覆盖现有TA的课表")
+                    }
+                }
+
+                if (state.partnerSnapshot != null) {
+                    PartnerManageSection(title = "本地数据") {
+                        TextButton(
+                            onClick = { confirmDelete = true },
+                            modifier = Modifier.fillMaxWidth().height(48.dp)
+                        ) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("删除本地TA的课表", color = Color(0xFFB3261E))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
             }
-            Spacer(Modifier.height(16.dp))
-        }
             // ModalBottomSheet 位于页面根 Snackbar 之上，提示必须在面板层内承载才可见。
             PartnerFeedbackHost(
                 hostState = snackbarHostState,
@@ -651,11 +826,32 @@ private fun PartnerManageSheet(
         }
     }
 
+    if (confirmRevoke) {
+        AlertDialog(
+            onDismissRequest = { confirmRevoke = false },
+            title = { Text("撤销当前邀请码？") },
+            text = {
+                Text("撤销后，对方将无法再使用该邀请码导入你的课表；已经导入的课表不会被删除。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRevoke()
+                    confirmRevoke = false
+                }) {
+                    Text("确认撤销", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRevoke = false }) { Text("取消") }
+            }
+        )
+    }
+
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除TA课表？") },
-            text = { Text("只删除本机保存的TA课表，不会撤销对方的邀请码。") },
+            title = { Text("删除TA的课表？") },
+            text = { Text("只删除本机保存的TA的课表，不会撤销对方的邀请码。") },
             confirmButton = {
                 TextButton(onClick = {
                     onDeletePartner()
@@ -670,8 +866,8 @@ private fun PartnerManageSheet(
     pendingReplacementInput?.let { input ->
         AlertDialog(
             onDismissRequest = { pendingReplacementInput = null },
-            title = { Text("覆盖现有TA课表？") },
-            text = { Text("导入成功后，本机现有的TA课表将被新快照替换。") },
+            title = { Text("覆盖现有TA的课表？") },
+            text = { Text("导入成功后，本机现有的TA的课表将被新快照替换。") },
             confirmButton = {
                 TextButton(onClick = {
                     onImport(input)
@@ -684,6 +880,140 @@ private fun PartnerManageSheet(
         )
     }
 }
+
+@Composable
+private fun PartnerManageSection(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = PartnerScheduleVisualStyle.manageSectionSurface,
+        contentColor = PartnerScheduleVisualStyle.managePrimaryText,
+        shape = RoundedCornerShape(18.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                title,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                color = PartnerScheduleVisualStyle.managePrimaryText
+            )
+            content()
+        }
+    }
+}
+
+@Composable
+private fun IdentityColorSelector(
+    selected: PartnerIdentityColor,
+    partnerColor: PartnerIdentityColor?,
+    locked: Boolean,
+    onColorChange: (PartnerIdentityColor) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        PartnerIdentityColor.entries.chunked(4).forEach { rowColors ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                rowColors.forEach { color ->
+                    val style = PartnerScheduleVisualStyle.courseCard(color)
+                    val isPartnerColor = color == partnerColor
+                    val enabled = !locked && !isPartnerColor
+                    val isSelected = color == selected
+                    Surface(
+                        onClick = { onColorChange(color) },
+                        enabled = enabled,
+                        modifier = Modifier.weight(1f).height(56.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = style.surface.copy(alpha = if (enabled || isSelected) 1f else 0.48f),
+                        contentColor = style.content,
+                        border = BorderStroke(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = style.content.copy(alpha = if (isSelected) 1f else 0.35f)
+                        )
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    color.displayName,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
+                                if (isPartnerColor) {
+                                    Text("TA的颜色", fontSize = 8.sp, maxLines = 1)
+                                }
+                            }
+                            if (isSelected) {
+                                Icon(
+                                    Icons.Outlined.Check,
+                                    contentDescription = "已选择",
+                                    modifier = Modifier.align(Alignment.TopEnd).size(15.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PartnerSettingRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = PartnerScheduleVisualStyle.managePrimaryText
+            )
+            Text(
+                description,
+                fontSize = 11.sp,
+                color = PartnerScheduleVisualStyle.manageSecondaryText
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = PartnerScheduleVisualStyle.manageAccent
+            )
+        )
+    }
+}
+
+@Composable
+private fun partnerManageTextFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = PartnerScheduleVisualStyle.managePrimaryText,
+    unfocusedTextColor = PartnerScheduleVisualStyle.managePrimaryText,
+    focusedBorderColor = PartnerScheduleVisualStyle.manageAccent,
+    unfocusedBorderColor = PartnerScheduleVisualStyle.manageSecondaryText.copy(alpha = 0.55f),
+    focusedLabelColor = PartnerScheduleVisualStyle.manageAccent,
+    unfocusedLabelColor = PartnerScheduleVisualStyle.manageSecondaryText,
+    cursorColor = PartnerScheduleVisualStyle.manageAccent,
+    focusedSupportingTextColor = PartnerScheduleVisualStyle.manageSecondaryText,
+    unfocusedSupportingTextColor = PartnerScheduleVisualStyle.manageSecondaryText
+)
 
 @Composable
 private fun PartnerFeedbackHost(
@@ -723,12 +1053,16 @@ private fun InviteCard(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(invite.code.chunked(4).joinToString(" "), fontWeight = FontWeight.Bold, fontSize = 18.sp)
-            Text("有效至 ${invite.expiresAt}", fontSize = 12.sp, color = Color(0xFF756D70))
+            Text(
+                partnerInviteExpiryText(invite.expiresAt),
+                fontSize = 12.sp,
+                color = Color(0xFF756D70)
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("TA课表邀请码", invite.code))
+                        clipboard.setPrimaryClip(ClipData.newPlainText("TA的课表邀请码", invite.code))
                         onFeedback("邀请码已复制")
                     },
                     colors = ButtonDefaults.outlinedButtonColors(
@@ -748,7 +1082,7 @@ private fun InviteCard(
                                     type = "text/plain"
                                     putExtra(Intent.EXTRA_TEXT, partnerInviteShareText(invite.code))
                                 },
-                                "分享TA课表邀请码"
+                                "分享TA的课表邀请码"
                             )
                         )
                     },
@@ -778,7 +1112,7 @@ private fun PartnerCourseDetailSheet(group: PartnerDisplayGroup, onDismiss: () -
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                if (group.courses.size > 1) "${group.courses.size} 门重叠课程" else "课程详情",
+                partnerOverlapDetailTitle(group.courses.size),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -791,14 +1125,15 @@ private fun PartnerCourseDetailSheet(group: PartnerDisplayGroup, onDismiss: () -
                 ) {
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            if (course.ownerColor == PartnerIdentityColor.PINK) "粉色课程" else "蓝色课程",
+                            "${course.ownerColor.displayName}课程",
                             fontSize = 12.sp,
                             color = cardStyle.content
                         )
                         Text(course.title, fontWeight = FontWeight.Bold)
                         course.room?.let { Text("教室：$it") }
                         course.teacher?.let { Text("教师：$it") }
-                        Text("时间：${course.startTime}–${course.endTime}")
+                        val (startsAt, endsAt) = partnerCourseDetailTimeRange(course)
+                        Text("时间：$startsAt–$endsAt")
                     }
                 }
             }

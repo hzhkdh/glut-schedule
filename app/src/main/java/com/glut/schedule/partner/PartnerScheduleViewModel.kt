@@ -7,10 +7,12 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
+import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
+import com.glut.schedule.data.settings.PartnerScheduleViewMode
 import com.glut.schedule.data.settings.ScheduleSettingsStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -18,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import java.time.LocalDate
 
 data class PartnerScheduleUiState(
@@ -27,6 +30,11 @@ data class PartnerScheduleUiState(
     val semesterEndDate: LocalDate = LocalDate.now(),
     val classPeriods: List<ClassPeriod> = emptyList(),
     val campusKey: String = "guilin-yanshan",
+    val today: LocalDate = LocalDate.now(),
+    val currentWeekNumber: Int = 1,
+    val showWeekend: Boolean = false,
+    val showNoon: Boolean = false,
+    val viewMode: PartnerScheduleViewMode = PartnerScheduleViewMode.COMBINED,
     val ownCourses: List<PartnerCourse> = emptyList(),
     val partnerSnapshot: PartnerScheduleSnapshot? = null,
     val myColor: PartnerIdentityColor = PartnerIdentityColor.BLUE,
@@ -37,18 +45,8 @@ data class PartnerScheduleUiState(
     val combinedCourses: List<PartnerCourse>
         get() = ownCourses + partnerSnapshot.orEmptyCourses()
 
-    val commonFreeCountToday: Int
-        get() {
-            if (partnerSnapshot == null || classPeriods.isEmpty()) return 0
-            val day = LocalDate.now().dayOfWeek.value
-            return commonFreeSegments(
-                dayOfWeek = day,
-                week = week,
-                dayStart = classPeriods.first().startsAt,
-                dayEnd = classPeriods.last().endsAt,
-                courses = combinedCourses
-            ).size
-        }
+    val displayedCourses: List<PartnerCourse>
+        get() = partnerCoursesForMode(viewMode, ownCourses, partnerSnapshot.orEmptyCourses())
 }
 
 private fun PartnerScheduleSnapshot?.orEmptyCourses(): List<PartnerCourse> = this?.courses.orEmpty()
@@ -59,12 +57,19 @@ private data class LocalScheduleData(
     val semester: AcademicSemester?
 )
 
-private data class CalendarData(
+private data class CalendarBase(
     val week: Int,
     val start: LocalDate,
     val end: LocalDate,
     val campus: CampusType,
     val subCampus: String
+)
+
+private data class CalendarData(
+    val base: CalendarBase,
+    val showWeekend: Boolean,
+    val showNoon: Boolean,
+    val viewMode: PartnerScheduleViewMode
 )
 
 private data class StoredPartnerData(
@@ -75,13 +80,14 @@ private data class StoredPartnerData(
 
 class PartnerScheduleViewModel(
     repository: ScheduleRepository,
-    settingsStore: ScheduleSettingsStore,
+    private val settingsStore: ScheduleSettingsStore,
     private val storage: PartnerScheduleStorage,
     private val gateway: PartnerScheduleGateway
 ) : ViewModel() {
     private val selectedWeek = MutableStateFlow<Int?>(null)
     private val isBusy = MutableStateFlow(false)
     private val message = MutableStateFlow("")
+    private val operationMutex = Mutex()
 
     val uiState: StateFlow<PartnerScheduleUiState>
 
@@ -93,14 +99,22 @@ class PartnerScheduleViewModel(
         ) { courses, classPeriods, semester ->
             LocalScheduleData(courses, classPeriods, semester)
         }
-        val calendarData = combine(
+        val calendarBase = combine(
             settingsStore.currentWeekNumber,
             settingsStore.semesterStartMonday,
             settingsStore.semesterEndDate,
             settingsStore.campusType,
             settingsStore.guilinSubCampus
         ) { week, start, end, campus, subCampus ->
-            CalendarData(week, start, end, campus, subCampus)
+            CalendarBase(week, start, end, campus, subCampus)
+        }
+        val calendarData = combine(
+            calendarBase,
+            settingsStore.partnerShowWeekend,
+            settingsStore.partnerShowNoon,
+            settingsStore.partnerViewMode
+        ) { base, showWeekend, showNoon, viewMode ->
+            CalendarData(base, showWeekend, showNoon, viewMode)
         }
         val storedData = combine(
             storage.partnerSnapshot,
@@ -111,13 +125,13 @@ class PartnerScheduleViewModel(
         }
         val baseState = combine(localData, calendarData, storedData, selectedWeek) {
                 local, calendar, stored, selected ->
-            val start = local.semester?.semesterStartDate ?: calendar.start
-            val end = local.semester?.semesterEndDate ?: calendar.end
+            val start = local.semester?.semesterStartDate ?: calendar.base.start
+            val end = local.semester?.semesterEndDate ?: calendar.base.end
             val maxWeek = academicMaxWeekForCalendar(start, end)
-            val week = clampAcademicWeek(selected ?: calendar.week, maxWeek)
-            val campusKey = when (calendar.campus) {
+            val week = clampAcademicWeek(selected ?: calendar.base.week, maxWeek)
+            val campusKey = when (calendar.base.campus) {
                 CampusType.NANNING -> "nanning"
-                CampusType.GUILIN -> if (calendar.subCampus == GUILIN_SUB_CAMPUS_PINGFENG) {
+                CampusType.GUILIN -> if (calendar.base.subCampus == GUILIN_SUB_CAMPUS_PINGFENG) {
                     "guilin-pingfeng"
                 } else {
                     "guilin-yanshan"
@@ -140,6 +154,11 @@ class PartnerScheduleViewModel(
                 semesterEndDate = end,
                 classPeriods = local.classPeriods,
                 campusKey = campusKey,
+                today = LocalDate.now(),
+                currentWeekNumber = academicWeekForDate(LocalDate.now(), start, maxWeek),
+                showWeekend = calendar.showWeekend,
+                showNoon = calendar.showNoon,
+                viewMode = calendar.viewMode,
                 ownCourses = ownSnapshot.courses,
                 partnerSnapshot = stored.snapshot,
                 myColor = stored.myColor,
@@ -168,7 +187,36 @@ class PartnerScheduleViewModel(
     }
 
     fun setMyColor(color: PartnerIdentityColor) {
+        if (isBusy.value || storage.activeInvite.value != null) {
+            message.value = "请先完成当前操作并撤销邀请码，再修改身份色"
+            return
+        }
+        if (color == uiState.value.partnerSnapshot?.identityColor) {
+            message.value = "这是TA的颜色，请选择其他颜色"
+            return
+        }
         storage.setMyColor(color)
+    }
+
+    fun setShowWeekend(showWeekend: Boolean) {
+        viewModelScope.launch { settingsStore.setPartnerShowWeekend(showWeekend) }
+    }
+
+    fun setShowNoon(showNoon: Boolean) {
+        viewModelScope.launch { settingsStore.setPartnerShowNoon(showNoon) }
+    }
+
+    fun setViewMode(mode: PartnerScheduleViewMode) {
+        viewModelScope.launch { settingsStore.setPartnerViewMode(mode) }
+    }
+
+    fun returnToCurrentWeek() {
+        val state = uiState.value
+        selectedWeek.value = academicWeekForDate(
+            LocalDate.now(),
+            state.semesterStartMonday,
+            state.maxWeek
+        )
     }
 
     fun generateInvite(shareRoom: Boolean, shareTeacher: Boolean) {
@@ -199,11 +247,15 @@ class PartnerScheduleViewModel(
 
     fun importInvite(input: String) {
         if (isBusy.value) return
-        launchOperation("TA课表已导入") {
+        launchOperation("TA的课表已导入") {
             val snapshot = gateway.fetchInvite(input)
-            if (snapshot.identityColor == storage.myColor.value) {
-                storage.setMyColor(snapshot.identityColor.opposite())
-            }
+            storage.setMyColor(
+                partnerImportLocalColor(
+                    current = storage.myColor.value,
+                    partner = snapshot.identityColor,
+                    hasActiveInvite = storage.activeInvite.value != null
+                )
+            )
             storage.savePartnerSnapshot(snapshot)
         }
     }
@@ -219,7 +271,7 @@ class PartnerScheduleViewModel(
 
     fun deletePartnerSnapshot() {
         storage.clearPartnerSnapshot()
-        message.value = "已删除本地TA课表"
+        message.value = "已删除本地TA的课表"
     }
 
     fun clearMessage() {
@@ -227,20 +279,23 @@ class PartnerScheduleViewModel(
     }
 
     private fun launchOperation(successMessage: String, block: suspend () -> Unit) {
+        // 在 UI 事件线程同步抢占，避免快速双击在协程启动前穿透 isBusy 检查。
+        if (!operationMutex.tryLock()) return
+        isBusy.value = true
+        message.value = ""
         viewModelScope.launch {
-            isBusy.value = true
-            message.value = ""
-            runCatching { block() }
-                .onSuccess { message.value = successMessage }
-                .onFailure { error -> message.value = error.message ?: "操作失败，请稍后重试" }
-            isBusy.value = false
+            try {
+                runCatching { block() }
+                    .onSuccess { message.value = successMessage }
+                    .onFailure { error -> message.value = error.message ?: "操作失败，请稍后重试" }
+            } finally {
+                isBusy.value = false
+                operationMutex.unlock()
+            }
         }
     }
 
 }
-
-private fun PartnerIdentityColor.opposite(): PartnerIdentityColor =
-    if (this == PartnerIdentityColor.PINK) PartnerIdentityColor.BLUE else PartnerIdentityColor.PINK
 
 class PartnerScheduleViewModelFactory(
     private val repository: ScheduleRepository,

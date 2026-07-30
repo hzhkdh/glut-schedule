@@ -8,9 +8,18 @@ import org.json.JSONObject
 import java.time.LocalDate
 import java.time.LocalTime
 
-enum class PartnerIdentityColor(val storageValue: String) {
-    PINK("pink"),
-    BLUE("blue");
+enum class PartnerIdentityColor(
+    val storageValue: String,
+    val displayName: String
+) {
+    PINK("pink", "粉色"),
+    BLUE("blue", "蓝色"),
+    PURPLE("purple", "紫色"),
+    TEAL("teal", "青色"),
+    GREEN("green", "绿色"),
+    ORANGE("orange", "橙色"),
+    RED("red", "红色"),
+    GOLD("gold", "金色");
 
     companion object {
         fun fromStorage(value: String): PartnerIdentityColor =
@@ -62,7 +71,8 @@ fun createPartnerScheduleSnapshot(
             val firstPeriod = periodBySection[occurrence.startSection] ?: return@mapNotNull null
             val lastPeriod = periodBySection[occurrence.endSection] ?: return@mapNotNull null
             PartnerCourse(
-                id = occurrence.id,
+                // 本地 occurrence.id 可能由教室/教师参与生成，不能跨越隐私开关上传。
+                id = "",
                 title = course.title.trim(),
                 room = course.room.trim().takeIf { shareRoom && it.isNotEmpty() },
                 teacher = course.teacher.trim().takeIf { shareTeacher && it.isNotEmpty() },
@@ -75,6 +85,9 @@ fun createPartnerScheduleSnapshot(
                 ownerColor = identityColor
             )
         }
+    }.mapIndexed { index, course ->
+        // v1 的 id 只用于快照内稳定区分课程，不承载本地数据库或教务系统身份。
+        course.copy(id = "shared-${index + 1}")
     }
     return PartnerScheduleSnapshot(
         identityColor = identityColor,

@@ -1,9 +1,7 @@
 package com.glut.schedule
 
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
 import com.glut.schedule.partner.PartnerIdentityColor
-import com.glut.schedule.partner.PartnerOverlapKind
 import com.glut.schedule.partner.PartnerScheduleVisualStyle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -36,20 +34,6 @@ class PartnerScheduleVisualStyleTest {
             val cardStyle = PartnerScheduleVisualStyle.courseCard(identityColor)
             assertReadable(cardStyle.content, cardStyle.surface)
         }
-    }
-
-    @Test
-    fun `部分重合只在顶部为右上角角标留位`() {
-        val partialPadding = PartnerScheduleVisualStyle.cardContentTopPadding(PartnerOverlapKind.PARTIAL)
-
-        assertTrue(
-            "课程内容顶部留位必须大于角标直径",
-            partialPadding >= PartnerScheduleVisualStyle.overlapBadgeSize + 2.dp
-        )
-        assertEquals(
-            0.dp,
-            PartnerScheduleVisualStyle.cardContentTopPadding(PartnerOverlapKind.EXACT)
-        )
     }
 
     private fun assertReadable(foreground: Color, background: Color) {

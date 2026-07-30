@@ -28,6 +28,17 @@ import java.time.LocalDate
 
 enum class CampusType { GUILIN, NANNING }
 
+/** 情侣/基友课表的展示范围；未知旧值必须安全回退到“一起”。 */
+enum class PartnerScheduleViewMode(val storageValue: String) {
+    PARTNER("partner"),
+    COMBINED("combined");
+
+    companion object {
+        fun fromStorageValue(value: String?): PartnerScheduleViewMode =
+            entries.firstOrNull { it.storageValue == value } ?: COMBINED
+    }
+}
+
 enum class GuilinSubCampus(val storageValue: String) {
     YANSHAN(GUILIN_SUB_CAMPUS_DEFAULT),
     PINGFENG(GUILIN_SUB_CAMPUS_PINGFENG);
@@ -66,6 +77,9 @@ class ScheduleSettingsStore(
     private val currentWeekKey = intPreferencesKey("current_week")
     private val showWeekendKey = booleanPreferencesKey("show_weekend")
     private val showNoonKey = booleanPreferencesKey("show_noon")
+    private val partnerShowWeekendKey = booleanPreferencesKey("partner_show_weekend")
+    private val partnerShowNoonKey = booleanPreferencesKey("partner_show_noon")
+    private val partnerViewModeKey = stringPreferencesKey("partner_schedule_view_mode")
     private val semesterStartMondayKey = stringPreferencesKey("semester_start_monday")
     private val semesterEndDateKey = stringPreferencesKey("semester_end_date")
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
@@ -97,6 +111,15 @@ class ScheduleSettingsStore(
 
     val showWeekend: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
         preferences[showWeekendKey] ?: false
+    }.distinctUntilChanged()
+
+    /** 情侣/基友课表的显示偏好独立保存，不改变首页布局。 */
+    val partnerShowWeekend: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
+        preferences[partnerShowWeekendKey] ?: false
+    }.distinctUntilChanged()
+
+    val partnerViewMode: Flow<PartnerScheduleViewMode> = context.scheduleSettings.data.map { preferences ->
+        PartnerScheduleViewMode.fromStorageValue(preferences[partnerViewModeKey])
     }.distinctUntilChanged()
 
     val semesterStartMonday: Flow<LocalDate> = context.scheduleSettings.data.map { preferences ->
@@ -213,13 +236,35 @@ class ScheduleSettingsStore(
         }
     }
 
+    suspend fun setPartnerShowWeekend(showWeekend: Boolean) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[partnerShowWeekendKey] = showWeekend
+        }
+    }
+
+    suspend fun setPartnerViewMode(mode: PartnerScheduleViewMode) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[partnerViewModeKey] = mode.storageValue
+        }
+    }
+
     val showNoon: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
         preferences[showNoonKey] ?: false
+    }.distinctUntilChanged()
+
+    val partnerShowNoon: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
+        preferences[partnerShowNoonKey] ?: false
     }.distinctUntilChanged()
 
     suspend fun setShowNoon(showNoon: Boolean) {
         context.scheduleSettings.edit { preferences ->
             preferences[showNoonKey] = showNoon
+        }
+    }
+
+    suspend fun setPartnerShowNoon(showNoon: Boolean) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[partnerShowNoonKey] = showNoon
         }
     }
 

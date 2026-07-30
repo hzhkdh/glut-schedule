@@ -5,6 +5,8 @@ import com.glut.schedule.ui.components.isWeekTitleClickable
 import com.glut.schedule.ui.components.scheduleGridMonthHeaderStartPaddingDp
 import com.glut.schedule.ui.components.scheduleGridMonthHeaderTopPaddingDp
 import com.glut.schedule.ui.components.scheduleGridMonthText
+import com.glut.schedule.ui.components.scheduleCalendarDays
+import com.glut.schedule.data.model.ScheduleWeek
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.LocalDate
@@ -38,5 +40,29 @@ class ScheduleHeaderTest {
     fun gridMonthHeaderKeepsMonthAlignedWithWeekdayRow() {
         assertEquals(15, scheduleGridMonthHeaderStartPaddingDp())
         assertEquals(6, scheduleGridMonthHeaderTopPaddingDp())
+    }
+
+    @Test
+    fun calendarDaysExposeDatesAndHighlightOnlyTheActualToday() {
+        val currentWeek = ScheduleWeek(1, LocalDate.of(2026, 7, 27))
+        val currentDays = scheduleCalendarDays(
+            week = currentWeek,
+            today = LocalDate.of(2026, 7, 30),
+            dayCount = 5,
+            showCalendarDates = true
+        )
+
+        assertEquals(listOf("一", "二", "三", "四", "五"), currentDays.map { it.name })
+        assertEquals(listOf(27, 28, 29, 30, 31), currentDays.map { it.date?.dayOfMonth })
+        assertEquals(listOf(false, false, false, true, false), currentDays.map { it.isToday })
+
+        val otherWeek = scheduleCalendarDays(
+            week = ScheduleWeek(2, LocalDate.of(2026, 8, 3)),
+            today = LocalDate.of(2026, 7, 30),
+            dayCount = 7,
+            showCalendarDates = true
+        )
+        assertEquals(7, otherWeek.size)
+        assertEquals(false, otherWeek.any { it.isToday })
     }
 }

@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
+import android.os.Build
 import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -115,6 +117,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.glut.schedule.data.model.NoticeInfo
 import com.glut.schedule.data.model.CourseColorMapper
@@ -198,6 +201,15 @@ private enum class SettingsSubPage(val title: String) {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Android 15 会默认启用 edge-to-edge，旧系统需要显式关闭 decor fitting，
+        // 才能让自定义背景铺到透明状态栏；各页面已有的系统栏 inset 继续保护交互控件。
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         val container = (application as ScheduleApplication).appContainer
 
         setContent {

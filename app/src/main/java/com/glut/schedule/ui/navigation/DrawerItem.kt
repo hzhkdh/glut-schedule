@@ -31,7 +31,7 @@ enum class DrawerItem(
     GradeExam("考级成绩", Icons.Outlined.EmojiEvents),
     FitnessScore("体测成绩", Icons.Outlined.FitnessCenter),
     CampusInfo("校园信息", Icons.Outlined.AccountBalance),
-    PartnerSchedule("TA课表", Icons.Outlined.PeopleAlt),
+    PartnerSchedule("情侣/基友课表", Icons.Outlined.PeopleAlt),
     Finance("财务", Icons.Outlined.AccountBalanceWallet),
     StudyPlan("教学计划", Icons.Outlined.MenuBook),
     Import("导入课表", Icons.Outlined.Download),

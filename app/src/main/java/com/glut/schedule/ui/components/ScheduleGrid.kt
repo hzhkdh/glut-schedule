@@ -31,7 +31,10 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -46,6 +49,40 @@ import com.glut.schedule.data.model.visibleDayCount
 import java.time.LocalDate
 
 private val dayNames = listOf("一", "二", "三", "四", "五", "六", "日")
+
+/**
+ * 固定节次高度内必须显式约束文字行高，并移除部分系统字体自带的超大上下留白。
+ * 否则在 vivo 等使用手写系统字体且放大字号的设备上，第三行结束时间会被父布局裁切。
+ */
+fun periodColumnTextStyle(
+    fontSize: TextUnit,
+    lineHeight: TextUnit
+): TextStyle = TextStyle(
+    fontSize = fontSize,
+    lineHeight = lineHeight,
+    platformStyle = PlatformTextStyle(includeFontPadding = false),
+    lineHeightStyle = LineHeightStyle(
+        alignment = LineHeightStyle.Alignment.Center,
+        trim = LineHeightStyle.Trim.None
+    )
+)
+
+data class ScheduleCalendarDay(
+    val name: String,
+    val date: LocalDate?,
+    val isToday: Boolean
+)
+
+/** 首页与情侣/基友课表共用同一份日期映射，避免星期、日期和今日高亮发生漂移。 */
+fun scheduleCalendarDays(
+    week: ScheduleWeek,
+    today: LocalDate,
+    dayCount: Int,
+    showCalendarDates: Boolean
+): List<ScheduleCalendarDay> = dayNames.take(dayCount).mapIndexed { index, name ->
+    val date = week.dateFor(index + 1).takeIf { showCalendarDates }
+    ScheduleCalendarDay(name = name, date = date, isToday = date == today)
+}
 
 @Composable
 fun ScheduleGrid(
@@ -73,10 +110,14 @@ fun ScheduleGrid(
         }
 
         Column {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                MonthHeader(week = week, width = leftWidth, showCalendarDates = showCalendarDates)
-                WeekDayHeader(week = week, today = today, dayWidth = dayWidth, dayCount = dayCount, showCalendarDates = showCalendarDates)
-            }
+            ScheduleCalendarHeader(
+                week = week,
+                today = today,
+                leftWidth = leftWidth,
+                dayWidth = dayWidth,
+                dayCount = dayCount,
+                showCalendarDates = showCalendarDates
+            )
 
             Row(
                 modifier = Modifier
@@ -94,6 +135,27 @@ fun ScheduleGrid(
                 )
             }
         }
+    }
+}
+
+@Composable
+fun ScheduleCalendarHeader(
+    week: ScheduleWeek,
+    today: LocalDate,
+    leftWidth: Dp,
+    dayWidth: Dp,
+    dayCount: Int,
+    showCalendarDates: Boolean = true
+) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        MonthHeader(week = week, width = leftWidth, showCalendarDates = showCalendarDates)
+        WeekDayHeader(
+            week = week,
+            today = today,
+            dayWidth = dayWidth,
+            dayCount = dayCount,
+            showCalendarDates = showCalendarDates
+        )
     }
 }
 
@@ -139,10 +201,7 @@ private fun WeekDayHeader(
     showCalendarDates: Boolean
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
-        dayNames.take(dayCount).forEachIndexed { index, name ->
-            val day = index + 1
-            val date = week.dateFor(day)
-            val isToday = showCalendarDates && date == today
+        scheduleCalendarDays(week, today, dayCount, showCalendarDates).forEach { item ->
             Column(
                 modifier = Modifier
                     .width(dayWidth)
@@ -150,17 +209,17 @@ private fun WeekDayHeader(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = name,
-                    color = if (isToday) Color.White else Color.White.copy(alpha = 0.42f),
+                    text = item.name,
+                    color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.42f),
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )
-                if (showCalendarDates) {
+                item.date?.let { date ->
                     Text(
                         text = date.dayOfMonth.toString(),
-                        color = if (isToday) Color.White else Color.White.copy(alpha = 0.34f),
+                        color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.34f),
                         fontSize = 12.sp,
-                        modifier = if (isToday) {
+                        modifier = if (item.isToday) {
                             Modifier
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(Color.White.copy(alpha = 0.22f))
@@ -198,11 +257,22 @@ private fun PeriodColumn(
                     Text(
                         text = if (isNanning) "${period.section}" else period.periodLabel(),
                         color = Color.White,
-                        fontSize = 14.sp,
+                        style = periodColumnTextStyle(fontSize = 14.sp, lineHeight = 16.sp),
+                        maxLines = 1,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(text = period.startsAt, color = Color.White.copy(alpha = 0.56f), fontSize = 9.sp)
-                    Text(text = period.endsAt, color = Color.White.copy(alpha = 0.56f), fontSize = 9.sp)
+                    Text(
+                        text = period.startsAt,
+                        color = Color.White.copy(alpha = 0.56f),
+                        style = periodColumnTextStyle(fontSize = 9.sp, lineHeight = 11.sp),
+                        maxLines = 1
+                    )
+                    Text(
+                        text = period.endsAt,
+                        color = Color.White.copy(alpha = 0.56f),
+                        style = periodColumnTextStyle(fontSize = 9.sp, lineHeight = 11.sp),
+                        maxLines = 1
+                    )
                 }
             }
         }
