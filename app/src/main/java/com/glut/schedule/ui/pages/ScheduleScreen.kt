@@ -113,13 +113,9 @@ fun ScheduleScreen(
         }
     }
     if (!uiState.isInitialized) {
-        // DataStore 与 Room 都完成首轮恢复后再创建 Pager，避免默认春季周次短暂参与同步。
-        Box(modifier = modifier.fillMaxSize()) {
-            StarryScheduleBackground(
-                customBackgroundUri = uiState.customBackgroundUri,
-                customBackgroundBitmap = customBackgroundBitmap
-            )
-        }
+        // 背景设置尚未恢复时只显示中性占位，避免把临时空值误绘制成默认星空。
+        // DataStore 与 Room 都完成首轮恢复后再创建 Pager，避免错误背景和默认周次短暂闪现。
+        Box(modifier = modifier.fillMaxSize())
         return
     }
     val blocksByWeek = remember(uiState.courses, uiState.maxAcademicWeek) {

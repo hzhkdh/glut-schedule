@@ -63,6 +63,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
+import com.glut.schedule.service.academic.SemesterDownloadItemStatus
+import com.glut.schedule.service.academic.SemesterDownloadMode
+import com.glut.schedule.service.academic.SemesterDownloadState
 
 private val LoginPrimary = Color(0xFF141821)
 private val LoginSecondary = Color(0xFF667085)
@@ -78,6 +81,7 @@ fun DirectLoginScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val semesterDownloadState by viewModel.semesterDownloadState.collectAsStateWithLifecycle()
     var passwordVisible by remember { mutableStateOf(false) }
 
     Column(
@@ -209,7 +213,10 @@ fun DirectLoginScreen(
                     semesters = uiState.semesters,
                     viewedSemesterId = uiState.viewedSemesterId,
                     importingSemesterId = uiState.importingSemesterId,
+                    downloadState = semesterDownloadState,
                     onDownloadSemester = viewModel::downloadSemester,
+                    onDownloadAll = viewModel::downloadAllSemesters,
+                    onRetryFailed = viewModel::retryFailedSemester,
                     onViewSemester = viewModel::viewSemester
                 )
             }
@@ -238,7 +245,10 @@ private fun SemesterManagementSection(
     semesters: List<AcademicSemester>,
     viewedSemesterId: String,
     importingSemesterId: String?,
+    downloadState: SemesterDownloadState,
     onDownloadSemester: (String) -> Unit,
+    onDownloadAll: () -> Unit,
+    onRetryFailed: (String) -> Unit,
     onViewSemester: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -246,8 +256,10 @@ private fun SemesterManagementSection(
     val selectedSemester = semesters.firstOrNull { it.id == selectedSemesterId }
         ?: semesters.firstOrNull { it.isCurrent }
         ?: semesters.first()
-    val isDownloading = importingSemesterId == selectedSemester.id ||
+    val activeSemesterId = downloadState.activeSemesterId ?: importingSemesterId
+    val isDownloading = activeSemesterId == selectedSemester.id ||
         selectedSemester.cacheStatus == SemesterCacheStatus.DOWNLOADING
+    val anyDownloadRunning = downloadState.isRunning || importingSemesterId != null
     val isViewable = selectedSemester.isCurrent || selectedSemester.cacheStatus == SemesterCacheStatus.CACHED
     val canRedownload = !selectedSemester.isCurrent &&
         selectedSemester.cacheStatus == SemesterCacheStatus.CACHED
@@ -258,6 +270,15 @@ private fun SemesterManagementSection(
         selectedSemester.cacheStatus == SemesterCacheStatus.FAILED -> "重新下载"
         else -> "下载并缓存"
     }
+    val bulkCandidates = semesters.count { semester ->
+        !semester.isCurrent &&
+            (semester.cacheStatus == SemesterCacheStatus.NOT_CACHED ||
+                semester.cacheStatus == SemesterCacheStatus.FAILED)
+    }
+    val completedItems = downloadState.items.count { item ->
+        item.status == SemesterDownloadItemStatus.SUCCEEDED ||
+            item.status == SemesterDownloadItemStatus.FAILED
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Text("学期课表", color = LoginPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -267,6 +288,57 @@ private fun SemesterManagementSection(
             fontSize = 13.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
         )
+        Button(
+            onClick = onDownloadAll,
+            enabled = !anyDownloadRunning && bulkCandidates > 0,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = LoginAccent,
+                contentColor = Color.White,
+                disabledContainerColor = LoginBorder.copy(alpha = 0.45f),
+                disabledContentColor = LoginSecondary
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            val text = when {
+                downloadState.isRunning && downloadState.mode != SemesterDownloadMode.SINGLE ->
+                    "已完成 $completedItems/${downloadState.items.size}"
+                bulkCandidates == 0 -> "历史学期均已缓存"
+                else -> "全部下载"
+            }
+            Text(text, fontWeight = FontWeight.SemiBold)
+        }
+        downloadState.lastBulkSummary?.let { summary ->
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                color = Color(0xFFFAFAF8),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Text("最近一次全部下载", color = LoginPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    summary.items.forEach { item ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(item.displayName, color = LoginPrimary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            Text(
+                                if (item.status == SemesterDownloadItemStatus.SUCCEEDED) "已完成" else "失败",
+                                color = if (item.status == SemesterDownloadItemStatus.SUCCEEDED) Color(0xFF15803D) else Color(0xFFDC2626),
+                                fontSize = 12.sp
+                            )
+                            if (item.status == SemesterDownloadItemStatus.FAILED) {
+                                TextButton(
+                                    onClick = { onRetryFailed(item.semesterId) },
+                                    enabled = !anyDownloadRunning
+                                ) { Text("重试") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
         ExposedDropdownMenuBox(
             expanded = expanded,
             onExpandedChange = { expanded = !expanded },
@@ -292,7 +364,7 @@ private fun SemesterManagementSection(
             ) {
                 semesters.forEach { semester ->
                     val status = when {
-                        importingSemesterId == semester.id || semester.cacheStatus == SemesterCacheStatus.DOWNLOADING -> "下载中"
+                        activeSemesterId == semester.id || semester.cacheStatus == SemesterCacheStatus.DOWNLOADING -> "下载中"
                         semester.isCurrent -> "当前"
                         semester.cacheStatus == SemesterCacheStatus.CACHED -> "已缓存"
                         semester.cacheStatus == SemesterCacheStatus.FAILED -> "重试"
@@ -319,7 +391,7 @@ private fun SemesterManagementSection(
                 if (isViewable) onViewSemester(selectedSemester.id)
                 else onDownloadSemester(selectedSemester.id)
             },
-            enabled = !isDownloading && selectedSemester.id != viewedSemesterId,
+            enabled = !anyDownloadRunning && !isDownloading && selectedSemester.id != viewedSemesterId,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 12.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = LoginAccent,
@@ -338,7 +410,7 @@ private fun SemesterManagementSection(
         if (canRedownload) {
             OutlinedButton(
                 onClick = { onDownloadSemester(selectedSemester.id) },
-                enabled = !isDownloading,
+                enabled = !anyDownloadRunning && !isDownloading,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 8.dp),
                 shape = RoundedCornerShape(12.dp)
             ) {

@@ -7,6 +7,17 @@ import org.junit.Test
 
 class MultiSemesterUiContractTest {
     @Test
+    fun scheduleLoadingPlaceholderDoesNotDrawDefaultBackgroundBeforeSettingsRestore() {
+        val screen = page("ScheduleScreen.kt")
+        val loadingBranch = screen
+            .substringAfter("if (!uiState.isInitialized) {")
+            .substringBefore("val blocksByWeek")
+
+        assertTrue(loadingBranch.contains("Box(modifier = modifier.fillMaxSize())"))
+        assertFalse(loadingBranch.contains("StarryScheduleBackground("))
+    }
+
+    @Test
     fun admissionParsingUsesTheStudentNumberFromEachAuthenticationAttempt() {
         val viewModel = page("DirectLoginViewModel.kt")
 
@@ -36,6 +47,11 @@ class MultiSemesterUiContractTest {
         assertTrue(screen.contains("disabledContentColor = LoginSecondary"))
         assertFalse(screen.contains("Text(actionLabel, color = Color.White"))
         assertTrue(screen.contains("viewModel::downloadSemester"))
+        assertTrue(screen.contains("viewModel::downloadAllSemesters"))
+        assertTrue(screen.contains("viewModel::retryFailedSemester"))
+        assertTrue(screen.contains("全部下载"))
+        assertTrue(screen.contains("最近一次全部下载"))
+        assertTrue(screen.contains("已完成 \$completedItems/\${downloadState.items.size}"))
         assertTrue(screen.contains("viewModel::viewSemester"))
         assertTrue(screen.contains("heightIn(min = 48.dp)"))
         assertFalse(screen.contains("Scaffold("))
@@ -57,6 +73,8 @@ class MultiSemesterUiContractTest {
     fun semesterDownloadAndViewAreDistinctAndDownloadNeverSelects() {
         val viewModel = page("DirectLoginViewModel.kt")
         val screen = page("DirectLoginScreen.kt")
+        val coordinator = service("SemesterBulkDownloadCoordinator.kt")
+        val container = appSource("ScheduleApplication.kt")
         val downloadBody = viewModel.substringAfter("fun downloadSemester(")
             .substringBefore("fun viewSemester(")
         val viewBody = viewModel.substringAfter("fun viewSemester(")
@@ -65,11 +83,11 @@ class MultiSemesterUiContractTest {
         assertTrue(viewModel.contains("fun downloadSemester(semesterId: String)"))
         assertTrue(viewModel.contains("fun viewSemester(semesterId: String)"))
         assertFalse(downloadBody.contains("scheduleRepository.selectSemester"))
-        assertTrue(downloadBody.contains("useWeeklyTimetable = true"))
-        assertTrue(downloadBody.contains("onProgress = { completed, total ->"))
-        assertTrue(downloadBody.contains("第${'$'}{completed}/${'$'}{total}周"))
-        assertFalse(downloadBody.contains("semester.cacheStatus == SemesterCacheStatus.CACHED ||"))
-        assertTrue(downloadBody.contains("previousCacheStatus"))
+        assertTrue(downloadBody.contains("semesterBulkDownloadCoordinator.startSingle(semesterId)"))
+        assertTrue(container.contains("useWeeklyTimetable = true"))
+        assertTrue(container.contains("onProgress = onProgress"))
+        assertTrue(coordinator.contains("completedWeeks = completed"))
+        assertTrue(coordinator.contains("previousStatus"))
         assertTrue(screen.contains("canRedownload"))
         assertTrue(screen.contains("onDownloadSemester(selectedSemester.id)"))
         assertTrue(viewBody.contains("AcademicSemesterViewPlanner.weekFor("))
@@ -124,16 +142,15 @@ class MultiSemesterUiContractTest {
     fun authenticatedStudentNumberSnapshotCoversCurrentAndHistoricalImports() {
         val viewModel = page("DirectLoginViewModel.kt")
         val sessionStore = service("AcademicSessionStore.kt")
-        val downloadBody = viewModel.substringAfter("fun downloadSemester(")
-            .substringBefore("fun viewSemester(")
+        val container = appSource("ScheduleApplication.kt")
         val importBody = viewModel.substringAfter("private suspend fun performImport(")
             .substringBefore("private suspend fun fetchAndSaveScores(")
 
         assertTrue(sessionStore.contains("authenticatedStudentNumber"))
         assertTrue(sessionStore.contains("saveAuthenticatedStudentNumber"))
         assertTrue(viewModel.contains("sessionStore.saveAuthenticatedStudentNumber(studentNumber)"))
-        assertTrue(downloadBody.contains("sessionStore.authenticatedStudentNumber.first()"))
-        assertFalse(downloadBody.contains("_uiState.value.username"))
+        assertTrue(container.contains("academicSessionStore.authenticatedStudentNumber.first()"))
+        assertTrue(container.contains("studentIdFallback = session.ownerStudentNumber"))
         assertFalse(importBody.contains("_uiState.value.username"))
         assertTrue(importBody.contains("studentIdFallback = studentNumber"))
     }
@@ -239,5 +256,10 @@ class MultiSemesterUiContractTest {
     private fun service(name: String): String {
         val module = File("src/main/java/com/glut/schedule/service/academic/$name")
         return (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/service/academic/$name")).readText()
+    }
+
+    private fun appSource(name: String): String {
+        val module = File("src/main/java/com/glut/schedule/$name")
+        return (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/$name")).readText()
     }
 }

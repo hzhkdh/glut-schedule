@@ -40,6 +40,65 @@ import org.junit.Test
 
 class ScheduleRepositoryTest {
     @Test
+    fun statisticsSourcesUseLivePeriodsForCurrentAndFrozenPeriodsForHistory() = runTest {
+        val history = AcademicSemester.create(
+            CampusType.GUILIN,
+            2025,
+            "45",
+            SemesterSeason.AUTUMN,
+            "2",
+            isCurrent = false,
+            cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.CACHED,
+            portalMaxWeek = 20
+        )
+        val current = AcademicSemester.create(
+            CampusType.GUILIN,
+            2026,
+            "46",
+            SemesterSeason.SPRING,
+            "1",
+            isCurrent = true,
+            cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.CACHED,
+            portalMaxWeek = 20
+        )
+        val currentCourse = course("current-course", "当前课程")
+        val historyCourse = course("history-course", "历史课程")
+        val frozenHistoryPeriods = guilinClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "08:00", endsAt = "08:45") else it
+        }
+        val liveCurrentPeriods = guilinClassPeriods().map {
+            if (it.section == 1) it.copy(startsAt = "08:10", endsAt = "08:55") else it
+        }
+        val dao = FakeScheduleDao(initialSemesters = listOf(history.toEntity(), current.toEntity()))
+        dao.insertCourses(
+            listOf(
+                currentCourse.toEntity(current.id),
+                historyCourse.toEntity(history.id)
+            )
+        )
+        dao.insertOccurrences(
+            currentCourse.occurrences.map { it.toEntity(current.id) } +
+                historyCourse.occurrences.map { it.toEntity(history.id) }
+        )
+        dao.insertClassPeriods(frozenHistoryPeriods.map { it.toEntity(history.id) })
+        val repository = ScheduleRepository(
+            dao = dao,
+            campusType = flowOf(CampusType.GUILIN),
+            classPeriodProfileOverrides = flowOf(
+                mapOf(ClassPeriodProfile.GUILIN_YANSHAN to liveCurrentPeriods)
+            )
+        )
+
+        val sources = repository.courseTimeSemesterSources.first()
+
+        assertEquals(listOf(current.id, history.id), sources.map { it.semesterId })
+        assertEquals("08:10", sources[0].classPeriods.first().startsAt)
+        assertEquals("08:00", sources[1].classPeriods.first().startsAt)
+        assertEquals(listOf("当前课程"), sources[0].courses.map { it.title })
+        assertEquals(listOf("历史课程"), sources[1].courses.map { it.title })
+    }
+
+    @Test
     fun replaceSemesterAdjustmentsWritesToExplicitTargetSemester() = runTest {
         val firstSemester = AcademicSemester.create(
             CampusType.GUILIN, 2025, "45", SemesterSeason.AUTUMN, "2", isCurrent = false

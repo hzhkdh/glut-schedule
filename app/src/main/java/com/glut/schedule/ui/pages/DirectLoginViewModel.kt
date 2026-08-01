@@ -21,6 +21,8 @@ import com.glut.schedule.service.academic.scorePageUnavailableReason
 import com.glut.schedule.service.academic.AcademicOALoginClient
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.AcademicSemesterImportService
+import com.glut.schedule.service.academic.SemesterBulkDownloadCoordinator
+import com.glut.schedule.service.academic.SemesterDownloadStartResult
 import com.glut.schedule.service.academic.AcademicSemesterCalendarResolver
 import com.glut.schedule.service.academic.AcademicSemesterCurrentImportPlanner
 import com.glut.schedule.service.academic.AcademicSemesterProbePlanner
@@ -115,6 +117,7 @@ class DirectLoginViewModel(
     private val apiProbeService: ApiProbeService,
     private val academicExamService: AcademicExamService,
     private val semesterImportService: AcademicSemesterImportService,
+    private val semesterBulkDownloadCoordinator: SemesterBulkDownloadCoordinator,
     private val scheduleParser: AcademicScheduleParser,
     private val scoreParser: ScoreParser,
     private val gradeExamParser: GradeExamParser = GradeExamParser(),
@@ -129,6 +132,7 @@ class DirectLoginViewModel(
         )
     )
     val uiState: StateFlow<DirectLoginUiState> = _uiState
+    val semesterDownloadState = semesterBulkDownloadCoordinator.state
 
     private var loginHttpClient = AcademicLoginHttpClient()
     private val oaLoginClient = AcademicOALoginClient()
@@ -190,66 +194,32 @@ class DirectLoginViewModel(
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
 
     fun downloadSemester(semesterId: String) {
-        val semester = _uiState.value.semesters.firstOrNull { it.id == semesterId } ?: return
-        if (semester.cacheStatus == SemesterCacheStatus.DOWNLOADING) return
-        if (_uiState.value.importingSemesterId != null) return
-        val previousCacheStatus = semester.cacheStatus
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(importingSemesterId = semesterId, message = "正在下载${semester.displayName}...")
-            scheduleRepository.updateSemesterCacheStatus(semesterId, SemesterCacheStatus.DOWNLOADING)
-            val cookie = sessionStore.academicCookie.first()
-            val baseUrl = sessionStore.campusBaseUrl.first().ifBlank {
-                if (semester.campus == com.glut.schedule.data.settings.CampusType.NANNING) {
-                    AcademicLoginResult.NANNING_URL
-                } else AcademicLoginResult.DEFAULT_GUILIN_URL
-            }
-            val authenticatedStudentNumber = sessionStore.authenticatedStudentNumber.first()
-                .ifBlank { credentialStore.getUsername() }
-            val result = if (cookie.isBlank()) {
-                Result.failure(IllegalStateException("登录状态已过期，请重新登录"))
-            } else {
-                semesterImportService.importSemester(
-                    cookie = cookie,
-                    baseUrl = baseUrl,
-                    semester = semester,
-                    studentIdFallback = authenticatedStudentNumber,
-                    useWeeklyTimetable = true,
-                    onProgress = { completed, total ->
-                        _uiState.value = _uiState.value.copy(
-                            message = "正在下载${semester.displayName}（第${completed}/${total}周）..."
-                        )
-                    }
-                )
-            }
-            result.onSuccess { payload ->
-                scheduleRepository.replaceSemesterSchedule(
-                    semester = semester,
-                    courses = payload.courses,
-                    adjustments = payload.adjustments,
-                    portalMaxWeek = payload.portalMaxWeek
-                )
-                _uiState.value = _uiState.value.copy(
-                    importingSemesterId = null,
-                    message = "已缓存${semester.displayName}，历史学期为只读模式"
-                )
-            }.onFailure { error ->
-                // 历史缓存刷新失败时恢复原状态，避免一次网络波动让已有课表不可查看。
-                val fallbackStatus = if (previousCacheStatus == SemesterCacheStatus.CACHED) {
-                    SemesterCacheStatus.CACHED
-                } else {
-                    SemesterCacheStatus.FAILED
-                }
-                scheduleRepository.updateSemesterCacheStatus(semesterId, fallbackStatus)
-                _uiState.value = _uiState.value.copy(
-                    importingSemesterId = null,
-                    message = if (fallbackStatus == SemesterCacheStatus.CACHED) {
-                        "重新下载失败，已保留现有缓存：${error.message ?: "请稍后重试"}"
-                    } else {
-                        "下载失败：${error.message ?: "请稍后重试"}"
-                    }
-                )
-            }
+            updateDownloadStartMessage(semesterBulkDownloadCoordinator.startSingle(semesterId))
         }
+    }
+
+    fun downloadAllSemesters() {
+        viewModelScope.launch {
+            updateDownloadStartMessage(semesterBulkDownloadCoordinator.startAll())
+        }
+    }
+
+    fun retryFailedSemester(semesterId: String) {
+        viewModelScope.launch {
+            updateDownloadStartMessage(semesterBulkDownloadCoordinator.retryFailed(semesterId))
+        }
+    }
+
+    private fun updateDownloadStartMessage(result: SemesterDownloadStartResult) {
+        val message = when (result) {
+            is SemesterDownloadStartResult.Started -> "下载任务已开始，可前往其他页面"
+            SemesterDownloadStartResult.AlreadyRunning -> "已有学期下载任务正在进行"
+            SemesterDownloadStartResult.NothingPending -> "历史学期均已缓存"
+            SemesterDownloadStartResult.LoginRequired -> "登录状态已过期，请重新登录"
+            SemesterDownloadStartResult.NotRetryable -> "该学期当前不可下载"
+        }
+        _uiState.value = _uiState.value.copy(message = message)
     }
 
     fun viewSemester(semesterId: String) {
@@ -564,6 +534,7 @@ class DirectLoginViewModel(
         val previousStudent = sessionStore.authenticatedStudentNumber.first()
         if (shouldClearAcademicData(previousStudent, studentNumber)) {
             // 账号变化时先清空旧教务缓存，避免新账号短暂看到上一位学生的数据。
+            semesterBulkDownloadCoordinator.cancelForAccountChange()
             scheduleRepository.clearAllData()
             sessionStore.clearAll()
         }
@@ -968,6 +939,7 @@ class DirectLoginViewModelFactory(
     private val apiProbeService: ApiProbeService,
     private val academicExamService: AcademicExamService,
     private val semesterImportService: AcademicSemesterImportService,
+    private val semesterBulkDownloadCoordinator: SemesterBulkDownloadCoordinator,
     private val scheduleParser: AcademicScheduleParser,
     private val scoreParser: ScoreParser,
     private val gradeExamParser: GradeExamParser = GradeExamParser(),
@@ -978,8 +950,8 @@ class DirectLoginViewModelFactory(
         return DirectLoginViewModel(
             loginService, sessionStore, credentialStore,
             scheduleRepository, settingsStore, apiProbeService,
-            academicExamService, semesterImportService, scheduleParser,
-            scoreParser, gradeExamParser, studyPlanParser
+            academicExamService, semesterImportService, semesterBulkDownloadCoordinator,
+            scheduleParser, scoreParser, gradeExamParser, studyPlanParser
         ) as T
     }
 }

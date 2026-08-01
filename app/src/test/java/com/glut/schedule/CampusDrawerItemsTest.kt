@@ -12,7 +12,12 @@ class CampusDrawerItemsTest {
     @Test
     fun guilinCampusItemsCombinePublicImagesAndKeepFinanceSeparate() {
         assertEquals(
-            listOf(DrawerItem.CampusInfo, DrawerItem.PartnerSchedule, DrawerItem.Finance),
+            listOf(
+                DrawerItem.CourseTimeStats,
+                DrawerItem.CampusInfo,
+                DrawerItem.PartnerSchedule,
+                DrawerItem.Finance
+            ),
             campusDrawerItems(CampusType.GUILIN)
         )
     }
@@ -20,7 +25,11 @@ class CampusDrawerItemsTest {
     @Test
     fun nanningKeepsFinanceButHidesGuilinInformation() {
         assertEquals(
-            listOf(DrawerItem.PartnerSchedule, DrawerItem.Finance),
+            listOf(
+                DrawerItem.CourseTimeStats,
+                DrawerItem.PartnerSchedule,
+                DrawerItem.Finance
+            ),
             campusDrawerItems(CampusType.NANNING)
         )
     }

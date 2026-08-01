@@ -10,6 +10,8 @@ import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSemesterImportService
+import com.glut.schedule.service.academic.SemesterBulkDownloadCoordinator
+import com.glut.schedule.service.academic.SemesterDownloadSession
 import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.fitness.FitnessApiService
 import com.glut.schedule.service.fitness.FitnessStore
@@ -41,6 +43,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class ScheduleApplication : Application() {
@@ -50,7 +53,7 @@ class ScheduleApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        appContainer = AppContainer(this)
+        appContainer = AppContainer(this, applicationScope)
         applicationScope.launch {
             try {
                 appContainer.scheduleRepository.resetViewedSemesterToCurrent()
@@ -80,7 +83,7 @@ class ScheduleApplication : Application() {
     }
 }
 
-class AppContainer(application: Application) {
+class AppContainer(application: Application, applicationScope: CoroutineScope) {
     private val database = Room.databaseBuilder(
         application,
         ScheduleDatabase::class.java,
@@ -118,6 +121,49 @@ class AppContainer(application: Application) {
     val academicExamService = AcademicExamService(examParser)
     val credentialStore = CredentialStore(application)
     val academicSemesterImportService = AcademicSemesterImportService(apiProbeService, academicScheduleParser)
+    val semesterBulkDownloadCoordinator = SemesterBulkDownloadCoordinator(
+        scope = applicationScope,
+        semestersProvider = { scheduleRepository.semesters.first() },
+        sessionProvider = {
+            val owner = academicSessionStore.authenticatedStudentNumber.first()
+                .ifBlank { credentialStore.getUsername() }
+            SemesterDownloadSession(
+                ownerStudentNumber = owner,
+                cookie = academicSessionStore.academicCookie.first(),
+                baseUrl = academicSessionStore.campusBaseUrl.first()
+            )
+        },
+        currentOwnerProvider = {
+            academicSessionStore.authenticatedStudentNumber.first()
+                .ifBlank { credentialStore.getUsername() }
+        },
+        download = { semester, session, onProgress ->
+            val baseUrl = session.baseUrl.ifBlank {
+                if (semester.campus == com.glut.schedule.data.settings.CampusType.NANNING) {
+                    com.glut.schedule.service.academic.AcademicLoginResult.NANNING_URL
+                } else {
+                    com.glut.schedule.service.academic.AcademicLoginResult.DEFAULT_GUILIN_URL
+                }
+            }
+            academicSemesterImportService.importSemester(
+                cookie = session.cookie,
+                baseUrl = baseUrl,
+                semester = semester,
+                studentIdFallback = session.ownerStudentNumber,
+                useWeeklyTimetable = true,
+                onProgress = onProgress
+            )
+        },
+        commit = { semester, payload ->
+            scheduleRepository.replaceSemesterSchedule(
+                semester = semester,
+                courses = payload.courses,
+                adjustments = payload.adjustments,
+                portalMaxWeek = payload.portalMaxWeek
+            )
+        },
+        updateCacheStatus = scheduleRepository::updateSemesterCacheStatus
+    )
     val fitnessStore = FitnessStore(application)
     val fitnessApiService = FitnessApiService()
     val fitnessParser = FitnessParser()

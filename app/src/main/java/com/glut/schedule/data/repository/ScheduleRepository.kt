@@ -7,6 +7,7 @@ import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.CourseTimeSemesterSource
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.GradeExamInfo
 import com.glut.schedule.data.model.ScoreInfo
@@ -103,6 +104,42 @@ class ScheduleRepository(
             semester, selectedCampus,
             config.legacyOverrides, config.profileOverrides, config.guilinSubCampus
         )
+    }
+
+    /**
+     * 课时统计需要同时读取多个学期，不能复用只面向“正在查看学期”的 courses 流。
+     * 当前学期采用用户此刻生效的作息；历史学期则固定使用下载时随学期保存的作息。
+     */
+    val courseTimeSemesterSources: Flow<List<CourseTimeSemesterSource>> = combine(
+        semesters,
+        dao.observeCourses(),
+        dao.observeOccurrences(),
+        dao.observeClassPeriods(),
+        currentClassPeriods
+    ) { semesterList, courseEntities, occurrenceEntities, periodEntities, liveCurrentPeriods ->
+        semesterList
+            .sortedWith(
+                compareByDescending<AcademicSemester> { it.isCurrent }
+                    .thenByDescending { it.portalYear }
+                    .thenByDescending { it.season.ordinal }
+            )
+            .map { semester ->
+                CourseTimeSemesterSource(
+                    semesterId = semester.id,
+                    semesterLabel = semester.displayName,
+                    isCurrent = semester.isCurrent,
+                    isDownloaded = semester.cacheStatus == SemesterCacheStatus.CACHED,
+                    portalMaxWeek = semester.portalMaxWeek,
+                    courses = mapCourses(courseEntities, occurrenceEntities, semester.id),
+                    classPeriods = if (semester.isCurrent) {
+                        liveCurrentPeriods
+                    } else {
+                        periodEntities
+                            .filter { it.semesterId == semester.id }
+                            .map { it.toModel() }
+                    }
+                )
+            }
     }
 
     suspend fun seedIfEmpty() {

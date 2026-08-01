@@ -138,6 +138,9 @@ import com.glut.schedule.ui.navigation.otherDrawerItems
 import com.glut.schedule.ui.navigation.prepareDrawerSelection
 import com.glut.schedule.ui.pages.AboutScreen
 import com.glut.schedule.ui.pages.FaqScreen
+import com.glut.schedule.ui.pages.CourseTimeStatsScreen
+import com.glut.schedule.ui.pages.CourseTimeStatsViewModel
+import com.glut.schedule.ui.pages.CourseTimeStatsViewModelFactory
 import com.glut.schedule.ui.pages.SemesterOverviewScreen
 import com.glut.schedule.ui.pages.SemesterOverviewViewModel
 import com.glut.schedule.ui.pages.SemesterOverviewViewModelFactory
@@ -301,6 +304,11 @@ class MainActivity : ComponentActivity() {
                         loginService = container.academicLoginService
                     )
                 )
+                val courseTimeStatsViewModel: CourseTimeStatsViewModel = viewModel(
+                    factory = CourseTimeStatsViewModelFactory(
+                        sourceFlow = container.scheduleRepository.courseTimeSemesterSources
+                    )
+                )
                 val directLoginViewModel: DirectLoginViewModel = viewModel(
                     factory = DirectLoginViewModelFactory(
                         loginService = container.academicLoginService,
@@ -314,9 +322,30 @@ class MainActivity : ComponentActivity() {
                         scoreParser = container.scoreParser,
                         gradeExamParser = container.gradeExamParser,
                         studyPlanParser = container.studyPlanParser,
-                        semesterImportService = container.academicSemesterImportService
+                        semesterImportService = container.academicSemesterImportService,
+                        semesterBulkDownloadCoordinator = container.semesterBulkDownloadCoordinator
                     )
                 )
+                LaunchedEffect(container.semesterBulkDownloadCoordinator) {
+                    container.semesterBulkDownloadCoordinator.completionEvents.collect { summary ->
+                        val succeeded = summary.items.count {
+                            it.status == com.glut.schedule.service.academic.SemesterDownloadItemStatus.SUCCEEDED
+                        }
+                        val failed = summary.items.size - succeeded
+                        val text = if (summary.mode == com.glut.schedule.service.academic.SemesterDownloadMode.SINGLE) {
+                            if (failed == 0) "学期课表已下载" else "学期课表下载失败"
+                        } else if (failed == 0) {
+                            "历史学期下载完成"
+                        } else {
+                            "下载完成：成功 $succeeded，失败 $failed"
+                        }
+                        android.widget.Toast.makeText(
+                            this@MainActivity,
+                            text,
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
                 val fitnessScoreViewModel: FitnessScoreViewModel = viewModel(
                     factory = FitnessScoreViewModelFactory(
                         service = container.fitnessApiService,
@@ -814,6 +843,10 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                         onImageGestureActive = { active -> drawerGestureBlocked = active }
                                     )
                                 }
+                                DrawerItem.CourseTimeStats -> CourseTimeStatsScreen(
+                                    viewModel = courseTimeStatsViewModel,
+                                    onImportClick = { selectedItem = DrawerItem.Import }
+                                )
                                 DrawerItem.Finance -> financeViewModel?.let {
                                     FinanceScreen(
                                         viewModel = it,
