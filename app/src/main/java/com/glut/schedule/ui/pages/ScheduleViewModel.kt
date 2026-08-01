@@ -14,6 +14,8 @@ import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
 import com.glut.schedule.data.model.ScheduleWeek
+import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
+import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.academicMaxWeekForSemester
@@ -66,6 +68,8 @@ data class ScheduleUiState(
     val showWeekend: Boolean = false,
     val showNoon: Boolean = false,
     val customBackgroundUri: String = "",
+    val customBackgroundCrop: NormalizedCropRect? = null,
+    val backgroundDimAmount: Float = DEFAULT_BACKGROUND_DIM_AMOUNT,
     val courseColorOverrides: Map<String, String> = emptyMap(),
     val isRefreshing: Boolean = false,
     val message: String = "",
@@ -93,6 +97,8 @@ private data class ScheduleSettingsUiState(
     val semesterStartMonday: LocalDate,
     val semesterEndDate: LocalDate,
     val customBackgroundUri: String,
+    val customBackgroundCrop: NormalizedCropRect?,
+    val backgroundDimAmount: Float,
     val campusType: CampusType,
     val guilinSubCampus: String = GUILIN_SUB_CAMPUS_DEFAULT,
     val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>> = emptyMap()
@@ -152,18 +158,20 @@ class ScheduleViewModel(
                     semesterEndDate = semesterEndDate
                 )
             },
-            settingsStore.customBackgroundUri,
+            settingsStore.backgroundPreferences,
             settingsStore.campusType,
             settingsStore.guilinSubCampus,
             settingsStore.classPeriodProfileOverrides
-        ) { base, customBackgroundUri, campusType, guilinSubCampus, profileOverrides ->
+        ) { base, backgroundPreferences, campusType, guilinSubCampus, profileOverrides ->
             ScheduleSettingsUiState(
                 weekNumber = base.weekNumber,
                 showWeekend = base.showWeekend,
                 showNoon = base.showNoon,
                 semesterStartMonday = base.semesterStartMonday,
                 semesterEndDate = base.semesterEndDate,
-                customBackgroundUri = customBackgroundUri,
+                customBackgroundUri = backgroundPreferences.uri,
+                customBackgroundCrop = backgroundPreferences.crop,
+                backgroundDimAmount = backgroundPreferences.dimAmount,
                 campusType = campusType,
                 guilinSubCampus = guilinSubCampus,
                 classPeriodProfileOverrides = profileOverrides
@@ -237,6 +245,8 @@ class ScheduleViewModel(
                 showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
                 customBackgroundUri = settings.customBackgroundUri,
+                customBackgroundCrop = settings.customBackgroundCrop,
+                backgroundDimAmount = settings.backgroundDimAmount,
                 courseColorOverrides = coloredState.overrides,
                 semesters = semesters,
                 viewedSemester = viewedSemester,
@@ -329,6 +339,14 @@ class ScheduleViewModel(
 
     fun setCustomBackgroundUri(uri: String) {
         viewModelScope.launch { settingsStore.setCustomBackgroundUri(uri) }
+    }
+
+    fun setCustomBackground(uri: String, crop: NormalizedCropRect) {
+        viewModelScope.launch { settingsStore.setCustomBackground(uri, crop) }
+    }
+
+    fun setBackgroundDimAmount(value: Float) {
+        viewModelScope.launch { settingsStore.setBackgroundDimAmount(value) }
     }
 
     fun clearCustomBackground() {

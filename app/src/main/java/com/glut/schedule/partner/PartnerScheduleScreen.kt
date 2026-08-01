@@ -113,6 +113,7 @@ fun PartnerScheduleScreen(
     viewModel: PartnerScheduleViewModel,
     customBackgroundUri: String,
     customBackgroundBitmap: ImageBitmap?,
+    backgroundDimAmount: Float,
     onDrawerOpen: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -131,7 +132,8 @@ fun PartnerScheduleScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         StarryScheduleBackground(
             customBackgroundUri = customBackgroundUri,
-            customBackgroundBitmap = customBackgroundBitmap
+            customBackgroundBitmap = customBackgroundBitmap,
+            dimAmount = backgroundDimAmount
         )
         Column(
             modifier = Modifier

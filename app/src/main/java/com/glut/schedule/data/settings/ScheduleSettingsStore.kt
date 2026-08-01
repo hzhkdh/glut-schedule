@@ -3,6 +3,7 @@ package com.glut.schedule.data.settings
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.MutablePreferences
@@ -13,6 +14,10 @@ import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
+import com.glut.schedule.data.model.NormalizedCropRect
+import com.glut.schedule.data.model.ScheduleBackgroundPreferences
+import com.glut.schedule.data.model.snapBackgroundDimAmount
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.clampAcademicWeek
@@ -83,6 +88,11 @@ class ScheduleSettingsStore(
     private val semesterStartMondayKey = stringPreferencesKey("semester_start_monday")
     private val semesterEndDateKey = stringPreferencesKey("semester_end_date")
     private val customBackgroundUriKey = stringPreferencesKey("custom_background_uri")
+    private val customBackgroundCropLeftKey = floatPreferencesKey("custom_background_crop_left")
+    private val customBackgroundCropTopKey = floatPreferencesKey("custom_background_crop_top")
+    private val customBackgroundCropRightKey = floatPreferencesKey("custom_background_crop_right")
+    private val customBackgroundCropBottomKey = floatPreferencesKey("custom_background_crop_bottom")
+    private val backgroundDimAmountKey = floatPreferencesKey("background_dim_amount")
     private val courseColorOverridesKey = stringSetPreferencesKey("course_color_overrides")
     private val guilinClassPeriodsKey = stringSetPreferencesKey("guilin_class_periods")
     private val guilinYanshanClassPeriodsKey = stringSetPreferencesKey("guilin_yanshan_class_periods")
@@ -137,6 +147,26 @@ class ScheduleSettingsStore(
 
     val customBackgroundUri: Flow<String> = context.scheduleSettings.data.map { preferences ->
         preferences[customBackgroundUriKey].orEmpty()
+    }.distinctUntilChanged()
+
+    /** URI、裁剪参数和蒙黑度来自同一份 Preferences 快照，避免界面短暂组合出不一致状态。 */
+    val backgroundPreferences: Flow<ScheduleBackgroundPreferences> = context.scheduleSettings.data.map { preferences ->
+        val crop = listOf(
+            preferences[customBackgroundCropLeftKey],
+            preferences[customBackgroundCropTopKey],
+            preferences[customBackgroundCropRightKey],
+            preferences[customBackgroundCropBottomKey]
+        ).takeIf { values -> values.all { it != null } }
+            ?.let { values ->
+                NormalizedCropRect(values[0]!!, values[1]!!, values[2]!!, values[3]!!).sanitized()
+            }
+        ScheduleBackgroundPreferences(
+            uri = preferences[customBackgroundUriKey].orEmpty(),
+            crop = crop,
+            dimAmount = snapBackgroundDimAmount(
+                preferences[backgroundDimAmountKey] ?: DEFAULT_BACKGROUND_DIM_AMOUNT
+            )
+        )
     }.distinctUntilChanged()
 
     val courseColorOverrides: Flow<Map<String, String>> = context.scheduleSettings.data.map { preferences ->
@@ -281,6 +311,11 @@ class ScheduleSettingsStore(
     }
 
     suspend fun setCustomBackgroundUri(uri: String) {
+        setCustomBackground(uri, crop = null)
+    }
+
+    /** 自定义图片 URI 与裁剪区域必须一次写入，避免冷启动读到半套配置。 */
+    suspend fun setCustomBackground(uri: String, crop: NormalizedCropRect?) {
         context.scheduleSettings.edit { preferences ->
             val trimmed = uri.trim()
             if (trimmed.isBlank()) {
@@ -288,6 +323,24 @@ class ScheduleSettingsStore(
             } else {
                 preferences[customBackgroundUriKey] = trimmed
             }
+            val safeCrop = crop?.sanitized()
+            if (safeCrop == null) {
+                preferences.remove(customBackgroundCropLeftKey)
+                preferences.remove(customBackgroundCropTopKey)
+                preferences.remove(customBackgroundCropRightKey)
+                preferences.remove(customBackgroundCropBottomKey)
+            } else {
+                preferences[customBackgroundCropLeftKey] = safeCrop.left
+                preferences[customBackgroundCropTopKey] = safeCrop.top
+                preferences[customBackgroundCropRightKey] = safeCrop.right
+                preferences[customBackgroundCropBottomKey] = safeCrop.bottom
+            }
+        }
+    }
+
+    suspend fun setBackgroundDimAmount(value: Float) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[backgroundDimAmountKey] = snapBackgroundDimAmount(value)
         }
     }
 

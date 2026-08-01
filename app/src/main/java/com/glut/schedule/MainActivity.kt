@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color as AndroidColor
+import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.view.View
@@ -67,6 +68,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -161,6 +163,7 @@ import com.glut.schedule.ui.pages.CampusImageScreen
 import com.glut.schedule.ui.pages.CampusImageViewModel
 import com.glut.schedule.ui.pages.CampusImageViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
+import com.glut.schedule.ui.pages.BackgroundCropScreen
 import com.glut.schedule.partner.PartnerScheduleScreen
 import com.glut.schedule.partner.PartnerScheduleViewModel
 import com.glut.schedule.partner.PartnerScheduleViewModelFactory
@@ -169,7 +172,10 @@ import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.components.BuiltInScheduleBackground
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
+import com.glut.schedule.ui.components.StarryScheduleBackground
 import com.glut.schedule.ui.components.shouldUseCustomBackground
+import com.glut.schedule.data.model.NormalizedCropRect
+import com.glut.schedule.data.model.snapBackgroundDimAmount
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
@@ -191,8 +197,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDateTime
+import kotlin.math.roundToInt
 
 private enum class SettingsSubPage(val title: String) {
     ROOT("设置"),
@@ -200,6 +210,16 @@ private enum class SettingsSubPage(val title: String) {
     CLASS_PERIODS("上课时间"),
     BUILT_IN_BACKGROUNDS("内置背景")
 }
+
+private data class PendingBackgroundCrop(
+    val uri: String,
+    val initialCrop: NormalizedCropRect?
+)
+
+private data class CommittableBackgroundSource(
+    val uri: String,
+    val releaseOnFailure: Boolean
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -232,10 +252,16 @@ class MainActivity : ComponentActivity() {
                 var showResetConfirm by remember { mutableStateOf(false) }
                 var settingsSubPage by remember { mutableStateOf(SettingsSubPage.ROOT) }
                 var drawerGestureBlocked by remember { mutableStateOf(false) }
+                var pendingBackgroundCrop by remember { mutableStateOf<PendingBackgroundCrop?>(null) }
+                var backgroundCropSaving by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
                     when {
+                        pendingBackgroundCrop != null -> {
+                            // 保存期间消费系统返回键，避免裁剪提交到一半时离开页面。
+                            if (!backgroundCropSaving) pendingBackgroundCrop = null
+                        }
                         drawerState.isOpen -> scope.launch { drawerState.close() }
                         settingsSubPage != SettingsSubPage.ROOT -> settingsSubPage = SettingsSubPage.ROOT
                         selectedItem != DrawerItem.Schedule -> selectedItem = DrawerItem.Schedule
@@ -304,6 +330,12 @@ class MainActivity : ComponentActivity() {
                         loginService = container.academicLoginService
                     )
                 )
+                LaunchedEffect(Unit) {
+                    val currentBackgroundUri = container.settingsStore.backgroundPreferences.first().uri
+                    withContext(Dispatchers.IO) {
+                        releaseUnusedBackgroundPermissions(this@MainActivity, currentBackgroundUri)
+                    }
+                }
                 val courseTimeStatsViewModel: CourseTimeStatsViewModel = viewModel(
                     factory = CourseTimeStatsViewModelFactory(
                         sourceFlow = container.scheduleRepository.courseTimeSemesterSources
@@ -420,22 +452,19 @@ class MainActivity : ComponentActivity() {
                     contract = ActivityResultContracts.OpenDocument()
                 ) { uri: android.net.Uri? ->
                     uri ?: return@rememberLauncherForActivityResult
-                    val uriText = uri.toString()
-                    runCatching {
-                        context.contentResolver.takePersistableUriPermission(
-                            uri,
-                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        )
-                    }
+                    // 长期读取权限延后到用户确认裁剪时获取；取消选择不会遗留授权。
+                    pendingBackgroundCrop = PendingBackgroundCrop(uri.toString(), initialCrop = null)
+                }
+
+                val clearBackground: () -> Unit = {
+                    val oldUri = scheduleViewModel.uiState.value.customBackgroundUri
                     scope.launch {
-                        val metrics = resources.displayMetrics
-                        val loaded = container.backgroundStore.preload(
-                            uri = uriText,
-                            targetWidth = metrics.widthPixels,
-                            targetHeight = metrics.heightPixels
-                        )
-                        if (loaded) {
-                            scheduleViewModel.setCustomBackgroundUri(uriText)
+                        withContext(NonCancellable) {
+                            container.settingsStore.setCustomBackground("", crop = null)
+                            container.backgroundStore.evictSource(oldUri)
+                            withContext(Dispatchers.IO) {
+                                releaseBackgroundSource(this@MainActivity, oldUri)
+                            }
                         }
                     }
                 }
@@ -489,8 +518,8 @@ class MainActivity : ComponentActivity() {
                         }
                 }
 
-                DisposableEffect(selectedItem) {
-                    applySystemBarStyle(lightIcons = !isSchedulePage)
+                DisposableEffect(selectedItem, pendingBackgroundCrop) {
+                    applySystemBarStyle(lightIcons = pendingBackgroundCrop == null && !isSchedulePage)
                     onDispose { }
                 }
 
@@ -822,6 +851,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     backgroundStore = container.backgroundStore,
                                     onImportClick = { selectedItem = DrawerItem.Import },
                                     onExamClick = { selectedItem = DrawerItem.Exam },
+                                    onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
+                                    onClearBackground = clearBackground,
                                     onDrawerOpen = { scope.launch { drawerState.open() } }
                                 )
                                 DrawerItem.PartnerSchedule -> PartnerScheduleDestination(
@@ -861,6 +892,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
                                     viewModel = scheduleViewModel,
+                                    backgroundStore = container.backgroundStore,
                                     subPage = settingsSubPage,
                                     greetingEnabled = greetingEnabled,
                                     onGreetingEnabledChange = { enabled ->
@@ -869,6 +901,22 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                         }
                                     },
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
+                                    onRecropBackground = { uri, crop ->
+                                        pendingBackgroundCrop = PendingBackgroundCrop(uri, crop)
+                                    },
+                                    onClearBackground = clearBackground,
+                                    onSelectBuiltInBackground = { background ->
+                                        val oldUri = scheduleViewModel.uiState.value.customBackgroundUri
+                                        scope.launch {
+                                            withContext(NonCancellable) {
+                                                container.settingsStore.setCustomBackground(background.storageValue, crop = null)
+                                                container.backgroundStore.evictSource(oldUri)
+                                                withContext(Dispatchers.IO) {
+                                                    releaseBackgroundSource(this@MainActivity, oldUri)
+                                                }
+                                            }
+                                        }
+                                    },
                                     onSubPageChange = { settingsSubPage = it },
                                     onReset = { showResetConfirm = true }
                                 )
@@ -894,6 +942,89 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                             }
                         }
                     }
+                }
+
+                pendingBackgroundCrop?.let { request ->
+                    val metrics = resources.displayMetrics
+                    BackgroundCropScreen(
+                        uri = request.uri,
+                        initialCrop = request.initialCrop,
+                        targetWidth = metrics.widthPixels,
+                        targetHeight = metrics.heightPixels,
+                        backgroundStore = container.backgroundStore,
+                        isSaving = backgroundCropSaving,
+                        onCancel = {
+                            pendingBackgroundCrop = null
+                        },
+                        onConfirm = { crop ->
+                            backgroundCropSaving = true
+                            scope.launch {
+                                var preparedSource: CommittableBackgroundSource? = null
+                                var committed = false
+                                try {
+                                    val oldUri = scheduleViewModel.uiState.value.customBackgroundUri
+                                    withContext(NonCancellable + Dispatchers.IO) {
+                                        // 在不可取消区间内同时取得资源和记录句柄，确保 finally 一定能回收。
+                                        preparedSource = prepareBackgroundSourceForCommit(
+                                            this@MainActivity, request.uri, currentUri = oldUri
+                                        )
+                                    }
+                                    val finalSource = preparedSource
+                                    if (finalSource == null) {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "无法长期读取这张图片，请重新选择",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                        return@launch
+                                    }
+                                    val loaded = container.backgroundStore.preload(
+                                        uri = finalSource.uri,
+                                        crop = crop,
+                                        targetWidth = metrics.widthPixels,
+                                        targetHeight = metrics.heightPixels
+                                    )
+                                    if (loaded) {
+                                        withContext(NonCancellable) {
+                                            // DataStore 落盘与 committed 标志必须属于同一原子区间。
+                                            container.settingsStore.setCustomBackground(finalSource.uri, crop)
+                                            committed = true
+                                        }
+                                        pendingBackgroundCrop = null
+                                        if (oldUri != finalSource.uri) {
+                                            container.backgroundStore.evictSource(oldUri)
+                                            withContext(NonCancellable + Dispatchers.IO) {
+                                                releaseBackgroundSource(this@MainActivity, oldUri)
+                                            }
+                                        }
+                                    } else {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "背景处理失败，已保留当前背景",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                } catch (cancellation: CancellationException) {
+                                    throw cancellation
+                                } catch (_: Exception) {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "背景处理失败，已保留当前背景",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                } finally {
+                                    if (!committed) {
+                                        preparedSource?.takeIf { it.releaseOnFailure }?.let { source ->
+                                            withContext(NonCancellable + Dispatchers.IO) {
+                                                releaseBackgroundSource(this@MainActivity, source.uri)
+                                            }
+                                        }
+                                    }
+                                    backgroundCropSaving = false
+                                }
+                            }
+                        }
+                    )
                 }
 
                 // Update dialog
@@ -954,6 +1085,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     .cancelForAccountChange()
                                             },
                                             clearData = {
+                                                val backgroundUriToRelease =
+                                                    scheduleViewModel.uiState.value.customBackgroundUri
                                                 directLoginViewModel.clearLoginState()
                                                 fitnessScoreViewModel.clearData()
                                                 financeViewModels.clearAll()
@@ -962,6 +1095,13 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                 container.settingsStore.clearAll()
                                                 container.academicSessionStore.clearAll()
                                                 container.credentialStore.clearCredentials()
+                                                withContext(Dispatchers.IO) {
+                                                    releaseBackgroundSource(
+                                                        this@MainActivity,
+                                                        backgroundUriToRelease
+                                                    )
+                                                    clearOwnedBackgroundSources(this@MainActivity)
+                                                }
                                             }
                                         )
                                     }
@@ -1002,23 +1142,35 @@ private fun ScheduleDestination(
     backgroundStore: ScheduleBackgroundStore,
     onImportClick: () -> Unit,
     onExamClick: () -> Unit,
+    onPickBackground: () -> Unit,
+    onClearBackground: () -> Unit,
     onDrawerOpen: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
-    var backgroundCacheRevision by remember(uiState.customBackgroundUri) { mutableIntStateOf(0) }
-    LaunchedEffect(uiState.customBackgroundUri) {
+    val metrics = context.resources.displayMetrics
+    var backgroundCacheRevision by remember(uiState.customBackgroundUri, uiState.customBackgroundCrop) { mutableIntStateOf(0) }
+    LaunchedEffect(uiState.customBackgroundUri, uiState.customBackgroundCrop) {
         val uri = uiState.customBackgroundUri
-        if (shouldUseCustomBackground(uri) && backgroundStore.get(uri) == null) {
-            val metrics = context.resources.displayMetrics
-            val loaded = backgroundStore.preload(uri, metrics.widthPixels, metrics.heightPixels)
+        if (shouldUseCustomBackground(uri) && backgroundStore.get(
+                uri, uiState.customBackgroundCrop, metrics.widthPixels, metrics.heightPixels
+            ) == null
+        ) {
+            val loaded = backgroundStore.preload(
+                uri, uiState.customBackgroundCrop, metrics.widthPixels, metrics.heightPixels
+            )
             if (!loaded) viewModel.clearCustomBackground()
             backgroundCacheRevision++
         }
     }
-    val backgroundBitmap = remember(uiState.customBackgroundUri, backgroundCacheRevision) {
+    val backgroundBitmap = remember(uiState.customBackgroundUri, uiState.customBackgroundCrop, backgroundCacheRevision) {
         if (shouldUseCustomBackground(uiState.customBackgroundUri)) {
-            backgroundStore.get(uiState.customBackgroundUri)
+            backgroundStore.get(
+                uiState.customBackgroundUri,
+                uiState.customBackgroundCrop,
+                metrics.widthPixels,
+                metrics.heightPixels
+            )
         } else {
             null
         }
@@ -1026,8 +1178,9 @@ private fun ScheduleDestination(
     ScheduleScreen(
         viewModel = viewModel,
         uiState = uiState,
-        backgroundStore = backgroundStore,
         customBackgroundBitmap = backgroundBitmap,
+        onPickBackground = onPickBackground,
+        onClearBackground = onClearBackground,
         onImportClick = onImportClick,
         onExamClick = onExamClick,
         onDrawerOpen = onDrawerOpen
@@ -1043,20 +1196,30 @@ private fun PartnerScheduleDestination(
 ) {
     val scheduleState by scheduleViewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var backgroundCacheRevision by remember(scheduleState.customBackgroundUri) { mutableIntStateOf(0) }
+    val metrics = context.resources.displayMetrics
+    var backgroundCacheRevision by remember(scheduleState.customBackgroundUri, scheduleState.customBackgroundCrop) { mutableIntStateOf(0) }
 
-    LaunchedEffect(scheduleState.customBackgroundUri) {
+    LaunchedEffect(scheduleState.customBackgroundUri, scheduleState.customBackgroundCrop) {
         val uri = scheduleState.customBackgroundUri
-        if (shouldUseCustomBackground(uri) && backgroundStore.get(uri) == null) {
-            val metrics = context.resources.displayMetrics
-            val loaded = backgroundStore.preload(uri, metrics.widthPixels, metrics.heightPixels)
+        if (shouldUseCustomBackground(uri) && backgroundStore.get(
+                uri, scheduleState.customBackgroundCrop, metrics.widthPixels, metrics.heightPixels
+            ) == null
+        ) {
+            val loaded = backgroundStore.preload(
+                uri, scheduleState.customBackgroundCrop, metrics.widthPixels, metrics.heightPixels
+            )
             if (!loaded) scheduleViewModel.clearCustomBackground()
             backgroundCacheRevision++
         }
     }
-    val backgroundBitmap = remember(scheduleState.customBackgroundUri, backgroundCacheRevision) {
+    val backgroundBitmap = remember(scheduleState.customBackgroundUri, scheduleState.customBackgroundCrop, backgroundCacheRevision) {
         if (shouldUseCustomBackground(scheduleState.customBackgroundUri)) {
-            backgroundStore.get(scheduleState.customBackgroundUri)
+            backgroundStore.get(
+                scheduleState.customBackgroundUri,
+                scheduleState.customBackgroundCrop,
+                metrics.widthPixels,
+                metrics.heightPixels
+            )
         } else {
             null
         }
@@ -1066,6 +1229,7 @@ private fun PartnerScheduleDestination(
         viewModel = viewModel,
         customBackgroundUri = scheduleState.customBackgroundUri,
         customBackgroundBitmap = backgroundBitmap,
+        backgroundDimAmount = scheduleState.backgroundDimAmount,
         onDrawerOpen = onDrawerOpen
     )
 }
@@ -1073,10 +1237,14 @@ private fun PartnerScheduleDestination(
 @Composable
 private fun ScheduleSettingsDestination(
     viewModel: ScheduleViewModel,
+    backgroundStore: ScheduleBackgroundStore,
     subPage: SettingsSubPage,
     greetingEnabled: Boolean,
     onGreetingEnabledChange: (Boolean) -> Unit,
     onPickBackground: () -> Unit,
+    onRecropBackground: (String, NormalizedCropRect?) -> Unit,
+    onClearBackground: () -> Unit,
+    onSelectBuiltInBackground: (BuiltInScheduleBackground) -> Unit,
     onSubPageChange: (SettingsSubPage) -> Unit,
     onReset: () -> Unit
 ) {
@@ -1101,8 +1269,7 @@ private fun ScheduleSettingsDestination(
             selectedBackground = BuiltInScheduleBackground.fromStorageValue(uiState.customBackgroundUri)
                 ?: if (uiState.customBackgroundUri.isBlank()) BuiltInScheduleBackground.STARRY else null,
             onSelectBackground = { background ->
-                // 内置背景使用稳定标识持久化，默认星空以空值兼容旧设置。
-                viewModel.setCustomBackgroundUri(background.storageValue)
+                onSelectBuiltInBackground(background)
                 onSubPageChange(SettingsSubPage.ROOT)
             }
         )
@@ -1113,9 +1280,17 @@ private fun ScheduleSettingsDestination(
             onShowNoonChange = viewModel::setShowNoon,
             greetingEnabled = greetingEnabled,
             onGreetingEnabledChange = onGreetingEnabledChange,
-            hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
+            customBackgroundUri = uiState.customBackgroundUri,
+            customBackgroundCrop = uiState.customBackgroundCrop,
+            backgroundDimAmount = uiState.backgroundDimAmount,
+            backgroundStore = backgroundStore,
+            hasCustomBackground = shouldUseCustomBackground(uiState.customBackgroundUri),
             onPickBackground = onPickBackground,
-            onClearBackground = viewModel::clearCustomBackground,
+            onRecropBackground = {
+                onRecropBackground(uiState.customBackgroundUri, uiState.customBackgroundCrop)
+            },
+            onBackgroundDimAmountChange = viewModel::setBackgroundDimAmount,
+            onClearBackground = onClearBackground,
             onBuiltInBackgrounds = { onSubPageChange(SettingsSubPage.BUILT_IN_BACKGROUNDS) },
             onCourseColors = { onSubPageChange(SettingsSubPage.COURSE_COLORS) },
             onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
@@ -1250,8 +1425,14 @@ private fun SettingsPage(
     onShowNoonChange: (Boolean) -> Unit = {},
     greetingEnabled: Boolean = true,
     onGreetingEnabledChange: (Boolean) -> Unit = {},
+    customBackgroundUri: String = "",
+    customBackgroundCrop: NormalizedCropRect? = null,
+    backgroundDimAmount: Float = 0.5f,
+    backgroundStore: ScheduleBackgroundStore,
     hasCustomBackground: Boolean = false,
     onPickBackground: () -> Unit = {},
+    onRecropBackground: () -> Unit = {},
+    onBackgroundDimAmountChange: (Float) -> Unit = {},
     onClearBackground: () -> Unit = {},
     onBuiltInBackgrounds: () -> Unit = {},
     onCourseColors: () -> Unit = {},
@@ -1262,6 +1443,39 @@ private fun SettingsPage(
     val settingsPrimary = Color(0xFF141821)
     val settingsSecondary = Color(0xFF667085)
     val settingsCardBg = Color(0xFFFFFEFB)
+    val context = LocalContext.current
+    val metrics = context.resources.displayMetrics
+    var backgroundPreviewRevision by remember(customBackgroundUri, customBackgroundCrop) { mutableIntStateOf(0) }
+    var previewDimAmount by remember(backgroundDimAmount) { mutableStateOf(backgroundDimAmount) }
+    LaunchedEffect(customBackgroundUri, customBackgroundCrop) {
+        if (
+            shouldUseCustomBackground(customBackgroundUri) &&
+            backgroundStore.get(
+                customBackgroundUri,
+                customBackgroundCrop,
+                metrics.widthPixels,
+                metrics.heightPixels
+            ) == null
+        ) {
+            backgroundStore.preload(
+                customBackgroundUri,
+                customBackgroundCrop,
+                metrics.widthPixels,
+                metrics.heightPixels
+            )
+            backgroundPreviewRevision++
+        }
+    }
+    val previewBitmap = remember(customBackgroundUri, customBackgroundCrop, backgroundPreviewRevision) {
+        if (shouldUseCustomBackground(customBackgroundUri)) {
+            backgroundStore.get(
+                customBackgroundUri,
+                customBackgroundCrop,
+                metrics.widthPixels,
+                metrics.heightPixels
+            )
+        } else null
+    }
 
     Column(
         modifier = Modifier
@@ -1353,6 +1567,50 @@ private fun SettingsPage(
             // Background section
             Text("背景", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Surface(
+                modifier = Modifier.fillMaxWidth().height(150.dp),
+                color = Color(0xFF111827),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    StarryScheduleBackground(
+                        modifier = Modifier.matchParentSize(),
+                        customBackgroundUri = customBackgroundUri,
+                        customBackgroundBitmap = previewBitmap,
+                        dimAmount = previewDimAmount
+                    )
+                    Column(
+                        modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("背景效果预览", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text("软件工程 · 08:00", color = Color.White.copy(alpha = 0.82f), fontSize = 13.sp)
+                    }
+                }
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("背景蒙黑度", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Text(
+                            "${(previewDimAmount * 100).roundToInt()}%",
+                            color = settingsSecondary,
+                            fontSize = 13.sp
+                        )
+                    }
+                    Slider(
+                        value = previewDimAmount,
+                        onValueChange = { previewDimAmount = snapBackgroundDimAmount(it) },
+                        onValueChangeFinished = { onBackgroundDimAmountChange(previewDimAmount) },
+                        valueRange = 0f..0.8f,
+                        steps = 15
+                    )
+                }
+            }
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = settingsCardBg,
                 shape = RoundedCornerShape(14.dp)
@@ -1390,6 +1648,22 @@ private fun SettingsPage(
                         )
                     }
                     if (hasCustomBackground) {
+                        HorizontalDivider(color = Color(0xFFEDE8DE))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onRecropBackground)
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("重新裁剪", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                            Icon(
+                                Icons.Outlined.ChevronRight,
+                                contentDescription = null,
+                                tint = settingsSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                         HorizontalDivider(color = Color(0xFFEDE8DE))
                         Row(
                             modifier = Modifier
@@ -2218,6 +2492,102 @@ private fun UpdateDialog(
                 }
             )
         }
+    }
+}
+
+/**
+ * 确认裁剪后才获取长期 URI 权限；提供方不支持时复制原图到私有目录作为可靠后备。
+ */
+private fun prepareBackgroundSourceForCommit(
+    context: Context,
+    sourceUri: String,
+    currentUri: String
+): CommittableBackgroundSource? {
+    if (sourceUri == currentUri) return CommittableBackgroundSource(sourceUri, releaseOnFailure = false)
+    val source = runCatching { Uri.parse(sourceUri) }.getOrNull() ?: return null
+    val persisted = runCatching {
+        context.contentResolver.takePersistableUriPermission(
+            source,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION
+        )
+    }.isSuccess
+    if (persisted) return CommittableBackgroundSource(sourceUri, releaseOnFailure = true)
+
+    val directory = File(context.filesDir, "custom_backgrounds").apply { mkdirs() }
+    val token = "${System.currentTimeMillis()}_${System.nanoTime()}"
+    val temporary = File(directory, "source_$token.tmp")
+    val destination = File(directory, "source_$token")
+    return runCatching {
+        context.contentResolver.openInputStream(source)?.use { input ->
+            temporary.outputStream().use(input::copyTo)
+        } ?: error("无法打开背景图片")
+        check(temporary.length() > 0L) { "背景图片为空" }
+        check(temporary.renameTo(destination)) { "背景图片保存失败" }
+        CommittableBackgroundSource(Uri.fromFile(destination).toString(), releaseOnFailure = true)
+    }.onFailure {
+        temporary.delete()
+        destination.delete()
+    }.getOrNull()
+}
+
+private fun releaseBackgroundSource(context: Context, uriText: String) {
+    if (uriText.isBlank()) return
+    val uri = runCatching { Uri.parse(uriText) }.getOrNull() ?: return
+    if (uri.scheme == "content") {
+        runCatching {
+            context.contentResolver.releasePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+    } else {
+        deleteOwnedBackgroundSource(context, uriText)
+    }
+}
+
+/** 启动时回收未被当前背景引用的持久授权、私有副本和中断复制留下的临时文件。 */
+private fun releaseUnusedBackgroundPermissions(context: Context, currentUri: String) {
+    context.contentResolver.persistedUriPermissions
+        .filter { permission -> permission.uri.toString() != currentUri }
+        .forEach { permission ->
+            runCatching {
+                context.contentResolver.releasePersistableUriPermission(
+                    permission.uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+        }
+    val root = runCatching { File(context.filesDir, "custom_backgrounds").canonicalFile }.getOrNull() ?: return
+    val currentFile = runCatching {
+        Uri.parse(currentUri).takeIf { it.scheme == "file" }?.path?.let(::File)?.canonicalFile
+    }.getOrNull()
+    root.listFiles()?.forEach { child ->
+        runCatching {
+            val target = child.canonicalFile
+            if (target.parentFile == root && target != currentFile) target.delete()
+        }
+    }
+}
+
+/** 只允许删除应用私有背景目录内的文件，外部相册 URI 永远不会被触碰。 */
+private fun deleteOwnedBackgroundSource(context: Context, uriText: String) {
+    runCatching {
+        val uri = Uri.parse(uriText)
+        if (uri.scheme != "file") return@runCatching
+        val root = File(context.filesDir, "custom_backgrounds").canonicalFile
+        val target = uri.path?.let(::File)?.canonicalFile ?: return@runCatching
+        if (target.parentFile == root) target.delete()
+    }
+}
+
+private fun clearOwnedBackgroundSources(context: Context) {
+    runCatching {
+        val root = File(context.filesDir, "custom_backgrounds").canonicalFile
+        root.listFiles()?.forEach { child ->
+            val target = child.canonicalFile
+            if (target.isFile && target.parentFile == root) target.delete()
+        }
+        root.delete()
     }
 }
 

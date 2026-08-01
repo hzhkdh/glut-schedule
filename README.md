@@ -11,12 +11,27 @@
 - 彩色课程卡片展示课程名、教室、教师，选课属性徽章（必修蓝/限选橙/任选绿）
 - 同一时段多门冲突课程自动分组，点击轮换显示
 - 调课自动处理：原课消失，补课出现在对应的周次/节次
-- 支持自定义背景图片和课程卡片颜色
+- 支持“星空”“花”内置背景、自定义背景图片和课程卡片颜色
+- 自定义背景按当前设备竖屏比例裁剪，支持拖动、双指缩放（1×–5×）和重新裁剪
+- 背景蒙黑度支持 0%–80%、每档 5% 调节，并同步应用于本人课表与情侣/基友课表
+
+### 课时统计
+- 按课程、教室或教师三个维度统计计划课时，可查看单个学期或全部已下载学期的汇总
+- 环形图展示各项占总时长的比例，点击扇区或明细卡片可查看名称、时长和百分比
+- 明细按时长降序双列展示；相邻扇区使用可区分颜色，时间和百分比保持完整显示
+- 严格按实际上课周次和每节课时长计算，自动排除存在同名真实排课的“待确认”占位记录
+
+### 情侣/基友课表
+- 通过 24 小时邀请码分享和导入 TA 的课表，可在 TA 单人视图与双方合并视图间切换
+- 可分别控制是否分享教室、教师，并为双方设置身份色
+- TA 课表独立保存周末和中午显示偏好，不影响本人课表布局
 
 ### 数据导入
 - 直接输入学号密码登录教务系统，自动检测桂林/南宁校区
 - 南宁分校支持验证码登录
 - 登录后自动拉取：课表、考试安排、考试成绩、等级考试、教学计划、调课信息
+- 支持按学期下载历史课表或一键下载全部历史学期；任务由应用级协调器继续执行，切换页面不影响进度
+- 当前学期自动更新，历史学期下载后离线只读；失败的学期可单独重试
 - 凭据加密存储（EncryptedSharedPreferences），支持静默登录刷新
 - 记住密码：勾选后加密保存，不勾选自动清除已存密码
 - 体测平台使用独立登录与验证码流程，凭据和会话同样加密保存在本机
@@ -31,13 +46,15 @@
 | 考级成绩 | 英语四六级、普通话等国家考试 | skilltest.jsdo (moduleId=2090) |
 | 体测成绩 | 最新与历年体测明细、总评、评分标准 | 体测管理平台 |
 | 校园信息 | 校历、作息时间、校车路线和校园地图 | 内置校园地图 + 校园信息图片服务 |
+| 课时统计 | 按课程/教室/教师统计单学期或全部学期课时 | 本地课表 + 学期作息缓存 |
+| 情侣/基友课表 | 通过限时邀请码分享、导入和合并查看 TA 的课表 | 本地课表 + 邀请服务 |
 | 财务 | 财务概览、缴费项目、交易记录和电子票据 | 桂林理工大学财务平台 |
 | 教学计划 | 课组学分/门数要求与完成情况 | studentSelfSchedule.jsdo → studentScheduleLineShow.do |
 | 学期概览 | 学期日期、进度、节假日、调课一览 | 教务日历 + timor.tech 节假日 API |
-| 导入课表 | 学号密码登录，一键导入全部数据 | 多端点并行探测 |
+| 导入课表 | 登录导入当前数据，按学期或一键下载全部历史课表 | 多端点并行探测 |
 | 通知 | App 内公告、维护提醒、更新提示，支持未读红点 | Cloudflare Pages notices.json |
 | 常见问题 | FAQ 分类展开/收起（常见问题/数据解读/隐私安全/关于项目） | — |
-| 设置 | 显示周末、自定义背景、课程卡片颜色 | — |
+| 设置 | 显示周末、内置/自定义背景、背景蒙黑度、课程卡片颜色 | — |
 | 关于 | 版本信息、维护者、检测更新、小程序名称复制、App 内下载安装 | Cloudflare Pages + GitHub Releases API |
 
 ### 学期概览
@@ -90,9 +107,10 @@
 - 支持本地缓存，网络失败时不影响 App 使用
 
 ### 数据持久化
-- Room 保存课表、成绩、考试、教学计划和调课等教务数据
-- DataStore 保存显示设置、学期信息、通知缓存和已读状态
+- Room 保存当前及历史学期课表、学期作息、成绩、考试、教学计划和调课等教务数据
+- DataStore 保存显示设置、自定义背景裁剪参数、背景蒙黑度、学期信息、通知缓存和已读状态
 - 教务、体测和财务凭据使用加密存储；财务、体测和校园图片使用独立本地缓存
+- 自定义背景优先保留系统授予的长期图片访问权限；不支持时仅在应用私有目录保存备用副本
 - 切换账号自动清除旧数据
 - 各菜单独立刷新按钮，登录后自动刷新
 
@@ -104,6 +122,7 @@
 - DataStore Preferences 1.2.1
 - OkHttp 5.3.2
 - Security-Crypto 1.1.0-alpha06
+- ExifInterface 1.4.2
 - kotlinx-coroutines 1.10.2
 - Gradle 8.13 + AGP 8.13.0
 
@@ -153,7 +172,7 @@ app/src/main/java/com/glut/schedule/
     settings/                       DataStore 设置、学期信息、通知与节假日缓存
 
   service/
-    academic/                       教务登录、会话、凭据、多端点探测与考试请求
+    academic/                       教务登录、会话、凭据、多端点探测、多学期下载与考试请求
     parser/                         课表、成绩、考试、教学计划和体测解析器
     fitness/                        体测 API、请求协议、凭据与页面缓存
     finance/                        财务 API、HTML 解析、缓存编解码与加密存储
@@ -162,10 +181,12 @@ app/src/main/java/com/glut/schedule/
     UpdateChecker.kt                Cloudflare Pages / GitHub 版本检测
     NoticeChecker.kt                App 内通知拉取与 JSON 解析
 
+  partner/                          情侣/基友课表快照、邀请码服务、存储、布局与页面
+
   ui/
-    components/                     课表背景、表头和网格等复用 Compose 组件
+    components/                     课表背景、裁剪计算、表头和网格等复用 Compose 组件
     navigation/                     抽屉菜单定义与校区可见性规则
-    pages/                          各业务页面及 ViewModel，包括专业成绩、校园信息和财务
+    pages/                          各业务页面及 ViewModel，包括背景裁剪、专业成绩、校园信息和财务
     theme/                          Material 3 主题
 
 app/src/main/res/
@@ -177,10 +198,14 @@ app/src/main/res/
 ## 数据流
 
 - 教务导入：`AcademicLoginService` / `ApiProbeService` → 各 Parser → `ScheduleRepository`（Room）→ ViewModel `StateFlow` → Compose UI
+- 历史学期：`SemesterBulkDownloadCoordinator` 在应用级作用域串行下载 → Room 按学期保存课表与作息 → 课表和统计页面离线读取
+- 课时统计：多学期课表与作息 → `CourseTimeStatsCalculator` 按课程/教室/教师汇总 → 可交互环形图和双列明细
+- 情侣/基友课表：本人课表快照 → 限时邀请码服务 → `PartnerScheduleStore` 本地保存 → TA/合并视图
 - 专业成绩：Room 中的成绩 + 教学计划 → `ProfessionalScoreCalculator` 按学年筛选与折算 → `ProfessionalScoreViewModel` → 结果卡片
 - 体测查询：`FitnessApiService` → `FitnessProtocol` / `FitnessParser` → `FitnessStore` → `FitnessScoreViewModel`
 - 财务查询：`FinanceApiService` → `FinanceParser` → `FinanceStore` / `FinanceCacheCodec` → `FinanceViewModel`
 - 校园信息：`CampusImageService` → 可信图片校验与文件缓存 → `CampusImageViewModel`；校园地图直接读取内置资源
+- 背景设置：系统图片选择器 → `BackgroundCropScreen` → 裁剪参数与图片访问权限 → `ScheduleBackgroundStore` 按显示尺寸解码和缓存
 - 设置与通知：`ScheduleSettingsStore` / `NoticeChecker` → DataStore 缓存与状态 Flow → 对应页面和侧边栏红点
 - App 更新：`UpdateChecker` → `AppUpdater` 流式下载 APK → FileProvider → 系统安装器
 
@@ -204,5 +229,5 @@ app/src/main/res/
 
 - JUnit 4.13.2 + kotlinx-coroutines-test
 - 覆盖领域模型、Parser、Repository、API Service、缓存编解码、ViewModel 和 UI 契约
-- 包含桂林/南宁教务、专业成绩、体测、财务、校园信息、通知、更新与发布版本回归测试
+- 包含桂林/南宁教务、多学期下载、课时统计、情侣/基友课表、专业成绩、体测、财务、校园信息、自定义背景裁剪与解码、通知、更新及发布版本回归测试
 - 测试目录：`app/src/test/java/`

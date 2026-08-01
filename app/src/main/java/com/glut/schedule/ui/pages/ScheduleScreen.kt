@@ -1,10 +1,5 @@
 package com.glut.schedule.ui.pages
 
-import android.content.Intent
-import android.net.Uri
-
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -56,10 +51,7 @@ import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.ScheduleHeader
-import com.glut.schedule.ui.components.BackgroundSwitchResult
-import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.components.StarryScheduleBackground
-import com.glut.schedule.ui.components.shouldCommitCustomBackgroundUri
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -67,8 +59,9 @@ import kotlinx.coroutines.launch
 fun ScheduleScreen(
     viewModel: ScheduleViewModel,
     uiState: ScheduleUiState,
-    backgroundStore: ScheduleBackgroundStore,
     customBackgroundBitmap: ImageBitmap?,
+    onPickBackground: () -> Unit,
+    onClearBackground: () -> Unit,
     onImportClick: () -> Unit,
     onExamClick: () -> Unit = {},
     onDrawerOpen: () -> Unit = {},
@@ -76,42 +69,7 @@ fun ScheduleScreen(
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     var showAddActions by remember { mutableStateOf(false) }
-    val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val backgroundPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri ?: return@rememberLauncherForActivityResult
-        val uriText = uri.toString()
-        runCatching {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-        }
-        coroutineScope.launch {
-            val metrics = context.resources.displayMetrics
-            val loaded = backgroundStore.preload(
-                uri = uriText,
-                targetWidth = metrics.widthPixels,
-                targetHeight = metrics.heightPixels
-            )
-            when (shouldCommitCustomBackgroundUri(uriText, preloadSucceeded = loaded)) {
-                BackgroundSwitchResult.Commit -> {
-                    viewModel.setCustomBackgroundUri(uriText)
-                    showAddActions = false
-                }
-                BackgroundSwitchResult.KeepCurrent -> {
-                    snackbarHostState.showSnackbar("背景加载失败，已保留当前背景")
-                    showAddActions = false
-                }
-                BackgroundSwitchResult.Clear -> {
-                    viewModel.clearCustomBackground()
-                    showAddActions = false
-                }
-            }
-        }
-    }
     if (!uiState.isInitialized) {
         // 背景设置尚未恢复时只显示中性占位，避免把临时空值误绘制成默认星空。
         // DataStore 与 Room 都完成首轮恢复后再创建 Pager，避免错误背景和默认周次短暂闪现。
@@ -153,7 +111,8 @@ fun ScheduleScreen(
     Box(modifier = modifier.fillMaxSize()) {
         StarryScheduleBackground(
             customBackgroundUri = uiState.customBackgroundUri,
-            customBackgroundBitmap = customBackgroundBitmap
+            customBackgroundBitmap = customBackgroundBitmap,
+            dimAmount = uiState.backgroundDimAmount
         )
         Column(
             modifier = Modifier
@@ -243,10 +202,13 @@ fun ScheduleScreen(
                     ) { showAddActions = false }
             )
             ScheduleAddActionsPanel(
-                hasCustomBackground = uiState.customBackgroundUri.isNotBlank(),
-                onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
+                hasCustomBackground = com.glut.schedule.ui.components.shouldUseCustomBackground(uiState.customBackgroundUri),
+                onPickBackground = {
+                    onPickBackground()
+                    showAddActions = false
+                },
                 onClearBackground = {
-                    viewModel.clearCustomBackground()
+                    onClearBackground()
                     showAddActions = false
                 },
                 modifier = Modifier
