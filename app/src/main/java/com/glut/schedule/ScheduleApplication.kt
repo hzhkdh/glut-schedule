@@ -159,6 +159,7 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
                 semester = semester,
                 courses = payload.courses,
                 adjustments = payload.adjustments,
+                classPeriods = scheduleRepository.currentClassPeriods.first(),
                 portalMaxWeek = payload.portalMaxWeek
             )
         },

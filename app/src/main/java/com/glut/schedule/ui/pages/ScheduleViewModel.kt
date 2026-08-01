@@ -497,6 +497,7 @@ class ScheduleViewModel(
             semester = targetSemester,
             courses = payload.courses,
             adjustments = payload.adjustments,
+            classPeriods = repository.currentClassPeriods.first(),
             semesterStartDate = resolvedCalendar.startMonday,
             semesterEndDate = resolvedCalendar.endDate,
             portalMaxWeek = payload.portalMaxWeek

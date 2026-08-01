@@ -947,15 +947,23 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                             Text("确认重置", color = Color(0xFFDC2626),
                                 modifier = Modifier.clickable {
                                     showResetConfirm = false
-                                    directLoginViewModel.clearLoginState()
-                                    fitnessScoreViewModel.clearData()
-                                    financeViewModels.clearAll()
-                                    container.financeStore.clearAll()
                                     scope.launch {
-                                        container.scheduleRepository.clearAllData()
-                                        container.settingsStore.clearAll()
-                                        container.academicSessionStore.clearAll()
-                                        container.credentialStore.clearCredentials()
+                                        resetApplicationDataSafely(
+                                            cancelActiveDownloads = {
+                                                container.semesterBulkDownloadCoordinator
+                                                    .cancelForAccountChange()
+                                            },
+                                            clearData = {
+                                                directLoginViewModel.clearLoginState()
+                                                fitnessScoreViewModel.clearData()
+                                                financeViewModels.clearAll()
+                                                container.financeStore.clearAll()
+                                                container.scheduleRepository.clearAllData()
+                                                container.settingsStore.clearAll()
+                                                container.academicSessionStore.clearAll()
+                                                container.credentialStore.clearCredentials()
+                                            }
+                                        )
                                     }
                                 }.padding(8.dp))
                         },

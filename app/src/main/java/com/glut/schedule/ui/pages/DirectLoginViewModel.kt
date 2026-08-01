@@ -662,6 +662,7 @@ class DirectLoginViewModel(
                 semester = currentSemester,
                 courses = currentPayload.courses,
                 adjustments = currentPayload.adjustments,
+                classPeriods = scheduleRepository.currentClassPeriods.first(),
                 semesterStartDate = resolvedCalendar.startMonday,
                 semesterEndDate = resolvedCalendar.endDate,
                 portalMaxWeek = currentPayload.portalMaxWeek

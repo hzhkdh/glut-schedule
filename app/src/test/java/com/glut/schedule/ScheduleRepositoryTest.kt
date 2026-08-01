@@ -40,6 +40,38 @@ import org.junit.Test
 
 class ScheduleRepositoryTest {
     @Test
+    fun replacingHistoricalSchedulePersistsProvidedClassPeriods() = runTest {
+        val historical = AcademicSemester.create(
+            CampusType.GUILIN,
+            2025,
+            "45",
+            SemesterSeason.AUTUMN,
+            "2",
+            isCurrent = false
+        )
+        val customPeriods = guilinClassPeriods().map { period ->
+            if (period.section == 1) {
+                period.copy(startsAt = "07:45", endsAt = "08:35")
+            } else {
+                period
+            }
+        }
+        val dao = FakeScheduleDao(initialSemesters = listOf(historical.toEntity()))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+
+        repository.replaceSemesterSchedule(
+            semester = historical,
+            courses = listOf(course("custom-period", "自定义作息课程")),
+            adjustments = emptyList(),
+            classPeriods = customPeriods
+        )
+
+        val source = repository.courseTimeSemesterSources.first().single()
+        assertEquals("07:45", source.classPeriods.first { it.section == 1 }.startsAt)
+        assertEquals("08:35", source.classPeriods.first { it.section == 1 }.endsAt)
+    }
+
+    @Test
     fun statisticsSourcesUseLivePeriodsForCurrentAndFrozenPeriodsForHistory() = runTest {
         val history = AcademicSemester.create(
             CampusType.GUILIN,
@@ -323,7 +355,12 @@ class ScheduleRepositoryTest {
         val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
         repository.selectSemester(AcademicSemester.LEGACY_CURRENT_ID)
 
-        repository.replaceSemesterSchedule(historical, listOf(course("history", "历史课程")), emptyList())
+        repository.replaceSemesterSchedule(
+            historical,
+            listOf(course("history", "历史课程")),
+            emptyList(),
+            guilinClassPeriods()
+        )
 
         assertEquals(AcademicSemester.LEGACY_CURRENT_ID, repository.viewedSemesterId.value)
     }
@@ -369,8 +406,18 @@ class ScheduleRepositoryTest {
             CampusType.GUILIN, 2025, "45", SemesterSeason.SPRING, "1", isCurrent = true
         )
 
-        repository.replaceSemesterSchedule(autumn, listOf(course("shared", "历史课程")), emptyList())
-        repository.replaceSemesterSchedule(spring, listOf(course("shared", "当前课程")), emptyList())
+        repository.replaceSemesterSchedule(
+            autumn,
+            listOf(course("shared", "历史课程")),
+            emptyList(),
+            guilinClassPeriods()
+        )
+        repository.replaceSemesterSchedule(
+            spring,
+            listOf(course("shared", "当前课程")),
+            emptyList(),
+            guilinClassPeriods()
+        )
 
         assertEquals(listOf(autumn.id, spring.id), dao.replacedSemesterIds)
         assertEquals(2, dao.insertedCourses.map { it.semesterId }.distinct().size)
@@ -391,6 +438,7 @@ class ScheduleRepositoryTest {
             semester = semester,
             courses = listOf(course("internship", "实习")),
             adjustments = emptyList(),
+            classPeriods = guilinClassPeriods(),
             portalMaxWeek = 19
         )
 

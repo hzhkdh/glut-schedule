@@ -301,14 +301,11 @@ class ScheduleRepository(
         semester: AcademicSemester,
         courses: List<ScheduleCourse>,
         adjustments: List<SemesterAdjustment>,
+        classPeriods: List<ClassPeriod>,
         semesterStartDate: java.time.LocalDate? = semester.semesterStartDate,
         semesterEndDate: java.time.LocalDate? = semester.semesterEndDate,
         portalMaxWeek: Int? = semester.portalMaxWeek
     ) {
-        val periods = when (semester.campus) {
-            CampusType.GUILIN -> guilinClassPeriods()
-            CampusType.NANNING -> nanningClassPeriods()
-        }
         val coloredCourses = CourseColorMapper.assignColors(courses, courseColorOverrides.first())
         val cachedSemester = semester.copy(
             cacheStatus = SemesterCacheStatus.CACHED,
@@ -321,7 +318,8 @@ class ScheduleRepository(
             semester = cachedSemester.toEntity(),
             courses = coloredCourses.map { it.toEntity(semester.id) },
             occurrences = coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity(semester.id) } },
-            periods = periods.map { it.toEntity(semester.id) },
+            // 历史统计依赖此处冻结的作息，必须保存调用时实际生效的子校区与用户覆盖。
+            periods = classPeriods.map { it.toEntity(semester.id) },
             adjustments = adjustments.map { it.toEntity(semester.id) }
         )
         if (semester.isCurrent && semester.id != AcademicSemester.LEGACY_CURRENT_ID) {
