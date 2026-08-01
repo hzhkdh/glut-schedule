@@ -1,7 +1,7 @@
 {
-  "version": "v0.21.1",
-  "versionCode": 37,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.21.1",
-  "releaseNotes": "## fix\r\n去重学期概览中的课程数量",
-  "publishedAt": "2026-07-28T16:10:03Z"
+  "version": "v0.22.0",
+  "versionCode": 38,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.22.0",
+  "releaseNotes": "- 新增【情侣/基友课表】菜单，双端可互导\r\n- 新增【课时统计】菜单，统计课程、教室、教师三个维度的时长\r\n- 新增蒙黑度自调节\r\n- 新增外部背景图裁剪功能",
+  "publishedAt": "2026-08-01T15:26:58Z"
 }
