@@ -41,15 +41,17 @@ enum class BuiltInScheduleBackground(
     @param:DrawableRes val drawableRes: Int,
     val displayName: String
 ) {
-    STARRY("", R.drawable.builtin_starry_background, "星空"),
     FLOWER("builtin://flower", R.drawable.builtin_flower_background, "花")
     ;
 
     companion object {
-        fun fromStorageValue(value: String): BuiltInScheduleBackground? =
-            entries.firstOrNull { background ->
+        fun fromStorageValue(value: String): BuiltInScheduleBackground? {
+            // 旧版以空值代表默认星空；星空下线后让同一空值自然迁移为默认《花》。
+            if (value.isBlank()) return FLOWER
+            return entries.firstOrNull { background ->
                 background.storageValue.isNotBlank() && background.storageValue == value
             }
+        }
     }
 }
 
@@ -316,10 +318,10 @@ fun StarryScheduleBackground(
             drawRect(Color.Black.copy(alpha = dimAmount.coerceIn(0f, 0.8f)))
         }
     } else {
-        // 空值代表默认星空；内置标识只切换资源，不走外部图片解码流程。
+        // 空值和内置标识都使用默认《花》，不走外部图片解码流程。
         BuiltInScheduleBackgroundImage(
             background = BuiltInScheduleBackground.fromStorageValue(customBackgroundUri)
-                ?: BuiltInScheduleBackground.STARRY,
+                ?: BuiltInScheduleBackground.FLOWER,
             modifier = modifier,
             dimAmount = dimAmount
         )

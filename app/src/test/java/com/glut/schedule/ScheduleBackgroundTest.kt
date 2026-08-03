@@ -152,6 +152,10 @@ class ScheduleBackgroundTest {
         assertFalse(shouldUseCustomBackground(BuiltInScheduleBackground.FLOWER.storageValue))
         assertEquals(
             BuiltInScheduleBackground.FLOWER,
+            BuiltInScheduleBackground.fromStorageValue("")
+        )
+        assertEquals(
+            BuiltInScheduleBackground.FLOWER,
             BuiltInScheduleBackground.fromStorageValue("builtin://flower")
         )
         assertEquals(null, BuiltInScheduleBackground.fromStorageValue("content://images/background"))

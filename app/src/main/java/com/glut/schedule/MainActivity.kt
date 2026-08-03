@@ -49,12 +49,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.DownloadDone
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -167,13 +170,13 @@ import com.glut.schedule.ui.pages.BackgroundCropScreen
 import com.glut.schedule.ui.pages.RemoteBackgroundGalleryScreen
 import com.glut.schedule.ui.pages.RemoteBackgroundGalleryViewModel
 import com.glut.schedule.ui.pages.RemoteBackgroundGalleryViewModelFactory
+import com.glut.schedule.ui.pages.remoteBackgroundDownloadBadgeText
 import com.glut.schedule.partner.PartnerScheduleScreen
 import com.glut.schedule.partner.PartnerScheduleViewModel
 import com.glut.schedule.partner.PartnerScheduleViewModelFactory
 import com.glut.schedule.ui.pages.ClassPeriodSettingsScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
-import com.glut.schedule.ui.components.BuiltInScheduleBackground
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.components.StarryScheduleBackground
 import com.glut.schedule.ui.components.shouldUseCustomBackground
@@ -211,7 +214,7 @@ private enum class SettingsSubPage(val title: String) {
     ROOT("设置"),
     COURSE_COLORS("课程卡片颜色"),
     CLASS_PERIODS("上课时间"),
-    BUILT_IN_BACKGROUNDS("背景图库")
+    BACKGROUND_GALLERY("背景图库")
 }
 
 private data class PendingBackgroundCrop(
@@ -444,7 +447,7 @@ class MainActivity : ComponentActivity() {
                     ))
                 } else null
                 val remoteBackgroundGalleryViewModel: RemoteBackgroundGalleryViewModel? =
-                    if (selectedItem == DrawerItem.Settings && settingsSubPage == SettingsSubPage.BUILT_IN_BACKGROUNDS) {
+                    if (selectedItem == DrawerItem.Settings && settingsSubPage == SettingsSubPage.BACKGROUND_GALLERY) {
                         viewModel(
                             key = "remote-background-gallery",
                             factory = RemoteBackgroundGalleryViewModelFactory(container.remoteBackgroundRepository)
@@ -844,6 +847,43 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
+                                            DrawerItem.Settings -> remoteBackgroundGalleryViewModel?.let { viewModel ->
+                                                val galleryState by viewModel.uiState.collectAsStateWithLifecycle()
+                                                val downloadedCount = galleryState.downloaded.size
+                                                val badgeText = remoteBackgroundDownloadBadgeText(downloadedCount)
+                                                IconButton(onClick = { viewModel.setDownloadedManagerVisible(true) }) {
+                                                    BadgedBox(
+                                                        badge = {
+                                                            badgeText?.let { count ->
+                                                                Badge(
+                                                                    containerColor = Color(0xFF3F7DF6),
+                                                                    contentColor = Color.White
+                                                                ) { Text(count) }
+                                                            }
+                                                        }
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Outlined.DownloadDone,
+                                                            contentDescription = if (downloadedCount == 0) {
+                                                                "管理已下载背景，暂无已下载背景"
+                                                            } else {
+                                                                "管理已下载背景，共 $downloadedCount 项"
+                                                            },
+                                                            tint = Color(0xFF141821)
+                                                        )
+                                                    }
+                                                }
+                                                IconButton(
+                                                    onClick = viewModel::refresh,
+                                                    enabled = !galleryState.isLoading
+                                                ) {
+                                                    Icon(
+                                                        Icons.Outlined.Refresh,
+                                                        contentDescription = "刷新在线背景",
+                                                        tint = Color(0xFF141821)
+                                                    )
+                                                }
+                                            }
                                             else -> {}
                                         }
                                     },
@@ -917,18 +957,6 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
                                     onRecropBackground = { request -> pendingBackgroundCrop = request },
                                     onClearBackground = clearBackground,
-                                    onSelectBuiltInBackground = { background ->
-                                        val oldUri = scheduleViewModel.uiState.value.customBackgroundUri
-                                        scope.launch {
-                                            withContext(NonCancellable) {
-                                                container.settingsStore.setCustomBackground(background.storageValue, crop = null)
-                                                container.backgroundStore.evictSource(oldUri)
-                                                withContext(Dispatchers.IO) {
-                                                    releaseBackgroundSource(this@MainActivity, oldUri)
-                                                }
-                                            }
-                                        }
-                                    },
                                     onUseRemoteBackground = { asset ->
                                         pendingBackgroundCrop = PendingBackgroundCrop(
                                             uri = asset.uri,
@@ -1282,7 +1310,6 @@ private fun ScheduleSettingsDestination(
     onPickBackground: () -> Unit,
     onRecropBackground: (PendingBackgroundCrop) -> Unit,
     onClearBackground: () -> Unit,
-    onSelectBuiltInBackground: (BuiltInScheduleBackground) -> Unit,
     onUseRemoteBackground: (com.glut.schedule.service.background.DownloadedRemoteBackground) -> Unit,
     onSubPageChange: (SettingsSubPage) -> Unit,
     onReset: () -> Unit
@@ -1304,17 +1331,11 @@ private fun ScheduleSettingsDestination(
             onResetPeriods = viewModel::resetClassPeriods,
             onSetGuilinSubCampus = viewModel::setGuilinSubCampus
         )
-        SettingsSubPage.BUILT_IN_BACKGROUNDS -> remoteBackgroundGalleryViewModel?.let { galleryViewModel ->
+        SettingsSubPage.BACKGROUND_GALLERY -> remoteBackgroundGalleryViewModel?.let { galleryViewModel ->
             RemoteBackgroundGalleryScreen(
                 viewModel = galleryViewModel,
                 backgroundStore = backgroundStore,
                 activeBackgroundUri = uiState.customBackgroundUri,
-                selectedBuiltIn = BuiltInScheduleBackground.fromStorageValue(uiState.customBackgroundUri)
-                    ?: if (uiState.customBackgroundUri.isBlank()) BuiltInScheduleBackground.STARRY else null,
-                onSelectBuiltIn = { background ->
-                    onSelectBuiltInBackground(background)
-                    onSubPageChange(SettingsSubPage.ROOT)
-                },
                 onUseDownloaded = onUseRemoteBackground
             )
         }
@@ -1342,7 +1363,7 @@ private fun ScheduleSettingsDestination(
             },
             onBackgroundDimAmountChange = viewModel::setBackgroundDimAmount,
             onClearBackground = onClearBackground,
-            onBuiltInBackgrounds = { onSubPageChange(SettingsSubPage.BUILT_IN_BACKGROUNDS) },
+            onBuiltInBackgrounds = { onSubPageChange(SettingsSubPage.BACKGROUND_GALLERY) },
             onCourseColors = { onSubPageChange(SettingsSubPage.COURSE_COLORS) },
             onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
             onReset = onReset
@@ -1832,81 +1853,6 @@ internal fun shouldRunDrawerGreetingAnimation(
     animatorsEnabled: Boolean,
     touchExplorationEnabled: Boolean
 ): Boolean = requested && animatorsEnabled && !touchExplorationEnabled
-
-@Composable
-private fun BuiltInBackgroundsPage(
-    selectedBackground: BuiltInScheduleBackground?,
-    onSelectBackground: (BuiltInScheduleBackground) -> Unit
-) {
-    val settingsBg = Color(0xFFF6F4EF)
-    val settingsPrimary = Color(0xFF141821)
-    val settingsCardBg = Color(0xFFFFFEFB)
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(settingsBg)
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        BuiltInBackgroundsCard(
-            background = BuiltInScheduleBackground.STARRY,
-            selected = selectedBackground == BuiltInScheduleBackground.STARRY,
-            onClick = { onSelectBackground(BuiltInScheduleBackground.STARRY) },
-            cardColor = settingsCardBg,
-            textColor = settingsPrimary
-        )
-        BuiltInBackgroundsCard(
-            background = BuiltInScheduleBackground.FLOWER,
-            selected = selectedBackground == BuiltInScheduleBackground.FLOWER,
-            onClick = { onSelectBackground(BuiltInScheduleBackground.FLOWER) },
-            cardColor = settingsCardBg,
-            textColor = settingsPrimary
-        )
-    }
-}
-
-@Composable
-private fun BuiltInBackgroundsCard(
-    background: BuiltInScheduleBackground,
-    selected: Boolean,
-    onClick: () -> Unit,
-    cardColor: Color,
-    textColor: Color
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = cardColor,
-        shape = RoundedCornerShape(14.dp),
-        shadowElevation = if (selected) 2.dp else 0.dp
-    ) {
-        Column(modifier = Modifier.clickable(onClick = onClick)) {
-            Image(
-                painter = painterResource(background.drawableRes),
-                contentDescription = "${background.displayName}背景预览",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp),
-                contentScale = ContentScale.Crop
-            )
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(background.displayName, color = textColor, fontSize = 16.sp, modifier = Modifier.weight(1f))
-                if (selected) {
-                    Icon(
-                        Icons.Outlined.Check,
-                        contentDescription = "已选择",
-                        tint = Color(0xFF2563EB),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun CourseColorsPage(

@@ -37,12 +37,13 @@ class MainActivityMergeRegressionTest {
     }
 
     @Test
-    fun backgroundGalleryNavigationKeepsBothBuiltInBackgroundsReachable() {
-        assertTrue(source.contains("BUILT_IN_BACKGROUNDS(\"背景图库\")"))
-        assertTrue(source.contains("SettingsSubPage.BUILT_IN_BACKGROUNDS -> remoteBackgroundGalleryViewModel?.let"))
+    fun backgroundGalleryShowsOnlyTheRemoteCatalog() {
+        assertTrue(source.contains("BACKGROUND_GALLERY(\"背景图库\")"))
+        assertTrue(source.contains("SettingsSubPage.BACKGROUND_GALLERY -> remoteBackgroundGalleryViewModel?.let"))
         assertTrue(source.contains("Text(\"背景图库\""))
-        assertTrue(gallerySource.contains("BuiltInScheduleBackground.STARRY"))
-        assertTrue(gallerySource.contains("BuiltInScheduleBackground.FLOWER"))
+        assertFalse(gallerySource.contains("Text(\"内置背景\""))
+        assertFalse(gallerySource.contains("Text(\"在线画廊\""))
+        assertFalse(gallerySource.contains("BuiltInGalleryCard"))
     }
 
     @Test
