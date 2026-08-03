@@ -14,6 +14,11 @@ class MainActivityMergeRegressionTest {
         (if (module.exists()) module else
             File("app/src/main/java/com/glut/schedule/MainActivity.kt")).readText()
     }
+    private val gallerySource by lazy {
+        val module = File("src/main/java/com/glut/schedule/ui/pages/RemoteBackgroundGalleryScreen.kt")
+        (if (module.exists()) module else
+            File("app/src/main/java/com/glut/schedule/ui/pages/RemoteBackgroundGalleryScreen.kt")).readText()
+    }
 
     @Test
     fun drawerUsesSeventyFivePercentOfScreenWidth() {
@@ -32,12 +37,19 @@ class MainActivityMergeRegressionTest {
     }
 
     @Test
-    fun builtInBackgroundNavigationRemainsReachable() {
-        assertTrue(source.contains("BUILT_IN_BACKGROUNDS(\"内置背景\")"))
-        assertTrue(source.contains("SettingsSubPage.BUILT_IN_BACKGROUNDS -> BuiltInBackgroundsPage("))
-        assertTrue(source.contains("Text(\"内置背景\""))
-        assertTrue(source.contains("BuiltInScheduleBackground.STARRY"))
-        assertTrue(source.contains("BuiltInScheduleBackground.FLOWER"))
+    fun backgroundGalleryNavigationKeepsBothBuiltInBackgroundsReachable() {
+        assertTrue(source.contains("BUILT_IN_BACKGROUNDS(\"背景图库\")"))
+        assertTrue(source.contains("SettingsSubPage.BUILT_IN_BACKGROUNDS -> remoteBackgroundGalleryViewModel?.let"))
+        assertTrue(source.contains("Text(\"背景图库\""))
+        assertTrue(gallerySource.contains("BuiltInScheduleBackground.STARRY"))
+        assertTrue(gallerySource.contains("BuiltInScheduleBackground.FLOWER"))
+    }
+
+    @Test
+    fun recroppingRemoteBackgroundKeepsItsRemoteIdentity() {
+        assertTrue(source.contains("remoteId = uiState.remoteBackgroundId.takeIf(String::isNotBlank)"))
+        assertTrue(source.contains("remoteSha256 = uiState.remoteBackgroundSha256.takeIf(String::isNotBlank)"))
+        assertTrue(source.contains("remoteDisplayName = uiState.remoteBackgroundDisplayName.takeIf(String::isNotBlank)"))
     }
 
     @Test

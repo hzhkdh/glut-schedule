@@ -164,6 +164,9 @@ import com.glut.schedule.ui.pages.CampusImageViewModel
 import com.glut.schedule.ui.pages.CampusImageViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.BackgroundCropScreen
+import com.glut.schedule.ui.pages.RemoteBackgroundGalleryScreen
+import com.glut.schedule.ui.pages.RemoteBackgroundGalleryViewModel
+import com.glut.schedule.ui.pages.RemoteBackgroundGalleryViewModelFactory
 import com.glut.schedule.partner.PartnerScheduleScreen
 import com.glut.schedule.partner.PartnerScheduleViewModel
 import com.glut.schedule.partner.PartnerScheduleViewModelFactory
@@ -208,12 +211,15 @@ private enum class SettingsSubPage(val title: String) {
     ROOT("设置"),
     COURSE_COLORS("课程卡片颜色"),
     CLASS_PERIODS("上课时间"),
-    BUILT_IN_BACKGROUNDS("内置背景")
+    BUILT_IN_BACKGROUNDS("背景图库")
 }
 
 private data class PendingBackgroundCrop(
     val uri: String,
-    val initialCrop: NormalizedCropRect?
+    val initialCrop: NormalizedCropRect?,
+    val remoteId: String? = null,
+    val remoteSha256: String? = null,
+    val remoteDisplayName: String? = null
 )
 
 private data class CommittableBackgroundSource(
@@ -437,6 +443,13 @@ class MainActivity : ComponentActivity() {
                         )
                     ))
                 } else null
+                val remoteBackgroundGalleryViewModel: RemoteBackgroundGalleryViewModel? =
+                    if (selectedItem == DrawerItem.Settings && settingsSubPage == SettingsSubPage.BUILT_IN_BACKGROUNDS) {
+                        viewModel(
+                            key = "remote-background-gallery",
+                            factory = RemoteBackgroundGalleryViewModelFactory(container.remoteBackgroundRepository)
+                        )
+                    } else null
 
                 LaunchedEffect(campusType) {
                     if (
@@ -893,6 +906,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
                                     viewModel = scheduleViewModel,
                                     backgroundStore = container.backgroundStore,
+                                    remoteBackgroundGalleryViewModel = remoteBackgroundGalleryViewModel,
                                     subPage = settingsSubPage,
                                     greetingEnabled = greetingEnabled,
                                     onGreetingEnabledChange = { enabled ->
@@ -901,9 +915,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                         }
                                     },
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
-                                    onRecropBackground = { uri, crop ->
-                                        pendingBackgroundCrop = PendingBackgroundCrop(uri, crop)
-                                    },
+                                    onRecropBackground = { request -> pendingBackgroundCrop = request },
                                     onClearBackground = clearBackground,
                                     onSelectBuiltInBackground = { background ->
                                         val oldUri = scheduleViewModel.uiState.value.customBackgroundUri
@@ -916,6 +928,15 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                 }
                                             }
                                         }
+                                    },
+                                    onUseRemoteBackground = { asset ->
+                                        pendingBackgroundCrop = PendingBackgroundCrop(
+                                            uri = asset.uri,
+                                            initialCrop = null,
+                                            remoteId = asset.id,
+                                            remoteSha256 = asset.sha256,
+                                            remoteDisplayName = asset.displayName
+                                        )
                                     },
                                     onSubPageChange = { settingsSubPage = it },
                                     onReset = { showResetConfirm = true }
@@ -965,9 +986,14 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     val oldUri = scheduleViewModel.uiState.value.customBackgroundUri
                                     withContext(NonCancellable + Dispatchers.IO) {
                                         // 在不可取消区间内同时取得资源和记录句柄，确保 finally 一定能回收。
-                                        preparedSource = prepareBackgroundSourceForCommit(
-                                            this@MainActivity, request.uri, currentUri = oldUri
-                                        )
+                                        preparedSource = if (request.remoteId != null) {
+                                            // 远程原图已在持久下载库中，不能复制进自定义目录或随切换被清理。
+                                            CommittableBackgroundSource(request.uri, releaseOnFailure = false)
+                                        } else {
+                                            prepareBackgroundSourceForCommit(
+                                                this@MainActivity, request.uri, currentUri = oldUri
+                                            )
+                                        }
                                     }
                                     val finalSource = preparedSource
                                     if (finalSource == null) {
@@ -987,7 +1013,17 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     if (loaded) {
                                         withContext(NonCancellable) {
                                             // DataStore 落盘与 committed 标志必须属于同一原子区间。
-                                            container.settingsStore.setCustomBackground(finalSource.uri, crop)
+                                            if (request.remoteId != null && request.remoteSha256 != null) {
+                                                container.settingsStore.setRemoteBackground(
+                                                    uri = finalSource.uri,
+                                                    crop = crop,
+                                                    id = request.remoteId,
+                                                    sha256 = request.remoteSha256,
+                                                    displayName = request.remoteDisplayName.orEmpty()
+                                                )
+                                            } else {
+                                                container.settingsStore.setCustomBackground(finalSource.uri, crop)
+                                            }
                                             committed = true
                                         }
                                         pendingBackgroundCrop = null
@@ -1101,6 +1137,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                         backgroundUriToRelease
                                                     )
                                                     clearOwnedBackgroundSources(this@MainActivity)
+                                                    container.remoteBackgroundRepository.clearAllData()
                                                 }
                                             }
                                         )
@@ -1238,13 +1275,15 @@ private fun PartnerScheduleDestination(
 private fun ScheduleSettingsDestination(
     viewModel: ScheduleViewModel,
     backgroundStore: ScheduleBackgroundStore,
+    remoteBackgroundGalleryViewModel: RemoteBackgroundGalleryViewModel?,
     subPage: SettingsSubPage,
     greetingEnabled: Boolean,
     onGreetingEnabledChange: (Boolean) -> Unit,
     onPickBackground: () -> Unit,
-    onRecropBackground: (String, NormalizedCropRect?) -> Unit,
+    onRecropBackground: (PendingBackgroundCrop) -> Unit,
     onClearBackground: () -> Unit,
     onSelectBuiltInBackground: (BuiltInScheduleBackground) -> Unit,
+    onUseRemoteBackground: (com.glut.schedule.service.background.DownloadedRemoteBackground) -> Unit,
     onSubPageChange: (SettingsSubPage) -> Unit,
     onReset: () -> Unit
 ) {
@@ -1265,14 +1304,20 @@ private fun ScheduleSettingsDestination(
             onResetPeriods = viewModel::resetClassPeriods,
             onSetGuilinSubCampus = viewModel::setGuilinSubCampus
         )
-        SettingsSubPage.BUILT_IN_BACKGROUNDS -> BuiltInBackgroundsPage(
-            selectedBackground = BuiltInScheduleBackground.fromStorageValue(uiState.customBackgroundUri)
-                ?: if (uiState.customBackgroundUri.isBlank()) BuiltInScheduleBackground.STARRY else null,
-            onSelectBackground = { background ->
-                onSelectBuiltInBackground(background)
-                onSubPageChange(SettingsSubPage.ROOT)
-            }
-        )
+        SettingsSubPage.BUILT_IN_BACKGROUNDS -> remoteBackgroundGalleryViewModel?.let { galleryViewModel ->
+            RemoteBackgroundGalleryScreen(
+                viewModel = galleryViewModel,
+                backgroundStore = backgroundStore,
+                activeBackgroundUri = uiState.customBackgroundUri,
+                selectedBuiltIn = BuiltInScheduleBackground.fromStorageValue(uiState.customBackgroundUri)
+                    ?: if (uiState.customBackgroundUri.isBlank()) BuiltInScheduleBackground.STARRY else null,
+                onSelectBuiltIn = { background ->
+                    onSelectBuiltInBackground(background)
+                    onSubPageChange(SettingsSubPage.ROOT)
+                },
+                onUseDownloaded = onUseRemoteBackground
+            )
+        }
         SettingsSubPage.ROOT -> SettingsPage(
             showWeekend = uiState.showWeekend,
             onShowWeekendChange = viewModel::setShowWeekend,
@@ -1287,7 +1332,13 @@ private fun ScheduleSettingsDestination(
             hasCustomBackground = shouldUseCustomBackground(uiState.customBackgroundUri),
             onPickBackground = onPickBackground,
             onRecropBackground = {
-                onRecropBackground(uiState.customBackgroundUri, uiState.customBackgroundCrop)
+                onRecropBackground(PendingBackgroundCrop(
+                    uri = uiState.customBackgroundUri,
+                    initialCrop = uiState.customBackgroundCrop,
+                    remoteId = uiState.remoteBackgroundId.takeIf(String::isNotBlank),
+                    remoteSha256 = uiState.remoteBackgroundSha256.takeIf(String::isNotBlank),
+                    remoteDisplayName = uiState.remoteBackgroundDisplayName.takeIf(String::isNotBlank)
+                ))
             },
             onBackgroundDimAmountChange = viewModel::setBackgroundDimAmount,
             onClearBackground = onClearBackground,
@@ -1623,7 +1674,7 @@ private fun SettingsPage(
                             .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("内置背景", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Text("背景图库", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                         Icon(
                             Icons.Outlined.ChevronRight,
                             contentDescription = null,

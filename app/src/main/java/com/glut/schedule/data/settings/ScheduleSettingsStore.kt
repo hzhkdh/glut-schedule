@@ -93,6 +93,9 @@ class ScheduleSettingsStore(
     private val customBackgroundCropRightKey = floatPreferencesKey("custom_background_crop_right")
     private val customBackgroundCropBottomKey = floatPreferencesKey("custom_background_crop_bottom")
     private val backgroundDimAmountKey = floatPreferencesKey("background_dim_amount")
+    private val remoteBackgroundIdKey = stringPreferencesKey("remote_background_id")
+    private val remoteBackgroundSha256Key = stringPreferencesKey("remote_background_sha256")
+    private val remoteBackgroundDisplayNameKey = stringPreferencesKey("remote_background_display_name")
     private val courseColorOverridesKey = stringSetPreferencesKey("course_color_overrides")
     private val guilinClassPeriodsKey = stringSetPreferencesKey("guilin_class_periods")
     private val guilinYanshanClassPeriodsKey = stringSetPreferencesKey("guilin_yanshan_class_periods")
@@ -165,7 +168,10 @@ class ScheduleSettingsStore(
             crop = crop,
             dimAmount = snapBackgroundDimAmount(
                 preferences[backgroundDimAmountKey] ?: DEFAULT_BACKGROUND_DIM_AMOUNT
-            )
+            ),
+            remoteId = preferences[remoteBackgroundIdKey].orEmpty(),
+            remoteSha256 = preferences[remoteBackgroundSha256Key].orEmpty(),
+            remoteDisplayName = preferences[remoteBackgroundDisplayNameKey].orEmpty()
         )
     }.distinctUntilChanged()
 
@@ -317,24 +323,48 @@ class ScheduleSettingsStore(
     /** 自定义图片 URI 与裁剪区域必须一次写入，避免冷启动读到半套配置。 */
     suspend fun setCustomBackground(uri: String, crop: NormalizedCropRect?) {
         context.scheduleSettings.edit { preferences ->
-            val trimmed = uri.trim()
-            if (trimmed.isBlank()) {
-                preferences.remove(customBackgroundUriKey)
-            } else {
-                preferences[customBackgroundUriKey] = trimmed
-            }
-            val safeCrop = crop?.sanitized()
-            if (safeCrop == null) {
-                preferences.remove(customBackgroundCropLeftKey)
-                preferences.remove(customBackgroundCropTopKey)
-                preferences.remove(customBackgroundCropRightKey)
-                preferences.remove(customBackgroundCropBottomKey)
-            } else {
-                preferences[customBackgroundCropLeftKey] = safeCrop.left
-                preferences[customBackgroundCropTopKey] = safeCrop.top
-                preferences[customBackgroundCropRightKey] = safeCrop.right
-                preferences[customBackgroundCropBottomKey] = safeCrop.bottom
-            }
+            writeBackground(preferences, uri, crop)
+            preferences.remove(remoteBackgroundIdKey)
+            preferences.remove(remoteBackgroundSha256Key)
+            preferences.remove(remoteBackgroundDisplayNameKey)
+        }
+    }
+
+    /** 远程资源身份与 URI、裁剪区域一次写入，删除管理才能可靠判断“使用中”。 */
+    suspend fun setRemoteBackground(
+        uri: String,
+        crop: NormalizedCropRect?,
+        id: String,
+        sha256: String,
+        displayName: String
+    ) {
+        context.scheduleSettings.edit { preferences ->
+            writeBackground(preferences, uri, crop)
+            preferences[remoteBackgroundIdKey] = id
+            preferences[remoteBackgroundSha256Key] = sha256
+            preferences[remoteBackgroundDisplayNameKey] = displayName
+        }
+    }
+
+    private fun writeBackground(
+        preferences: MutablePreferences,
+        uri: String,
+        crop: NormalizedCropRect?
+    ) {
+        val trimmed = uri.trim()
+        if (trimmed.isBlank()) preferences.remove(customBackgroundUriKey)
+        else preferences[customBackgroundUriKey] = trimmed
+        val safeCrop = crop?.sanitized()
+        if (safeCrop == null) {
+            preferences.remove(customBackgroundCropLeftKey)
+            preferences.remove(customBackgroundCropTopKey)
+            preferences.remove(customBackgroundCropRightKey)
+            preferences.remove(customBackgroundCropBottomKey)
+        } else {
+            preferences[customBackgroundCropLeftKey] = safeCrop.left
+            preferences[customBackgroundCropTopKey] = safeCrop.top
+            preferences[customBackgroundCropRightKey] = safeCrop.right
+            preferences[customBackgroundCropBottomKey] = safeCrop.bottom
         }
     }
 

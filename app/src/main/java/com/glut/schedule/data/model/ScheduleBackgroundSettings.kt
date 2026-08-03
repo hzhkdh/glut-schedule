@@ -34,7 +34,10 @@ data class NormalizedCropRect(
 data class ScheduleBackgroundPreferences(
     val uri: String = "",
     val crop: NormalizedCropRect? = null,
-    val dimAmount: Float = DEFAULT_BACKGROUND_DIM_AMOUNT
+    val dimAmount: Float = DEFAULT_BACKGROUND_DIM_AMOUNT,
+    val remoteId: String = "",
+    val remoteSha256: String = "",
+    val remoteDisplayName: String = ""
 )
 
 fun snapBackgroundDimAmount(value: Float): Float {

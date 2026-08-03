@@ -20,6 +20,8 @@ import com.glut.schedule.service.finance.FinanceParser
 import com.glut.schedule.service.finance.FinanceStore
 import com.glut.schedule.service.campus.CampusImageFileCache
 import com.glut.schedule.service.campus.CampusImageService
+import com.glut.schedule.service.background.RemoteBackgroundAssetStore
+import com.glut.schedule.service.background.RemoteBackgroundRepository
 import com.glut.schedule.service.parser.CompositeScheduleParser
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
 import com.glut.schedule.service.parser.GlutExamParser
@@ -110,6 +112,12 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
         guilinSubCampus = settingsStore.guilinSubCampus
     )
     val backgroundStore = ScheduleBackgroundStore(application)
+    val remoteBackgroundRepository = RemoteBackgroundRepository(
+        catalogCacheFile = application.filesDir.resolve("remote_backgrounds/catalog.json"),
+        previewCacheDirectory = application.cacheDir.resolve("remote_background_previews"),
+        assetStore = RemoteBackgroundAssetStore(application.filesDir.resolve("remote_backgrounds/assets")),
+        downloadCacheDirectory = application.cacheDir.resolve("remote_background_downloads")
+    )
     val academicSessionStore = AcademicSessionStore(application)
     // Nanning parser first: it checks for infolist_common and returns empty
     // for non-Nanning HTML. Guilin parser handles everything else.
