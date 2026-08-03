@@ -300,7 +300,7 @@ fun backgroundBitmapByteSize(width: Int, height: Int): Int {
 }
 
 @Composable
-fun StarryScheduleBackground(
+fun ScheduleBackgroundImage(
     modifier: Modifier = Modifier,
     customBackgroundUri: String = "",
     customBackgroundBitmap: ImageBitmap? = null,

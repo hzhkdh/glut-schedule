@@ -51,7 +51,7 @@ import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.ScheduleHeader
-import com.glut.schedule.ui.components.StarryScheduleBackground
+import com.glut.schedule.ui.components.ScheduleBackgroundImage
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -71,7 +71,7 @@ fun ScheduleScreen(
     var showAddActions by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
     if (!uiState.isInitialized) {
-        // 背景设置尚未恢复时只显示中性占位，避免把临时空值误绘制成默认星空。
+        // 背景设置尚未恢复时只显示中性占位，避免把临时空值误绘制成默认《花》。
         // DataStore 与 Room 都完成首轮恢复后再创建 Pager，避免错误背景和默认周次短暂闪现。
         Box(modifier = modifier.fillMaxSize())
         return
@@ -109,7 +109,7 @@ fun ScheduleScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        StarryScheduleBackground(
+        ScheduleBackgroundImage(
             customBackgroundUri = uiState.customBackgroundUri,
             customBackgroundBitmap = customBackgroundBitmap,
             dimAmount = uiState.backgroundDimAmount

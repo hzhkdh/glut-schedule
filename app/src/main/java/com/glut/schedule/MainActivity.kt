@@ -178,7 +178,7 @@ import com.glut.schedule.ui.pages.ClassPeriodSettingsScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
-import com.glut.schedule.ui.components.StarryScheduleBackground
+import com.glut.schedule.ui.components.ScheduleBackgroundImage
 import com.glut.schedule.ui.components.shouldUseCustomBackground
 import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.data.model.snapBackgroundDimAmount
@@ -1644,7 +1644,7 @@ private fun SettingsPage(
                 shape = RoundedCornerShape(14.dp)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    StarryScheduleBackground(
+                    ScheduleBackgroundImage(
                         modifier = Modifier.matchParentSize(),
                         customBackgroundUri = customBackgroundUri,
                         customBackgroundBitmap = previewBitmap,

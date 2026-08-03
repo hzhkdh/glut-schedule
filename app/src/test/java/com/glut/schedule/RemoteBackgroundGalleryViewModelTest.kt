@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -48,6 +49,23 @@ class RemoteBackgroundGalleryViewModelTest {
     }
 
     @Test
+    fun activeDownloadKeepsPreviewOpenUntilTheOriginalIsReady() = runTest {
+        val pendingDownload = CompletableDeferred<DownloadedRemoteBackground>()
+        val viewModel = RemoteBackgroundGalleryViewModel(FakeGateway(download = pendingDownload))
+
+        viewModel.openPreview(ITEM)
+        viewModel.downloadAndUse(ITEM) { }
+        viewModel.closePreview()
+
+        assertEquals(ITEM, viewModel.uiState.value.selectedItem)
+        assertEquals(ITEM.id, viewModel.uiState.value.downloadingId)
+
+        pendingDownload.complete(ASSET)
+        assertNull(viewModel.uiState.value.selectedItem)
+        assertNull(viewModel.uiState.value.downloadingId)
+    }
+
+    @Test
     fun latePreviewResponseCannotOverwriteNewSelection() = runTest {
         val first = CompletableDeferred<File>()
         val second = CompletableDeferred<File>()
@@ -75,7 +93,8 @@ class RemoteBackgroundGalleryViewModelTest {
     private class FakeGateway(
         private val deleteResult: RemoteBackgroundDeleteResult = RemoteBackgroundDeleteResult.Deleted,
         private val previews: MutableList<CompletableDeferred<File>> = mutableListOf(),
-        private val catalogError: Boolean = false
+        private val catalogError: Boolean = false,
+        private val download: CompletableDeferred<DownloadedRemoteBackground>? = null
     ) : RemoteBackgroundGateway {
         override suspend fun loadCatalog(forceRefresh: Boolean): RemoteBackgroundCatalog {
             if (catalogError) error("offline")
@@ -88,7 +107,7 @@ class RemoteBackgroundGalleryViewModelTest {
         override suspend fun downloadOriginal(
             item: RemoteBackgroundItem,
             onProgress: (Float) -> Unit
-        ) = ASSET
+        ) = download?.await() ?: ASSET
         override fun downloadedAssets() = listOf(ASSET)
         override fun deleteDownloaded(id: String, sha256: String, activeUri: String) = deleteResult
         override fun clearAllData() = Unit

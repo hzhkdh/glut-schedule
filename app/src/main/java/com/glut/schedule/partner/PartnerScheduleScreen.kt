@@ -95,7 +95,7 @@ import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.model.visibleDayCount
 import com.glut.schedule.data.settings.PartnerScheduleViewMode
 import com.glut.schedule.ui.components.ScheduleCalendarHeader
-import com.glut.schedule.ui.components.StarryScheduleBackground
+import com.glut.schedule.ui.components.ScheduleBackgroundImage
 import com.glut.schedule.ui.components.courseCardRoomLineHeight
 import com.glut.schedule.ui.components.courseCardRoomTextSize
 import com.glut.schedule.ui.components.periodColumnTextStyle
@@ -130,7 +130,7 @@ fun PartnerScheduleScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        StarryScheduleBackground(
+        ScheduleBackgroundImage(
             customBackgroundUri = customBackgroundUri,
             customBackgroundBitmap = customBackgroundBitmap,
             dimAmount = backgroundDimAmount

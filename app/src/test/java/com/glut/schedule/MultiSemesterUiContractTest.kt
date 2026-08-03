@@ -14,7 +14,7 @@ class MultiSemesterUiContractTest {
             .substringBefore("val blocksByWeek")
 
         assertTrue(loadingBranch.contains("Box(modifier = modifier.fillMaxSize())"))
-        assertFalse(loadingBranch.contains("StarryScheduleBackground("))
+        assertFalse(loadingBranch.contains("ScheduleBackgroundImage("))
     }
 
     @Test
