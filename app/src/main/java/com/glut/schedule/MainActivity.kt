@@ -49,7 +49,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.DownloadDone
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
@@ -58,6 +58,7 @@ import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -170,7 +171,7 @@ import com.glut.schedule.ui.pages.BackgroundCropScreen
 import com.glut.schedule.ui.pages.RemoteBackgroundGalleryScreen
 import com.glut.schedule.ui.pages.RemoteBackgroundGalleryViewModel
 import com.glut.schedule.ui.pages.RemoteBackgroundGalleryViewModelFactory
-import com.glut.schedule.ui.pages.remoteBackgroundDownloadBadgeText
+import com.glut.schedule.ui.pages.remoteBackgroundCacheBadgeText
 import com.glut.schedule.partner.PartnerScheduleScreen
 import com.glut.schedule.partner.PartnerScheduleViewModel
 import com.glut.schedule.partner.PartnerScheduleViewModelFactory
@@ -214,7 +215,7 @@ private enum class SettingsSubPage(val title: String) {
     ROOT("设置"),
     COURSE_COLORS("课程卡片颜色"),
     CLASS_PERIODS("上课时间"),
-    BACKGROUND_GALLERY("背景图库")
+    BACKGROUND_GALLERY("画廊")
 }
 
 private data class PendingBackgroundCrop(
@@ -450,7 +451,10 @@ class MainActivity : ComponentActivity() {
                     if (selectedItem == DrawerItem.Settings && settingsSubPage == SettingsSubPage.BACKGROUND_GALLERY) {
                         viewModel(
                             key = "remote-background-gallery",
-                            factory = RemoteBackgroundGalleryViewModelFactory(container.remoteBackgroundRepository)
+                            factory = RemoteBackgroundGalleryViewModelFactory(
+                                container.remoteBackgroundRepository,
+                                container.remoteArtworkSaver
+                            )
                         )
                     } else null
 
@@ -487,6 +491,12 @@ class MainActivity : ComponentActivity() {
 
                 val isSchedulePage =
                     selectedItem == DrawerItem.Schedule || selectedItem == DrawerItem.PartnerSchedule
+                val isImmersiveArtwork = if (remoteBackgroundGalleryViewModel != null) {
+                    val galleryState by remoteBackgroundGalleryViewModel.uiState.collectAsStateWithLifecycle()
+                    galleryState.selectedItem != null
+                } else {
+                    false
+                }
                 val latestGreetingEnabled by rememberUpdatedState(greetingEnabled)
                 val latestStudentName by rememberUpdatedState(studentName)
                 val latestAuthenticatedStudentNumber by rememberUpdatedState(authenticatedStudentNumber)
@@ -534,8 +544,10 @@ class MainActivity : ComponentActivity() {
                         }
                 }
 
-                DisposableEffect(selectedItem, pendingBackgroundCrop) {
-                    applySystemBarStyle(lightIcons = pendingBackgroundCrop == null && !isSchedulePage)
+                DisposableEffect(selectedItem, pendingBackgroundCrop, isImmersiveArtwork) {
+                    applySystemBarStyle(
+                        lightIcons = pendingBackgroundCrop == null && !isSchedulePage && !isImmersiveArtwork
+                    )
                     onDispose { }
                 }
 
@@ -739,7 +751,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                     Scaffold(
                         topBar = {
                             // 课程表页面不显示单独的 TopAppBar，菜单按钮集成在 ScheduleHeader 中
-                            if (!isSchedulePage) {
+                            if (!isSchedulePage && !isImmersiveArtwork) {
                                 TopAppBar(
                                     title = {
                                         Text(
@@ -850,7 +862,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             DrawerItem.Settings -> remoteBackgroundGalleryViewModel?.let { viewModel ->
                                                 val galleryState by viewModel.uiState.collectAsStateWithLifecycle()
                                                 val downloadedCount = galleryState.downloaded.size
-                                                val badgeText = remoteBackgroundDownloadBadgeText(downloadedCount)
+                                                val badgeText = remoteBackgroundCacheBadgeText(downloadedCount)
                                                 IconButton(onClick = { viewModel.setDownloadedManagerVisible(true) }) {
                                                     BadgedBox(
                                                         badge = {
@@ -863,11 +875,11 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                         }
                                                     ) {
                                                         Icon(
-                                                            Icons.Outlined.DownloadDone,
+                                                            Icons.Outlined.Storage,
                                                             contentDescription = if (downloadedCount == 0) {
-                                                                "管理已下载背景，暂无已下载背景"
+                                                                "缓存管理，暂无原图缓存"
                                                             } else {
-                                                                "管理已下载背景，共 $downloadedCount 项"
+                                                                "缓存管理，共 $downloadedCount 项"
                                                             },
                                                             tint = Color(0xFF141821)
                                                         )
@@ -877,11 +889,19 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     onClick = viewModel::refresh,
                                                     enabled = !galleryState.isLoading
                                                 ) {
-                                                    Icon(
-                                                        Icons.Outlined.Refresh,
-                                                        contentDescription = "刷新在线背景",
-                                                        tint = Color(0xFF141821)
-                                                    )
+                                                    if (galleryState.isLoading) {
+                                                        CircularProgressIndicator(
+                                                            modifier = Modifier.size(22.dp),
+                                                            strokeWidth = 2.dp,
+                                                            color = Color(0xFF141821)
+                                                        )
+                                                    } else {
+                                                        Icon(
+                                                            Icons.Outlined.Refresh,
+                                                            contentDescription = "刷新画廊",
+                                                            tint = Color(0xFF141821)
+                                                        )
+                                                    }
                                                 }
                                             }
                                             else -> {}
@@ -894,8 +914,18 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                             }
                         },
                         // 课程表页面不消耗系统栏空间，让背景铺满全屏
-                        contentWindowInsets = if (isSchedulePage) WindowInsets(0) else ScaffoldDefaults.contentWindowInsets,
-                        containerColor = if (isSchedulePage) Color(0xFF07111F) else Color(0xFFF6F4EF)
+                        contentWindowInsets = if (isSchedulePage || isImmersiveArtwork) {
+                            WindowInsets(0)
+                        } else {
+                            ScaffoldDefaults.contentWindowInsets
+                        },
+                        containerColor = if (isImmersiveArtwork) {
+                            Color(0xFF101116)
+                        } else if (isSchedulePage) {
+                            Color(0xFF07111F)
+                        } else {
+                            Color(0xFFF6F4EF)
+                        }
                     ) { padding ->
                         Box(modifier = Modifier.padding(padding)) {
                             when (selectedItem) {
@@ -1695,7 +1725,7 @@ private fun SettingsPage(
                             .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("背景图库", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Text("画廊", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                         Icon(
                             Icons.Outlined.ChevronRight,
                             contentDescription = null,
@@ -1711,7 +1741,7 @@ private fun SettingsPage(
                             .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("选择背景图片", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Text("自定义背景", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                         Icon(
                             Icons.Outlined.ChevronRight,
                             contentDescription = null,

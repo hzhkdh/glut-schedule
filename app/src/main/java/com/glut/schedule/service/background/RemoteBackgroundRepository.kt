@@ -19,6 +19,11 @@ import okhttp3.Request
 
 interface RemoteBackgroundGateway {
     suspend fun loadCatalog(forceRefresh: Boolean = false): RemoteBackgroundCatalog
+    suspend fun loadCatalogResult(forceRefresh: Boolean = false): RemoteBackgroundCatalogLoadResult =
+        RemoteBackgroundCatalogLoadResult(
+            catalog = loadCatalog(forceRefresh),
+            source = RemoteBackgroundCatalogLoadSource.NETWORK_UPDATED
+        )
     suspend fun loadPreview(item: RemoteBackgroundItem, large: Boolean): File
     suspend fun downloadOriginal(
         item: RemoteBackgroundItem,
@@ -28,6 +33,18 @@ interface RemoteBackgroundGateway {
     fun deleteDownloaded(id: String, sha256: String, activeUri: String): RemoteBackgroundDeleteResult
     fun clearAllData()
 }
+
+enum class RemoteBackgroundCatalogLoadSource {
+    NETWORK_UPDATED,
+    NETWORK_UNCHANGED,
+    CACHE_HIT,
+    CACHE_FALLBACK
+}
+
+data class RemoteBackgroundCatalogLoadResult(
+    val catalog: RemoteBackgroundCatalog,
+    val source: RemoteBackgroundCatalogLoadSource
+)
 
 class RemoteBackgroundRepository(
     client: OkHttpClient = OkHttpClient(),
@@ -46,9 +63,18 @@ class RemoteBackgroundRepository(
         .followSslRedirects(false)
         .build()
 
-    override suspend fun loadCatalog(forceRefresh: Boolean): RemoteBackgroundCatalog = withContext(Dispatchers.IO) {
+    override suspend fun loadCatalog(forceRefresh: Boolean): RemoteBackgroundCatalog =
+        loadCatalogResult(forceRefresh).catalog
+
+    override suspend fun loadCatalogResult(forceRefresh: Boolean): RemoteBackgroundCatalogLoadResult =
+        withContext(Dispatchers.IO) {
         val cached = loadCachedCatalog()
-        if (!forceRefresh && cached != null) return@withContext cached
+        if (!forceRefresh && cached != null) {
+            return@withContext RemoteBackgroundCatalogLoadResult(
+                catalog = cached,
+                source = RemoteBackgroundCatalogLoadSource.CACHE_HIT
+            )
+        }
         var lastError: Exception? = null
         for (url in (listOf(catalogUrl) + fallbackCatalogUrls).distinct()) {
             try {
@@ -64,14 +90,26 @@ class RemoteBackgroundRepository(
                 val catalog = RemoteBackgroundCatalogParser.parse(raw)
                 saveCatalog(raw)
                 assetStore.synchronizeCatalog(catalog.items)
-                return@withContext catalog
+                return@withContext RemoteBackgroundCatalogLoadResult(
+                    catalog = catalog,
+                    source = if (cached == catalog) {
+                        RemoteBackgroundCatalogLoadSource.NETWORK_UNCHANGED
+                    } else {
+                        RemoteBackgroundCatalogLoadSource.NETWORK_UPDATED
+                    }
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 lastError = error
             }
         }
-        cached ?: throw (lastError as? IOException ?: IOException(lastError?.message, lastError))
+        cached?.let {
+            RemoteBackgroundCatalogLoadResult(
+                catalog = it,
+                source = RemoteBackgroundCatalogLoadSource.CACHE_FALLBACK
+            )
+        } ?: throw (lastError as? IOException ?: IOException(lastError?.message, lastError))
     }
 
     override suspend fun loadPreview(item: RemoteBackgroundItem, large: Boolean): File = withContext(Dispatchers.IO) {

@@ -22,6 +22,7 @@ import com.glut.schedule.service.campus.CampusImageFileCache
 import com.glut.schedule.service.campus.CampusImageService
 import com.glut.schedule.service.background.RemoteBackgroundAssetStore
 import com.glut.schedule.service.background.RemoteBackgroundRepository
+import com.glut.schedule.service.background.AndroidRemoteArtworkSaver
 import com.glut.schedule.service.parser.CompositeScheduleParser
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
 import com.glut.schedule.service.parser.GlutExamParser
@@ -118,6 +119,7 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
         assetStore = RemoteBackgroundAssetStore(application.filesDir.resolve("remote_backgrounds/assets")),
         downloadCacheDirectory = application.cacheDir.resolve("remote_background_downloads")
     )
+    val remoteArtworkSaver = AndroidRemoteArtworkSaver(application)
     val academicSessionStore = AcademicSessionStore(application)
     // Nanning parser first: it checks for infolist_common and returns empty
     // for non-Nanning HTML. Guilin parser handles everything else.

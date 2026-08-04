@@ -38,9 +38,10 @@ class MainActivityMergeRegressionTest {
 
     @Test
     fun backgroundGalleryShowsOnlyTheRemoteCatalog() {
-        assertTrue(source.contains("BACKGROUND_GALLERY(\"背景图库\")"))
+        assertTrue(source.contains("BACKGROUND_GALLERY(\"画廊\")"))
         assertTrue(source.contains("SettingsSubPage.BACKGROUND_GALLERY -> remoteBackgroundGalleryViewModel?.let"))
-        assertTrue(source.contains("Text(\"背景图库\""))
+        assertTrue(source.contains("Text(\"画廊\""))
+        assertTrue(source.contains("Text(\"自定义背景\""))
         assertFalse(gallerySource.contains("Text(\"内置背景\""))
         assertFalse(gallerySource.contains("Text(\"在线画廊\""))
         assertFalse(gallerySource.contains("BuiltInGalleryCard"))

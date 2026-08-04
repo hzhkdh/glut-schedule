@@ -2,9 +2,13 @@ package com.glut.schedule
 
 import com.glut.schedule.service.background.DownloadedRemoteBackground
 import com.glut.schedule.service.background.RemoteBackgroundCatalog
+import com.glut.schedule.service.background.RemoteBackgroundCatalogLoadResult
+import com.glut.schedule.service.background.RemoteBackgroundCatalogLoadSource
 import com.glut.schedule.service.background.RemoteBackgroundDeleteResult
 import com.glut.schedule.service.background.RemoteBackgroundGateway
 import com.glut.schedule.service.background.RemoteBackgroundItem
+import com.glut.schedule.service.background.RemoteArtworkSaveResult
+import com.glut.schedule.service.background.RemoteArtworkSaver
 import com.glut.schedule.ui.pages.RemoteBackgroundGalleryViewModel
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -90,15 +94,123 @@ class RemoteBackgroundGalleryViewModelTest {
         assertTrue(viewModel.uiState.value.message.contains("无法加载"))
     }
 
+    @Test
+    fun manualRefreshReportsWhenGalleryIsAlreadyUpToDate() = runTest {
+        val gateway = FakeGateway(
+            loadSources = mutableListOf(
+                RemoteBackgroundCatalogLoadSource.NETWORK_UPDATED,
+                RemoteBackgroundCatalogLoadSource.NETWORK_UNCHANGED
+            )
+        )
+        val viewModel = RemoteBackgroundGalleryViewModel(gateway)
+
+        viewModel.refresh()
+
+        assertEquals("已是最新", viewModel.uiState.value.message)
+    }
+
+    @Test
+    fun galleryVisibilityOnlyRefreshesAfterFiveMinutes() = runTest {
+        var now = 1_000L
+        val gateway = FakeGateway()
+        val viewModel = RemoteBackgroundGalleryViewModel(gateway, nowMillis = { now })
+        assertEquals(1, gateway.catalogLoadCount)
+
+        now += 4 * 60 * 1_000L
+        viewModel.onGalleryVisible()
+        assertEquals(1, gateway.catalogLoadCount)
+
+        now += 60 * 1_000L
+        viewModel.onGalleryVisible()
+        assertEquals(2, gateway.catalogLoadCount)
+    }
+
+    @Test
+    fun cachedFallbackIsExplainedAfterManualRefresh() = runTest {
+        val gateway = FakeGateway(
+            loadSources = mutableListOf(
+                RemoteBackgroundCatalogLoadSource.NETWORK_UPDATED,
+                RemoteBackgroundCatalogLoadSource.CACHE_FALLBACK
+            )
+        )
+        val viewModel = RemoteBackgroundGalleryViewModel(gateway)
+
+        viewModel.refresh()
+
+        assertEquals("刷新失败，正在显示上次内容", viewModel.uiState.value.message)
+    }
+
+    @Test
+    fun savingArtworkDoesNotCreatePrivateBackgroundCache() = runTest {
+        val gateway = FakeGateway(downloaded = mutableListOf())
+        val saver = FakeArtworkSaver()
+        val viewModel = RemoteBackgroundGalleryViewModel(gateway, artworkSaver = saver)
+
+        viewModel.saveArtwork(ITEM)
+
+        assertEquals("已保存到系统相册", viewModel.uiState.value.message)
+        assertTrue(viewModel.uiState.value.downloaded.isEmpty())
+        assertEquals(0, gateway.originalDownloadCount)
+        assertNull(saver.cachedAsset)
+    }
+
+    @Test
+    fun clearingCachePreservesTheArtworkCurrentlyUsedAsBackground() = runTest {
+        val other = ASSET.copy(id = "other", sha256 = "b".repeat(64), file = File("other.img"))
+        val gateway = FakeGateway(downloaded = mutableListOf(ASSET, other))
+        val viewModel = RemoteBackgroundGalleryViewModel(gateway)
+
+        viewModel.clearUnusedDownloads(activeUri = ASSET.uri)
+
+        assertEquals(listOf(ASSET), viewModel.uiState.value.downloaded)
+        assertEquals("已清理 1 项缓存", viewModel.uiState.value.message)
+    }
+
+    @Test
+    fun activeAlbumSaveKeepsArtworkOpenUntilWritingFinishes() = runTest {
+        val pendingSave = CompletableDeferred<RemoteArtworkSaveResult>()
+        val viewModel = RemoteBackgroundGalleryViewModel(
+            FakeGateway(),
+            artworkSaver = PendingArtworkSaver(pendingSave)
+        )
+
+        viewModel.openPreview(ITEM)
+        viewModel.saveArtwork(ITEM)
+        viewModel.closePreview()
+
+        assertEquals(ITEM, viewModel.uiState.value.selectedItem)
+        assertEquals(ITEM.id, viewModel.uiState.value.savingId)
+
+        pendingSave.complete(RemoteArtworkSaveResult("content://gallery/saved"))
+        assertNull(viewModel.uiState.value.savingId)
+    }
+
     private class FakeGateway(
         private val deleteResult: RemoteBackgroundDeleteResult = RemoteBackgroundDeleteResult.Deleted,
         private val previews: MutableList<CompletableDeferred<File>> = mutableListOf(),
         private val catalogError: Boolean = false,
-        private val download: CompletableDeferred<DownloadedRemoteBackground>? = null
+        private val download: CompletableDeferred<DownloadedRemoteBackground>? = null,
+        private val loadSources: MutableList<RemoteBackgroundCatalogLoadSource> = mutableListOf(),
+        private val downloaded: MutableList<DownloadedRemoteBackground> = mutableListOf(ASSET)
     ) : RemoteBackgroundGateway {
+        var catalogLoadCount: Int = 0
+        var originalDownloadCount: Int = 0
+
         override suspend fun loadCatalog(forceRefresh: Boolean): RemoteBackgroundCatalog {
+            catalogLoadCount++
             if (catalogError) error("offline")
             return RemoteBackgroundCatalog("r1", "2026-08-03", listOf(ITEM))
+        }
+        override suspend fun loadCatalogResult(forceRefresh: Boolean): RemoteBackgroundCatalogLoadResult {
+            val catalog = loadCatalog(forceRefresh)
+            return RemoteBackgroundCatalogLoadResult(
+                catalog = catalog,
+                source = if (loadSources.isEmpty()) {
+                    RemoteBackgroundCatalogLoadSource.NETWORK_UPDATED
+                } else {
+                    loadSources.removeAt(0)
+                }
+            )
         }
         override suspend fun loadPreview(item: RemoteBackgroundItem, large: Boolean): File {
             if (!large || previews.isEmpty()) return File("preview.webp")
@@ -107,10 +219,44 @@ class RemoteBackgroundGalleryViewModelTest {
         override suspend fun downloadOriginal(
             item: RemoteBackgroundItem,
             onProgress: (Float) -> Unit
-        ) = download?.await() ?: ASSET
-        override fun downloadedAssets() = listOf(ASSET)
-        override fun deleteDownloaded(id: String, sha256: String, activeUri: String) = deleteResult
+        ): DownloadedRemoteBackground {
+            originalDownloadCount++
+            return download?.await() ?: ASSET
+        }
+        override fun downloadedAssets() = downloaded.toList()
+        override fun deleteDownloaded(id: String, sha256: String, activeUri: String): RemoteBackgroundDeleteResult {
+            if (deleteResult != RemoteBackgroundDeleteResult.Deleted) return deleteResult
+            val asset = downloaded.firstOrNull { it.id == id && it.sha256 == sha256 }
+                ?: return RemoteBackgroundDeleteResult.NotFound
+            if (asset.uri == activeUri) return RemoteBackgroundDeleteResult.InUse
+            downloaded.remove(asset)
+            return RemoteBackgroundDeleteResult.Deleted
+        }
         override fun clearAllData() = Unit
+    }
+
+    private class FakeArtworkSaver : RemoteArtworkSaver {
+        var cachedAsset: DownloadedRemoteBackground? = null
+
+        override suspend fun save(
+            item: RemoteBackgroundItem,
+            cached: DownloadedRemoteBackground?,
+            onProgress: (Float) -> Unit
+        ): RemoteArtworkSaveResult {
+            cachedAsset = cached
+            onProgress(1f)
+            return RemoteArtworkSaveResult("content://gallery/saved")
+        }
+    }
+
+    private class PendingArtworkSaver(
+        private val result: CompletableDeferred<RemoteArtworkSaveResult>
+    ) : RemoteArtworkSaver {
+        override suspend fun save(
+            item: RemoteBackgroundItem,
+            cached: DownloadedRemoteBackground?,
+            onProgress: (Float) -> Unit
+        ): RemoteArtworkSaveResult = result.await()
     }
 
     companion object {

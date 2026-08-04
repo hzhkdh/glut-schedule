@@ -2,6 +2,7 @@ package com.glut.schedule
 
 import com.glut.schedule.service.background.RemoteBackgroundAssetStore
 import com.glut.schedule.service.background.RemoteBackgroundItem
+import com.glut.schedule.service.background.RemoteBackgroundCatalogLoadSource
 import com.glut.schedule.service.background.RemoteBackgroundRepository
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -16,6 +17,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RemoteBackgroundRepositoryTest {
+    @Test
+    fun refreshReportsUpdatedUnchangedAndCachedFallbackResults() = runTest {
+        MockWebServer().use { server ->
+            val root = Files.createTempDirectory("remote-background-refresh-result").toFile()
+            try {
+                server.enqueue(jsonResponse(validCatalog()))
+                server.enqueue(jsonResponse(validCatalog()))
+                server.enqueue(MockResponse().setResponseCode(503))
+                val repository = repository(root, server)
+
+                val updated = repository.loadCatalogResult(forceRefresh = true)
+                val unchanged = repository.loadCatalogResult(forceRefresh = true)
+                val fallback = repository.loadCatalogResult(forceRefresh = true)
+
+                assertEquals(RemoteBackgroundCatalogLoadSource.NETWORK_UPDATED, updated.source)
+                assertEquals(RemoteBackgroundCatalogLoadSource.NETWORK_UNCHANGED, unchanged.source)
+                assertEquals(RemoteBackgroundCatalogLoadSource.CACHE_FALLBACK, fallback.source)
+                assertEquals(updated.catalog, fallback.catalog)
+            } finally {
+                root.deleteRecursively()
+            }
+        }
+    }
+
     @Test
     fun refreshFailureReturnsLastGoodCatalogAndKeepsJsonDisplayName() = runTest {
         MockWebServer().use { server ->
