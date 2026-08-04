@@ -10,6 +10,7 @@ import com.glut.schedule.service.background.RemoteBackgroundItem
 import com.glut.schedule.service.background.RemoteArtworkSaveResult
 import com.glut.schedule.service.background.RemoteArtworkSaver
 import com.glut.schedule.ui.pages.RemoteBackgroundGalleryViewModel
+import com.glut.schedule.ui.pages.RemoteGalleryListPosition
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
@@ -183,6 +184,17 @@ class RemoteBackgroundGalleryViewModelTest {
 
         pendingSave.complete(RemoteArtworkSaveResult("content://gallery/saved"))
         assertNull(viewModel.uiState.value.savingId)
+    }
+
+    @Test
+    fun galleryScrollPositionSurvivesArtworkRoundTrip() = runTest {
+        val viewModel = RemoteBackgroundGalleryViewModel(FakeGateway())
+
+        viewModel.updateListPosition(firstVisibleItemIndex = 7, firstVisibleItemScrollOffset = 96)
+        viewModel.openPreview(ITEM)
+        viewModel.closePreview()
+
+        assertEquals(RemoteGalleryListPosition(7, 96), viewModel.uiState.value.listPosition)
     }
 
     private class FakeGateway(

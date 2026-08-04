@@ -8,8 +8,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -29,7 +32,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +42,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -74,7 +80,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -102,6 +110,10 @@ fun RemoteBackgroundGalleryScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val galleryListState = rememberLazyListState(
+        initialFirstVisibleItemIndex = state.listPosition.firstVisibleItemIndex,
+        initialFirstVisibleItemScrollOffset = state.listPosition.firstVisibleItemScrollOffset
+    )
     var pendingPermissionItem by remember { mutableStateOf<RemoteBackgroundItem?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -140,8 +152,16 @@ fun RemoteBackgroundGalleryScreen(
         if (state.selectedItem == null) {
             GalleryList(
                 state = state,
+                listState = galleryListState,
                 backgroundStore = backgroundStore,
-                onItemClick = viewModel::openPreview,
+                onItemClick = { item ->
+                    // 仅在进入详情前保存位置，避免像素级滚动持续更新整个页面状态。
+                    viewModel.updateListPosition(
+                        galleryListState.firstVisibleItemIndex,
+                        galleryListState.firstVisibleItemScrollOffset
+                    )
+                    viewModel.openPreview(item)
+                },
                 onRetry = viewModel::refresh
             )
         } else {
@@ -180,6 +200,7 @@ fun RemoteBackgroundGalleryScreen(
 @Composable
 private fun GalleryList(
     state: RemoteBackgroundGalleryUiState,
+    listState: LazyListState,
     backgroundStore: ScheduleBackgroundStore,
     onItemClick: (RemoteBackgroundItem) -> Unit,
     onRetry: () -> Unit
@@ -202,6 +223,7 @@ private fun GalleryList(
             }
         }
         else -> LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
@@ -282,21 +304,224 @@ private fun RemoteArtworkDetail(
     onSave: () -> Unit
 ) {
     val bitmap = rememberRemoteBitmap(previewUri, backgroundStore)
+    val scrollState = rememberScrollState()
+    var showFullscreenViewer by remember(item.id) { mutableStateOf(false) }
+    val darkTheme = isSystemInDarkTheme()
+    val pageColor = if (darkTheme) Color(0xFF171819) else Color(0xFFF7F2E8)
+    val imageBackdrop = if (darkTheme) Color(0xFF0F1011) else Color(0xFFE7DFD1)
+    val primaryText = if (darkTheme) Color(0xFFF1EFEA) else Color(0xFF181817)
+    val secondaryText = if (darkTheme) Color(0xFFAAA8A2) else Color(0xFF6D685F)
+    val dividerColor = if (darkTheme) Color(0xFF343536) else Color(0xFFD9D2C5)
+    val canLeave = canLeaveRemoteArtwork(isDownloading, isSaving)
+    val buttonsEnabled = !isDownloading && !isSaving
+    var actionBarHeightPx by remember(item.id) { mutableStateOf(0) }
+    val actionBarHeight = with(LocalDensity.current) { actionBarHeightPx.toDp() }
+
+    if (showFullscreenViewer) {
+        RemoteArtworkFullscreenViewer(
+            item = item,
+            bitmap = bitmap,
+            isPreviewLoading = isPreviewLoading,
+            onBack = { showFullscreenViewer = false }
+        )
+        return
+    }
+
+    // 详情页整体滚动，避免长简介被固定图片压缩；底部操作栏保持可见。
+    BackHandler(enabled = true) {
+        if (canLeave) onBack()
+    }
+    Box(modifier = Modifier.fillMaxSize().background(pageColor)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(bottom = actionBarHeight + 16.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .height(64.dp)
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack, enabled = canLeave, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "返回画廊",
+                        tint = primaryText
+                    )
+                }
+                Text(
+                    text = "作品",
+                    color = primaryText,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 6.dp)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(remoteArtworkImageHeight(item))
+                    .background(imageBackdrop)
+                    .clickable(enabled = bitmap != null) { showFullscreenViewer = true },
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    bitmap != null -> Image(
+                        bitmap = bitmap,
+                        contentDescription = "查看${item.displayName}大图",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    isPreviewLoading -> CircularProgressIndicator(color = secondaryText)
+                    else -> Text("大图预览加载失败", color = secondaryText)
+                }
+                if (bitmap != null) {
+                    Icon(
+                        Icons.Outlined.Fullscreen,
+                        contentDescription = "进入全屏缩放",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(14.dp)
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.62f))
+                            .padding(9.dp)
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val artwork = item.artwork
+                Text(
+                    text = artwork?.let { "《${it.titleZh}》" } ?: item.displayName,
+                    color = primaryText,
+                    fontSize = 27.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                artwork?.let { metadata ->
+                    Text(
+                        text = metadata.titleEn,
+                        color = secondaryText,
+                        fontSize = 16.sp,
+                        fontStyle = FontStyle.Italic
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "${metadata.artistZh}（${metadata.artistEn}）",
+                        color = primaryText,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "${metadata.nationality} · ${metadata.year}",
+                        color = secondaryText,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        text = "${metadata.medium} · 现藏于${metadata.collection}",
+                        color = secondaryText,
+                        fontSize = 14.sp
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 16.dp),
+                        color = dividerColor
+                    )
+                    Text("作品简介", color = secondaryText, fontSize = 13.sp)
+                    Text(
+                        text = metadata.description,
+                        color = primaryText,
+                        fontSize = 16.sp,
+                        lineHeight = 25.sp,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .onSizeChanged { actionBarHeightPx = it.height },
+            color = pageColor.copy(alpha = 0.97f),
+            shadowElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
+                if (isDownloading || isSaving) {
+                    val progress = if (isDownloading) downloadProgress else saveProgress
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = if (darkTheme) Color.White else Color(0xFF171717),
+                        trackColor = secondaryText.copy(alpha = 0.25f)
+                    )
+                    Text(
+                        if (isDownloading) "正在准备原图 ${(progress * 100).toInt()}%" else "正在保存到相册 ${(progress * 100).toInt()}%",
+                        color = secondaryText,
+                        fontSize = 12.sp
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = onSave,
+                        enabled = buttonsEnabled,
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (buttonsEnabled) secondaryText else secondaryText.copy(alpha = 0.38f)
+                        ),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = primaryText,
+                            disabledContentColor = secondaryText.copy(alpha = 0.62f)
+                        )
+                    ) { Text("保存到相册") }
+                    Button(
+                        onClick = onUse,
+                        enabled = buttonsEnabled,
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (darkTheme) Color(0xFFF1EFEA) else Color(0xFF191919),
+                            contentColor = if (darkTheme) Color(0xFF171819) else Color.White,
+                            disabledContainerColor = secondaryText.copy(alpha = 0.18f),
+                            disabledContentColor = secondaryText.copy(alpha = 0.72f)
+                        )
+                    ) { Text("设为背景") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RemoteArtworkFullscreenViewer(
+    item: RemoteBackgroundItem,
+    bitmap: ImageBitmap?,
+    isPreviewLoading: Boolean,
+    onBack: () -> Unit
+) {
     var scale by remember(item.id) { mutableFloatStateOf(1f) }
     var offset by remember(item.id) { mutableStateOf(Offset.Zero) }
     var viewport by remember(item.id) { mutableStateOf(IntSize.Zero) }
     var showControls by remember(item.id) { mutableStateOf(true) }
-    val canLeave = canLeaveRemoteArtwork(isDownloading, isSaving)
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         val newScale = (scale * zoomChange).coerceIn(1f, 5f)
         scale = newScale
         offset = constrainArtworkOffset(offset + panChange, newScale, viewport)
     }
 
-    // 下载或写入相册期间吞掉返回操作，避免用户离开后留下半成品。
-    BackHandler(enabled = true) {
-        if (canLeave) onBack()
-    }
+    BackHandler(onBack = onBack)
     Box(modifier = Modifier.fillMaxSize().background(ArtworkBackgroundColor)) {
         when {
             bitmap != null -> Image(
@@ -337,7 +562,6 @@ private fun RemoteArtworkDetail(
             Box(modifier = Modifier.fillMaxSize()) {
                 IconButton(
                     onClick = onBack,
-                    enabled = canLeave,
                     modifier = Modifier
                         .windowInsetsPadding(WindowInsets.statusBars)
                         .padding(16.dp)
@@ -345,57 +569,17 @@ private fun RemoteArtworkDetail(
                         .clip(CircleShape)
                         .background(Color.Black.copy(alpha = 0.52f))
                 ) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回画廊", tint = Color.White)
-                }
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))
-                            )
-                        )
-                        .windowInsetsPadding(WindowInsets.navigationBars)
-                        .padding(start = 24.dp, end = 24.dp, top = 72.dp, bottom = 22.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Text(item.displayName, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                    if (isDownloading || isSaving) {
-                        val progress = if (isDownloading) downloadProgress else saveProgress
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = Color.White,
-                            trackColor = Color.White.copy(alpha = 0.25f)
-                        )
-                        Text(
-                            if (isDownloading) "正在准备原图 ${(progress * 100).toInt()}%" else "正在保存到相册 ${(progress * 100).toInt()}%",
-                            color = Color.White.copy(alpha = 0.86f),
-                            fontSize = 13.sp
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton(
-                            onClick = onSave,
-                            enabled = !isDownloading && !isSaving,
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                        ) { Text("保存到相册") }
-                        Button(
-                            onClick = onUse,
-                            enabled = !isDownloading && !isSaving,
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color.White,
-                                contentColor = GalleryTextColor
-                            )
-                        ) { Text("设为背景") }
-                    }
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回作品详情", tint = Color.White)
                 }
             }
         }
     }
+}
+
+private fun remoteArtworkImageHeight(item: RemoteBackgroundItem) = when {
+    item.width >= item.height * 1.35f -> 280.dp
+    item.width >= item.height -> 330.dp
+    else -> 410.dp
 }
 
 @Composable

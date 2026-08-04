@@ -12,6 +12,7 @@ data class RemoteBackgroundCatalog(
 data class RemoteBackgroundItem(
     val id: String,
     val displayName: String,
+    val artwork: RemoteArtworkMetadata? = null,
     val thumbnailUrl: String,
     val previewUrl: String,
     val originalUrl: String,
@@ -19,6 +20,18 @@ data class RemoteBackgroundItem(
     val byteSize: Long,
     val width: Int,
     val height: Int
+)
+
+data class RemoteArtworkMetadata(
+    val titleZh: String,
+    val titleEn: String,
+    val artistZh: String,
+    val artistEn: String,
+    val nationality: String,
+    val year: String,
+    val medium: String,
+    val collection: String,
+    val description: String
 )
 
 object RemoteBackgroundCatalogParser {
@@ -43,6 +56,14 @@ object RemoteBackgroundCatalogParser {
             require(displayName == displayName.trim() && displayNamePattern.matches(displayName)) {
                 "在线背景名称格式无效"
             }
+            // 只有完全缺失 artwork 才按旧缓存处理；字段存在却类型错误必须拒绝，避免静默隐藏配置问题。
+            val artwork = if (!value.has("artwork")) {
+                null
+            } else {
+                val rawArtwork = value.opt("artwork")
+                require(rawArtwork is JSONObject) { "在线作品资料 artwork 类型无效" }
+                parseArtwork(rawArtwork)
+            }
             val thumbnailUrl = trustedUrl(value.getString("thumbnailUrl"), PREVIEW_HOSTS)
             val previewUrl = trustedUrl(value.getString("previewUrl"), PREVIEW_HOSTS)
             val originalUrl = trustedUrl(value.getString("originalUrl"), ORIGINAL_HOST)
@@ -58,6 +79,7 @@ object RemoteBackgroundCatalogParser {
             RemoteBackgroundItem(
                 id = id,
                 displayName = displayName,
+                artwork = artwork,
                 thumbnailUrl = thumbnailUrl,
                 previewUrl = previewUrl,
                 originalUrl = originalUrl,
@@ -71,6 +93,29 @@ object RemoteBackgroundCatalogParser {
             revision = revision,
             generatedAt = root.optString("generatedAt"),
             items = items
+        )
+    }
+
+    private fun parseArtwork(value: JSONObject): RemoteArtworkMetadata {
+        val title = value.optJSONObject("title") ?: error("在线作品资料缺少 title")
+        val artist = value.optJSONObject("artist") ?: error("在线作品资料缺少 artist")
+        fun required(owner: JSONObject, name: String): String {
+            val raw = owner.opt(name)
+            require(raw is String && raw.isNotEmpty() && raw == raw.trim()) {
+                "在线作品资料字段无效：$name"
+            }
+            return raw
+        }
+        return RemoteArtworkMetadata(
+            titleZh = required(title, "zh"),
+            titleEn = required(title, "en"),
+            artistZh = required(artist, "zh"),
+            artistEn = required(artist, "en"),
+            nationality = required(artist, "nationality"),
+            year = required(value, "year"),
+            medium = required(value, "medium"),
+            collection = required(value, "collection"),
+            description = required(value, "description")
         )
     }
 

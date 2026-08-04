@@ -31,7 +31,13 @@ data class RemoteBackgroundGalleryUiState(
     val saveProgress: Float = 0f,
     val showDownloadedManager: Boolean = false,
     val catalogUnavailable: Boolean = false,
+    val listPosition: RemoteGalleryListPosition = RemoteGalleryListPosition(),
     val message: String = ""
+)
+
+data class RemoteGalleryListPosition(
+    val firstVisibleItemIndex: Int = 0,
+    val firstVisibleItemScrollOffset: Int = 0
 )
 
 class RemoteBackgroundGalleryViewModel(
@@ -204,6 +210,17 @@ class RemoteBackgroundGalleryViewModel(
 
     fun showMessage(message: String) {
         _uiState.update { it.copy(message = message) }
+    }
+
+    fun updateListPosition(firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
+        _uiState.update {
+            it.copy(
+                listPosition = RemoteGalleryListPosition(
+                    firstVisibleItemIndex = firstVisibleItemIndex.coerceAtLeast(0),
+                    firstVisibleItemScrollOffset = firstVisibleItemScrollOffset.coerceAtLeast(0)
+                )
+            )
+        }
     }
 
     fun saveArtwork(item: RemoteBackgroundItem) {
