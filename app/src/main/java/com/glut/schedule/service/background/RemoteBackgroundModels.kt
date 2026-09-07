@@ -2,6 +2,7 @@ package com.glut.schedule.service.background
 
 import java.net.URI
 import org.json.JSONObject
+import org.json.JSONArray
 
 data class RemoteBackgroundCatalog(
     val revision: String,
@@ -13,6 +14,7 @@ data class RemoteBackgroundItem(
     val id: String,
     val displayName: String,
     val artwork: RemoteArtworkMetadata? = null,
+    val sources: List<RemoteArtworkSource> = emptyList(),
     val thumbnailUrl: String,
     val previewUrl: String,
     val originalUrl: String,
@@ -20,6 +22,11 @@ data class RemoteBackgroundItem(
     val byteSize: Long,
     val width: Int,
     val height: Int
+)
+
+data class RemoteArtworkSource(
+    val label: String,
+    val url: String
 )
 
 data class RemoteArtworkMetadata(
@@ -64,6 +71,26 @@ object RemoteBackgroundCatalogParser {
                 require(rawArtwork is JSONObject) { "在线作品资料 artwork 类型无效" }
                 parseArtwork(rawArtwork)
             }
+            val sources = if (!value.has("sources")) {
+                emptyList()
+            } else {
+                val rawSources = value.opt("sources")
+                require(rawSources is JSONArray) { "在线作品来源 sources 类型无效" }
+                require(rawSources.length() in 1..MAX_ARTWORK_SOURCES) { "在线作品来源数量无效" }
+                (0 until rawSources.length()).map { sourceIndex ->
+                    val source = rawSources.opt(sourceIndex)
+                    require(source is JSONObject) { "在线作品来源项目类型无效" }
+                    val label = source.opt("label")
+                    val url = source.opt("url")
+                    require(label is String && label.isNotEmpty() && label == label.trim()) {
+                        "在线作品来源标签无效"
+                    }
+                    require(url is String && url.isNotEmpty() && url == url.trim()) {
+                        "在线作品来源地址无效"
+                    }
+                    RemoteArtworkSource(label = label, url = trustedSourceUrl(url))
+                }
+            }
             val thumbnailUrl = trustedUrl(value.getString("thumbnailUrl"), PREVIEW_HOSTS)
             val previewUrl = trustedUrl(value.getString("previewUrl"), PREVIEW_HOSTS)
             val originalUrl = trustedUrl(value.getString("originalUrl"), ORIGINAL_HOST)
@@ -80,6 +107,7 @@ object RemoteBackgroundCatalogParser {
                 id = id,
                 displayName = displayName,
                 artwork = artwork,
+                sources = sources,
                 thumbnailUrl = thumbnailUrl,
                 previewUrl = previewUrl,
                 originalUrl = originalUrl,
@@ -135,9 +163,19 @@ object RemoteBackgroundCatalogParser {
         return uri.toString()
     }
 
+    private fun trustedSourceUrl(raw: String): String {
+        val uri = runCatching { URI(raw) }.getOrNull()
+        require(uri?.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
+            "在线作品来源地址不受信任"
+        }
+        return uri.toString()
+    }
+
     private val PREVIEW_HOSTS = setOf("background.999314.xyz", "schedule-background-host.pages.dev")
     private const val ORIGINAL_HOST = "img.999314.xyz"
-    private const val MAX_CATALOG_ITEMS = 100
+    // 限制异常目录的内存开销，同时容纳扩充后的在线画廊。
+    private const val MAX_CATALOG_ITEMS = 1_000
+    private const val MAX_ARTWORK_SOURCES = 8
     private const val MAX_ORIGINAL_BYTES = 25L * 1024 * 1024
     private const val MAX_ORIGINAL_PIXELS = 50_000_000L
 }

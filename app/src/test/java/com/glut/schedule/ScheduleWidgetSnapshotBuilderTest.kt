@@ -8,7 +8,6 @@ import com.glut.schedule.widget.WidgetScheduleStatus
 import java.time.LocalDate
 import java.time.LocalDateTime
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ScheduleWidgetSnapshotBuilderTest {
@@ -29,7 +28,6 @@ class ScheduleWidgetSnapshotBuilderTest {
 
         assertEquals(WidgetScheduleStatus.NO_DATA, snapshot.status)
         assertEquals(emptyList<Any>(), snapshot.todayCourses)
-        assertNull(snapshot.nextCourse)
     }
 
     @Test
@@ -70,7 +68,6 @@ class ScheduleWidgetSnapshotBuilderTest {
         assertEquals(listOf("tomorrow"), snapshot.tomorrowCourses.map { it.title })
         assertEquals("08:30", snapshot.todayCourses.first().startTime)
         assertEquals("10:05", snapshot.todayCourses.first().endTime)
-        assertEquals("morning", snapshot.nextCourse?.title)
     }
 
     @Test
@@ -92,11 +89,10 @@ class ScheduleWidgetSnapshotBuilderTest {
 
         assertEquals("07:45", snapshot.todayCourses.single().startTime)
         assertEquals("09:20", snapshot.todayCourses.single().endTime)
-        assertEquals("07:45", snapshot.nextCourse?.startTime)
     }
 
     @Test
-    fun noCourseTodayIncludesNearestCourseWithinSevenDays() {
+    fun noCourseTodayDoesNotBuildAnUnrelatedCourseReminder() {
         val now = LocalDateTime.of(2026, 3, 18, 12, 0) // Wednesday of week 2.
         val fridayCourse = course(
             "friday",
@@ -106,28 +102,17 @@ class ScheduleWidgetSnapshotBuilderTest {
         val snapshot = build(now, listOf(fridayCourse))
 
         assertEquals(WidgetScheduleStatus.NO_COURSES, snapshot.status)
-        assertEquals(LocalDate.of(2026, 3, 20), snapshot.nextCourse?.date)
-        assertEquals("friday", snapshot.nextCourse?.title)
     }
 
     @Test
-    fun coursesBeyondSevenDaysAreNotAdvertisedAsNextCourse() {
-        val now = LocalDateTime.of(2026, 3, 16, 12, 0)
-        val nextMondayOnly = course(
-            "next-monday",
-            occurrence("next-monday", day = 1, weeks = "3周")
-        )
+    fun finishedTodayCoursesAreRemovedWhileLaterCoursesRemain() {
+        val now = LocalDateTime.of(2026, 3, 16, 13, 3)
+        val morning = course("morning", occurrence("morning", day = 1, start = 3, end = 4, weeks = "1-19周"))
+        val afternoon = course("afternoon", occurrence("afternoon", day = 1, start = 7, end = 8, weeks = "1-19周"))
 
-        val snapshot = ScheduleWidgetSnapshotBuilder.build(
-            now = now,
-            courses = listOf(nextMondayOnly),
-            classPeriods = periods,
-            semesterStartMonday = semesterStart,
-            semesterEndDate = semesterEnd,
-            futureSearchDays = 6
-        )
+        val snapshot = build(now, listOf(morning, afternoon))
 
-        assertNull(snapshot.nextCourse)
+        assertEquals(listOf("afternoon"), snapshot.todayCourses.map { it.title })
     }
 
     private fun build(now: LocalDateTime, courses: List<ScheduleCourse>) =

@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Build
 import android.view.View
 import android.view.WindowManager
+import android.view.ViewTreeObserver
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -181,6 +182,7 @@ import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.components.ScheduleBackgroundImage
 import com.glut.schedule.ui.components.shouldUseCustomBackground
+import com.glut.schedule.ui.components.scheduleFirstFrameReady
 import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.data.model.snapBackgroundDimAmount
 import com.glut.schedule.ui.pages.ScoreScreen
@@ -209,6 +211,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDateTime
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 
 private enum class SettingsSubPage(val title: String) {
@@ -232,6 +235,9 @@ private data class CommittableBackgroundSource(
 )
 
 class MainActivity : ComponentActivity() {
+    private val firstFrameReady = AtomicBoolean(false)
+    private var firstFramePreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Android 15 会默认启用 edge-to-edge，旧系统需要显式关闭 decor fitting，
@@ -244,6 +250,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         val container = (application as ScheduleApplication).appContainer
+        holdLaunchWindowUntilFirstFrameIsReady()
 
         setContent {
             @OptIn(ExperimentalMaterial3Api::class)
@@ -932,6 +939,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.Schedule -> ScheduleDestination(
                                     viewModel = scheduleViewModel,
                                     backgroundStore = container.backgroundStore,
+                                    onFirstFrameReady = ::releaseFirstFrame,
                                     onImportClick = { selectedItem = DrawerItem.Import },
                                     onExamClick = { selectedItem = DrawerItem.Exam },
                                     onPickBackground = { backgroundPicker.launch(arrayOf("image/*")) },
@@ -1211,6 +1219,35 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
         }
     }
 
+    /**
+     * 冷启动时继续保留系统启动窗口，直到 DataStore 已恢复且目标背景真正可绘制。
+     * 这样首个应用帧不会先露出默认画作，再异步切换为用户选择的画廊背景。
+     */
+    private fun holdLaunchWindowUntilFirstFrameIsReady() {
+        val decorView = window.decorView
+        val listener = ViewTreeObserver.OnPreDrawListener { firstFrameReady.get() }
+        firstFramePreDrawListener = listener
+        decorView.viewTreeObserver.addOnPreDrawListener(listener)
+    }
+
+    private fun releaseFirstFrame() {
+        if (!firstFrameReady.compareAndSet(false, true)) return
+        removeFirstFramePreDrawListener()
+        window.decorView.postInvalidateOnAnimation()
+    }
+
+    private fun removeFirstFramePreDrawListener() {
+        val listener = firstFramePreDrawListener ?: return
+        val observer = window.decorView.viewTreeObserver
+        if (observer.isAlive) observer.removeOnPreDrawListener(listener)
+        firstFramePreDrawListener = null
+    }
+
+    override fun onDestroy() {
+        removeFirstFramePreDrawListener()
+        super.onDestroy()
+    }
+
     private fun applySystemBarStyle(lightIcons: Boolean) {
         val lightFlag = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         window.statusBarColor = AndroidColor.TRANSPARENT
@@ -1235,6 +1272,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
 private fun ScheduleDestination(
     viewModel: ScheduleViewModel,
     backgroundStore: ScheduleBackgroundStore,
+    onFirstFrameReady: () -> Unit,
     onImportClick: () -> Unit,
     onExamClick: () -> Unit,
     onPickBackground: () -> Unit,
@@ -1268,6 +1306,16 @@ private fun ScheduleDestination(
             )
         } else {
             null
+        }
+    }
+    LaunchedEffect(uiState.isInitialized, uiState.customBackgroundUri, backgroundBitmap) {
+        if (scheduleFirstFrameReady(
+                isInitialized = uiState.isInitialized,
+                backgroundUri = uiState.customBackgroundUri,
+                customBitmapAvailable = backgroundBitmap != null
+            )
+        ) {
+            onFirstFrameReady()
         }
     }
     ScheduleScreen(

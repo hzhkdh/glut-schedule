@@ -119,6 +119,26 @@ data class CourseOccurrenceEntity(
 )
 
 @Entity(
+    tableName = "course_remarks",
+    primaryKeys = ["semesterId", "courseId", "occurrenceId", "weekNumber"],
+    foreignKeys = [ForeignKey(
+        entity = AcademicSemesterEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["semesterId"],
+        onDelete = ForeignKey.CASCADE
+    )],
+    indices = [Index(value = ["semesterId"])]
+)
+data class CourseRemarkEntity(
+    val semesterId: String,
+    val courseId: String,
+    val occurrenceId: String,
+    val weekNumber: Int,
+    val text: String,
+    val updatedAtEpochMillis: Long
+)
+
+@Entity(
     tableName = "class_periods",
     primaryKeys = ["semesterId", "section"],
     foreignKeys = [ForeignKey(

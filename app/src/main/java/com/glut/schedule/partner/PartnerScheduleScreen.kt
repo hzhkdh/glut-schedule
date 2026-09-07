@@ -45,6 +45,7 @@ import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.PeopleAlt
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -144,16 +145,18 @@ fun PartnerScheduleScreen(
                 weekNumber = state.week,
                 today = state.today,
                 viewMode = state.viewMode,
-                showViewMode = state.activePartnerSnapshot != null,
+                showViewMode = state.profiles.isNotEmpty(),
+                showProfileSwitch = state.viewMode == PartnerScheduleViewMode.PARTNER && state.profiles.size > 1,
+                profileColor = state.selectedProfile?.displayColor,
                 onDrawerOpen = onDrawerOpen,
                 onWeekTitleClick = viewModel::returnToCurrentWeek,
                 onViewModeChange = viewModel::setViewMode,
+                onProfileSwitch = viewModel::cycleProfile,
                 onManage = { showManage = true }
             )
-            if (state.activePartnerSnapshot == null) {
+            if (state.profiles.isEmpty()) {
                 PartnerEmptyState(
                     isBusy = state.isBusy,
-                    hasStaleSnapshot = state.hasStalePartnerSnapshot,
                     onManage = { showManage = true }
                 )
             } else {
@@ -182,7 +185,8 @@ fun PartnerScheduleScreen(
             onGenerate = viewModel::generateInvite,
             onImport = viewModel::importInvite,
             onRevoke = viewModel::revokeInvite,
-            onDeletePartner = viewModel::deletePartnerSnapshot,
+            onDeleteProfile = viewModel::deleteProfile,
+            onRenameProfile = viewModel::renameProfile,
             snackbarHostState = snackbarHostState,
             onFeedback = { message ->
                 scope.launch { snackbarHostState.showSnackbar(message) }
@@ -200,9 +204,12 @@ private fun PartnerHeader(
     today: java.time.LocalDate,
     viewMode: PartnerScheduleViewMode,
     showViewMode: Boolean,
+    showProfileSwitch: Boolean,
+    profileColor: PartnerIdentityColor?,
     onDrawerOpen: () -> Unit,
     onWeekTitleClick: () -> Unit,
     onViewModeChange: (PartnerScheduleViewMode) -> Unit,
+    onProfileSwitch: () -> Unit,
     onManage: () -> Unit
 ) {
     Row(
@@ -259,8 +266,31 @@ private fun PartnerHeader(
                 }
             )
         }
+        if (showProfileSwitch) {
+            ProfileSwitchButton(profileColor = profileColor, onClick = onProfileSwitch)
+        }
         IconButton(onClick = onManage, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Outlined.Share, contentDescription = "分享与导入", tint = Color(0xFFD94F78))
+        }
+    }
+}
+
+@Composable
+private fun ProfileSwitchButton(profileColor: PartnerIdentityColor?, onClick: () -> Unit) {
+    val dotColor = profileColor?.let { PartnerScheduleVisualStyle.courseCard(it).content } ?: Color(0xFFD94F78)
+    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                Icons.Outlined.SwapHoriz,
+                contentDescription = "切换课表",
+                modifier = Modifier.size(20.dp),
+                tint = Color(0xFFD94F78)
+            )
+            Surface(
+                modifier = Modifier.align(Alignment.BottomEnd).size(7.dp),
+                shape = CircleShape,
+                color = dotColor
+            ) {}
         }
     }
 }
@@ -287,7 +317,6 @@ private fun PartnerViewModeButton(
 @Composable
 private fun PartnerEmptyState(
     isBusy: Boolean,
-    hasStaleSnapshot: Boolean,
     onManage: () -> Unit
 ) {
     Column(
@@ -313,18 +342,14 @@ private fun PartnerEmptyState(
         }
         Spacer(Modifier.height(24.dp))
         Text(
-            if (hasStaleSnapshot) "TA的课表属于其他学期" else "还没有TA的课表",
+            "还没有导入课表",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = PartnerScheduleVisualStyle.pagePrimaryText
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            if (hasStaleSnapshot) {
-                "旧课表已暂停显示，请导入TA当前学期的邀请码。"
-            } else {
-                "生成自己的邀请码，或输入TA的邀请码。"
-            },
+            "请依次导入两个人的邀请码，组合查看双方课程。",
             color = PartnerScheduleVisualStyle.pageSecondaryText,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -344,10 +369,7 @@ private fun PartnerScheduleContent(
     onGroupClick: (PartnerDisplayGroup) -> Unit
 ) {
     val campusByOwner = buildMap {
-        put(state.myColor, state.campusKey)
-        state.activePartnerSnapshot?.let { snapshot ->
-            put(snapshot.identityColor, snapshot.campus)
-        }
+        state.profiles.forEach { profile -> put(profile.displayColor, profile.snapshot.campus) }
     }
     val pagerState = rememberPagerState(
         initialPage = partnerPagerPageForWeek(state.week, state.maxWeek),
@@ -668,9 +690,10 @@ private fun PartnerManageSheet(
     onShowWeekendChange: (Boolean) -> Unit,
     onShowNoonChange: (Boolean) -> Unit,
     onGenerate: (Boolean, Boolean) -> Unit,
-    onImport: (String) -> Unit,
+    onImport: (String, String, String?) -> Unit,
     onRevoke: () -> Unit,
-    onDeletePartner: () -> Unit,
+    onDeleteProfile: (String) -> Unit,
+    onRenameProfile: (String, String) -> Unit,
     snackbarHostState: SnackbarHostState,
     onFeedback: (String) -> Unit
 ) {
@@ -679,9 +702,10 @@ private fun PartnerManageSheet(
     var shareRoom by remember { mutableStateOf(defaultShareOptions.shareRoom) }
     var shareTeacher by remember { mutableStateOf(defaultShareOptions.shareTeacher) }
     var inviteInput by remember { mutableStateOf("") }
-    var confirmDelete by remember { mutableStateOf(false) }
+    var profileName by remember { mutableStateOf("") }
+    var replaceProfileId by remember { mutableStateOf<String?>(null) }
+    var pendingDeleteProfileId by remember { mutableStateOf<String?>(null) }
     var confirmRevoke by remember { mutableStateOf(false) }
-    var pendingReplacementInput by remember { mutableStateOf<String?>(null) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -707,17 +731,10 @@ private fun PartnerManageSheet(
                 PartnerManageSection(title = "我的身份色") {
                     IdentityColorSelector(
                         selected = state.myColor,
-                        partnerColor = state.activePartnerSnapshot?.identityColor,
+                        partnerColor = null,
                         locked = state.activeInvite != null || state.isBusy,
                         onColorChange = onColorChange
                     )
-                    state.activePartnerSnapshot?.identityColor?.let { partnerColor ->
-                        Text(
-                            "TA的颜色是${partnerColor.displayName}，该颜色不可重复使用",
-                            fontSize = 12.sp,
-                            color = PartnerScheduleVisualStyle.manageSecondaryText
-                        )
-                    }
                     if (state.activeInvite != null) {
                         Text(
                             "当前邀请码有效期间身份色保持不变，撤销后可重新选择",
@@ -801,44 +818,68 @@ private fun PartnerManageSheet(
                     }
                 }
 
-                PartnerManageSection(title = "导入TA的课表") {
+                PartnerManageSection(title = "导入双人课表") {
+                    val selectedReplaceProfile = state.profiles.firstOrNull { it.id == replaceProfileId }
+                    state.profiles.forEach { profile ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .background(
+                                    if (profile.id == replaceProfileId) {
+                                        PartnerScheduleVisualStyle.manageAccent.copy(alpha = 0.08f)
+                                    } else {
+                                        Color.Transparent
+                                    }
+                                )
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("${profile.name} · ${profile.displayColor.displayName}", modifier = Modifier.weight(1f))
+                            TextButton(onClick = { replaceProfileId = profile.id }) { Text("用邀请码更新") }
+                            TextButton(onClick = { pendingDeleteProfileId = profile.id }) { Text("删除") }
+                        }
+                    }
+                    selectedReplaceProfile?.let { profile ->
+                        Text(
+                            "将用下方邀请码替换「${profile.name}」",
+                            fontSize = 12.sp,
+                            color = PartnerScheduleVisualStyle.manageSecondaryText
+                        )
+                    }
                     OutlinedTextField(
                         value = inviteInput,
                         onValueChange = { inviteInput = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("TA的邀请码") },
+                        label = { Text("邀请码") },
+                        singleLine = true,
+                        colors = partnerManageTextFieldColors()
+                    )
+                    OutlinedTextField(
+                        value = profileName,
+                        onValueChange = { profileName = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("昵称（可选）") },
                         singleLine = true,
                         colors = partnerManageTextFieldColors()
                     )
                     Button(
                         onClick = {
-                            if (state.partnerSnapshot == null) {
-                                onImport(inviteInput)
-                            } else {
-                                pendingReplacementInput = inviteInput
-                            }
+                            onImport(inviteInput, profileName, replaceProfileId)
+                            inviteInput = ""
+                            profileName = ""
+                            replaceProfileId = null
                         },
-                        enabled = !state.isBusy && inviteInput.isNotBlank(),
+                        enabled = !state.isBusy && inviteInput.isNotBlank() &&
+                            (replaceProfileId != null || state.profiles.size < 2),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = PartnerScheduleVisualStyle.manageAccent,
                             contentColor = Color.White
                         ),
                         modifier = Modifier.fillMaxWidth().height(48.dp)
                     ) {
-                        Text(if (state.partnerSnapshot == null) "导入TA的课表" else "覆盖现有TA的课表")
-                    }
-                }
-
-                if (state.partnerSnapshot != null) {
-                    PartnerManageSection(title = "本地数据") {
-                        TextButton(
-                            onClick = { confirmDelete = true },
-                            modifier = Modifier.fillMaxWidth().height(48.dp)
-                        ) {
-                            Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("删除本地TA的课表", color = Color(0xFFB3261E))
-                        }
+                        Text(
+                            if (selectedReplaceProfile == null) "导入课表"
+                            else "更新「${selectedReplaceProfile.name}」"
+                        )
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -872,38 +913,24 @@ private fun PartnerManageSheet(
         )
     }
 
-    if (confirmDelete) {
+    pendingDeleteProfileId?.let { profileId ->
+        val profile = state.profiles.firstOrNull { it.id == profileId }
         AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("删除TA的课表？") },
-            text = { Text("只删除本机保存的TA的课表，不会撤销对方的邀请码。") },
+            onDismissRequest = { pendingDeleteProfileId = null },
+            title = { Text("删除${profile?.name ?: "该"}课表？") },
+            text = { Text("只删除本机保存的课表，不会撤销对方的邀请码。") },
             confirmButton = {
                 TextButton(onClick = {
-                    onDeletePartner()
-                    confirmDelete = false
+                    onDeleteProfile(profileId)
+                    pendingDeleteProfileId = null
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("取消") }
+                TextButton(onClick = { pendingDeleteProfileId = null }) { Text("取消") }
             }
         )
     }
-    pendingReplacementInput?.let { input ->
-        AlertDialog(
-            onDismissRequest = { pendingReplacementInput = null },
-            title = { Text("覆盖现有TA的课表？") },
-            text = { Text("导入成功后，本机现有的TA的课表将被新快照替换。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onImport(input)
-                    pendingReplacementInput = null
-                }) { Text("确认覆盖") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingReplacementInput = null }) { Text("取消") }
-            }
-        )
-    }
+
 }
 
 @Composable

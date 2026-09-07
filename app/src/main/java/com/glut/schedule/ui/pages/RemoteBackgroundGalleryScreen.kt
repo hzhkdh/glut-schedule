@@ -41,8 +41,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -81,6 +81,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -177,7 +178,8 @@ fun RemoteBackgroundGalleryScreen(
                 saveProgress = state.saveProgress,
                 onBack = viewModel::closePreview,
                 onUse = { viewModel.downloadAndUse(item, onUseDownloaded) },
-                onSave = { requestSave(item) }
+                onSave = { requestSave(item) },
+                onSourceOpenFailed = { viewModel.showMessage("无法打开资料来源，请稍后重试") }
             )
         }
         SnackbarHost(
@@ -301,7 +303,8 @@ private fun RemoteArtworkDetail(
     saveProgress: Float,
     onBack: () -> Unit,
     onUse: () -> Unit,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    onSourceOpenFailed: () -> Unit
 ) {
     val bitmap = rememberRemoteBitmap(previewUri, backgroundStore)
     val scrollState = rememberScrollState()
@@ -316,6 +319,7 @@ private fun RemoteArtworkDetail(
     val buttonsEnabled = !isDownloading && !isSaving
     var actionBarHeightPx by remember(item.id) { mutableStateOf(0) }
     val actionBarHeight = with(LocalDensity.current) { actionBarHeightPx.toDp() }
+    val uriHandler = LocalUriHandler.current
 
     if (showFullscreenViewer) {
         RemoteArtworkFullscreenViewer(
@@ -361,11 +365,13 @@ private fun RemoteArtworkDetail(
                     modifier = Modifier.padding(start = 6.dp)
                 )
             }
+            val imageFrameModifier = artworkDetailAspectRatio(item.width, item.height)?.let { ratio ->
+                Modifier.fillMaxWidth().aspectRatio(ratio)
+            } ?: run {
+                Modifier.fillMaxWidth().height(410.dp).background(imageBackdrop)
+            }
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(remoteArtworkImageHeight(item))
-                    .background(imageBackdrop)
+                modifier = imageFrameModifier
                     .clickable(enabled = bitmap != null) { showFullscreenViewer = true },
                 contentAlignment = Alignment.Center
             ) {
@@ -378,20 +384,6 @@ private fun RemoteArtworkDetail(
                     )
                     isPreviewLoading -> CircularProgressIndicator(color = secondaryText)
                     else -> Text("大图预览加载失败", color = secondaryText)
-                }
-                if (bitmap != null) {
-                    Icon(
-                        Icons.Outlined.Fullscreen,
-                        contentDescription = "进入全屏缩放",
-                        tint = Color.White,
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(14.dp)
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.62f))
-                            .padding(9.dp)
-                    )
                 }
             }
             Column(
@@ -441,6 +433,38 @@ private fun RemoteArtworkDetail(
                         lineHeight = 25.sp,
                         modifier = Modifier.padding(top = 6.dp)
                     )
+                    if (item.sources.isNotEmpty()) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 16.dp),
+                            color = dividerColor
+                        )
+                        Text("资料来源", color = secondaryText, fontSize = 13.sp)
+                        item.sources.forEach { source ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        runCatching { uriHandler.openUri(source.url) }
+                                            .onFailure { onSourceOpenFailed() }
+                                    }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = source.label,
+                                    color = primaryText,
+                                    fontSize = 15.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    Icons.AutoMirrored.Outlined.OpenInNew,
+                                    contentDescription = "在浏览器打开${source.label}",
+                                    tint = secondaryText,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -503,6 +527,9 @@ private fun RemoteArtworkDetail(
         }
     }
 }
+
+internal fun artworkDetailAspectRatio(width: Int, height: Int): Float? =
+    if (width > 0 && height > 0 && width >= height) width.toFloat() / height else null
 
 @Composable
 private fun RemoteArtworkFullscreenViewer(
@@ -574,12 +601,6 @@ private fun RemoteArtworkFullscreenViewer(
             }
         }
     }
-}
-
-private fun remoteArtworkImageHeight(item: RemoteBackgroundItem) = when {
-    item.width >= item.height * 1.35f -> 280.dp
-    item.width >= item.height -> 330.dp
-    else -> 410.dp
 }
 
 @Composable

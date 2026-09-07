@@ -33,6 +33,18 @@ interface ScheduleDao {
     @Query("SELECT * FROM course_occurrences ORDER BY dayOfWeek, startSection")
     fun observeOccurrences(): Flow<List<CourseOccurrenceEntity>>
 
+    @Query("SELECT * FROM course_remarks ORDER BY updatedAtEpochMillis DESC")
+    fun observeCourseRemarks(): Flow<List<CourseRemarkEntity>>
+
+    @Upsert
+    suspend fun upsertCourseRemark(remark: CourseRemarkEntity)
+
+    @Query("DELETE FROM course_remarks WHERE semesterId = :semesterId AND courseId = :courseId AND occurrenceId = :occurrenceId AND weekNumber = :weekNumber")
+    suspend fun deleteCourseRemark(semesterId: String, courseId: String, occurrenceId: String, weekNumber: Int)
+
+    @Query("DELETE FROM course_remarks")
+    suspend fun deleteAllCourseRemarks()
+
     @Query("SELECT * FROM class_periods ORDER BY section")
     fun observeClassPeriods(): Flow<List<ClassPeriodEntity>>
 
@@ -219,6 +231,7 @@ interface ScheduleDao {
 
     @Transaction
     suspend fun clearAll() {
+        deleteAllCourseRemarks()
         deleteCourses()
         deleteOccurrences()
         deleteAllExams()

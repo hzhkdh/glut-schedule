@@ -1,12 +1,19 @@
 package com.glut.schedule
 
 import com.glut.schedule.service.background.RemoteBackgroundCatalogParser
+import com.glut.schedule.ui.pages.artworkDetailAspectRatio
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RemoteBackgroundCatalogTest {
+    @Test
+    fun horizontalArtworkUsesItsExactAspectRatioWithoutLetterboxHeight() {
+        assertEquals(1.5f, artworkDetailAspectRatio(1500, 1000)!!, 0.0001f)
+        assertNull(artworkDetailAspectRatio(1000, 1500))
+    }
     @Test
     fun parseKeepsDisplayNameConfiguredByJson() {
         val catalog = RemoteBackgroundCatalogParser.parse(validCatalog())
@@ -35,6 +42,32 @@ class RemoteBackgroundCatalogTest {
 
         assertNull(catalog.items.single().artwork)
         assertEquals("梵高《盛开的杏花》", catalog.items.single().displayName)
+        assertTrue(catalog.items.single().sources.isEmpty())
+    }
+
+    @Test
+    fun parseKeepsPublicArtworkSources() {
+        val raw = validCatalog().replace(
+            "\"thumbnailUrl\"",
+            "\"sources\": [{\"label\": \"梵高博物馆作品页\", \"url\": \"https://www.vangoghmuseum.nl/en/collection/s0176V1962\"}],\n            \"thumbnailUrl\""
+        )
+
+        val source = RemoteBackgroundCatalogParser.parse(raw).items.single().sources.single()
+
+        assertEquals("梵高博物馆作品页", source.label)
+        assertEquals("https://www.vangoghmuseum.nl/en/collection/s0176V1962", source.url)
+    }
+
+    @Test
+    fun parseRejectsInvalidSourcesInsteadOfHidingThem() {
+        val wrongType = validCatalog().replace("\"thumbnailUrl\"", "\"sources\": 123,\n            \"thumbnailUrl\"")
+        val unsafeUrl = validCatalog().replace(
+            "\"thumbnailUrl\"",
+            "\"sources\": [{\"label\": \"来源\", \"url\": \"http://example.com/work\"}],\n            \"thumbnailUrl\""
+        )
+
+        assertThrows(IllegalArgumentException::class.java) { RemoteBackgroundCatalogParser.parse(wrongType) }
+        assertThrows(IllegalArgumentException::class.java) { RemoteBackgroundCatalogParser.parse(unsafeUrl) }
     }
 
     @Test
@@ -80,6 +113,39 @@ class RemoteBackgroundCatalogTest {
         assertThrows(IllegalArgumentException::class.java) {
             RemoteBackgroundCatalogParser.parse(raw)
         }
+    }
+
+    @Test
+    fun parseAllowsOneThousandItemsButRejectsOneThousandAndOne() {
+        assertEquals(1_000, RemoteBackgroundCatalogParser.parse(catalogWithItemCount(1_000)).items.size)
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteBackgroundCatalogParser.parse(catalogWithItemCount(1_001))
+        }
+    }
+
+    private fun catalogWithItemCount(count: Int): String {
+        val items = (1..count).joinToString(",") { index ->
+            """
+            {
+              "id": "artwork-$index",
+              "displayName": "作者《作品$index》",
+              "thumbnailUrl": "https://background.999314.xyz/generated/thumb.webp",
+              "previewUrl": "https://background.999314.xyz/generated/preview.webp",
+              "originalUrl": "https://img.999314.xyz/file/original.jpg",
+              "sha256": "${"a".repeat(64)}",
+              "byteSize": 1,
+              "width": 1,
+              "height": 1
+            }
+            """.trimIndent()
+        }
+        return """
+        {
+          "protocol": 1,
+          "revision": "revision-$count",
+          "items": [$items]
+        }
+        """.trimIndent()
     }
 
     private fun validCatalog(includeArtwork: Boolean = true): String {

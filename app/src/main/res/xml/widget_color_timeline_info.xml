@@ -3,7 +3,7 @@
     android:description="@string/widget_color_timeline_description"
     android:initialLayout="@layout/glance_default_loading_layout"
     android:minWidth="250dp"
-    android:minHeight="110dp"
+    android:minHeight="180dp"
     android:previewImage="@drawable/widget_preview_color_timeline"
     android:previewLayout="@layout/widget_preview_color_timeline"
     android:resizeMode="horizontal|vertical"

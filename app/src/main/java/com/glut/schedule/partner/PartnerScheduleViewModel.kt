@@ -36,28 +36,22 @@ data class PartnerScheduleUiState(
     val showNoon: Boolean = false,
     val viewMode: PartnerScheduleViewMode = PartnerScheduleViewMode.COMBINED,
     val ownCourses: List<PartnerCourse> = emptyList(),
-    val partnerSnapshot: PartnerScheduleSnapshot? = null,
+    val profiles: List<ImportedPartnerProfile> = emptyList(),
+    val selectedProfileId: String? = null,
     val myColor: PartnerIdentityColor = PartnerIdentityColor.BLUE,
     val activeInvite: StoredPartnerInvite? = null,
     val isBusy: Boolean = false,
     val message: String = ""
 ) {
-    val activePartnerSnapshot: PartnerScheduleSnapshot?
-        get() = partnerSnapshot?.takeIf {
-            isPartnerSemesterCompatible(semesterStartMonday, semesterEndDate, it)
-        }
-
-    val hasStalePartnerSnapshot: Boolean
-        get() = partnerSnapshot != null && activePartnerSnapshot == null
-
-    val combinedCourses: List<PartnerCourse>
-        get() = ownCourses + activePartnerSnapshot.orEmptyCourses()
+    val selectedProfile: ImportedPartnerProfile?
+        get() = profiles.firstOrNull { it.id == selectedProfileId } ?: profiles.firstOrNull()
 
     val displayedCourses: List<PartnerCourse>
-        get() = partnerCoursesForMode(viewMode, ownCourses, activePartnerSnapshot.orEmptyCourses())
+        get() = when (viewMode) {
+            PartnerScheduleViewMode.COMBINED -> profiles.flatMap { it.displayCourses() }
+            PartnerScheduleViewMode.PARTNER -> selectedProfile?.displayCourses().orEmpty()
+        }
 }
-
-private fun PartnerScheduleSnapshot?.orEmptyCourses(): List<PartnerCourse> = this?.courses.orEmpty()
 
 private data class LocalScheduleData(
     val courses: List<ScheduleCourse>,
@@ -81,7 +75,7 @@ private data class CalendarData(
 )
 
 private data class StoredPartnerData(
-    val snapshot: PartnerScheduleSnapshot?,
+    val profiles: List<ImportedPartnerProfile>,
     val invite: StoredPartnerInvite?,
     val myColor: PartnerIdentityColor
 )
@@ -93,6 +87,7 @@ class PartnerScheduleViewModel(
     private val gateway: PartnerScheduleGateway
 ) : ViewModel() {
     private val selectedWeek = MutableStateFlow<Int?>(null)
+    private val selectedProfileId = MutableStateFlow<String?>(null)
     private val isBusy = MutableStateFlow(false)
     private val message = MutableStateFlow("")
     private val operationMutex = Mutex()
@@ -125,16 +120,19 @@ class PartnerScheduleViewModel(
             CalendarData(base, showWeekend, showNoon, viewMode)
         }
         val storedData = combine(
-            storage.partnerSnapshot,
+            storage.profiles,
             storage.activeInvite,
             storage.myColor
         ) { snapshot, invite, color ->
             StoredPartnerData(snapshot, invite, color)
         }
-        val baseState = combine(localData, calendarData, storedData, selectedWeek) {
-                local, calendar, stored, selected ->
-            val start = local.semester?.semesterStartDate ?: calendar.base.start
-            val end = local.semester?.semesterEndDate ?: calendar.base.end
+        val baseState = combine(localData, calendarData, storedData, selectedWeek, selectedProfileId) {
+                local, calendar, stored, selected, selectedProfile ->
+            // 双人页以第一份已导入课表为日历基准，不将本机主课表混入展示数据。
+            val start = stored.profiles.firstOrNull()?.snapshot?.semesterStartMonday
+                ?: local.semester?.semesterStartDate ?: calendar.base.start
+            val end = stored.profiles.firstOrNull()?.snapshot?.semesterEndDate
+                ?: local.semester?.semesterEndDate ?: calendar.base.end
             val maxWeek = academicMaxWeekForCalendar(start, end)
             val week = clampAcademicWeek(selected ?: calendar.base.week, maxWeek)
             val campusKey = when (calendar.base.campus) {
@@ -168,7 +166,8 @@ class PartnerScheduleViewModel(
                 showNoon = calendar.showNoon,
                 viewMode = calendar.viewMode,
                 ownCourses = ownSnapshot.courses,
-                partnerSnapshot = stored.snapshot,
+                profiles = stored.profiles,
+                selectedProfileId = selectedProfile,
                 myColor = stored.myColor,
                 activeInvite = stored.invite
             )
@@ -197,10 +196,6 @@ class PartnerScheduleViewModel(
     fun setMyColor(color: PartnerIdentityColor) {
         if (isBusy.value || storage.activeInvite.value != null) {
             message.value = "请先完成当前操作并撤销邀请码，再修改身份色"
-            return
-        }
-        if (color == uiState.value.activePartnerSnapshot?.identityColor) {
-            message.value = "这是TA的颜色，请选择其他颜色"
             return
         }
         storage.setMyColor(color)
@@ -253,25 +248,52 @@ class PartnerScheduleViewModel(
         }
     }
 
-    fun importInvite(input: String) {
+    fun selectProfile(id: String) {
+        selectedProfileId.value = id
+        if (uiState.value.viewMode != PartnerScheduleViewMode.PARTNER) {
+            setViewMode(PartnerScheduleViewMode.PARTNER)
+        }
+    }
+
+    /** 单人模式下按导入顺序循环切换，避免额外占用课表顶部空间。 */
+    fun cycleProfile() {
+        val profiles = uiState.value.profiles
+        if (profiles.size < 2) return
+        val currentIndex = profiles.indexOfFirst { it.id == uiState.value.selectedProfile?.id }
+        val nextIndex = if (currentIndex in profiles.indices) {
+            (currentIndex + 1) % profiles.size
+        } else {
+            0
+        }
+        val nextProfile = profiles[nextIndex]
+        selectedProfileId.value = nextProfile.id
+        message.value = "已切换到${nextProfile.name}"
+    }
+
+    fun importInvite(input: String, name: String, replaceProfileId: String? = null) {
         if (isBusy.value) return
-        launchOperation("TA的课表已导入") {
+        launchOperation("课表已导入") {
             val snapshot = gateway.fetchInvite(input)
             val currentState = uiState.value
-            // 必须先校验再修改身份色或快照，失败导入不能破坏当前单槽位数据。
-            requirePartnerSemesterCompatible(
-                localStart = currentState.semesterStartMonday,
-                localEnd = currentState.semesterEndDate,
-                snapshot = snapshot
+            val profiles = storage.profiles.value
+            val replacing = profiles.firstOrNull { it.id == replaceProfileId }
+            require(replacing != null || profiles.size < 2) { "最多只能导入两份课表，请先更新或删除已有课表" }
+            profiles.firstOrNull { it.id != replaceProfileId }?.snapshot?.let { first ->
+                requirePartnerSemesterCompatible(first.semesterStartMonday, first.semesterEndDate, snapshot)
+            }
+            val usedColors = profiles.filterNot { it.id == replaceProfileId }.map { it.displayColor }.toSet()
+            val displayColor = snapshot.identityColor.takeIf { it !in usedColors }
+                ?: PartnerIdentityColor.entries.first { it !in usedColors }
+            val profile = ImportedPartnerProfile(
+                id = replacing?.id ?: "profile-${System.currentTimeMillis()}",
+                name = name.trim().take(20).ifBlank { partnerProfileDefaultName(profiles.size) },
+                snapshot = snapshot,
+                displayColor = displayColor
             )
-            storage.setMyColor(
-                partnerImportLocalColor(
-                    current = storage.myColor.value,
-                    partner = snapshot.identityColor,
-                    hasActiveInvite = storage.activeInvite.value != null
-                )
+            storage.saveProfiles(
+                (profiles.filterNot { it.id == replaceProfileId } + profile).take(2)
             )
-            storage.savePartnerSnapshot(snapshot)
+            selectedProfileId.value = profile.id
         }
     }
 
@@ -284,9 +306,19 @@ class PartnerScheduleViewModel(
         }
     }
 
-    fun deletePartnerSnapshot() {
-        storage.clearPartnerSnapshot()
-        message.value = "已删除本地TA的课表"
+    fun renameProfile(id: String, name: String) {
+        val normalized = name.trim().take(20)
+        if (normalized.isBlank()) {
+            message.value = "昵称不能为空"
+            return
+        }
+        storage.saveProfiles(storage.profiles.value.map { if (it.id == id) it.copy(name = normalized) else it })
+    }
+
+    fun deleteProfile(id: String) {
+        storage.saveProfiles(storage.profiles.value.filterNot { it.id == id })
+        if (selectedProfileId.value == id) selectedProfileId.value = storage.profiles.value.firstOrNull()?.id
+        message.value = "已删除本地课表"
     }
 
     fun clearMessage() {

@@ -95,4 +95,27 @@ class ScheduleDatabaseMigrationSqlTest {
         val source = (if (module.exists()) module else File("app/$module")).readText()
         assertTrue(source.contains("ScheduleDatabase.MIGRATION_10_11"))
     }
+
+    @Test
+    fun migration11To12CreatesOccurrenceScopedCourseRemarks() {
+        val statements = mutableListOf<String>()
+        val database = Proxy.newProxyInstance(
+            SupportSQLiteDatabase::class.java.classLoader,
+            arrayOf(SupportSQLiteDatabase::class.java)
+        ) { _, method, arguments ->
+            if (method.name == "execSQL") statements += arguments.orEmpty().first() as String
+            null
+        } as SupportSQLiteDatabase
+
+        ScheduleDatabase.MIGRATION_11_12.migrate(database)
+
+        val create = statements.single { it.contains("CREATE TABLE IF NOT EXISTS `course_remarks`") }
+        assertTrue(create.contains("PRIMARY KEY(`semesterId`, `courseId`, `occurrenceId`, `weekNumber`)"))
+        assertTrue(create.contains("REFERENCES `academic_semesters`(`id`)"))
+        assertFalse(create.contains("REFERENCES `courses`"))
+
+        val module = File("src/main/java/com/glut/schedule/ScheduleApplication.kt")
+        val source = (if (module.exists()) module else File("app/$module")).readText()
+        assertTrue(source.contains("ScheduleDatabase.MIGRATION_11_12"))
+    }
 }

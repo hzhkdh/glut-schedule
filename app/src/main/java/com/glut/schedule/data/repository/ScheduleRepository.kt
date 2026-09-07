@@ -8,6 +8,7 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.CourseTimeSemesterSource
+import com.glut.schedule.data.model.CourseRemark
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.GradeExamInfo
 import com.glut.schedule.data.model.ScoreInfo
@@ -22,6 +23,7 @@ import com.glut.schedule.data.model.nanningClassPeriods
 import com.glut.schedule.data.model.pingfengClassPeriods
 import com.glut.schedule.data.model.yanshanClassPeriods
 import com.glut.schedule.data.model.validateClassPeriods
+import com.glut.schedule.data.model.normalizedCourseRemark
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.ClassPeriodProfile
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
@@ -86,6 +88,56 @@ class ScheduleRepository(
         classPeriodOverrides, classPeriodProfileOverrides, guilinSubCampus
     ) { legacyOverrides, profileOverrides, subCampus ->
         ClassPeriodConfig(legacyOverrides, profileOverrides, subCampus)
+    }
+
+    val courseRemarks: Flow<List<CourseRemark>> = combine(
+        dao.observeCourseRemarks(),
+        viewedSemesterId
+    ) { remarks, semesterId ->
+        remarks.filter { it.semesterId == semesterId }.map { entity ->
+            CourseRemark(
+                semesterId = entity.semesterId,
+                courseId = entity.courseId,
+                occurrenceId = entity.occurrenceId,
+                weekNumber = entity.weekNumber,
+                text = entity.text,
+                updatedAtEpochMillis = entity.updatedAtEpochMillis
+            )
+        }
+    }
+
+    suspend fun saveCourseRemark(
+        semesterId: String,
+        courseId: String,
+        occurrenceId: String,
+        weekNumber: Int,
+        text: String
+    ) {
+        val normalized = text.normalizedCourseRemark()
+        if (normalized.isEmpty()) {
+            // 删除必须经过查看页的二次确认；清空编辑框后保存只视为无操作。
+            return
+        }
+        dao.upsertCourseRemark(
+            com.glut.schedule.data.local.CourseRemarkEntity(
+                semesterId = semesterId,
+                courseId = courseId,
+                occurrenceId = occurrenceId,
+                weekNumber = weekNumber,
+                text = normalized,
+                updatedAtEpochMillis = System.currentTimeMillis()
+            )
+        )
+    }
+
+    /** 显式删除指定周次的单条备注，避免界面层通过保存空字符串表达删除意图。 */
+    suspend fun deleteCourseRemark(
+        semesterId: String,
+        courseId: String,
+        occurrenceId: String,
+        weekNumber: Int
+    ) {
+        dao.deleteCourseRemark(semesterId, courseId, occurrenceId, weekNumber)
     }
 
     val classPeriods: Flow<List<ClassPeriod>> = combine(

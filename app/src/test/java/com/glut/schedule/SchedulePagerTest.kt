@@ -1,20 +1,59 @@
 package com.glut.schedule
 
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
 import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.CourseOccurrence
+import com.glut.schedule.data.model.CourseRemark
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.ui.pages.courseBlocksByWeek
 import com.glut.schedule.ui.pages.pagerPageForWeekNumber
 import com.glut.schedule.ui.pages.weekNumberForPagerPage
 import com.glut.schedule.ui.components.courseCardRoomTextSize
 import com.glut.schedule.ui.components.courseCardTitleTextSize
+import com.glut.schedule.ui.components.CourseCardTapAction
+import com.glut.schedule.ui.components.courseCardContentPadding
+import com.glut.schedule.ui.components.courseCardTapAction
 import com.glut.schedule.ui.components.overlappingCourseBlockGroups
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SchedulePagerTest {
+    @Test
+    fun remarkedCourseKeepsFullTextWidthAndOnlyReservesBottomBadgeSpace() {
+        val padding = courseCardContentPadding(hasRemark = true)
+
+        assertEquals(0.dp, padding.calculateLeftPadding(LayoutDirection.Ltr))
+        assertEquals(0.dp, padding.calculateRightPadding(LayoutDirection.Ltr))
+        assertEquals(14.dp, padding.calculateBottomPadding())
+    }
+
+    @Test
+    fun remarkedCourseTapAlwaysOpensRemarkEvenWhenCoursesConflict() {
+        assertEquals(
+            CourseCardTapAction.ViewRemark,
+            courseCardTapAction(hasRemark = true, hasConflict = false)
+        )
+        assertEquals(
+            CourseCardTapAction.ViewRemark,
+            courseCardTapAction(hasRemark = true, hasConflict = true)
+        )
+    }
+
+    @Test
+    fun unremarkedCourseTapOnlyCyclesConflicts() {
+        assertEquals(
+            CourseCardTapAction.CycleConflict,
+            courseCardTapAction(hasRemark = false, hasConflict = true)
+        )
+        assertEquals(
+            CourseCardTapAction.None,
+            courseCardTapAction(hasRemark = false, hasConflict = false)
+        )
+    }
+
     @Test
     fun pagerPageMapsToOneBasedAcademicWeek() {
         assertEquals(MIN_ACADEMIC_WEEK, weekNumberForPagerPage(0))
@@ -62,6 +101,21 @@ class SchedulePagerTest {
         assertEquals(1, blocksByWeek.getValue(4).size)
         assertEquals(0, blocksByWeek.getValue(5).size)
         assertEquals(19, blocksByWeek.size)
+    }
+
+    @Test
+    fun courseRemarkAppearsOnlyOnItsSpecificOccurrenceAndWeek() {
+        val occurrence = occurrence(id = "math-1", courseId = "math", weekText = "1-2周")
+        val blocks = courseBlocksByWeek(
+            courses = listOf(course("math", "高等数学", listOf(occurrence))),
+            maxWeek = 2,
+            remarks = listOf(
+                CourseRemark("semester", "math", "math-1", 2, "带尺子", 1L)
+            )
+        )
+
+        assertEquals(null, blocks.getValue(1).single().remark)
+        assertEquals("带尺子", blocks.getValue(2).single().remark)
     }
 
     @Test

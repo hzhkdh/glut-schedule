@@ -6,8 +6,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [AcademicSemesterEntity::class, CourseEntity::class, CourseOccurrenceEntity::class, ClassPeriodEntity::class, ExamEntity::class, ScoreEntity::class, GradeExamEntity::class, StudyPlanGroupEntity::class, StudyPlanCourseEntity::class, SemesterAdjustmentEntity::class],
-    version = 11,
+    entities = [AcademicSemesterEntity::class, CourseEntity::class, CourseOccurrenceEntity::class, CourseRemarkEntity::class, ClassPeriodEntity::class, ExamEntity::class, ScoreEntity::class, GradeExamEntity::class, StudyPlanGroupEntity::class, StudyPlanCourseEntity::class, SemesterAdjustmentEntity::class],
+    version = 12,
     exportSchema = true
 )
 abstract class ScheduleDatabase : RoomDatabase() {
@@ -136,6 +136,25 @@ abstract class ScheduleDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE academic_semesters ADD COLUMN portalMaxWeek INTEGER")
                 // v9→v10 已处理历史缓存清理，此处不再重复。
+            }
+        }
+
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 备注只关联学期，不关联会在刷新课表时重建的课程表，确保用户内容不会被导入覆盖。
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `course_remarks` (
+                        `semesterId` TEXT NOT NULL,
+                        `courseId` TEXT NOT NULL,
+                        `occurrenceId` TEXT NOT NULL,
+                        `weekNumber` INTEGER NOT NULL,
+                        `text` TEXT NOT NULL,
+                        `updatedAtEpochMillis` INTEGER NOT NULL,
+                        PRIMARY KEY(`semesterId`, `courseId`, `occurrenceId`, `weekNumber`),
+                        FOREIGN KEY(`semesterId`) REFERENCES `academic_semesters`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_course_remarks_semesterId` ON `course_remarks` (`semesterId`)")
             }
         }
     }

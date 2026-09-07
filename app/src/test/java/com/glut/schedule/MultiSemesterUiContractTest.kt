@@ -18,6 +18,64 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
+    fun customBackgroundLoadingDoesNotDrawBuiltInArtworkFallback() {
+        val screen = page("ScheduleScreen.kt")
+        val loadingBranch = screen
+            .substringAfter("customBackgroundBitmap == null")
+            .substringBefore("val pagerState")
+
+        assertTrue(loadingBranch.contains("Box(modifier = modifier.fillMaxSize())"))
+        assertFalse(loadingBranch.contains("ScheduleBackgroundImage("))
+    }
+
+    @Test
+    fun courseRemarkDialogUsesMinimalLightSurface() {
+        val screen = page("ScheduleScreen.kt")
+        val dialog = screen
+            .substringAfter("private fun CourseRemarkEditDialog(")
+            .substringBefore("private fun ScheduleAddActionsPanel(")
+
+        assertTrue(dialog.contains("containerColor = Color(0xFFFFFBF3)"))
+        assertTrue(dialog.contains("placeholder = { Text(\"例如：带实验报告\") }"))
+        assertFalse(dialog.contains("记录这节课需要携带的物品或其他提醒"))
+        assertFalse(dialog.contains("label = { Text(\"简要备注\") }"))
+    }
+
+    @Test
+    fun remarkedCourseUsesHighContrastChatBubbleBadge() {
+        val grid = component("ScheduleGrid.kt")
+
+        assertTrue(grid.contains("Icons.Rounded.ChatBubble"))
+        assertTrue(grid.contains(".size(20.dp)"))
+        assertTrue(grid.contains(".size(48.dp)"))
+        assertFalse(grid.contains("Icons.AutoMirrored.Rounded.StickyNote2"))
+    }
+
+    @Test
+    fun courseRemarkViewerShowsOnlyContentAndActions() {
+        val screen = page("ScheduleScreen.kt")
+        val viewer = screen
+            .substringAfter("private fun CourseRemarkViewDialog(")
+            .substringBefore("private fun CourseRemarkEditDialog(")
+
+        assertFalse(viewer.contains("OutlinedTextField("))
+        assertFalse(viewer.contains("/80"))
+        assertFalse(viewer.contains("title = {"))
+        assertFalse(viewer.contains("text = \"课程备注\""))
+        assertFalse(viewer.contains("第${'$'}{target.weekNumber}周"))
+        assertFalse(viewer.contains("Icons.Rounded.Close"))
+        assertTrue(viewer.contains("onDismissRequest = onDismiss"))
+        assertTrue(viewer.contains("text = target.block.remark.orEmpty()"))
+        assertTrue(viewer.contains("Text(\"删除\""))
+        assertTrue(viewer.contains("Text(\"编辑\""))
+        assertTrue(screen.contains("private fun CourseRemarkDeleteConfirmDialog("))
+        assertTrue(screen.contains("删除这条备注？"))
+        assertTrue(screen.contains("returnToView = true"))
+        assertTrue(screen.contains("returnToView = false"))
+        assertTrue(screen.contains("if (overlay.returnToView)"))
+    }
+
+    @Test
     fun admissionParsingUsesTheStudentNumberFromEachAuthenticationAttempt() {
         val viewModel = page("DirectLoginViewModel.kt")
 

@@ -18,6 +18,7 @@ import com.glut.schedule.partner.partnerHeaderPrimaryText
 import com.glut.schedule.partner.PartnerViewModeIcon
 import com.glut.schedule.partner.partnerDefaultShareOptions
 import com.glut.schedule.partner.partnerViewModeIcon
+import com.glut.schedule.partner.partnerProfileDefaultName
 import com.glut.schedule.partner.partnerCoursesForMode
 import com.glut.schedule.partner.partnerInviteExpiryText
 import com.glut.schedule.partner.partnerImportLocalColor
@@ -39,6 +40,12 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 class PartnerScheduleLayoutTest {
+
+    @Test
+    fun unnamedImportedProfilesUseCompactStableDefaultNames() {
+        assertEquals("课表1", partnerProfileDefaultName(0))
+        assertEquals("课表2", partnerProfileDefaultName(1))
+    }
 
     private fun course(
         title: String,

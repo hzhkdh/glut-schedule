@@ -52,6 +52,21 @@ data class PartnerScheduleSnapshot(
 )
 
 /**
+ * 本机仅保存展示层信息；邀请码快照仍保持 v1，确保 Android 与微信端继续互通。
+ */
+data class ImportedPartnerProfile(
+    val id: String,
+    val name: String,
+    val snapshot: PartnerScheduleSnapshot,
+    val displayColor: PartnerIdentityColor
+)
+
+fun partnerProfileDefaultName(index: Int): String = "课表${index + 1}"
+
+fun ImportedPartnerProfile.displayCourses(): List<PartnerCourse> =
+    snapshot.courses.map { it.copy(ownerColor = displayColor) }
+
+/**
  * 将本地课表转换为可共享快照。转换发生在上传前，确保未授权字段和本地备注
  * 从一开始就不会进入网络请求体。
  */

@@ -140,6 +140,20 @@ class ScheduleWidgetPreviewContractTest {
     }
 
     @Test
+    fun noCourseWidgetsDoNotOfferANextCourseReminder() {
+        val widgets = appFile(
+            "src/main/java/com/glut/schedule/widget/ScheduleWidgets.kt"
+        ).readText()
+        val models = appFile(
+            "src/main/java/com/glut/schedule/widget/ScheduleWidgetModels.kt"
+        ).readText()
+
+        assertFalse(widgets.contains("nextCourse"))
+        assertFalse(models.contains("nextCourse"))
+        assertTrue(widgets.contains("private fun NoCourseContent()"))
+    }
+
+    @Test
     fun compactScalablePreviewMatchesTheRealTwoRowHeader() {
         val preview = appFile(
             "src/main/res/layout/widget_preview_compact_today.xml"

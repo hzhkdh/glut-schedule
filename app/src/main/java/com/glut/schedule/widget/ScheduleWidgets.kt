@@ -39,7 +39,6 @@ private val WidgetCard = ColorProvider(Color(0xFFFFFEFB))
 private val WidgetPrimary = ColorProvider(Color(0xFF141821))
 private val WidgetSecondary = ColorProvider(Color(0xFF667085))
 private val WidgetAccent = ColorProvider(Color(0xFF3F7DF6))
-private val WidgetSoft = ColorProvider(Color(0xFFEAF1FF))
 private val WidgetDivider = ColorProvider(Color(0xFFE2E7EC))
 private val WidgetFallbackCourse = ColorProvider(Color(0xFF3F7DF6))
 
@@ -98,7 +97,7 @@ private fun CompactTodayContent(snapshot: WidgetScheduleSnapshot) {
         Spacer(GlanceModifier.height(10.dp))
         when (snapshot.status) {
             WidgetScheduleStatus.READY -> CourseList(snapshot.todayCourses, limit = 2)
-            WidgetScheduleStatus.NO_COURSES -> NoCourseContent(snapshot.nextCourse)
+            WidgetScheduleStatus.NO_COURSES -> NoCourseContent()
             else -> StatusContent(snapshot.status)
         }
     }
@@ -133,11 +132,12 @@ private fun ColorTimelineContent(snapshot: WidgetScheduleSnapshot) {
         WidgetHeader(snapshot, "日视图")
         Spacer(GlanceModifier.height(9.dp))
         when (snapshot.status) {
-            WidgetScheduleStatus.READY -> snapshot.todayCourses.take(3).forEachIndexed { index, course ->
+            // 日视图的最小尺寸只容纳两张完整卡片，避免末尾课程信息被宿主裁剪。
+            WidgetScheduleStatus.READY -> snapshot.todayCourses.take(2).forEachIndexed { index, course ->
                 TimelineCourse(course)
-                if (index != snapshot.todayCourses.take(3).lastIndex) Spacer(GlanceModifier.height(6.dp))
+                if (index != snapshot.todayCourses.take(2).lastIndex) Spacer(GlanceModifier.height(6.dp))
             }
-            WidgetScheduleStatus.NO_COURSES -> NoCourseContent(snapshot.nextCourse)
+            WidgetScheduleStatus.NO_COURSES -> NoCourseContent()
             else -> StatusContent(snapshot.status)
         }
     }
@@ -261,7 +261,7 @@ private fun TimelineCourse(course: WidgetCourseItem) {
 }
 
 @Composable
-private fun NoCourseContent(nextCourse: WidgetCourseItem?) {
+private fun NoCourseContent() {
     Column(
         modifier = GlanceModifier.fillMaxSize(),
         verticalAlignment = Alignment.CenterVertically,
@@ -269,19 +269,6 @@ private fun NoCourseContent(nextCourse: WidgetCourseItem?) {
     ) {
         Text("今天没有课", style = TitleStyle, maxLines = 1)
         Text("好好安排自己的时间吧", style = BodyStyle, maxLines = 1)
-        if (nextCourse != null) {
-            Spacer(GlanceModifier.height(10.dp))
-            Row(
-                modifier = GlanceModifier.fillMaxWidth().background(WidgetSoft).cornerRadius(10.dp).padding(9.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = GlanceModifier.defaultWeight()) {
-                    Text("下一节", style = SmallStyle, maxLines = 1)
-                    Text(nextCourse.title, style = TitleStyle, maxLines = 1)
-                }
-                Text("${nextCourse.date.chineseDayOfWeek()} ${nextCourse.timeLabel()}", style = TextStyle(color = WidgetAccent, fontSize = 10.sp), maxLines = 1)
-            }
-        }
     }
 }
 

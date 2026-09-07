@@ -41,8 +41,7 @@ data class WidgetScheduleSnapshot(
     val today: LocalDate,
     val currentWeek: Int,
     val todayCourses: List<WidgetCourseItem> = emptyList(),
-    val tomorrowCourses: List<WidgetCourseItem> = emptyList(),
-    val nextCourse: WidgetCourseItem? = null
+    val tomorrowCourses: List<WidgetCourseItem> = emptyList()
 )
 
 object ScheduleWidgetSnapshotBuilder {
@@ -51,8 +50,7 @@ object ScheduleWidgetSnapshotBuilder {
         courses: List<ScheduleCourse>,
         classPeriods: List<ClassPeriod>,
         semesterStartMonday: LocalDate,
-        semesterEndDate: LocalDate,
-        futureSearchDays: Int = 7
+        semesterEndDate: LocalDate
     ): WidgetScheduleSnapshot {
         val today = now.toLocalDate()
         val currentWeek = academicWeekForDate(today, semesterStartMonday)
@@ -102,20 +100,16 @@ object ScheduleWidgetSnapshotBuilder {
             }.sortedWith(compareBy(WidgetCourseItem::startSection, WidgetCourseItem::endSection, WidgetCourseItem::title))
         }
 
-        val todayCourses = coursesFor(today)
+        // 小组件只展示尚未结束的当日课程；结束时刻触发刷新后应立即从卡片中移除。
+        val todayCourses = coursesFor(today).filter { it.isStillRelevantAt(now.toLocalTime()) }
         val tomorrowCourses = coursesFor(today.plusDays(1))
-        val nextCourse = (0..futureSearchDays)
-            .asSequence()
-            .flatMap { offset -> coursesFor(today.plusDays(offset.toLong())).asSequence() }
-            .firstOrNull { item -> item.date != today || item.isStillRelevantAt(now.toLocalTime()) }
 
         return WidgetScheduleSnapshot(
             status = if (todayCourses.isEmpty()) WidgetScheduleStatus.NO_COURSES else WidgetScheduleStatus.READY,
             today = today,
             currentWeek = currentWeek,
             todayCourses = todayCourses,
-            tomorrowCourses = tomorrowCourses,
-            nextCourse = nextCourse
+            tomorrowCourses = tomorrowCourses
         )
     }
 }

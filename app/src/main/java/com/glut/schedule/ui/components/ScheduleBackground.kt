@@ -27,7 +27,13 @@ import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
 import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.R
 import java.io.InputStream
+import java.io.File
+import java.security.MessageDigest
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
@@ -58,6 +64,8 @@ enum class BuiltInScheduleBackground(
 class ScheduleBackgroundStore(
     private val context: Context
 ) {
+    private val preloadMutex = Mutex()
+    private val diskCacheDirectory = context.cacheDir.resolve(BACKGROUND_DISK_CACHE_DIRECTORY)
     private val cache = object : LruCache<String, ImageBitmap>(MAX_BACKGROUND_CACHE_BYTES) {
         override fun sizeOf(key: String, value: ImageBitmap): Int =
             backgroundBitmapByteSize(value.width, value.height)
@@ -73,23 +81,34 @@ class ScheduleBackgroundStore(
         targetHeight: Int
     ): Boolean = withContext(Dispatchers.IO) {
         if (!shouldUseCustomBackground(uri)) return@withContext true
-        val cacheKey = backgroundCacheKey(uri, crop, targetWidth, targetHeight)
-        if (cache.get(cacheKey) != null) {
-            Log.d(RecomposeTag, "background cache hit")
-            return@withContext true
-        }
+        preloadMutex.withLock {
+            val cacheKey = backgroundCacheKey(uri, crop, targetWidth, targetHeight)
+            if (cache.get(cacheKey) != null) {
+                Log.d(RecomposeTag, "background memory cache hit")
+                return@withLock true
+            }
 
-        Log.d(RecomposeTag, "background decode start")
-        val decoded = runCatching {
-            decodeSampledBitmap(uri, crop, targetWidth, targetHeight)?.asImageBitmap()
-        }.getOrNull()
-        if (decoded != null) {
-            cache.put(cacheKey, decoded)
-            Log.d(RecomposeTag, "background decode success")
-            true
-        } else {
-            Log.d(RecomposeTag, "background decode failed")
-            false
+            readDiskCache(uri, cacheKey, targetWidth, targetHeight)?.let { bitmap ->
+                cache.put(cacheKey, bitmap.asImageBitmap())
+                Log.d(RecomposeTag, "background disk cache hit")
+                return@withLock true
+            }
+
+            Log.d(RecomposeTag, "background source decode start")
+            val decoded = runCatching {
+                decodeSampledBitmap(uri, crop, targetWidth, targetHeight)
+            }.getOrNull()
+            if (decoded != null) {
+                // 用户确认裁剪时先生成屏幕尺寸派生图，后续冷启动只需解码这张小图。
+                writeDiskCache(uri, cacheKey, decoded)
+                cache.put(cacheKey, decoded.asImageBitmap())
+                trimBackgroundDiskCache(diskCacheDirectory, MAX_BACKGROUND_DISK_CACHE_BYTES)
+                Log.d(RecomposeTag, "background source decode success")
+                true
+            } else {
+                Log.d(RecomposeTag, "background source decode failed")
+                false
+            }
         }
     }
 
@@ -98,11 +117,74 @@ class ScheduleBackgroundStore(
         runCatching { decodeOrientedPreview(Uri.parse(uri), maxDimension)?.asImageBitmap() }.getOrNull()
     }
 
-    fun evictSource(uri: String) {
-        val keys = mutableListOf<String>()
-        val snapshot = cache.snapshot()
-        snapshot.keys.filterTo(keys) { key -> key.startsWith("$uri|") }
-        keys.forEach(cache::remove)
+    suspend fun evictSource(uri: String) = withContext(Dispatchers.IO) {
+        preloadMutex.withLock {
+            // 与 preload 串行，避免清理完成后旧 URI 的并发解码又把派生图写回缓存。
+            val keys = mutableListOf<String>()
+            val snapshot = cache.snapshot()
+            snapshot.keys.filterTo(keys) { key -> key.startsWith("$uri|") }
+            keys.forEach(cache::remove)
+            val sourcePrefix = "${sha256Hex(uri)}_"
+            diskCacheDirectory.listFiles()
+                ?.filter { file -> file.name.startsWith(sourcePrefix) }
+                ?.forEach(File::delete)
+        }
+    }
+
+    private fun readDiskCache(
+        uri: String,
+        cacheKey: String,
+        targetWidth: Int,
+        targetHeight: Int
+    ): Bitmap? {
+        val file = backgroundDiskCacheFile(diskCacheDirectory, uri, cacheKey)
+        if (!file.isFile) return null
+        val bitmap = runCatching {
+            BitmapFactory.decodeFile(
+                file.absolutePath,
+                BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+            )
+        }.getOrNull()
+        val valid = bitmap != null && bitmap.width in 1..max(1, targetWidth) &&
+            bitmap.height in 1..max(1, targetHeight)
+        if (!valid) {
+            bitmap?.recycle()
+            file.delete()
+            return null
+        }
+        file.setLastModified(System.currentTimeMillis())
+        return bitmap
+    }
+
+    private fun writeDiskCache(uri: String, cacheKey: String, bitmap: Bitmap) {
+        diskCacheDirectory.mkdirs()
+        val destination = backgroundDiskCacheFile(diskCacheDirectory, uri, cacheKey)
+        val temporary = diskCacheDirectory.resolve(".${destination.name}.${System.nanoTime()}.tmp")
+        val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Bitmap.CompressFormat.WEBP_LOSSLESS
+        } else {
+            Bitmap.CompressFormat.PNG
+        }
+        val written = runCatching {
+            temporary.outputStream().buffered().use { output -> bitmap.compress(format, 100, output) }
+        }.getOrDefault(false)
+        if (!written) {
+            temporary.delete()
+            return
+        }
+        val moved = runCatching {
+            Files.move(
+                temporary.toPath(),
+                destination.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING
+            )
+            true
+        }.getOrDefault(false)
+        if (!moved) {
+            if (destination.exists()) destination.delete()
+            if (!temporary.renameTo(destination)) temporary.delete()
+        }
     }
 
     private fun decodeSampledBitmap(
@@ -115,6 +197,8 @@ class ScheduleBackgroundStore(
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val source = ImageDecoder.createSource(context.contentResolver, parsed)
             ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                // 派生图需要压缩落盘，不能使用不可压缩的硬件位图。
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                 val plan = calculateBackgroundDecodePlan(
                     sourceWidth = info.size.width,
                     sourceHeight = info.size.height,
@@ -288,6 +372,28 @@ private fun newBitmapRegionDecoder(input: InputStream): BitmapRegionDecoder? =
     BitmapRegionDecoder.newInstance(input, false)
 
 private const val MAX_BACKGROUND_CACHE_BYTES = 24 * 1024 * 1024
+private const val MAX_BACKGROUND_DISK_CACHE_BYTES = 32L * 1024 * 1024
+private const val BACKGROUND_DISK_CACHE_DIRECTORY = "schedule_background_renders"
+
+internal fun backgroundDiskCacheFile(directory: File, uri: String, cacheKey: String): File =
+    directory.resolve("${sha256Hex(uri)}_${sha256Hex(cacheKey)}.render")
+
+internal fun sha256Hex(value: String): String = MessageDigest.getInstance("SHA-256")
+    .digest(value.toByteArray(Charsets.UTF_8))
+    .joinToString("") { byte -> "%02x".format(byte) }
+
+/** 按最近访问时间淘汰派生图；临时文件不计入容量，并在异常中断后顺手清理。 */
+internal fun trimBackgroundDiskCache(directory: File, maximumBytes: Long) {
+    if (!directory.isDirectory) return
+    directory.listFiles()?.filter { it.name.endsWith(".tmp") }?.forEach(File::delete)
+    val files = directory.listFiles()?.filter(File::isFile)?.sortedBy(File::lastModified).orEmpty()
+    var total = files.sumOf(File::length)
+    for (file in files) {
+        if (total <= maximumBytes) break
+        val length = file.length()
+        if (file.delete()) total -= length
+    }
+}
 
 /**
  * ARGB 位图按每像素 4 字节估算缓存成本，并对极端尺寸做饱和处理防止整数溢出。
@@ -349,6 +455,15 @@ private fun BuiltInScheduleBackgroundImage(
 fun shouldUseCustomBackground(uri: String): Boolean {
     return uri.isNotBlank() && BuiltInScheduleBackground.fromStorageValue(uri) == null
 }
+
+/** 首个应用帧只能在真实目标背景可绘制时放行，避免默认画作与画廊画作连续闪切。 */
+fun scheduleFirstFrameReady(
+    isInitialized: Boolean,
+    backgroundUri: String,
+    customBitmapAvailable: Boolean
+): Boolean = isInitialized && (
+    !shouldUseCustomBackground(backgroundUri) || customBitmapAvailable
+)
 
 enum class BackgroundSwitchResult {
     Commit,

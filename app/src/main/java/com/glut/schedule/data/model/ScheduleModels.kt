@@ -221,8 +221,38 @@ fun academicMaxWeekForSemester(
 
 data class CourseBlock(
     val course: ScheduleCourse,
-    val occurrence: CourseOccurrence
+    val occurrence: CourseOccurrence,
+    val remark: String? = null
 )
+
+data class CourseRemark(
+    val semesterId: String,
+    val courseId: String,
+    val occurrenceId: String,
+    val weekNumber: Int,
+    val text: String,
+    val updatedAtEpochMillis: Long
+)
+
+fun String.takeUnicodeCodePoints(maximum: Int): String {
+    if (maximum <= 0) return ""
+    val count = codePointCount(0, length)
+    if (count <= maximum) return this
+    return substring(0, offsetByCodePoints(0, maximum))
+}
+
+fun String.limitCourseRemarkInput(
+    maximumCodePoints: Int = 80,
+    maximumLines: Int = 3
+): String {
+    val normalizedLines = replace("\r\n", "\n").replace('\r', '\n')
+        .split('\n')
+        .take(maximumLines.coerceAtLeast(1))
+        .joinToString("\n")
+    return normalizedLines.takeUnicodeCodePoints(maximumCodePoints)
+}
+
+fun String.normalizedCourseRemark(): String = limitCourseRemarkInput().trim()
 
 fun defaultClassPeriods(): List<ClassPeriod> = guilinClassPeriods()
 

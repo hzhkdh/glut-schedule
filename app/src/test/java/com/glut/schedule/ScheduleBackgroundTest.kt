@@ -11,6 +11,9 @@ import com.glut.schedule.ui.components.calculateBackgroundDecodePlan
 import com.glut.schedule.ui.components.calculateBitmapSampleSize
 import com.glut.schedule.ui.components.backgroundBitmapByteSize
 import com.glut.schedule.ui.components.backgroundCacheKey
+import com.glut.schedule.ui.components.backgroundDiskCacheFile
+import com.glut.schedule.ui.components.sha256Hex
+import com.glut.schedule.ui.components.trimBackgroundDiskCache
 import com.glut.schedule.ui.components.calculateNormalizedCenterCrop
 import com.glut.schedule.ui.components.calculateDecodeTargetSize
 import com.glut.schedule.ui.components.calculatePreviewSampleSize
@@ -19,12 +22,45 @@ import com.glut.schedule.ui.components.mapOrientedCropToRaw
 import com.glut.schedule.ui.components.cropRectFromTransform
 import com.glut.schedule.ui.components.shouldCommitCustomBackgroundUri
 import com.glut.schedule.ui.components.shouldUseCustomBackground
+import com.glut.schedule.ui.components.scheduleFirstFrameReady
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class ScheduleBackgroundTest {
+    @Test
+    fun customBackgroundKeepsLaunchWindowUntilTargetBitmapIsReady() {
+        assertFalse(
+            scheduleFirstFrameReady(
+                isInitialized = false,
+                backgroundUri = "content://gallery/artwork",
+                customBitmapAvailable = false
+            )
+        )
+        assertFalse(
+            scheduleFirstFrameReady(
+                isInitialized = true,
+                backgroundUri = "content://gallery/artwork",
+                customBitmapAvailable = false
+            )
+        )
+        assertTrue(
+            scheduleFirstFrameReady(
+                isInitialized = true,
+                backgroundUri = "content://gallery/artwork",
+                customBitmapAvailable = true
+            )
+        )
+        assertTrue(
+            scheduleFirstFrameReady(
+                isInitialized = true,
+                backgroundUri = BuiltInScheduleBackground.FLOWER.storageValue,
+                customBitmapAvailable = false
+            )
+        )
+    }
     @Test
     fun legacyPanoramaSamplingUsesSelectedRegionInsteadOfWholeImage() {
         val plan = calculateLegacyRegionDecodePlan(
@@ -132,6 +168,36 @@ class ScheduleBackgroundTest {
         )
 
         assertTrue(first != second)
+    }
+
+    @Test
+    fun diskCacheFileSeparatesSourceAndCropWithoutExposingUri() {
+        val directory = File("build/tmp/background-cache-test")
+        val uri = "content://private/gallery/image"
+        val first = backgroundDiskCacheFile(directory, uri, "$uri|crop-a|1080x2400")
+        val second = backgroundDiskCacheFile(directory, uri, "$uri|crop-b|1080x2400")
+
+        assertTrue(first.name != second.name)
+        assertTrue(first.name.startsWith(sha256Hex(uri)))
+        assertFalse(first.name.contains("content://"))
+    }
+
+    @Test
+    fun diskCacheTrimDeletesOldestFilesAndAbandonedTemps() {
+        val directory = File("build/tmp/background-cache-trim-${System.nanoTime()}").apply { mkdirs() }
+        try {
+            val oldest = directory.resolve("old.render").apply { writeBytes(ByteArray(6)); setLastModified(1L) }
+            val newest = directory.resolve("new.render").apply { writeBytes(ByteArray(6)); setLastModified(2L) }
+            val temporary = directory.resolve("abandoned.tmp").apply { writeBytes(ByteArray(2)) }
+
+            trimBackgroundDiskCache(directory, maximumBytes = 6L)
+
+            assertFalse(oldest.exists())
+            assertTrue(newest.exists())
+            assertFalse(temporary.exists())
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 
     @Test

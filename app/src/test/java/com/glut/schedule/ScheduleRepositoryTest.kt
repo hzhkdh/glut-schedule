@@ -9,6 +9,7 @@ import com.glut.schedule.data.local.GradeExamEntity
 import com.glut.schedule.data.local.ScheduleDao
 import com.glut.schedule.data.local.ScoreEntity
 import com.glut.schedule.data.local.toEntity
+import com.glut.schedule.data.local.toModel
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
@@ -39,6 +40,70 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScheduleRepositoryTest {
+    @Test
+    fun explicitCourseRemarkDeleteOnlyRemovesTheRequestedWeek() = runTest {
+        val semester = legacyCurrentSemester()
+        val dao = FakeScheduleDao(initialSemesters = listOf(semester))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+        repository.saveCourseRemark(semester.id, "course", "occurrence", 2, "第二周")
+        repository.saveCourseRemark(semester.id, "course", "occurrence", 3, "第三周")
+
+        repository.deleteCourseRemark(semester.id, "course", "occurrence", 2)
+
+        val remaining = repository.courseRemarks.first().single()
+        assertEquals(3, remaining.weekNumber)
+        assertEquals("第三周", remaining.text)
+    }
+
+    @Test
+    fun courseRemarkSurvivesScheduleRefreshAndEmptySaveDoesNotBypassDeleteConfirmation() = runTest {
+        val semester = legacyCurrentSemester()
+        val dao = FakeScheduleDao(initialSemesters = listOf(semester))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+
+        repository.saveCourseRemark(semester.id, "course", "occurrence", 3, "带实验报告")
+        repository.replaceSemesterSchedule(
+            semester = semester.toModel(),
+            courses = listOf(course("course", "实验课")),
+            adjustments = emptyList(),
+            classPeriods = guilinClassPeriods()
+        )
+
+        assertEquals("带实验报告", repository.courseRemarks.first().single().text)
+        repository.saveCourseRemark(semester.id, "course", "occurrence", 3, "   ")
+        assertEquals("带实验报告", repository.courseRemarks.first().single().text)
+    }
+
+    @Test
+    fun courseRemarkLimitCountsEmojiAsOneUnicodeCharacter() = runTest {
+        val semester = legacyCurrentSemester()
+        val dao = FakeScheduleDao(initialSemesters = listOf(semester))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+        val input = "🎨".repeat(81)
+
+        repository.saveCourseRemark(semester.id, "course", "occurrence", 1, input)
+
+        val saved = repository.courseRemarks.first().single().text
+        assertEquals(80, saved.codePointCount(0, saved.length))
+        assertTrue(saved.endsWith("🎨"))
+    }
+
+    @Test
+    fun courseRemarkPersistsAtMostThreeLines() = runTest {
+        val semester = legacyCurrentSemester()
+        val dao = FakeScheduleDao(initialSemesters = listOf(semester))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+
+        repository.saveCourseRemark(
+            semester.id,
+            "course",
+            "occurrence",
+            1,
+            "第一行\r\n第二行\n第三行\n第四行"
+        )
+
+        assertEquals("第一行\n第二行\n第三行", repository.courseRemarks.first().single().text)
+    }
     @Test
     fun replacingHistoricalSchedulePersistsProvidedClassPeriods() = runTest {
         val historical = AcademicSemester.create(
@@ -653,6 +718,7 @@ class ScheduleRepositoryTest {
         val semesterIds: List<String> get() = semesterFlow.value.map { it.id }
         private val courseFlow = MutableStateFlow<List<CourseEntity>>(emptyList())
         private val occurrenceFlow = MutableStateFlow<List<CourseOccurrenceEntity>>(emptyList())
+        private val remarkFlow = MutableStateFlow<List<com.glut.schedule.data.local.CourseRemarkEntity>>(emptyList())
         private val periodFlow = MutableStateFlow<List<ClassPeriodEntity>>(emptyList())
         private val adjustmentFlow = MutableStateFlow<List<com.glut.schedule.data.local.SemesterAdjustmentEntity>>(emptyList())
         val adjustments: List<com.glut.schedule.data.local.SemesterAdjustmentEntity>
@@ -679,6 +745,29 @@ class ScheduleRepositoryTest {
         override fun observeCourses(): Flow<List<CourseEntity>> = courseFlow
 
         override fun observeOccurrences(): Flow<List<CourseOccurrenceEntity>> = occurrenceFlow
+
+        override fun observeCourseRemarks(): Flow<List<com.glut.schedule.data.local.CourseRemarkEntity>> = remarkFlow
+
+        override suspend fun upsertCourseRemark(remark: com.glut.schedule.data.local.CourseRemarkEntity) {
+            remarkFlow.value = remarkFlow.value.filterNot {
+                it.semesterId == remark.semesterId && it.courseId == remark.courseId &&
+                    it.occurrenceId == remark.occurrenceId && it.weekNumber == remark.weekNumber
+            } + remark
+        }
+
+        override suspend fun deleteCourseRemark(
+            semesterId: String,
+            courseId: String,
+            occurrenceId: String,
+            weekNumber: Int
+        ) {
+            remarkFlow.value = remarkFlow.value.filterNot {
+                it.semesterId == semesterId && it.courseId == courseId &&
+                    it.occurrenceId == occurrenceId && it.weekNumber == weekNumber
+            }
+        }
+
+        override suspend fun deleteAllCourseRemarks() { remarkFlow.value = emptyList() }
 
         override fun observeClassPeriods(): Flow<List<ClassPeriodEntity>> = periodFlow
 

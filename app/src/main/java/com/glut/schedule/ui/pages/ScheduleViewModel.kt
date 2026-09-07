@@ -10,6 +10,7 @@ import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.NOON_SECTIONS
 import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.CourseRemark
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
@@ -65,6 +66,7 @@ data class ScheduleUiState(
     val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>> = emptyMap(),
     val courses: List<ScheduleCourse> = emptyList(),
     val courseBlocks: List<CourseBlock> = emptyList(),
+    val courseRemarks: List<CourseRemark> = emptyList(),
     val showWeekend: Boolean = false,
     val showNoon: Boolean = false,
     val customBackgroundUri: String = "",
@@ -120,7 +122,8 @@ private data class ScheduleCalendarSettings(
 
 private data class ColoredCoursesState(
     val courses: List<ScheduleCourse>,
-    val overrides: Map<String, String>
+    val overrides: Map<String, String>,
+    val remarks: List<CourseRemark>
 )
 
 class ScheduleViewModel(
@@ -189,13 +192,15 @@ class ScheduleViewModel(
 
         val coloredCoursesState = combine(
             repository.courses,
-            settingsStore.courseColorOverrides
-        ) { courses, overrides ->
+            settingsStore.courseColorOverrides,
+            repository.courseRemarks
+        ) { courses, overrides, remarks ->
             ColoredCoursesState(
                 courses = kotlinx.coroutines.withContext(Dispatchers.Default) {
                     CourseColorMapper.assignColors(courses, overrides)
                 },
-                overrides = overrides
+                overrides = overrides,
+                remarks = remarks
             )
         }
 
@@ -249,8 +254,18 @@ class ScheduleViewModel(
                 courseBlocks = coloredCourses.flatMap { course ->
                     course.occurrences
                         .filter { occurrence -> occurrence.isActiveInWeek(clampedWeekNumber) }
-                        .map { occurrence -> CourseBlock(course, occurrence) }
+                        .map { occurrence ->
+                            CourseBlock(
+                                course = course,
+                                occurrence = occurrence,
+                                remark = coloredState.remarks.firstOrNull {
+                                    it.courseId == course.id && it.occurrenceId == occurrence.id &&
+                                        it.weekNumber == clampedWeekNumber
+                                }?.text
+                            )
+                        }
                 },
+                courseRemarks = coloredState.remarks,
                 showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
                 customBackgroundUri = settings.customBackgroundUri,
@@ -375,6 +390,31 @@ class ScheduleViewModel(
 
     fun clearCourseColorOverrides() {
         viewModelScope.launch { settingsStore.clearCourseColorOverrides() }
+    }
+
+    fun saveCourseRemark(block: CourseBlock, weekNumber: Int, text: String) {
+        val semesterId = uiState.value.viewedSemester?.id ?: return
+        viewModelScope.launch {
+            repository.saveCourseRemark(
+                semesterId = semesterId,
+                courseId = block.course.id,
+                occurrenceId = block.occurrence.id,
+                weekNumber = weekNumber,
+                text = text
+            )
+        }
+    }
+
+    fun deleteCourseRemark(block: CourseBlock, weekNumber: Int) {
+        val semesterId = uiState.value.viewedSemester?.id ?: return
+        viewModelScope.launch {
+            repository.deleteCourseRemark(
+                semesterId = semesterId,
+                courseId = block.course.id,
+                occurrenceId = block.occurrence.id,
+                weekNumber = weekNumber
+            )
+        }
     }
 
     fun setClassPeriods(profile: ClassPeriodProfile, periods: List<ClassPeriod>) {

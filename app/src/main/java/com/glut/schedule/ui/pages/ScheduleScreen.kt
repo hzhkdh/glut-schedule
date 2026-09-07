@@ -5,12 +5,14 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
@@ -21,6 +23,9 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -38,6 +43,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,9 +54,11 @@ import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.CourseRemark
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.scheduleWeekForNumber
+import com.glut.schedule.data.model.limitCourseRemarkInput
 import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.ScheduleHeader
 import com.glut.schedule.ui.components.ScheduleBackgroundImage
@@ -69,6 +79,7 @@ fun ScheduleScreen(
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     var showAddActions by remember { mutableStateOf(false) }
+    var remarkOverlay by remember { mutableStateOf<CourseRemarkOverlay?>(null) }
     val coroutineScope = rememberCoroutineScope()
     if (!uiState.isInitialized) {
         // 背景设置尚未恢复时只显示中性占位，避免把临时空值误绘制成默认《花》。
@@ -76,8 +87,19 @@ fun ScheduleScreen(
         Box(modifier = modifier.fillMaxSize())
         return
     }
-    val blocksByWeek = remember(uiState.courses, uiState.maxAcademicWeek) {
-        courseBlocksByWeek(uiState.courses, uiState.maxAcademicWeek)
+    val blocksByWeek = remember(uiState.courses, uiState.courseRemarks, uiState.maxAcademicWeek) {
+        courseBlocksByWeek(
+            courses = uiState.courses,
+            maxWeek = uiState.maxAcademicWeek,
+            remarks = uiState.courseRemarks
+        )
+    }
+    if (com.glut.schedule.ui.components.shouldUseCustomBackground(uiState.customBackgroundUri) &&
+        customBackgroundBitmap == null
+    ) {
+        // Activity 会继续保留系统启动窗口；这里绝不能绘制另一张内置画作，否则冷启动会闪切背景。
+        Box(modifier = modifier.fillMaxSize())
+        return
     }
     val pagerState = key(uiState.viewedSemester?.id) {
         rememberPagerState(
@@ -188,6 +210,17 @@ fun ScheduleScreen(
                     showWeekend = uiState.showWeekend,
                     showNoon = uiState.showNoon,
                     showCalendarDates = uiState.hasAuthoritativeCalendar,
+                    onCourseRemarkClick = { block ->
+                        remarkOverlay = CourseRemarkOverlay.View(
+                            CourseRemarkTarget(block, pageWeekNumber)
+                        )
+                    },
+                    onCourseLongClick = { block ->
+                        remarkOverlay = CourseRemarkOverlay.Edit(
+                            target = CourseRemarkTarget(block, pageWeekNumber),
+                            returnToView = false
+                        )
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -232,6 +265,192 @@ fun ScheduleScreen(
             viewModel.clearMessage()
         }
     }
+    when (val overlay = remarkOverlay) {
+        is CourseRemarkOverlay.View -> CourseRemarkViewDialog(
+            target = overlay.target,
+            onDismiss = { remarkOverlay = null },
+            onEdit = {
+                remarkOverlay = CourseRemarkOverlay.Edit(
+                    target = overlay.target,
+                    returnToView = true
+                )
+            },
+            onDelete = { remarkOverlay = CourseRemarkOverlay.ConfirmDelete(overlay.target) }
+        )
+        is CourseRemarkOverlay.Edit -> CourseRemarkEditDialog(
+            target = overlay.target,
+            onDismiss = {
+                remarkOverlay = if (overlay.returnToView) {
+                    CourseRemarkOverlay.View(overlay.target)
+                } else {
+                    null
+                }
+            },
+            onSave = { text ->
+                viewModel.saveCourseRemark(overlay.target.block, overlay.target.weekNumber, text)
+                remarkOverlay = null
+            }
+        )
+        is CourseRemarkOverlay.ConfirmDelete -> CourseRemarkDeleteConfirmDialog(
+            onDismiss = { remarkOverlay = CourseRemarkOverlay.View(overlay.target) },
+            onConfirm = {
+                viewModel.deleteCourseRemark(overlay.target.block, overlay.target.weekNumber)
+                remarkOverlay = null
+            }
+        )
+        null -> Unit
+    }
+}
+
+private data class CourseRemarkTarget(val block: CourseBlock, val weekNumber: Int)
+
+private sealed interface CourseRemarkOverlay {
+    val target: CourseRemarkTarget
+
+    data class View(override val target: CourseRemarkTarget) : CourseRemarkOverlay
+    data class Edit(
+        override val target: CourseRemarkTarget,
+        val returnToView: Boolean
+    ) : CourseRemarkOverlay
+    data class ConfirmDelete(override val target: CourseRemarkTarget) : CourseRemarkOverlay
+}
+
+@Composable
+private fun CourseRemarkViewDialog(
+    target: CourseRemarkTarget,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFFFFFBF3),
+        textContentColor = Color(0xFF4A4338),
+        tonalElevation = 0.dp,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        text = {
+            Surface(
+                color = Color(0xFFF3EBDD),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+            ) {
+                Text(
+                    text = target.block.remark.orEmpty(),
+                    color = Color(0xFF2D2923),
+                    fontSize = 17.sp,
+                    lineHeight = 26.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 16.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                TextButton(onClick = onDelete) {
+                    Text("删除", color = Color(0xFFB42318))
+                }
+                TextButton(onClick = onEdit) {
+                    Text("编辑", color = Color(0xFF171717))
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun CourseRemarkEditDialog(
+    target: CourseRemarkTarget,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var text by remember(target) { mutableStateOf(target.block.remark.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFFFFFBF3),
+        titleContentColor = Color(0xFF171717),
+        textContentColor = Color(0xFF5F5A52),
+        tonalElevation = 0.dp,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        title = {
+            Text(
+                text = "第${target.weekNumber}周 · ${target.block.course.title}",
+                fontSize = 20.sp,
+                lineHeight = 28.sp,
+                maxLines = 2
+            )
+        },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { input -> text = input.limitCourseRemarkInput() },
+                placeholder = { Text("例如：带实验报告") },
+                supportingText = {
+                    Text(
+                        text = "${text.codePointCount(0, text.length)}/80",
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.End
+                    )
+                },
+                minLines = 2,
+                maxLines = 3,
+                singleLine = false,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "课程备注" },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color(0xFF171717),
+                    unfocusedTextColor = Color(0xFF171717),
+                    cursorColor = Color(0xFF171717),
+                    focusedBorderColor = Color(0xFF171717),
+                    unfocusedBorderColor = Color(0xFFC8C1B3),
+                    focusedPlaceholderColor = Color(0xFF8A8378),
+                    unfocusedPlaceholderColor = Color(0xFF8A8378),
+                    focusedSupportingTextColor = Color(0xFF777066),
+                    unfocusedSupportingTextColor = Color(0xFF777066)
+                )
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(text) }) {
+                Text("保存", color = Color(0xFF171717))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = Color(0xFF6F6A60))
+            }
+        }
+    )
+}
+
+@Composable
+private fun CourseRemarkDeleteConfirmDialog(
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFFFFFBF3),
+        titleContentColor = Color(0xFF171717),
+        textContentColor = Color(0xFF6F6A60),
+        tonalElevation = 0.dp,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        title = { Text("删除这条备注？") },
+        text = { Text("删除后无法恢复。") },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("删除", color = Color(0xFFB42318))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = Color(0xFF6F6A60))
+            }
+        }
+    )
 }
 
 @Composable
@@ -270,14 +489,24 @@ fun pagerPageForWeekNumber(weekNumber: Int, maxWeek: Int = MAX_ACADEMIC_WEEK): I
 
 fun courseBlocksByWeek(
     courses: List<ScheduleCourse>,
-    maxWeek: Int = MAX_ACADEMIC_WEEK
+    maxWeek: Int = MAX_ACADEMIC_WEEK,
+    remarks: List<CourseRemark> = emptyList()
 ): Map<Int, List<CourseBlock>> {
     val clampedMaxWeek = clampAcademicWeek(maxWeek)
     return (MIN_ACADEMIC_WEEK..clampedMaxWeek).associateWith { weekNumber ->
         courses.flatMap { course ->
             course.occurrences
                 .filter { occurrence -> occurrence.isActiveInWeek(weekNumber) }
-                .map { occurrence -> CourseBlock(course, occurrence) }
+                .map { occurrence ->
+                    CourseBlock(
+                        course = course,
+                        occurrence = occurrence,
+                        remark = remarks.firstOrNull {
+                            it.courseId == course.id && it.occurrenceId == occurrence.id &&
+                                it.weekNumber == weekNumber
+                        }?.text
+                    )
+                }
         }
     }
 }
