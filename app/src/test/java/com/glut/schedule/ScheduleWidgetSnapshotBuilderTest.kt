@@ -68,6 +68,8 @@ class ScheduleWidgetSnapshotBuilderTest {
         assertEquals(listOf("tomorrow"), snapshot.tomorrowCourses.map { it.title })
         assertEquals("08:30", snapshot.todayCourses.first().startTime)
         assertEquals("10:05", snapshot.todayCourses.first().endTime)
+        assertEquals(snapshot.todayCourses.size, snapshot.todayCourses.map { it.stableId }.distinct().size)
+        assertEquals(snapshot.todayCourses.map { it.stableId }, build(now, courses).todayCourses.map { it.stableId })
     }
 
     @Test

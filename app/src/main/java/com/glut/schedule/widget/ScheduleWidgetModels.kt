@@ -33,7 +33,8 @@ data class WidgetCourseItem(
     val endSection: Int,
     val startTime: String,
     val endTime: String,
-    val colorHex: String
+    val colorHex: String,
+    val stableId: Long = 0L
 )
 
 data class WidgetScheduleSnapshot(
@@ -94,7 +95,10 @@ object ScheduleWidgetSnapshotBuilder {
                             endSection = occurrence.endSection,
                             startTime = periodsBySection[occurrence.startSection]?.startsAt.orEmpty(),
                             endTime = periodsBySection[occurrence.endSection]?.endsAt.orEmpty(),
-                            colorHex = course.colorHex
+                            colorHex = course.colorHex,
+                            // 日期占高位、排课 ID 占低位，跨刷新保持稳定且不同日期不会复用。
+                            stableId = (date.toEpochDay() shl 32) xor
+                                (occurrence.id.hashCode().toLong() and 0xFFFF_FFFFL)
                         )
                     }.toList()
             }.sortedWith(compareBy(WidgetCourseItem::startSection, WidgetCourseItem::endSection, WidgetCourseItem::title))

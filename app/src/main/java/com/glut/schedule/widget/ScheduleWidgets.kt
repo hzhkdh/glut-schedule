@@ -16,6 +16,8 @@ import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.cornerRadius
+import androidx.glance.appwidget.lazy.LazyColumn
+import androidx.glance.appwidget.lazy.items
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.Alignment
@@ -96,7 +98,10 @@ private fun CompactTodayContent(snapshot: WidgetScheduleSnapshot) {
         CompactWidgetHeader(snapshot)
         Spacer(GlanceModifier.height(10.dp))
         when (snapshot.status) {
-            WidgetScheduleStatus.READY -> CourseList(snapshot.todayCourses, limit = 2)
+            WidgetScheduleStatus.READY -> ScrollableCourseList(
+                snapshot.todayCourses,
+                GlanceModifier.defaultWeight()
+            )
             WidgetScheduleStatus.NO_COURSES -> NoCourseContent()
             else -> StatusContent(snapshot.status)
         }
@@ -116,11 +121,11 @@ private fun TodayTomorrowContent(snapshot: WidgetScheduleSnapshot) {
             StatusContent(snapshot.status)
         } else {
             Row(modifier = GlanceModifier.fillMaxWidth()) {
-                DayColumn("今天", snapshot.todayCourses, GlanceModifier.defaultWeight())
+                ScrollableDayColumn("今天", snapshot.todayCourses, GlanceModifier.defaultWeight())
                 Spacer(GlanceModifier.width(8.dp))
                 Spacer(GlanceModifier.width(1.dp).height(92.dp).background(WidgetDivider))
                 Spacer(GlanceModifier.width(8.dp))
-                DayColumn("明天", snapshot.tomorrowCourses, GlanceModifier.defaultWeight())
+                ScrollableDayColumn("明天", snapshot.tomorrowCourses, GlanceModifier.defaultWeight())
             }
         }
     }
@@ -132,11 +137,10 @@ private fun ColorTimelineContent(snapshot: WidgetScheduleSnapshot) {
         WidgetHeader(snapshot, "日视图")
         Spacer(GlanceModifier.height(9.dp))
         when (snapshot.status) {
-            // 日视图的最小尺寸只容纳两张完整卡片，避免末尾课程信息被宿主裁剪。
-            WidgetScheduleStatus.READY -> snapshot.todayCourses.take(2).forEachIndexed { index, course ->
-                TimelineCourse(course)
-                if (index != snapshot.todayCourses.take(2).lastIndex) Spacer(GlanceModifier.height(6.dp))
-            }
+            WidgetScheduleStatus.READY -> ScrollableTimeline(
+                snapshot.todayCourses,
+                GlanceModifier.defaultWeight()
+            )
             WidgetScheduleStatus.NO_COURSES -> NoCourseContent()
             else -> StatusContent(snapshot.status)
         }
@@ -196,35 +200,49 @@ private fun WidgetRefreshAction() {
 }
 
 @Composable
-private fun DayColumn(label: String, courses: List<WidgetCourseItem>, modifier: GlanceModifier) {
+private fun ScrollableDayColumn(label: String, courses: List<WidgetCourseItem>, modifier: GlanceModifier) {
     Column(modifier = modifier) {
         Text(label, style = BodyStyle, maxLines = 1)
         Spacer(GlanceModifier.height(7.dp))
         if (courses.isEmpty()) {
             Text("没有课", style = SmallStyle, maxLines = 1)
         } else {
-            CourseList(courses, limit = 2)
+            ScrollableCourseList(courses, GlanceModifier.defaultWeight())
         }
     }
 }
 
 @Composable
-private fun CourseList(courses: List<WidgetCourseItem>, limit: Int) {
-    Column {
-        courses.take(limit).forEachIndexed { index, course ->
-            Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = GlanceModifier.width(5.dp).height(34.dp)
-                        .background(course.colorProvider())
-                        .cornerRadius(3.dp)
-                ) {}
-                Spacer(GlanceModifier.width(8.dp))
-                Column(modifier = GlanceModifier.defaultWeight()) {
-                    Text(course.title, style = TitleStyle, maxLines = 1)
-                    Text(course.courseMeta(), style = SmallStyle, maxLines = 1)
+private fun ScrollableCourseList(courses: List<WidgetCourseItem>, modifier: GlanceModifier) {
+    LazyColumn(modifier = modifier.fillMaxWidth()) {
+        items(items = courses, itemId = { course -> course.stableId }) { course ->
+            Column(modifier = GlanceModifier.fillMaxWidth()) {
+                Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = GlanceModifier.width(5.dp).height(34.dp)
+                            .background(course.colorProvider())
+                            .cornerRadius(3.dp)
+                    ) {}
+                    Spacer(GlanceModifier.width(8.dp))
+                    Column(modifier = GlanceModifier.defaultWeight()) {
+                        Text(course.title, style = TitleStyle, maxLines = 1)
+                        Text(course.courseMeta(), style = SmallStyle, maxLines = 1)
+                    }
                 }
+                Spacer(GlanceModifier.height(7.dp))
             }
-            if (index != courses.take(limit).lastIndex) Spacer(GlanceModifier.height(7.dp))
+        }
+    }
+}
+
+@Composable
+private fun ScrollableTimeline(courses: List<WidgetCourseItem>, modifier: GlanceModifier) {
+    LazyColumn(modifier = modifier.fillMaxWidth()) {
+        items(items = courses, itemId = { course -> course.stableId }) { course ->
+            Column(modifier = GlanceModifier.fillMaxWidth()) {
+                TimelineCourse(course)
+                Spacer(GlanceModifier.height(6.dp))
+            }
         }
     }
 }

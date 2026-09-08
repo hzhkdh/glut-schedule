@@ -123,20 +123,37 @@ class ScheduleWidgetPreviewContractTest {
     }
 
     @Test
-    fun compactWidgetUsesItsOwnTwoRowHeaderAndOnlyTwoCourses() {
+    fun everyCourseRegionUsesAStableScrollableCollection() {
         val widgets = appFile(
             "src/main/java/com/glut/schedule/widget/ScheduleWidgets.kt"
+        ).readText()
+        val models = appFile(
+            "src/main/java/com/glut/schedule/widget/ScheduleWidgetModels.kt"
         ).readText()
         val compact = widgets
             .substringAfter("private fun CompactTodayContent")
             .substringBefore("private fun TodayTomorrowContent")
-        val wideWidgets = widgets.substringAfter("private fun TodayTomorrowContent")
+        val recent = widgets
+            .substringAfter("private fun TodayTomorrowContent")
+            .substringBefore("private fun ColorTimelineContent")
+        val timeline = widgets
+            .substringAfter("private fun ColorTimelineContent")
+            .substringBefore("private fun CompactWidgetHeader")
 
         assertTrue(compact.contains("CompactWidgetHeader(snapshot)"))
-        assertTrue(compact.contains("CourseList(snapshot.todayCourses, limit = 2)"))
+        assertTrue(compact.contains("ScrollableCourseList("))
+        assertTrue(compact.contains("snapshot.todayCourses"))
+        assertEquals(2, "ScrollableDayColumn".toRegex().findAll(recent).count())
+        assertTrue(timeline.contains("ScrollableTimeline("))
+        assertTrue(timeline.contains("snapshot.todayCourses"))
+        assertEquals(2, "LazyColumn\\(".toRegex().findAll(widgets).count())
+        assertTrue(widgets.contains("itemId = { course -> course.stableId }"))
+        assertTrue(models.contains("val stableId: Long"))
+        assertFalse(widgets.contains("take(2)"))
+        assertFalse(widgets.contains("limit = 2"))
         assertFalse(compact.lineSequence().any { it.trimStart().startsWith("WidgetHeader(snapshot") })
-        assertTrue(wideWidgets.contains("WidgetHeader(snapshot, \"近期课程\")"))
-        assertTrue(wideWidgets.contains("WidgetHeader(snapshot, \"日视图\")"))
+        assertTrue(widgets.contains("WidgetHeader(snapshot, \"近期课程\")"))
+        assertTrue(widgets.contains("WidgetHeader(snapshot, \"日视图\")"))
     }
 
     @Test
