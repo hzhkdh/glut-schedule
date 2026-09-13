@@ -4,6 +4,7 @@ import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.service.greeting.DrawerGreetingContext
 import com.glut.schedule.service.greeting.DrawerGreetingPlanner
 import com.glut.schedule.service.greeting.GreetingCategory
+import com.glut.schedule.service.greeting.GreetingTemplateSet
 import com.glut.schedule.service.greeting.builtInGreetingTemplates
 import com.glut.schedule.service.holiday.CalendarDayInfo
 import com.glut.schedule.service.holiday.CalendarDayKind
@@ -21,20 +22,102 @@ class DrawerGreetingPlannerTest {
     private val templates = builtInGreetingTemplates()
 
     @Test
-    fun unfinishedTodayExamExcludesAllOrdinaryCategories() {
+    fun unfinishedTodayExamCoexistsWithOrdinaryGreetingCandidate() {
         val now = LocalDateTime.of(2026, 7, 26, 9, 0)
         val planner = DrawerGreetingPlanner(Random(1))
-        val result = planner.next(
-            context = context(
+        val categories = planner.eligibleCategories(
+            context(
                 now = now,
                 name = "张三",
                 exams = listOf(exam("高等数学", now.toLocalDate(), "10:00", "12:00"))
             ),
-            templates = templates
+            templates
         )
 
-        assertEquals(GreetingCategory.EXAM_TODAY, result.category)
-        assertTrue(result.text.contains("高等数学"))
+        assertEquals(listOf(GreetingCategory.GREETING, GreetingCategory.EXAM_TODAY), categories)
+    }
+
+    @Test
+    fun weightedSelectionUsesThirtyPercentForTodayExam() {
+        val now = LocalDateTime.of(2026, 7, 27, 9, 0)
+        val greetingContext = context(
+            now = now,
+            name = "张三",
+            exams = listOf(exam("高等数学", now.toLocalDate(), "10:00", "12:00"))
+        )
+
+        val contextual = DrawerGreetingPlanner(Random(0), categoryRoll = { 0.299 })
+            .next(greetingContext, templates)
+        val ordinary = DrawerGreetingPlanner(Random(0), categoryRoll = { 0.300 })
+            .next(greetingContext, templates)
+
+        assertEquals(GreetingCategory.EXAM_TODAY, contextual.category)
+        assertEquals(GreetingCategory.GREETING, ordinary.category)
+    }
+
+    @Test
+    fun weightedSelectionUsesFiftyPercentForTomorrowExam() {
+        val now = LocalDateTime.of(2026, 7, 27, 9, 0)
+        val greetingContext = context(
+            now = now,
+            name = "张三",
+            exams = listOf(exam("大学英语", now.toLocalDate().plusDays(1)))
+        )
+
+        val contextual = DrawerGreetingPlanner(Random(0), categoryRoll = { 0.499 })
+            .next(greetingContext, templates)
+        val ordinary = DrawerGreetingPlanner(Random(0), categoryRoll = { 0.500 })
+            .next(greetingContext, templates)
+
+        assertEquals(GreetingCategory.EXAM_TOMORROW, contextual.category)
+        assertEquals(GreetingCategory.GREETING, ordinary.category)
+    }
+
+    @Test
+    fun weightedSelectionUsesTwentyPercentForWeekend() {
+        val saturday = LocalDateTime.of(2026, 8, 1, 12, 0)
+        val greetingContext = context(now = saturday, name = "张三")
+
+        val contextual = DrawerGreetingPlanner(Random(0), categoryRoll = { 0.199 })
+            .next(greetingContext, templates)
+        val ordinary = DrawerGreetingPlanner(Random(0), categoryRoll = { 0.200 })
+            .next(greetingContext, templates)
+
+        assertEquals(GreetingCategory.WEEKEND, contextual.category)
+        assertEquals(GreetingCategory.GREETING, ordinary.category)
+    }
+
+    @Test
+    fun missingContextTemplateFallsBackToOrdinaryGreeting() {
+        val now = LocalDateTime.of(2026, 8, 1, 12, 0)
+        val greetingOnly = com.glut.schedule.service.greeting.GreetingTemplateSet(
+            mapOf(GreetingCategory.GREETING to listOf("你好 {name}"))
+        )
+
+        val result = DrawerGreetingPlanner(Random(0), categoryRoll = { 0.0 })
+            .next(context(now = now, name = "张三"), greetingOnly)
+
+        assertEquals(GreetingCategory.GREETING, result.category)
+        assertEquals("你好 张三", result.text)
+    }
+
+    @Test
+    fun avoidingPreviousTextDoesNotChangeTheWeightedCategory() {
+        val controlled = GreetingTemplateSet(
+            mapOf(
+                GreetingCategory.GREETING to listOf("固定问候"),
+                GreetingCategory.WEEKEND to listOf("周末问候")
+            )
+        )
+
+        val result = DrawerGreetingPlanner(Random(0), categoryRoll = { 0.9 }).next(
+            context(LocalDateTime.of(2026, 8, 1, 12, 0), name = "张三"),
+            controlled,
+            previousText = "固定问候"
+        )
+
+        assertEquals(GreetingCategory.GREETING, result.category)
+        assertEquals("固定问候", result.text)
     }
 
     @Test

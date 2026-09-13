@@ -47,10 +47,12 @@ data class PartnerScheduleUiState(
         get() = profiles.firstOrNull { it.id == selectedProfileId } ?: profiles.firstOrNull()
 
     val displayedCourses: List<PartnerCourse>
-        get() = when (viewMode) {
-            PartnerScheduleViewMode.COMBINED -> profiles.flatMap { it.displayCourses() }
-            PartnerScheduleViewMode.PARTNER -> selectedProfile?.displayCourses().orEmpty()
-        }
+        get() = partnerCoursesForMode(
+            mode = viewMode,
+            ownCourses = ownCourses,
+            // 两个档案只是两个可切换槽位，任何时候都只与当前 TA 进行双人对比。
+            partnerCourses = selectedProfile?.displayCourses().orEmpty()
+        )
 }
 
 private data class LocalScheduleData(
@@ -255,7 +257,7 @@ class PartnerScheduleViewModel(
         }
     }
 
-    /** 单人模式下按导入顺序循环切换，避免额外占用课表顶部空间。 */
+    /** 按导入顺序切换当前 TA；一起模式和只看 TA 模式共用同一选择。 */
     fun cycleProfile() {
         val profiles = uiState.value.profiles
         if (profiles.size < 2) return
@@ -281,9 +283,10 @@ class PartnerScheduleViewModel(
             profiles.firstOrNull { it.id != replaceProfileId }?.snapshot?.let { first ->
                 requirePartnerSemesterCompatible(first.semesterStartMonday, first.semesterEndDate, snapshot)
             }
-            val usedColors = profiles.filterNot { it.id == replaceProfileId }.map { it.displayColor }.toSet()
-            val displayColor = snapshot.identityColor.takeIf { it !in usedColors }
-                ?: PartnerIdentityColor.entries.first { it !in usedColors }
+            val usedColors = profiles
+                .filterNot { it.id == replaceProfileId }
+                .mapTo(mutableSetOf(currentState.myColor)) { it.displayColor }
+            val displayColor = resolveImportedProfileColor(snapshot.identityColor, usedColors)
             val profile = ImportedPartnerProfile(
                 id = replacing?.id ?: "profile-${System.currentTimeMillis()}",
                 name = name.trim().take(20).ifBlank { partnerProfileDefaultName(profiles.size) },

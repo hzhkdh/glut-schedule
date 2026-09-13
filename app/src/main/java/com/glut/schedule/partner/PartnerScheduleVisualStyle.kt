@@ -50,6 +50,10 @@ internal object PartnerScheduleVisualStyle {
     val inviteAction = manageAccent
     val feedbackSurface = Color(0xFFFCECF2)
     val feedbackContent = Color(0xFF6F2944)
+    // 课程详情不跟随系统深色主题，始终与微信端保持白色居中卡片。
+    val detailSurface = Color.White
+    val detailContent = Color(0xFF2A2226)
+    val detailAction = manageAccent
 
     val overlapBadgeSize = 22.dp
 

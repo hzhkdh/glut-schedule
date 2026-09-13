@@ -272,7 +272,19 @@ fun partnerCardShowsMetadata(kind: PartnerOverlapKind): Boolean =
     kind == PartnerOverlapKind.NONE
 
 fun partnerAvailableIdentityColors(partner: PartnerIdentityColor?): List<PartnerIdentityColor> =
-    PartnerIdentityColor.entries.filterNot { it == partner }
+    partnerAvailableIdentityColors(partner?.let(::setOf).orEmpty())
+
+/** 排除本机及所有已保存 TA 使用的颜色，保证切换槽位后双方仍可辨认。 */
+fun partnerAvailableIdentityColors(
+    reservedColors: Set<PartnerIdentityColor>
+): List<PartnerIdentityColor> = PartnerIdentityColor.entries.filterNot { it in reservedColors }
+
+/** 优先沿用分享者身份色；发生冲突时按固定调色板选择首个空闲色。 */
+fun resolveImportedProfileColor(
+    preferred: PartnerIdentityColor,
+    reservedColors: Set<PartnerIdentityColor>
+): PartnerIdentityColor = preferred.takeIf { it !in reservedColors }
+    ?: partnerAvailableIdentityColors(reservedColors).first()
 
 /**
  * 导入后双方颜色不能相同；冲突时按固定调色板顺序选择首个空闲颜色，

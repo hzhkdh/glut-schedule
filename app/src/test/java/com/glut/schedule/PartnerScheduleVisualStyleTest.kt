@@ -38,6 +38,15 @@ class PartnerScheduleVisualStyleTest {
     }
 
     @Test
+    fun `课程详情固定使用白色容器和高对比度正文`() {
+        assertEquals(Color.White, PartnerScheduleVisualStyle.detailSurface)
+        assertReadable(
+            PartnerScheduleVisualStyle.detailContent,
+            PartnerScheduleVisualStyle.detailSurface
+        )
+    }
+
+    @Test
     fun `重合卡片主体等分且羽化只发生在中线窄带`() {
         val first = Color(0xFFFFDDE7)
         val second = Color(0xFFD5E8FB)

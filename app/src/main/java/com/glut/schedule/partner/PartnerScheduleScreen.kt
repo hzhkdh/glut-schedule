@@ -82,6 +82,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -90,6 +91,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.glut.schedule.data.model.periodLabel
 import com.glut.schedule.data.model.scheduleWeekForNumber
@@ -146,7 +149,7 @@ fun PartnerScheduleScreen(
                 today = state.today,
                 viewMode = state.viewMode,
                 showViewMode = state.profiles.isNotEmpty(),
-                showProfileSwitch = state.viewMode == PartnerScheduleViewMode.PARTNER && state.profiles.size > 1,
+                showProfileSwitch = state.profiles.size > 1,
                 profileColor = state.selectedProfile?.displayColor,
                 onDrawerOpen = onDrawerOpen,
                 onWeekTitleClick = viewModel::returnToCurrentWeek,
@@ -194,7 +197,7 @@ fun PartnerScheduleScreen(
         )
     }
     detailGroup?.let { group ->
-        PartnerCourseDetailSheet(group = group, onDismiss = { detailGroup = null })
+        PartnerCourseDetailDialog(group = group, onDismiss = { detailGroup = null })
     }
 }
 
@@ -342,14 +345,14 @@ private fun PartnerEmptyState(
         }
         Spacer(Modifier.height(24.dp))
         Text(
-            "还没有导入课表",
+            "还没有导入TA课表",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = PartnerScheduleVisualStyle.pagePrimaryText
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            "请依次导入两个人的邀请码，组合查看双方课程。",
+            "导入一位TA的邀请码，即可对比查看你们的课表；还可再保存一位TA，随时切换。",
             color = PartnerScheduleVisualStyle.pageSecondaryText,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -731,7 +734,7 @@ private fun PartnerManageSheet(
                 PartnerManageSection(title = "我的身份色") {
                     IdentityColorSelector(
                         selected = state.myColor,
-                        partnerColor = null,
+                        partnerColors = state.profiles.map { it.displayColor }.toSet(),
                         locked = state.activeInvite != null || state.isBusy,
                         onColorChange = onColorChange
                     )
@@ -962,7 +965,7 @@ private fun PartnerManageSection(
 @Composable
 private fun IdentityColorSelector(
     selected: PartnerIdentityColor,
-    partnerColor: PartnerIdentityColor?,
+    partnerColors: Set<PartnerIdentityColor>,
     locked: Boolean,
     onColorChange: (PartnerIdentityColor) -> Unit
 ) {
@@ -974,7 +977,7 @@ private fun IdentityColorSelector(
             ) {
                 rowColors.forEach { color ->
                     val style = PartnerScheduleVisualStyle.courseCard(color)
-                    val isPartnerColor = color == partnerColor
+                    val isPartnerColor = color in partnerColors
                     val enabled = !locked && !isPartnerColor
                     val isSelected = color == selected
                     Surface(
@@ -1152,44 +1155,76 @@ private fun InviteCard(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PartnerCourseDetailSheet(group: PartnerDisplayGroup, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+private fun PartnerCourseDetailDialog(group: PartnerDisplayGroup, onDismiss: () -> Unit) {
+    val courseListMaxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.6f
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Text(
-                partnerOverlapDetailTitle(group.courses.size),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            group.courses.forEach { course ->
-                val cardStyle = PartnerScheduleVisualStyle.courseCard(course.ownerColor)
-                Surface(
-                    color = cardStyle.surface,
-                    contentColor = cardStyle.content,
-                    shape = RoundedCornerShape(14.dp)
+            Surface(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp),
+                color = PartnerScheduleVisualStyle.detailSurface,
+                contentColor = PartnerScheduleVisualStyle.detailContent,
+                shape = RoundedCornerShape(28.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
                 ) {
-                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            "${course.ownerColor.displayName}课程",
-                            fontSize = 12.sp,
-                            color = cardStyle.content
+                    Text(
+                        partnerOverlapDetailTitle(group.courses.size),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = courseListMaxHeight)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        group.courses.forEach { course ->
+                            val cardStyle = PartnerScheduleVisualStyle.courseCard(course.ownerColor)
+                            Surface(
+                                color = cardStyle.surface,
+                                contentColor = cardStyle.content,
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        "${course.ownerColor.displayName}课程",
+                                        fontSize = 12.sp,
+                                        color = cardStyle.content
+                                    )
+                                    Text(course.title, fontWeight = FontWeight.Bold)
+                                    course.room?.let { Text("教室：$it") }
+                                    course.teacher?.let { Text("教师：$it") }
+                                    val (startsAt, endsAt) = partnerCourseDetailTimeRange(course)
+                                    Text("时间：$startsAt–$endsAt")
+                                }
+                            }
+                        }
+                    }
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = PartnerScheduleVisualStyle.detailAction,
+                            contentColor = Color.White
                         )
-                        Text(course.title, fontWeight = FontWeight.Bold)
-                        course.room?.let { Text("教室：$it") }
-                        course.teacher?.let { Text("教师：$it") }
-                        val (startsAt, endsAt) = partnerCourseDetailTimeRange(course)
-                        Text("时间：$startsAt–$endsAt")
+                    ) {
+                        Text("知道了", fontWeight = FontWeight.Bold)
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
         }
     }
 }

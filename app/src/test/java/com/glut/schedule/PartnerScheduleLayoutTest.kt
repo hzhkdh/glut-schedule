@@ -31,6 +31,7 @@ import com.glut.schedule.partner.partnerOverlapDetailTitle
 import com.glut.schedule.partner.partnerRawSectionForCanonical
 import com.glut.schedule.partner.partnerVisibleSections
 import com.glut.schedule.partner.resolveDistinctPartnerColor
+import com.glut.schedule.partner.resolveImportedProfileColor
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.settings.PartnerScheduleViewMode
 import org.junit.Assert.assertEquals
@@ -424,6 +425,28 @@ class PartnerScheduleLayoutTest {
         assertEquals(
             false,
             PartnerIdentityColor.BLUE in partnerAvailableIdentityColors(PartnerIdentityColor.BLUE)
+        )
+    }
+
+    @Test
+    fun importedProfileColorAvoidsMineAndBothStoredSlots() {
+        val reserved = setOf(
+            PartnerIdentityColor.BLUE,
+            PartnerIdentityColor.PINK,
+            PartnerIdentityColor.PURPLE
+        )
+
+        assertEquals(
+            PartnerIdentityColor.TEAL,
+            resolveImportedProfileColor(PartnerIdentityColor.BLUE, reserved)
+        )
+        assertEquals(
+            PartnerIdentityColor.GREEN,
+            resolveImportedProfileColor(PartnerIdentityColor.GREEN, reserved)
+        )
+        assertEquals(
+            5,
+            partnerAvailableIdentityColors(reserved).size
         )
     }
 

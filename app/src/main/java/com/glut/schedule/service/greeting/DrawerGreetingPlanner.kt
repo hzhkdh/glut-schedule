@@ -26,7 +26,9 @@ data class DrawerGreeting(
 )
 
 class DrawerGreetingPlanner(
-    private val random: Random = Random.Default
+    private val random: Random = Random.Default,
+    // 分类抽签独立注入，便于两端用精确边界验证同一套概率规则。
+    private val categoryRoll: () -> Double = { random.nextDouble() }
 ) {
     fun next(
         context: DrawerGreetingContext,
@@ -43,23 +45,37 @@ class DrawerGreetingPlanner(
                 .map { render(it, category, context) }
                 .filter { it.isNotBlank() }
         }
-        val withoutPrevious = renderedByCategory.mapValues { (_, values) ->
-            values.filterNot { it == previousText }
-        }.filterValues { it.isNotEmpty() }
-        val candidates = withoutPrevious.ifEmpty {
-            renderedByCategory.filterValues { it.isNotEmpty() }
-        }
+        val candidates = renderedByCategory.filterValues { it.isNotEmpty() }
         if (candidates.isEmpty()) return DrawerGreeting(STATIC_SLOGAN, null, false)
 
-        // 先等概率选择分类、再选择分类内模板，避免模板条数较多的分类天然占优。
-        val category = candidates.keys.elementAt(random.nextInt(candidates.size))
-        val texts = candidates.getValue(category)
+        val greeting = GreetingCategory.GREETING.takeIf { it in candidates }
+        val contextual = candidates.keys.firstOrNull { it != GreetingCategory.GREETING }
+        val category = when {
+            greeting != null && contextual != null -> {
+                if (categoryRoll().coerceIn(0.0, 1.0) < contextualProbability(contextual)) {
+                    contextual
+                } else {
+                    greeting
+                }
+            }
+            contextual != null -> contextual
+            else -> greeting ?: return DrawerGreeting(STATIC_SLOGAN, null, false)
+        }
+        val allTexts = candidates.getValue(category)
+        // 防重复只在已经选中的分类内部生效，不能反向改变 20%/30%/50% 的分类权重。
+        val texts = allTexts.filterNot { it == previousText }.ifEmpty { allTexts }
         return DrawerGreeting(
             text = texts[random.nextInt(texts.size)],
             category = category,
             // 动态问候在每次打开侧边栏时都重新播放，运行 ID 负责重启动画协程。
             animate = true
         )
+    }
+
+    private fun contextualProbability(category: GreetingCategory): Double = when (category) {
+        GreetingCategory.EXAM_TODAY -> 0.30
+        GreetingCategory.EXAM_TOMORROW -> 0.50
+        else -> 0.20
     }
 
     fun eligibleCategories(
@@ -78,48 +94,43 @@ class DrawerGreetingPlanner(
             .sortedWith(compareBy<ExamInfo> { it.examDate }.thenBy { it.startTime })
             .toList()
 
-        if (unfinished.any { it.examDate == today }) {
-            return categoryIfAvailable(GreetingCategory.EXAM_TODAY, templates)
+        val upcomingDays = unfinished.firstOrNull()?.let {
+            ChronoUnit.DAYS.between(today, it.examDate)
         }
-        if (unfinished.any { it.examDate == today.plusDays(1) }) {
-            return categoryIfAvailable(GreetingCategory.EXAM_TOMORROW, templates)
+        val start = context.semesterStart
+        val end = context.semesterEnd
+        val semesterCategory = if (
+            start != null && end != null && !today.isBefore(start) && !today.isAfter(end)
+        ) {
+            if (ChronoUnit.DAYS.between(today, end) <= 30L) {
+                GreetingCategory.SEMESTER_ENDING
+            } else {
+                GreetingCategory.SEMESTER_WEEK
+            }
+        } else {
+            null
         }
-        if (context.now.hour in 0..4) {
-            return categoryIfAvailable(GreetingCategory.LATE_NIGHT, templates)
-        }
-        if (
+        // 同时命中多个节点时只保留最相关的一项，避免 20% 节点池再次稀释提醒。
+        val contextual = when {
+            unfinished.any { it.examDate == today } -> GreetingCategory.EXAM_TODAY
+            unfinished.any { it.examDate == today.plusDays(1) } -> GreetingCategory.EXAM_TOMORROW
+            context.now.hour in 0..4 -> GreetingCategory.LATE_NIGHT
             context.calendarDay.kind == CalendarDayKind.HOLIDAY &&
-            context.calendarDay.holidayName.isNotBlank()
-        ) {
-            return categoryIfAvailable(GreetingCategory.HOLIDAY, templates)
-        }
-        if (
+                context.calendarDay.holidayName.isNotBlank() -> GreetingCategory.HOLIDAY
             today.dayOfWeek in setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY) &&
-            context.calendarDay.kind != CalendarDayKind.ADJUSTED_WORKDAY
-        ) {
-            return categoryIfAvailable(GreetingCategory.WEEKEND, templates)
-        }
+                context.calendarDay.kind != CalendarDayKind.ADJUSTED_WORKDAY -> GreetingCategory.WEEKEND
+            upcomingDays in 2L..7L -> GreetingCategory.EXAM_UPCOMING
+            else -> semesterCategory
+        }?.takeIf { templates.forCategory(it).isNotEmpty() }
 
         return buildList {
-            if (context.studentName.isNotBlank()) {
-                addIfAvailable(GreetingCategory.GREETING, templates)
+            if (
+                context.studentName.isNotBlank() &&
+                templates.forCategory(GreetingCategory.GREETING).isNotEmpty()
+            ) {
+                add(GreetingCategory.GREETING)
             }
-            val upcomingDays = unfinished.firstOrNull()?.let {
-                ChronoUnit.DAYS.between(today, it.examDate)
-            }
-            if (upcomingDays in 2L..7L) {
-                addIfAvailable(GreetingCategory.EXAM_UPCOMING, templates)
-            }
-            val start = context.semesterStart
-            val end = context.semesterEnd
-            if (start != null && end != null && !today.isBefore(start) && !today.isAfter(end)) {
-                val remainingDays = ChronoUnit.DAYS.between(today, end)
-                addIfAvailable(
-                    if (remainingDays <= 30L) GreetingCategory.SEMESTER_ENDING
-                    else GreetingCategory.SEMESTER_WEEK,
-                    templates
-                )
-            }
+            contextual?.let(::add)
         }
     }
 
@@ -179,19 +190,6 @@ class DrawerGreetingPlanner(
 
     private fun isUnfinishedToday(exam: ExamInfo, now: LocalTime): Boolean =
         exam.endTime.toLocalTimeOrNull()?.let(now::isBefore) ?: true
-
-    private fun MutableList<GreetingCategory>.addIfAvailable(
-        category: GreetingCategory,
-        templates: GreetingTemplateSet
-    ) {
-        if (templates.forCategory(category).isNotEmpty()) add(category)
-    }
-
-    private fun categoryIfAvailable(
-        category: GreetingCategory,
-        templates: GreetingTemplateSet
-    ): List<GreetingCategory> =
-        if (templates.forCategory(category).isEmpty()) emptyList() else listOf(category)
 
     private fun String.toLocalTimeOrNull(): LocalTime? =
         runCatching { LocalTime.parse(trim()) }.getOrNull()
