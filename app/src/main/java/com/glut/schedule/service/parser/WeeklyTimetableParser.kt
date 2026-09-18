@@ -25,7 +25,8 @@ data class WeeklyTimetablePage(
     val semesterLabel: String,
     val selectedWeek: Int?,
     val availableWeeks: List<Int>,
-    val rows: List<WeeklyTimetableRow>
+    val rows: List<WeeklyTimetableRow>,
+    val skippedRowCount: Int = 0
 )
 
 fun WeeklyTimetablePage.contentMonday(): LocalDate? {
@@ -81,13 +82,18 @@ class WeeklyTimetableParser {
             .filter { it.closest("table") === courseTable }
         val headerPosition = tableRows.indexOf(headerRow)
         val headers = headerRow.directCellTexts()
+        var skippedRowCount = 0
         val rows = tableRows.drop(headerPosition + 1)
             .filter { row -> row.directCellTexts().any { it.isNotBlank() } }
             .mapNotNull { row ->
-                // 跳过无法解析为课程的行（如备注、统计行等），不中断整页解析
-                runCatching { parseCourseRow(row, headers, hasNoon) }.getOrNull()
+                // 单行格式异常不阻断整页；仅累计数量，避免保留课程正文等诊断敏感信息。
+                runCatching { parseCourseRow(row, headers, hasNoon) }
+                    .getOrElse {
+                        skippedRowCount += 1
+                        null
+                    }
             }
-        return WeeklyTimetablePage(semesterLabel, selectedWeek, availableWeeks, rows)
+        return WeeklyTimetablePage(semesterLabel, selectedWeek, availableWeeks, rows, skippedRowCount)
     }
 
     fun mergeWithMetadata(
@@ -177,32 +183,29 @@ class WeeklyTimetableParser {
         val titleIndex = column("课程名")
         val weekdayIndex = column("星期")
         val sectionIndex = column("节次")
+        val startTimeIndex = column("开始时间")
+        val endTimeIndex = column("结束时间")
         val buildingIndex = column("教学楼")
         val roomIndex = column("教室")
-        require(listOf(dateIndex, titleIndex, weekdayIndex, sectionIndex, buildingIndex, roomIndex)
+        require(listOf(dateIndex, titleIndex, weekdayIndex, sectionIndex, startTimeIndex, endTimeIndex, buildingIndex, roomIndex)
             .all { it in cells.indices }) { "Malformed weekly timetable course row" }
         val date = cells[dateIndex].trim()
         val title = cells[titleIndex].trim()
         val day = parseWeekday(cells[weekdayIndex])
-        val sectionRange = parseSectionRange(cells[sectionIndex])
+        val sectionRange = parseSectionRange(
+            value = cells[sectionIndex],
+            startTime = cells[startTimeIndex],
+            endTime = cells[endTimeIndex],
+            hasNoon = hasNoon
+        )
         require(title.isNotBlank()) { "Missing weekly timetable course title" }
         require(runCatching { LocalDate.parse(date) }.isSuccess) {
             "Invalid weekly timetable course date: $date"
         }
         require(day != 0) { "Invalid weekly timetable weekday: ${cells[weekdayIndex]}" }
         require(sectionRange != null) { "Invalid weekly timetable section: ${cells[sectionIndex]}" }
-        val (rawStart, rawEnd) = sectionRange
-        val maxRawSection = if (hasNoon) 12 else 11
-        require(rawStart in 1..maxRawSection && rawEnd in 1..maxRawSection && rawStart <= rawEnd) {
-            "Invalid weekly timetable section range: ${cells[sectionIndex]}"
-        }
-        val start = mapSection(rawStart, hasNoon)
-        val end = mapSection(rawEnd, hasNoon)
-        val validMappedRange = if (hasNoon) {
-            (start in 1..4 || start in 7..14) && (end in 1..4 || end in 7..14)
-        } else {
-            start in 1..11 && end in 1..11
-        }
+        val (start, end) = sectionRange
+        val validMappedRange = if (hasNoon) start in 1..14 && end in 1..14 else start in 1..11 && end in 1..11
         require(validMappedRange && start <= end) {
             "Invalid mapped weekly timetable section range: $start-$end"
         }
@@ -232,13 +235,24 @@ class WeeklyTimetableParser {
         else -> 0
     }
 
-    private fun parseSectionRange(value: String): Pair<Int, Int>? {
+    private fun parseSectionRange(
+        value: String,
+        startTime: String,
+        endTime: String,
+        hasNoon: Boolean
+    ): Pair<Int, Int>? {
+        // 桂林教务以“中午”表示午1、午2完整双节，页面时间用于避免误映射未知格式。
+        if (hasNoon && value.trim() == "中午" && startTime.trim() == "12:30" && endTime.trim() == "14:05") {
+            return 5 to 6
+        }
         val match = Regex(
             """^第?\s*(\d{1,2})(?:\s*(?:、|,|，|-|－|~|～|至)\s*(\d{1,2}))?\s*节?$"""
         ).matchEntire(value.trim()) ?: return null
         val start = match.groupValues[1].toIntOrNull() ?: return null
         val end = match.groupValues[2].toIntOrNull() ?: start
-        return start to end
+        val maxRawSection = if (hasNoon) 12 else 11
+        if (start !in 1..maxRawSection || end !in 1..maxRawSection || start > end) return null
+        return mapSection(start, hasNoon) to mapSection(end, hasNoon)
     }
 
     private fun mapSection(section: Int, hasNoon: Boolean): Int {

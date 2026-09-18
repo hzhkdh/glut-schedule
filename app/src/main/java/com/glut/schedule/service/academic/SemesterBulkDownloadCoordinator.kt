@@ -32,6 +32,7 @@ data class SemesterDownloadItemState(
     val status: SemesterDownloadItemStatus,
     val completedWeeks: Int = 0,
     val totalWeeks: Int = 0,
+    val skippedRowCount: Int = 0,
     val errorMessage: String? = null
 )
 
@@ -179,9 +180,12 @@ class SemesterBulkDownloadCoordinator(
                 verifyOwner(runGeneration, session.ownerStudentNumber)
                 commit(semester, payload)
                 verifyOwner(runGeneration, session.ownerStudentNumber)
-            }.onSuccess {
+                // 提交完成后继续携带下载结果，供成功摘要展示异常行跳过数量。
+                payload
+            }.onSuccess { payload ->
                 val item = currentItem(semester.id).copy(
                     status = SemesterDownloadItemStatus.SUCCEEDED,
+                    skippedRowCount = payload.skippedRowCount,
                     errorMessage = null
                 )
                 updateItem(runGeneration, semester.id) { item }

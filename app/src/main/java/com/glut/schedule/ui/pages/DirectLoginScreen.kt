@@ -323,7 +323,9 @@ private fun SemesterManagementSection(
                         ) {
                             Text(item.displayName, color = LoginPrimary, fontSize = 12.sp, modifier = Modifier.weight(1f))
                             Text(
-                                if (item.status == SemesterDownloadItemStatus.SUCCEEDED) "已完成" else "失败",
+                                if (item.status == SemesterDownloadItemStatus.SUCCEEDED) {
+                                    if (item.skippedRowCount > 0) "已完成，跳过${item.skippedRowCount}条" else "已完成"
+                                } else "失败",
                                 color = if (item.status == SemesterDownloadItemStatus.SUCCEEDED) Color(0xFF15803D) else Color(0xFFDC2626),
                                 fontSize = 12.sp
                             )

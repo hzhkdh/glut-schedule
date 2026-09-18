@@ -40,6 +40,25 @@ class WeeklyTimetableParserTest {
     }
 
     @Test
+    fun parsesVerifiedNoonRangeAsInternalSectionsFiveAndSix() {
+        val page = parser.parsePage(
+            weeklyHtml(
+                week = 6,
+                rows = courseRow(
+                    section = "中午",
+                    startTime = "12:30",
+                    endTime = "14:05"
+                )
+            ),
+            hasNoon = true
+        )
+
+        assertEquals(5, page.rows.single().startSection)
+        assertEquals(6, page.rows.single().endSection)
+        assertEquals(0, page.skippedRowCount)
+    }
+
+    @Test
     fun validateForRejectsDateAndWeekdayConflict() {
         val page = parser.parsePage(
             weeklyHtml(
@@ -163,6 +182,20 @@ class WeeklyTimetableParserTest {
             )
             assertTrue("节次无法解析的课程行应被跳过: $section", page.rows.isEmpty())
         }
+    }
+
+    @Test
+    fun countsUnknownMalformedRowsWithoutRejectingValidRows() {
+        val page = parser.parsePage(
+            weeklyHtml(
+                week = 6,
+                rows = courseRow(section = "实验课") + courseRow()
+            ),
+            hasNoon = true
+        )
+
+        assertEquals(1, page.rows.size)
+        assertEquals(1, page.skippedRowCount)
     }
 
     @Test
@@ -358,11 +391,13 @@ class WeeklyTimetableParserTest {
         date: String = "2024-10-07",
         weekday: String = "星期一",
         section: String = "第1、2节",
+        startTime: String = "08:00",
+        endTime: String = "09:40",
         building: String = "雁山1号楼",
         room: String = "00101"
     ) = """
         <tr><td>$date</td><td>测试课程</td><td>必修</td><td>正常考试</td>
-        <td>上午第一节</td><td>$weekday</td><td>$section</td><td>08:00</td><td>09:40</td>
+        <td>上午第一节</td><td>$weekday</td><td>$section</td><td>$startTime</td><td>$endTime</td>
         <td>$building</td><td>$room</td><td></td></tr>
     """.trimIndent()
 

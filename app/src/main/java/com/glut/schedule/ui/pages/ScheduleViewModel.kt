@@ -583,11 +583,14 @@ class ScheduleViewModel(
             )
         )
         val newCourseCount = payload.courses.countDistinctCourseTitles()
-        message.value = if (newCourseCount != oldCourseCount) {
+        val completionMessage = if (newCourseCount != oldCourseCount) {
             "${targetSemester.displayName}课表已更新：$oldCourseCount → $newCourseCount 门课程"
         } else {
             "${targetSemester.displayName}课表未发生变化（$newCourseCount 门课程）"
         }
+        message.value = if (payload.skippedRowCount > 0) {
+            "$completionMessage；已跳过 ${payload.skippedRowCount} 条异常课程记录"
+        } else completionMessage
     }
 
     private fun isAuthenticationFailure(error: Throwable?): Boolean =

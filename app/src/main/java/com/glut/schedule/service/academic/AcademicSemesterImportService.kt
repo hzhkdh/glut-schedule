@@ -116,7 +116,8 @@ data class AcademicSemesterImportPayload(
     val timetableHtml: String,
     val responseKind: AcademicSemesterResponseKind,
     val portalMaxWeek: Int? = null,
-    val semesterStartMonday: LocalDate? = null
+    val semesterStartMonday: LocalDate? = null,
+    val skippedRowCount: Int = 0
 )
 
 class AcademicSemesterImportService(
@@ -201,6 +202,7 @@ class AcademicSemesterImportService(
             }
             require(landingPage.availableWeeks.isNotEmpty()) { "周次课表未提供可下载周次" }
             portalMaxWeek = landingPage.availableWeeks.maxOrNull()
+            var skippedRowCount = 0
             val pages = buildList {
                 landingPage.availableWeeks.sorted().forEach { week ->
                     val response = apiProbeService.probeForm(
@@ -221,6 +223,7 @@ class AcademicSemesterImportService(
                         expectedSemesterLabel = semesterPortalLabel(semester),
                         expectedSemesterMonday = semesterStartMonday
                     )
+                    skippedRowCount += page.skippedRowCount
                     add(page)
                     onProgress(size, landingPage.availableWeeks.size)
                 }
@@ -240,6 +243,16 @@ class AcademicSemesterImportService(
             val weeklyAdjustments = scheduleParser.parseAdjustments(landing.body)
             if (weeklyAdjustments.isNotEmpty()) adjustments = weeklyAdjustments
             resolvedTimetableHtml = landing.body
+            return@runCatching AcademicSemesterImportPayload(
+                courses = courses,
+                adjustments = adjustments,
+                currcourseHtml = currcourse.body,
+                timetableHtml = resolvedTimetableHtml,
+                responseKind = responseKind,
+                portalMaxWeek = portalMaxWeek,
+                semesterStartMonday = semesterStartMonday,
+                skippedRowCount = skippedRowCount
+            )
         }
         AcademicSemesterImportPayload(
             courses = courses,
@@ -248,7 +261,8 @@ class AcademicSemesterImportService(
             timetableHtml = resolvedTimetableHtml,
             responseKind = responseKind,
             portalMaxWeek = portalMaxWeek,
-            semesterStartMonday = semesterStartMonday
+            semesterStartMonday = semesterStartMonday,
+            skippedRowCount = 0
         )
     }
 

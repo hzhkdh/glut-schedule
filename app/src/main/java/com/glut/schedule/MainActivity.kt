@@ -381,6 +381,7 @@ class MainActivity : ComponentActivity() {
                             it.status == com.glut.schedule.service.academic.SemesterDownloadItemStatus.SUCCEEDED
                         }
                         val failed = summary.items.size - succeeded
+                        val skippedRows = summary.items.sumOf { it.skippedRowCount }
                         val text = if (summary.mode == com.glut.schedule.service.academic.SemesterDownloadMode.SINGLE) {
                             if (failed == 0) "学期课表已下载" else "学期课表下载失败"
                         } else if (failed == 0) {
@@ -388,9 +389,10 @@ class MainActivity : ComponentActivity() {
                         } else {
                             "下载完成：成功 $succeeded，失败 $failed"
                         }
+                        val message = if (skippedRows > 0) "$text；已跳过 $skippedRows 条异常课程记录" else text
                         android.widget.Toast.makeText(
                             this@MainActivity,
-                            text,
+                            message,
                             android.widget.Toast.LENGTH_SHORT
                         ).show()
                     }

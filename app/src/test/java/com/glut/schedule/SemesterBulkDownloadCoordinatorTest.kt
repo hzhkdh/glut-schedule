@@ -100,6 +100,20 @@ class SemesterBulkDownloadCoordinatorTest {
         assertTrue(summary.items.all { it.status == SemesterDownloadItemStatus.FAILED })
     }
 
+    @Test
+    fun successfulItemCarriesSkippedRowCountFromPayload() = runTest {
+        val coordinator = coordinator(
+            scope = backgroundScope,
+            download = { _, _ -> Result.success(payload(skippedRowCount = 3)) }
+        )
+
+        val summary = (coordinator.startAll() as SemesterDownloadStartResult.Started)
+            .completion.await()!!
+
+        assertTrue(summary.items.filter { it.status == SemesterDownloadItemStatus.SUCCEEDED }
+            .all { it.skippedRowCount == 3 })
+    }
+
     private fun coordinator(
         scope: kotlinx.coroutines.CoroutineScope,
         owner: suspend () -> String = { "student-a" },
@@ -142,12 +156,13 @@ class SemesterBulkDownloadCoordinatorTest {
         cacheStatus = status
     )
 
-    private fun payload() = AcademicSemesterImportPayload(
+    private fun payload(skippedRowCount: Int = 0) = AcademicSemesterImportPayload(
         courses = emptyList(),
         adjustments = emptyList(),
         currcourseHtml = "",
         timetableHtml = "",
         responseKind = com.glut.schedule.service.academic.AcademicSemesterResponseKind.VALID_EMPTY_SCHEDULE,
-        portalMaxWeek = 20
+        portalMaxWeek = 20,
+        skippedRowCount = skippedRowCount
     )
 }

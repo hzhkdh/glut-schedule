@@ -769,7 +769,7 @@ class DirectLoginViewModel(
 
             _uiState.value = _uiState.value.copy(
                 isLoggingIn = false,
-                message = importCompletionMessage(failedModules),
+                message = importCompletionMessage(failedModules, currentPayload.skippedRowCount),
                 importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount, studyPlanCount)
             )
         } catch (e: Exception) {
@@ -922,13 +922,17 @@ internal fun isAuthenticatedNanningResponse(
     ).any { body.contains(it, ignoreCase = true) }
 }
 
-internal fun importCompletionMessage(failedModules: Collection<String>): String {
+internal fun importCompletionMessage(
+    failedModules: Collection<String>,
+    skippedRowCount: Int = 0
+): String {
     val uniqueModules = failedModules.distinct()
-    return if (uniqueModules.isEmpty()) {
+    val message = if (uniqueModules.isEmpty()) {
         "导入完成"
     } else {
         "部分导入失败：${uniqueModules.joinToString("、")}；已保留原缓存"
     }
+    return if (skippedRowCount > 0) "$message；已跳过 $skippedRowCount 条异常课程记录" else message
 }
 
 class DirectLoginViewModelFactory(
