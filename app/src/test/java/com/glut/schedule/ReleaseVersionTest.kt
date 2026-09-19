@@ -6,11 +6,11 @@ import org.junit.Test
 
 class ReleaseVersionTest {
     @Test
-    fun releaseVersionIs0231WithVersionCode125() {
+    fun releaseVersionIs0232WithVersionCode126() {
         val module = File("build.gradle.kts")
         val source = (if (module.exists()) module else File("app/build.gradle.kts")).readText()
-        assertTrue(source.contains("versionCode = 125"))
-        assertTrue(source.contains("versionName = \"0.23.1\""))
+        assertTrue(source.contains("versionCode = 126"))
+        assertTrue(source.contains("versionName = \"0.23.2\""))
     }
 
     @Test

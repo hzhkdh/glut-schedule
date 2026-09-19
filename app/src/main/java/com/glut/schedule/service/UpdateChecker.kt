@@ -17,7 +17,8 @@ data class UpdateInfo(
     val apkDownloadUrl: String,
     val releaseNotes: String,
     val isNewer: Boolean,
-    val isForceUpdate: Boolean = false
+    val isForceUpdate: Boolean = false,
+    val popup: Boolean = true
 )
 
 class UpdateChecker(
@@ -158,6 +159,7 @@ internal fun parseUpdateMetadata(json: String, currentVersion: String): UpdateIn
         val downloadUrl = obj.optString("downloadUrl", "")
         val updateDesc = obj.optString("updateDesc", obj.optString("releaseNotes", ""))
         val forceUpdate = obj.optBoolean("forceUpdate", false)
+        val popup = obj.optBoolean("popup", true)
 
         if (versionCode <= 0L ||
             versionName.isBlank() ||
@@ -171,7 +173,8 @@ internal fun parseUpdateMetadata(json: String, currentVersion: String): UpdateIn
             apkDownloadUrl = downloadUrl,
             releaseNotes = updateDesc,
             isNewer = UpdateChecker.compareVersions(versionName, currentVersion) > 0,
-            isForceUpdate = forceUpdate
+            isForceUpdate = forceUpdate,
+            popup = popup
         )
     }.getOrNull()
 }

@@ -78,7 +78,8 @@ class NoticeChecker(
                                 publishedAt = publishedAt,
                                 expiresAt = expiresAt,
                                 url = obj.optString("url").trim(),
-                                attachments = parseAttachments(obj)
+                                attachments = parseAttachments(obj),
+                                popup = obj.optBoolean("popup", true)
                             )
                         )
                     }

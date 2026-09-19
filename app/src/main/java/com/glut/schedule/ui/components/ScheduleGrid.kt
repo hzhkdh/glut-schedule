@@ -2,7 +2,6 @@ package com.glut.schedule.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,7 +20,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -98,8 +96,6 @@ fun ScheduleGrid(
     showWeekend: Boolean,
     showNoon: Boolean = false,
     showCalendarDates: Boolean = true,
-    onCourseRemarkClick: (CourseBlock) -> Unit = {},
-    onCourseLongClick: (CourseBlock) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -139,8 +135,6 @@ fun ScheduleGrid(
                     dayWidth = dayWidth,
                     dayCount = dayCount,
                     showNoon = effectiveShowNoon,
-                    onCourseRemarkClick = onCourseRemarkClick,
-                    onCourseLongClick = onCourseLongClick
                 )
             }
         }
@@ -296,8 +290,6 @@ private fun TimetableBody(
     dayWidth: Dp,
     dayCount: Int,
     showNoon: Boolean = false,
-    onCourseRemarkClick: (CourseBlock) -> Unit,
-    onCourseLongClick: (CourseBlock) -> Unit
 ) {
     val visiblePeriodCount = if (showNoon) periods.size else periods.size - NOON_SECTIONS.size
     val totalHeight = rowHeight * visiblePeriodCount
@@ -320,9 +312,7 @@ private fun TimetableBody(
                 CourseCard(
                     block = activeBlock,
                     conflictCount = group.size,
-                    onRemarkClick = { onCourseRemarkClick(activeBlock) },
                     onConflictClick = nextBlock,
-                    onLongClick = { onCourseLongClick(activeBlock) },
                     modifier = Modifier
                         .offset(
                             x = dayWidth * (activeBlock.occurrence.dayOfWeek - 1) + 2.dp,
@@ -402,27 +392,15 @@ private fun courseBlockDisplayComparator(): Comparator<CourseBlock> {
 private fun CourseCard(
     block: CourseBlock,
     conflictCount: Int,
-    onRemarkClick: () -> Unit,
     onConflictClick: (() -> Unit)?,
-    onLongClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val color = remember(block.course.colorHex) { Color(android.graphics.Color.parseColor(block.course.colorHex)) }
     val titleSize = courseCardTitleTextSize(block.course.title)
     val titleLineHeight = courseCardTitleLineHeight()
-    val hasRemark = !block.remark.isNullOrBlank()
-    val tapAction = courseCardTapAction(hasRemark = hasRemark, hasConflict = conflictCount > 1)
-    // 有备注时普通点击优先查看；冲突课程仍可通过右上角数字角标独立切换。
-    val clickableModifier = Modifier.combinedClickable(
-        onClick = {
-            when (tapAction) {
-                CourseCardTapAction.ViewRemark -> onRemarkClick()
-                CourseCardTapAction.CycleConflict -> onConflictClick?.invoke()
-                CourseCardTapAction.None -> Unit
-            }
-        },
-        onLongClick = onLongClick
-    )
+    val clickableModifier = Modifier.clickable {
+            if (conflictCount > 1) onConflictClick?.invoke()
+        }
 
     Box(
         modifier = modifier
@@ -433,12 +411,11 @@ private fun CourseCard(
             .semantics {
                 contentDescription =
                     "${block.course.title}，${block.course.teacher}，${block.course.room}" +
-                    (if (conflictCount > 1) "，共${conflictCount}门冲突课程" else "") +
-                    (if (hasRemark) "，有备注，单击查看、长按编辑" else "，长按添加备注")
+                    (if (conflictCount > 1) "，共${conflictCount}门冲突课程，单击切换" else "")
             }
     ) {
         Column(
-            modifier = Modifier.padding(courseCardContentPadding(hasRemark)),
+            modifier = Modifier,
             verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
             Text(
@@ -468,11 +445,9 @@ private fun CourseCard(
         if (conflictCount > 1) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 4.dp, y = (-4).dp)
-                    .size(48.dp)
-                    .clickable { onConflictClick?.invoke() }
-                    .semantics { contentDescription = "切换下一门冲突课程" },
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 2.dp, y = 2.dp)
+                    .size(18.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -493,42 +468,7 @@ private fun CourseCard(
             }
         }
 
-        if (hasRemark) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(20.dp)
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(Color(0xFFFFFBF3)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.ChatBubble,
-                    // 父卡片已经完整播报“有备注”与操作方式，图标本身只承担视觉提示。
-                    contentDescription = null,
-                    tint = Color(0xFF4A4338),
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-        }
     }
-}
-
-/** 备注图标只占用卡片底部空间，不压缩课程文字的横向可用宽度。 */
-fun courseCardContentPadding(hasRemark: Boolean): PaddingValues =
-    if (hasRemark) PaddingValues(bottom = 14.dp) else PaddingValues()
-
-enum class CourseCardTapAction {
-    ViewRemark,
-    CycleConflict,
-    None
-}
-
-/** 备注查看优先于冲突轮换；冲突课程另由数字角标提供独立入口。 */
-fun courseCardTapAction(hasRemark: Boolean, hasConflict: Boolean): CourseCardTapAction = when {
-    hasRemark -> CourseCardTapAction.ViewRemark
-    hasConflict -> CourseCardTapAction.CycleConflict
-    else -> CourseCardTapAction.None
 }
 
 fun courseCardTitleTextSize(title: String): TextUnit = 11.sp

@@ -132,6 +132,22 @@ class WeeklyTimetableParserTest {
     }
 
     @Test
+    fun normalAlternateWeekPlaceholderDoesNotCountAsMalformed() {
+        val placeholder = courseRow(
+            section = "",
+            startTime = "",
+            endTime = "",
+            building = "",
+            room = ""
+        ).replace("测试课程", "体育1")
+
+        val page = parser.parsePage(weeklyHtml(week = 6, rows = placeholder), hasNoon = true)
+
+        assertTrue(page.rows.isEmpty())
+        assertEquals(0, page.skippedRowCount)
+    }
+
+    @Test
     fun rejectsMissingOrUnrecognizedMainCourseTable() {
         val missingTable = "<html><body><span>2024秋</span></body></html>"
         val unrecognizedTable = weeklyHtml(week = 6, rows = "")
@@ -182,6 +198,14 @@ class WeeklyTimetableParserTest {
             )
             assertTrue("节次无法解析的课程行应被跳过: $section", page.rows.isEmpty())
         }
+    }
+
+    @Test
+    fun expectedUnscheduledCourseDescriptorDoesNotCountAsMalformed() {
+        val row = "<tr><td></td><td>金工实习（全校）</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>"
+        val page = parser.parsePage(weeklyHtml(week = 6, rows = row), hasNoon = true)
+        assertTrue(page.rows.isEmpty())
+        assertEquals(0, page.skippedRowCount)
     }
 
     @Test

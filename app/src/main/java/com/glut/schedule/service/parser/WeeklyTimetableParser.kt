@@ -86,6 +86,8 @@ class WeeklyTimetableParser {
         val rows = tableRows.drop(headerPosition + 1)
             .filter { row -> row.directCellTexts().any { it.isNotBlank() } }
             .mapNotNull { row ->
+                if (isUnscheduledDescriptor(row, headers)) return@mapNotNull null
+                if (isInactiveWeekPlaceholder(row, headers)) return@mapNotNull null
                 // 单行格式异常不阻断整页；仅累计数量，避免保留课程正文等诊断敏感信息。
                 runCatching { parseCourseRow(row, headers, hasNoon) }
                     .getOrElse {
@@ -94,6 +96,24 @@ class WeeklyTimetableParser {
                     }
             }
         return WeeklyTimetablePage(semesterLabel, selectedWeek, availableWeeks, rows, skippedRowCount)
+    }
+
+    private fun isUnscheduledDescriptor(row: Element, headers: List<String>): Boolean {
+        val cells = row.children().filter { it.tagName() == "td" }.map { it.text().trim() }
+        fun value(name: String) = cells.getOrNull(headers.indexOf(name)).orEmpty()
+        return value("课程名").isNotBlank() && value("日期").isBlank() &&
+            value("星期").isBlank() && value("节次").isBlank()
+    }
+
+    private fun isInactiveWeekPlaceholder(row: Element, headers: List<String>): Boolean {
+        val cells = row.children().filter { it.tagName() == "td" }.map { it.text().trim() }
+        fun value(name: String) = cells.getOrNull(headers.indexOf(name)).orEmpty()
+        val hasValidDate = runCatching { LocalDate.parse(value("日期")) }.isSuccess
+        val hasValidWeekday = parseWeekday(value("星期")) != 0
+        // 桂林体育隔周无课行只保留日期和星期，其余排课字段均为空。
+        return hasValidDate && hasValidWeekday &&
+            listOf("节次", "开始时间", "结束时间", "教学楼", "教室")
+                .all { value(it).isBlank() }
     }
 
     fun mergeWithMetadata(

@@ -18,8 +18,8 @@ android {
         applicationId = "com.glut.schedule"
         minSdk = 26
         targetSdk = 36
-        versionCode = 125
-        versionName = "0.23.1"
+        versionCode = 126
+        versionName = "0.23.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     }
@@ -205,14 +205,22 @@ tasks.register("publishUpdate") {
         println("Copied $apkName to app-update-host/")
 
         val updateJson = File(updateDir, "update.json")
+        val existingUpdate = if (updateJson.isFile) {
+            (groovy.json.JsonSlurper().parse(updateJson) as? Map<*, *>) ?: emptyMap<Any, Any>()
+        } else emptyMap<Any, Any>()
+        // 发布任务只刷新可由构建确定的元数据；维护者填写的文案与弹窗策略必须保留。
+        val updateDesc = existingUpdate["updateDesc"]?.toString().orEmpty()
+        val forceUpdate = existingUpdate["forceUpdate"] as? Boolean ?: false
+        val popup = existingUpdate["popup"] as? Boolean ?: true
         val json = groovy.json.JsonOutput.toJson(mapOf(
             "versionCode" to versionCode,
             "versionName" to versionName,
             "downloadUrl" to "https://update.999314.xyz/$apkName",
             "apkSha256" to apkSha256,
             "apkSize" to apkFile.length(),
-            "updateDesc" to "",
-            "forceUpdate" to false
+            "updateDesc" to updateDesc,
+            "forceUpdate" to forceUpdate,
+            "popup" to popup
         ))
         updateJson.writeText(groovy.json.JsonOutput.prettyPrint(json))
         println("Updated update.json")

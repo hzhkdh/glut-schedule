@@ -96,7 +96,8 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
         ScheduleDatabase.MIGRATION_8_9,
         ScheduleDatabase.MIGRATION_9_10,
         ScheduleDatabase.MIGRATION_10_11,
-        ScheduleDatabase.MIGRATION_11_12
+        ScheduleDatabase.MIGRATION_11_12,
+        ScheduleDatabase.MIGRATION_12_13
     )
      .build()
 

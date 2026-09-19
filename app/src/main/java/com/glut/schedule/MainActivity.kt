@@ -585,7 +585,7 @@ class MainActivity : ComponentActivity() {
                     if (info != null && info.isNewer) {
                         container.settingsStore.setUpdateAvailable(info.latestVersion)
                         val dismissedVersion = container.settingsStore.dismissedUpdatePopupVersion.first()
-                        if (dismissedVersion != info.latestVersion) {
+                        if (info.popup && dismissedVersion != info.latestVersion) {
                             autoPopupUpdateVersion = info.latestVersion
                             showUpdateDialog = UpdateDialogState.Idle(info)
                         }
@@ -624,7 +624,7 @@ class MainActivity : ComponentActivity() {
                     if (initialNoticeCheckFinished && showUpdateDialog == null && showNoticePopup == null) {
                         val alreadyShownIds = dismissedNoticePopupIds + noticePopupSessionDismissedIds
                         val latestNotice = notices.firstOrNull()
-                        if (latestNotice != null && latestNotice.id !in alreadyShownIds) {
+                        if (latestNotice != null && latestNotice.popup && latestNotice.id !in alreadyShownIds) {
                             showNoticePopup = latestNotice
                         }
                     }
@@ -1681,7 +1681,6 @@ private fun SettingsPage(
                     Switch(checked = greetingEnabled, onCheckedChange = onGreetingEnabledChange)
                 }
             }
-
             Text("课表外观", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Surface(
                 modifier = Modifier.fillMaxWidth(),
