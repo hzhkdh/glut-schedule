@@ -225,6 +225,33 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
+    fun importPagePutsCampusSelectorBeforeImportModeAndKeepsBothExplained() {
+        val screen = page("DirectLoginScreen.kt")
+
+        // 顺序：先选校区（登哪个教务），再选线路（用哪条导入）。
+        // 标签文字与小程序一致（「导入模式」），两端说同一句话。
+        val campusIndex = screen.indexOf("Text(\"南宁分校\"")
+        val modeIndex = screen.indexOf("Text(\"导入模式\"")
+        assertTrue("未找到「南宁分校」标题", campusIndex >= 0)
+        assertTrue("未找到「导入模式」标签", modeIndex >= 0)
+        assertTrue("「南宁分校」必须排在「导入模式」之前", campusIndex < modeIndex)
+        assertFalse(
+            "线路标签不能退回铺满整行的「导入方式」大标题",
+            screen.contains("Text(\"导入方式\"")
+        )
+
+        // 线路说明必须是两行图例，而不是连成一句的推荐语：
+        // 连成一句时选中态摆在哪条都会和文字分属两边，且长句会在「模式1」中间断行。
+        // 文案只描述「解析什么、快慢」，不评判哪条更准。
+        assertTrue(screen.contains("模式1 · 解析[个人课表]+[周次课表]，稍慢"))
+        assertTrue(screen.contains("模式2 · 解析[个人课表]，稍快(备用)"))
+        assertFalse(
+            "线路说明不能退回连成一句的写法",
+            screen.contains("模式1：以周次课表为准，更准确；模式2：只取个人课表")
+        )
+    }
+
+    @Test
     fun currentSemesterRefreshUsesExactSemesterImportAndLightweightCalendarProbe() {
         val viewModel = page("ScheduleViewModel.kt")
         val refreshBody = viewModel.substringAfter("fun refreshSchedule(")
@@ -232,7 +259,10 @@ class MultiSemesterUiContractTest {
 
         assertTrue(refreshBody.contains("uiState.value.viewedSemester"))
         assertTrue(refreshBody.contains("semesterImportService.importSemester("))
-        assertTrue(refreshBody.contains("mode = settingsStore.semesterImportMode.first()"))
+        // 刷新必须沿用**该学期当初的**导入线路：读全局偏好会让「一次失败后切到模式2」的连锁
+        // 静默改写已缓存学期的线路，课表时间/教室的取值口径随之改变，而用户没有要求改它。
+        assertTrue(refreshBody.contains("mode = targetSemester.importMode"))
+        assertFalse(refreshBody.contains("mode = settingsStore.semesterImportMode.first()"))
         assertTrue(refreshBody.contains("repository.replaceSemesterSchedule("))
         assertTrue(refreshBody.contains("portalMaxWeek = payload.portalMaxWeek"))
         assertTrue(refreshBody.contains("probeScheduleEndpoints("))

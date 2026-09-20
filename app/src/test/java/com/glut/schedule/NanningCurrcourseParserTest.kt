@@ -64,6 +64,58 @@ class NanningCurrcourseParserTest {
     }
 
     @Test
+    fun guilinCurrcourseShiftsSectionsFromPeriodFiveBecauseOfNoonSlots() {
+        // 桂林的 currcourse.jsdo 与南宁共用 tr.infolist_common + 嵌套 table.none 结构，
+        // 而 CompositeScheduleParser 把本解析器排在最前，所以桂林页面也由这里解析。
+        // 区别是桂林页面存在「中午1/中午2」：第 5 节起的内部节次号必须 +2。
+        //
+        // 漏掉偏移会让「第5、6节」落在内部 5/6——正好是中午的两个槽位，关闭「显示中午」
+        // 后整门课不显示（实测：数据库原理及应用B 整门课消失）。
+        val html = """
+            <table class="infolist_tab"><tr class="infolist_common">
+                <td><a class="infolist">数据库原理及应用B</a></td>
+                <td><a href='/academic/manager/teacherinfo/showTeacherInfoItem.do?userid=1' class="infolist">樊婷</a></td>
+                <td><table class="none"><tr>
+                    <td>1-12周</td><td>星期一</td><td>第5、6节</td><td>07120D</td>
+                </tr><tr>
+                    <td>1-6周</td><td>星期三</td><td>第7、8节</td><td>07120D</td>
+                </tr></table></td>
+            </tr></table>
+            <table class="infolist_tab"><tr><td>中午1</td><td>中午2</td></tr></table>
+        """.trimIndent()
+
+        val occurrences = parser.parsePersonalSchedule(html).single().occurrences
+
+        assertEquals(2, occurrences.size)
+        // 第5、6节 → 内部 7、8（中午1/2 占 5、6）
+        assertEquals(7, occurrences[0].startSection)
+        assertEquals(8, occurrences[0].endSection)
+        // 第7、8节 → 内部 9、10
+        assertEquals(9, occurrences[1].startSection)
+        assertEquals(10, occurrences[1].endSection)
+    }
+
+    @Test
+    fun nanningCurrcourseKeepsSectionsUnshiftedWhenPageHasNoNoonSlots() {
+        // 南宁没有中午时段，节次直排 1-11。这条锁住「修桂林不得误伤南宁」——
+        // 同样的「第5、6节」在无中午的页面上必须仍是内部 5、6。
+        val html = """
+            <table class="infolist_tab"><tr class="infolist_common">
+                <td><a class="infolist">高等数学</a></td>
+                <td><a href='/academic/manager/teacherinfo/showTeacherInfoItem.do?userid=1' class="infolist">张三</a></td>
+                <td><table class="none"><tr>
+                    <td>1-18周</td><td>星期一</td><td>第5、6节</td><td>06104</td>
+                </tr></table></td>
+            </tr></table>
+        """.trimIndent()
+
+        val occurrence = parser.parsePersonalSchedule(html).single().occurrences.single()
+
+        assertEquals(5, occurrence.startSection)
+        assertEquals(6, occurrence.endSection)
+    }
+
+    @Test
     fun parsesCourseWithMultipleTimeSlots() {
         val html = """
             <table class="infolist_tab"><tr class="infolist_common">

@@ -140,7 +140,12 @@ object CourseTimeStatsCalculator {
         source: CourseTimeSemesterSource,
         dimension: CourseTimeDimension
     ): SemesterAggregation {
-        val maxWeek = source.portalMaxWeek
+        // portalMaxWeek 可能为 null：模式2（纯个人课表）不请求周次课表落地页，拿不到门户的
+        // 周次列表。这里绝不能直接判 MISSING_MAX_WEEK——那会让**整个学期**从统计里消失，
+        // 用户看到的是「这个学期的统计没了」而不是「少算一点」。
+        // 退回与 historicalAcademicMaxWeek 同一份反推口径；课次里连一个周次数字都没有时，
+        // 才如实报「学期长度未知」，而不是伪装成「统计结果 0 分钟」。
+        val maxWeek = source.portalMaxWeek ?: derivedAcademicMaxWeek(source.courses)
         if (maxWeek == null || maxWeek !in 1..30) {
             return SemesterAggregation.Unavailable(CourseTimeStatsUnavailableReason.MISSING_MAX_WEEK)
         }

@@ -4,6 +4,7 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterSeason
+import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.academic.AcademicSemesterImportService
@@ -459,6 +460,39 @@ class AcademicSemesterImportServiceTest {
             val payload = result.getOrThrow()
             assertEquals(listOf(course()), payload.courses)
             assertEquals(SemesterImportMode.PERSONAL_ONLY, payload.importMode)
+            // 模式2 也必须给出 portalMaxWeek。留 null 会让 CourseTimeStats 把这个学期
+            // **整学期**判为不可统计——用户看到的是「这个学期的统计没了」，而不是少算一点。
+            // 本例学期没有起止日期，只能从课次周次反推：course() 是「1-16周」→ 16。
+            assertEquals(16, payload.portalMaxWeek)
+        }
+    }
+
+    @Test
+    fun personalOnlyModePrefersSemesterCalendarOverDerivedMaxWeek() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+
+            val start = LocalDate.of(2026, 9, 7)
+            val end = LocalDate.of(2027, 1, 24)
+
+            val payload = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                FixedParser(listOf(course()))
+            ).importSemester(
+                cookie = "JSESSIONID=test",
+                baseUrl = server.url("/").toString(),
+                semester = semester().copy(
+                    semesterStartDate = start,
+                    semesterEndDate = end
+                ),
+                studentIdFallback = "student-internal-id",
+                mode = SemesterImportMode.PERSONAL_ONLY
+            ).getOrThrow()
+
+            // 学期自带起止日期时必须优先用校历（与刷新路径 academicMaxWeekForCalendar 同算法）。
+            // 若错误地走了反推分支，这里会是 16，与本断言（20）不等——失败即说明优先级反了。
+            assertEquals(academicMaxWeekForCalendar(start, end), payload.portalMaxWeek)
         }
     }
 

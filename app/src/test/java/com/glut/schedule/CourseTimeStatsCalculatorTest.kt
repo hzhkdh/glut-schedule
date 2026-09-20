@@ -279,10 +279,54 @@ class CourseTimeStatsCalculatorTest {
         assertTrue(result.coverage.excludedSemesters.isEmpty())
     }
 
+    @Test
+    fun semesterImportedInPersonalOnlyModeIsStillCounted() {
+        // 模式2（纯个人课表）不请求周次课表落地页，拿不到门户的周次列表，portalMaxWeek 为 null。
+        // 旧行为在这里直接判 MISSING_MAX_WEEK，整个学期从统计里消失——用户看到的是
+        // 「这个学期的统计没了」，而不是「少算一点」。
+        // 反推口径必须与 historicalAcademicMaxWeek 一致：门户值优先，拿不到就取课次周次的最大值。
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(
+                    portalMaxWeek = null,
+                    courses = listOf(course(weekText = "1-14周"))
+                )
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertTrue(result.coverage.excludedSemesters.isEmpty())
+        // 单节 45 分钟 × 14 周
+        assertEquals(630, result.totalMinutes)
+    }
+
+    @Test
+    fun semesterWithoutAnyWeekNumberStaysUnavailable() {
+        // 反推兜底不能把「完全无从判断学期长度」也算成能统计：
+        // 课次里一个周次数字都没有（例如整门课都是「全周」）时仍应如实报 MISSING_MAX_WEEK，
+        // 否则就会把一个已知未知的学期伪装成「统计结果是 0 分钟」。
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(
+                    portalMaxWeek = null,
+                    courses = listOf(course(weekText = "全周"))
+                )
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertEquals(
+            listOf(CourseTimeStatsUnavailableReason.MISSING_MAX_WEEK),
+            result.coverage.excludedSemesters.map { it.reason }
+        )
+        assertEquals(0, result.totalMinutes)
+    }
+
     private fun source(
         id: String = "current",
         label: String = "2026·春",
         courses: List<ScheduleCourse>,
+        portalMaxWeek: Int? = 20,
         periods: List<ClassPeriod> = listOf(
             ClassPeriod(1, "08:00", "08:45"),
             ClassPeriod(2, "08:55", "09:40")
@@ -292,7 +336,7 @@ class CourseTimeStatsCalculatorTest {
         semesterLabel = label,
         isCurrent = id == "current",
         isDownloaded = true,
-        portalMaxWeek = 20,
+        portalMaxWeek = portalMaxWeek,
         courses = courses,
         classPeriods = periods
     )

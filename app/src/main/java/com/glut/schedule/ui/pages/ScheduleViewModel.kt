@@ -490,7 +490,12 @@ class ScheduleViewModel(
             baseUrl = campusBaseUrl,
             semester = targetSemester,
             studentIdFallback = studentId,
-            mode = settingsStore.semesterImportMode.first(),
+            // 「刷新」沿用**该学期当初的**导入线路，而不是全局偏好。
+            // 用全局偏好会形成一条隐蔽的连锁：模式1 失败后偏好被切到模式2（见
+            // DirectLoginViewModel.retryLastImportWithPersonalMode），此后刷新任意一个
+            // 原本模式1 缓存的历史学期都会把它按模式2 重写，课表时间/教室的取值口径随之改变，
+            // 而用户并没有要求改这个学期。想主动换线路请用导入页的「重新下载」——那里会先提示。
+            mode = targetSemester.importMode,
             onProgress = { completed, total ->
                 message.value = "正在刷新${targetSemester.displayName}（第${completed}/${total}周）..."
             }

@@ -15,6 +15,7 @@ import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.guilinClassPeriods
 import com.glut.schedule.data.model.nanningClassPeriods
@@ -22,6 +23,7 @@ import com.glut.schedule.data.model.pingfengClassPeriods
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.ClassPeriodProfile
+import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
 import kotlinx.coroutines.async
@@ -444,6 +446,32 @@ class ScheduleRepositoryTest {
         )
 
         assertEquals(19, repository.semesters.first().single().portalMaxWeek)
+    }
+
+    @Test
+    fun savingSemesterCatalogKeepsTheImportModeOfAlreadyCachedSemesters() = runTest {
+        // 目录里的学期由 AcademicSemester.create() 生成，importMode 恒为缺省 WEEKLY。
+        // saveSemesterCatalog 若只回填 cacheStatus / 日期 / portalMaxWeek 而漏掉 importMode，
+        // 每次保存目录都会把「该学期原本是模式2 缓存的」这个事实抹掉，而「重下会换线路」
+        // 的提示正是靠它判断——被抹掉后提示会说反。
+        val cachedPersonal = AcademicSemester.create(
+            CampusType.GUILIN, 2025, "45", SemesterSeason.AUTUMN, "2",
+            isCurrent = false,
+            cacheStatus = SemesterCacheStatus.CACHED,
+            importMode = SemesterImportMode.PERSONAL_ONLY
+        )
+        val dao = FakeScheduleDao(initialSemesters = listOf(cachedPersonal.toEntity()))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+
+        // 目录重新解析后，该学期的 importMode 回到缺省 WEEKLY。
+        repository.saveSemesterCatalog(
+            listOf(cachedPersonal.copy(importMode = SemesterImportMode.WEEKLY))
+        )
+
+        assertEquals(
+            SemesterImportMode.PERSONAL_ONLY,
+            repository.semesters.first().single().importMode
+        )
     }
 
     @Test

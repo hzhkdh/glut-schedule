@@ -338,7 +338,11 @@ class ScheduleRepository(
                 importedAtEpochMillis = existing?.importedAtEpochMillis,
                 semesterStartDate = existing?.semesterStartDate,
                 semesterEndDate = existing?.semesterEndDate,
-                portalMaxWeek = existing?.portalMaxWeek
+                portalMaxWeek = existing?.portalMaxWeek,
+                // 目录里的学期由 AcademicSemester.create() 生成，importMode 恒为缺省 WEEKLY。
+                // 不回填就会在每次保存目录时抹掉「该学期原本是模式几缓存的」这一事实——
+                // 导入页的「重下会换线路」提示正是靠它判断，抹掉后提示会说反。
+                importMode = existing?.importMode ?: incoming.importMode
             ).toEntity())
         }
         catalog.singleOrNull { it.isCurrent }?.let { current ->

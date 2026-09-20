@@ -1,9 +1,13 @@
 package com.glut.schedule.service.academic
 
 import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
+import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.countUnparsedWeekTexts
+import com.glut.schedule.data.model.derivedAcademicMaxWeek
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.parser.AcademicScheduleParser
@@ -305,6 +309,17 @@ class AcademicSemesterImportService(
         } else {
             personalCourses
         }
+        // 模式2 拿不到周次课表落地页，也就没有门户的周次列表（模式1 在 availableWeeks 里取）。
+        // 这里绝不能留 null：CourseTimeStats 会把 portalMaxWeek 为 null 的学期**整学期**
+        // 判为不可统计，用户看到的是「这个学期的统计没了」。两级来源，精度从高到低：
+        //   1) 学期自带的起止日期 —— 与刷新路径 academicMaxWeekForCalendar 同一算法；
+        //   2) 从课次周次反推 —— 与 historicalAcademicMaxWeek 共用同一份实现。
+        // 两级都拿不到（例如整学期课次都没有周次数字）才保持 null，让统计如实报「学期长度未知」。
+        portalMaxWeek = semester.semesterStartDate
+            ?.let { start ->
+                semester.semesterEndDate?.let { end -> academicMaxWeekForCalendar(start, end) }
+            }
+            ?: derivedAcademicMaxWeek(courses)?.coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
         AcademicSemesterImportPayload(
             courses = courses,
             adjustments = adjustments,

@@ -234,19 +234,31 @@ fun Iterable<ScheduleCourse>.countDistinctCourseTitles(): Int =
         .distinct()
         .count()
 
-fun historicalAcademicMaxWeek(
-    portalMaxWeek: Int?,
-    courses: List<ScheduleCourse>
-): Int {
-    val derivedMaxWeek = courses.asSequence()
+/**
+ * 从课次周次文本反推学期最大周次；课次里一个周次数字都没有时返回 null。
+ *
+ * 门户周次列表（`portalMaxWeek`）之外的唯一来源：模式2（纯个人课表）不请求周次课表落地页，
+ * 拿不到门户值，只能靠它。全仓只保留这一份反推实现——历史上「同一规则各写一份」已经
+ * 让本仓库两次踩坑（南宁/桂林解析器、中午节次偏移）。
+ *
+ * 反推值按构造不小于任何单个课次的周次，因此把它当作上界去 clamp 不会丢失课次。
+ */
+fun derivedAcademicMaxWeek(courses: List<ScheduleCourse>): Int? =
+    courses.asSequence()
         .flatMap { it.occurrences.asSequence() }
         .flatMap { occurrence ->
             Regex("""\d{1,2}""").findAll(occurrence.weekText)
                 .mapNotNull { it.value.toIntOrNull() }
         }
         .maxOrNull()
-        ?: 20
-    return (portalMaxWeek ?: derivedMaxWeek).coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
+
+fun historicalAcademicMaxWeek(
+    portalMaxWeek: Int?,
+    courses: List<ScheduleCourse>
+): Int {
+    // 门户周次列表优先；拿不到（模式2 或旧缓存）退回反推；再拿不到才兜底 20。
+    return (portalMaxWeek ?: derivedAcademicMaxWeek(courses) ?: 20)
+        .coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
 }
 
 fun academicMaxWeekForSemester(
