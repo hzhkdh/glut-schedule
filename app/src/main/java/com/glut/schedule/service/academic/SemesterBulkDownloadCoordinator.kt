@@ -164,6 +164,7 @@ class SemesterBulkDownloadCoordinator(
         semesters: List<AcademicSemester>
     ): SemesterBulkDownloadSummary? {
         val results = mutableListOf<SemesterDownloadItemState>()
+        var activeSession = session
         semesters.forEach { semester ->
             updateItem(runGeneration, semester.id) {
                 it.copy(status = SemesterDownloadItemStatus.DOWNLOADING)
@@ -172,11 +173,15 @@ class SemesterBulkDownloadCoordinator(
             runCatching {
                 verifyOwner(runGeneration, session.ownerStudentNumber)
                 updateCacheStatus(semester.id, SemesterCacheStatus.DOWNLOADING)
-                val payload = download(semester, session) { completed, total ->
+                val payload = download(semester, activeSession) { completed, total ->
                     updateItem(runGeneration, semester.id) {
                         it.copy(completedWeeks = completed, totalWeeks = total)
                     }
                 }.getOrThrow()
+                if (payload.updatedCookie.isNotBlank()) {
+                    // 教务可能在下载学期时轮换会话，后续学期必须接续本次响应的最新 Cookie。
+                    activeSession = activeSession.copy(cookie = payload.updatedCookie)
+                }
                 verifyOwner(runGeneration, session.ownerStudentNumber)
                 commit(semester, payload)
                 verifyOwner(runGeneration, session.ownerStudentNumber)

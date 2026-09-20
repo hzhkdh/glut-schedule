@@ -6,8 +6,10 @@ import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.service.academic.AcademicSemesterImportService
+import com.glut.schedule.service.academic.AcademicSemesterRequestBuilder
 import com.glut.schedule.service.academic.AcademicSemesterResponseKind
 import com.glut.schedule.service.academic.ApiProbeService
+import com.glut.schedule.service.academic.validateWeeklyProbeTransport
 import com.glut.schedule.service.parser.AcademicScheduleParser
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
@@ -21,6 +23,37 @@ import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 
 class AcademicSemesterImportServiceTest {
+    @Test
+    fun guilinWeeklyPostUrlIsHttpsEvenWhenLegacyBaseUrlIsProvided() {
+        assertEquals(
+            "https://jw.glut.edu.cn/academic/manager/coursearrange/studentWeeklyTimetable.do",
+            AcademicSemesterRequestBuilder.weeklyTimetablePostUrl("http://jw.glut.edu.cn")
+        )
+    }
+
+    @Test
+    fun weeklyPostMethodChangeIsReportedAsRedirectFailure() {
+        val error = runCatching {
+            validateWeeklyProbeTransport(
+                response = ApiProbeService.ProbeResult(
+                    url = "https://jw.glut.edu.cn/academic/manager/coursearrange/studentWeeklyTimetable.do",
+                    method = "POST",
+                    httpCode = 200,
+                    contentType = "text/html",
+                    body = "<html></html>",
+                    bodyLength = 13,
+                    finalMethod = "GET",
+                    redirected = true
+                ),
+                pageLabel = "第1周课表"
+            )
+        }.exceptionOrNull()
+
+        assertTrue(error?.message.orEmpty().contains("重定向"))
+        assertTrue(error?.message.orEmpty().contains("POST"))
+        assertTrue(error?.message.orEmpty().contains("GET"))
+    }
+
     @Test
     fun loginPageFailsAsAuthenticationExpiry() = runTest {
         val result = importFrom("""<form action="j_acegi_security_check"><input type="password" /></form>""")
@@ -135,6 +168,47 @@ class AcademicSemesterImportServiceTest {
             assertEquals("POST", weekRequest.method)
             assertEquals("yearid=45&termid=1&whichWeek=1", weekRequest.body.readUtf8())
             assertEquals(server.url("academic/manager/coursearrange/studentWeeklyTimetable.do?yearid=45&termid=1").toString(), weekRequest.getHeader("Referer"))
+        }
+    }
+
+    @Test
+    fun accurateImportCarriesRotatedSessionCookieIntoWeeklyRequests() = runTest {
+        MockWebServer().use { server ->
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val path = request.path.orEmpty()
+                    return when {
+                        path.contains("currcourse.jsdo") -> MockResponse()
+                            .setResponseCode(200)
+                            .addHeader("Set-Cookie", "JSESSIONID=rotated; Path=/")
+                            .setBody(validScheduleHtml())
+                        path.contains("showTimetable.do") -> MockResponse()
+                            .setResponseCode(200)
+                            .setBody(validScheduleHtml())
+                        request.method == "GET" && request.getHeader("Cookie")?.contains("JSESSIONID=rotated") == true -> MockResponse()
+                            .setResponseCode(200)
+                            .setBody(weeklyLandingHtml())
+                        request.method == "POST" && request.getHeader("Cookie")?.contains("JSESSIONID=rotated") == true -> MockResponse()
+                            .setResponseCode(200)
+                            .setBody(weeklyWeekHtml())
+                        else -> MockResponse().setResponseCode(200).setBody("<html><body>提示信息</body></html>")
+                    }
+                }
+            }
+
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                FixedParser(listOf(course()))
+            ).importSemester(
+                cookie = "JSESSIONID=initial",
+                baseUrl = server.url("/").toString(),
+                semester = semester(),
+                studentIdFallback = "student-internal-id",
+                useWeeklyTimetable = true
+            )
+
+            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
+            assertEquals("JSESSIONID=rotated", result.getOrThrow().updatedCookie)
         }
     }
 

@@ -21,7 +21,7 @@ sealed class AcademicLoginResult {
     data class NetworkError(val message: String) : AcademicLoginResult()
 
     companion object {
-        const val DEFAULT_GUILIN_URL = "http://jw.glut.edu.cn"
+        const val DEFAULT_GUILIN_URL = "https://jw.glut.edu.cn"
         const val NANNING_URL = "http://jw.glutnn.cn"
     }
 }
@@ -29,7 +29,7 @@ sealed class AcademicLoginResult {
 class AcademicLoginHttpClient(
     private val cookieJar: CapturingCookieJar = CapturingCookieJar(),
     client: OkHttpClient? = null,
-    private val baseUrl: String = "http://jw.glut.edu.cn",
+    private val baseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL,
     private val loginPagePath: String = "/academic/affairLogin.do",
     private val usePostLogin: Boolean = false
 ) {
@@ -155,7 +155,10 @@ class AcademicLoginHttpClient(
             when {
                 response.code == 401 || response.code == 403 -> AcademicLoginResult.InvalidCredentials
                 looksLikeLoginPage(body) -> AcademicLoginResult.CaptchaOrInteractiveLoginRequired
-                response.isSuccessful -> AcademicLoginResult.Success(cookie, baseUrl)
+                response.isSuccessful -> AcademicLoginResult.Success(
+                    cookie = cookieJar.cookieHeader().ifBlank { cookie },
+                    campusBaseUrl = AcademicUrlPolicy.normalizeCampusBaseUrl(baseUrl)
+                )
                 else -> AcademicLoginResult.NetworkError("教务系统返回 HTTP ${response.code}")
             }
         }
@@ -199,6 +202,36 @@ class CapturingCookieJar : CookieJar {
 
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
         return cookies.filter { cookie -> cookie.matches(url) }
+    }
+
+    /**
+     * App 已保存的会话只有 Cookie 头文本，没有 Secure、Path 等属性。
+     * 首次请求时将它作为 /academic 的普通种子 Cookie；服务端返回 Secure 新会话后，
+     * saveFromResponse 会以真实属性替换它，后续跨 HTTP→HTTPS 重定向由 OkHttp 处理。
+     */
+    fun seedFromCookieHeader(cookieHeader: String, url: HttpUrl) {
+        cookieHeader.split(';').forEach { segment ->
+            val pair = segment.trim()
+            val separator = pair.indexOf('=')
+            if (separator <= 0) return@forEach
+            val name = pair.substring(0, separator).trim()
+            val value = pair.substring(separator + 1).trim()
+            if (name.isBlank() || value.isBlank()) return@forEach
+
+            val existing = cookies.firstOrNull {
+                it.name == name && it.domain.equals(url.host, ignoreCase = true)
+            }
+            if (existing?.value == value) return@forEach
+            cookies.removeAll { it.name == name && it.domain.equals(url.host, ignoreCase = true) }
+            runCatching {
+                Cookie.Builder()
+                    .name(name)
+                    .value(value)
+                    .hostOnlyDomain(url.host)
+                    .path("/academic")
+                    .build()
+            }.getOrNull()?.let(cookies::add)
+        }
     }
 
     fun cookieHeader(): String {

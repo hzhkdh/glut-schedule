@@ -557,6 +557,7 @@ class DirectLoginViewModel(
     }
 
     private suspend fun performImport(cookie: String, campusBaseUrl: String, studentNumber: String) {
+        var activeCookie = cookie
         var courseCount = 0
         var examCount = 0
         var scoreCount = 0
@@ -564,8 +565,14 @@ class DirectLoginViewModel(
         var studyPlanCount = 0
         val failedModules = linkedSetOf<String>()
 
+        fun consumeProbeCookie(result: ApiProbeService.ProbeResult?) {
+            if (result?.updatedCookie?.isNotBlank() == true) activeCookie = result.updatedCookie
+        }
+
         try {
-            val results = apiProbeService.probeAllEndpoints(cookie = cookie, baseUrl = campusBaseUrl)
+            val results = apiProbeService.probeAllEndpoints(cookie = activeCookie, baseUrl = campusBaseUrl)
+            results.lastOrNull { it.updatedCookie.isNotBlank() }?.let(::consumeProbeCookie)
+            sessionStore.saveCookie(activeCookie)
             val campus = if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
                 com.glut.schedule.data.settings.CampusType.NANNING
             } else {
@@ -576,10 +583,12 @@ class DirectLoginViewModel(
             val catalogHtml = results.firstOrNull {
                 it.url.contains("currcourse.jsdo") && it.httpCode in 200..299
             }?.body.orEmpty()
-            val enrollmentHtml = apiProbeService.probeUrl(
-                cookie,
+            val enrollmentResult = apiProbeService.probeUrl(
+                activeCookie,
                 "$campusBaseUrl/academic/student/studentinfo/studentInfoModifyIndex.do?frombase=0&wantTag=0"
-            )?.body.orEmpty()
+            )
+            consumeProbeCookie(enrollmentResult)
+            val enrollmentHtml = enrollmentResult?.body.orEmpty()
             val studentName = AcademicSemesterParser.parseStudentName(enrollmentHtml)
             sessionStore.saveAuthenticatedStudent(studentNumber, studentName)
             val enrollmentDate = AcademicSemesterParser.parseEnrollment(
@@ -615,12 +624,14 @@ class DirectLoginViewModel(
             }
             val nextProbeResult = catalogPlan.nextSemester?.let { nextSemester ->
                 semesterImportService.importSemester(
-                    cookie = cookie,
+                    cookie = activeCookie,
                     baseUrl = campusBaseUrl,
                     semester = nextSemester,
                     studentIdFallback = studentNumber,
                     useWeeklyTimetable = false
-                )
+                ).also { result ->
+                    result.getOrNull()?.updatedCookie?.takeIf(String::isNotBlank)?.let { activeCookie = it }
+                }
             }
             val decision = AcademicSemesterProbePlanner.decide(catalogPlan, nextProbeResult)
             val semesterCatalog = decision.catalog
@@ -628,7 +639,7 @@ class DirectLoginViewModel(
 
             _uiState.value = _uiState.value.copy(message = "正在下载${currentSemester.displayName}周次课表...")
             val currentPayload = semesterImportService.importSemester(
-                cookie = cookie,
+                cookie = activeCookie,
                 baseUrl = campusBaseUrl,
                 semester = currentSemester,
                 studentIdFallback = studentNumber,
@@ -644,6 +655,8 @@ class DirectLoginViewModel(
                     error
                 )
             }
+            if (currentPayload.updatedCookie.isNotBlank()) activeCookie = currentPayload.updatedCookie
+            sessionStore.saveCookie(activeCookie)
             sessionStore.saveHtmlPreview(currentPayload.currcourseHtml.take(3000))
             scheduleRepository.saveSemesterCatalog(semesterCatalog)
             settingsStore.setCurrentSemesterId(currentSemester.id)
@@ -674,7 +687,7 @@ class DirectLoginViewModel(
             importInitialExams(
                 fetch = {
                     academicExamService.fetchExamData(
-                        cookie = cookie,
+                        cookie = activeCookie,
                         storedExamApiUrl = storedExamApiUrl,
                         baseUrl = campusBaseUrl
                     ).map { exams ->
@@ -692,7 +705,7 @@ class DirectLoginViewModel(
                 failedModules += "考试"
             }
 
-            fetchAndSaveScores(cookie, campusBaseUrl)
+            fetchAndSaveScores(activeCookie, campusBaseUrl)
                 .onSuccess { scoreCount = it }
                 .onFailure { failedModules += "成绩" }
 
@@ -726,7 +739,8 @@ class DirectLoginViewModel(
                     val (studentId, classId) = parsedIds
                     // Step 2: Fetch study plan via probeUrl (uses same reliable client as probing)
                     val planUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleLineShow.do?z=z&studentId=$studentId&classId=$classId"
-                    val planResult = apiProbeService.probeUrl(cookie, planUrl)
+                    val planResult = apiProbeService.probeUrl(activeCookie, planUrl)
+                    consumeProbeCookie(planResult)
                     if (planResult != null && planResult.httpCode == 200 && planResult.body.length > 500) {
                         var (groups, courses) = studyPlanParser.parseData(planResult.body)
                         // Step 3: 框架模式 — 任选课组详情
@@ -734,7 +748,8 @@ class DirectLoginViewModel(
                         val frameStudentId = if (selfBody.isNotEmpty()) studyPlanParser.parseFrameStudentId(selfBody) else null
                         if (frameStudentId != null) {
                             val frameUrl = "$campusBaseUrl/academic/manager/studyschedule/studentScheduleShowFrame.do?z=z&studentId=$frameStudentId&classId=$classId"
-                            val frameResult = apiProbeService.probeUrl(cookie, frameUrl)
+                            val frameResult = apiProbeService.probeUrl(activeCookie, frameUrl)
+                            consumeProbeCookie(frameResult)
                             if (frameResult != null && frameResult.httpCode == 200 && frameResult.body.length > 500) {
                                 val freeGroupIds = studyPlanParser.extractFreeGroupIds(frameResult.body)
                                 if (freeGroupIds.isNotEmpty()) {
@@ -742,7 +757,8 @@ class DirectLoginViewModel(
                                     val mc = courses.toMutableList()
                                     for ((gid, gname) in freeGroupIds) {
                                         val gUrl = "$campusBaseUrl/academic/manager/studyschedule/scheduleFreeGroupCourseList.do?pojoTypeId=2&id=$gid"
-                                        val gResult = apiProbeService.probeUrl(cookie, gUrl)
+                                        val gResult = apiProbeService.probeUrl(activeCookie, gUrl)
+                                        consumeProbeCookie(gResult)
                                         if (gResult != null && gResult.httpCode == 200) {
                                             val (fg, fcs) = studyPlanParser.parseFreeGroupDetail(gResult.body)
                                             if (fg != null) {
@@ -766,6 +782,7 @@ class DirectLoginViewModel(
                 // 单个模块失败不应阻断课表导入，但必须反馈且保留原缓存。
             }
             if (!studyPlanImported) failedModules += "教学计划"
+            sessionStore.saveCookie(activeCookie)
 
             _uiState.value = _uiState.value.copy(
                 isLoggingIn = false,

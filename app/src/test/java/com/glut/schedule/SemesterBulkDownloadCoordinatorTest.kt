@@ -114,6 +114,29 @@ class SemesterBulkDownloadCoordinatorTest {
             .all { it.skippedRowCount == 3 })
     }
 
+    @Test
+    fun bulkCarriesRotatedCookieIntoLaterSemesterDownloads() = runTest {
+        val seenCookies = mutableListOf<String>()
+        val coordinator = coordinator(
+            scope = backgroundScope,
+            download = { semester, session ->
+                seenCookies += session.cookie
+                if (semester.id == "failed") {
+                    Result.failure(IllegalStateException("模拟失败"))
+                } else {
+                    Result.success(payload(updatedCookie = "cookie-${semester.id}"))
+                }
+            }
+        )
+
+        (coordinator.startAll() as SemesterDownloadStartResult.Started).completion.await()
+
+        assertEquals(
+            listOf("cookie", "cookie-missing", "cookie-missing"),
+            seenCookies
+        )
+    }
+
     private fun coordinator(
         scope: kotlinx.coroutines.CoroutineScope,
         owner: suspend () -> String = { "student-a" },
@@ -156,13 +179,17 @@ class SemesterBulkDownloadCoordinatorTest {
         cacheStatus = status
     )
 
-    private fun payload(skippedRowCount: Int = 0) = AcademicSemesterImportPayload(
+    private fun payload(
+        skippedRowCount: Int = 0,
+        updatedCookie: String = ""
+    ) = AcademicSemesterImportPayload(
         courses = emptyList(),
         adjustments = emptyList(),
         currcourseHtml = "",
         timetableHtml = "",
         responseKind = com.glut.schedule.service.academic.AcademicSemesterResponseKind.VALID_EMPTY_SCHEDULE,
         portalMaxWeek = 20,
-        skippedRowCount = skippedRowCount
+        skippedRowCount = skippedRowCount,
+        updatedCookie = updatedCookie
     )
 }

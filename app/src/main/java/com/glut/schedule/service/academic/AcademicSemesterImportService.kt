@@ -12,27 +12,30 @@ import java.time.LocalDate
 
 object AcademicSemesterRequestBuilder {
     fun currcourseUrl(baseUrl: String, semester: AcademicSemester): String =
-        "${baseUrl.trimEnd('/')}/academic/student/currcourse/currcourse.jsdo" +
+        "${normalizedBaseUrl(baseUrl)}/academic/student/currcourse/currcourse.jsdo" +
             "?year=${encode(semester.portalYearId)}&term=${encode(semester.portalTermId)}"
 
     fun timetableUrl(baseUrl: String, studentId: String, semester: AcademicSemester): String =
-        "${baseUrl.trimEnd('/')}/academic/manager/coursearrange/showTimetable.do" +
+        "${normalizedBaseUrl(baseUrl)}/academic/manager/coursearrange/showTimetable.do" +
             "?id=${encode(studentId)}" +
             "&yearid=${encode(semester.portalYearId)}" +
             "&termid=${encode(semester.portalTermId)}" +
             "&timetableType=STUDENT&sectionType=BASE"
 
     fun weeklyTimetableUrl(baseUrl: String, semester: AcademicSemester): String =
-        "${baseUrl.trimEnd('/')}/academic/manager/coursearrange/studentWeeklyTimetable.do" +
+        "${normalizedBaseUrl(baseUrl)}/academic/manager/coursearrange/studentWeeklyTimetable.do" +
             "?yearid=${encode(semester.portalYearId)}&termid=${encode(semester.portalTermId)}"
 
     fun weeklyTimetablePostUrl(baseUrl: String): String =
-        "${baseUrl.trimEnd('/')}/academic/manager/coursearrange/studentWeeklyTimetable.do"
+        "${normalizedBaseUrl(baseUrl)}/academic/manager/coursearrange/studentWeeklyTimetable.do"
 
     fun weeklyTimetableForm(semester: AcademicSemester, week: Int): String =
         "yearid=${encode(semester.portalYearId)}&termid=${encode(semester.portalTermId)}&whichWeek=$week"
 
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
+
+    private fun normalizedBaseUrl(baseUrl: String): String =
+        AcademicUrlPolicy.normalizeCampusBaseUrl(baseUrl).trimEnd('/')
 }
 
 object AcademicSemesterResponseValidator {
@@ -117,7 +120,9 @@ data class AcademicSemesterImportPayload(
     val responseKind: AcademicSemesterResponseKind,
     val portalMaxWeek: Int? = null,
     val semesterStartMonday: LocalDate? = null,
-    val skippedRowCount: Int = 0
+    val skippedRowCount: Int = 0,
+    /** 本次串行下载完成后的最新会话，只允许交回会话存储，不得用于日志。 */
+    val updatedCookie: String = ""
 )
 
 class AcademicSemesterImportService(
@@ -133,7 +138,12 @@ class AcademicSemesterImportService(
         useWeeklyTimetable: Boolean = true,
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> }
     ): Result<AcademicSemesterImportPayload> = runCatching {
-        val currcourse = apiProbeService.probeUrl(cookie, AcademicSemesterRequestBuilder.currcourseUrl(baseUrl, semester))
+        var sessionCookie = cookie
+        fun consumeSessionCookie(response: ApiProbeService.ProbeResult) {
+            if (response.updatedCookie.isNotBlank()) sessionCookie = response.updatedCookie
+        }
+
+        val currcourse = apiProbeService.probeUrl(sessionCookie, AcademicSemesterRequestBuilder.currcourseUrl(baseUrl, semester))
             ?: error("无法连接教务服务器，下载${semester.displayName}课表失败")
         require(currcourse.httpCode in 200..299) {
             "教务系统返回 HTTP ${currcourse.httpCode}，下载${semester.displayName}课表失败"
@@ -146,6 +156,7 @@ class AcademicSemesterImportService(
         require(AcademicSemesterResponseValidator.matchesRequestedSemester(currcourse.body, semester)) {
             "教务系统返回学期与请求不一致，已保留现有缓存"
         }
+        consumeSessionCookie(currcourse)
 
         val personalCourses = scheduleParser.parsePersonalSchedule(currcourse.body)
         val responseKind = AcademicSemesterResponseValidator.classify(currcourse.body, personalCourses.size)
@@ -158,10 +169,11 @@ class AcademicSemesterImportService(
             .orEmpty().ifBlank { studentIdFallback }
         val timetable = if (studentId.isNotBlank()) {
             apiProbeService.probeUrl(
-                cookie,
+                sessionCookie,
                 AcademicSemesterRequestBuilder.timetableUrl(baseUrl, studentId, semester)
             )
         } else null
+        timetable?.let(::consumeSessionCookie)
         val timetableHtml = timetable?.takeIf { it.httpCode in 200..299 }?.body.orEmpty()
         if (timetableHtml.isNotBlank() &&
             AcademicSemesterResponseValidator.classify(timetableHtml, courseCount = 0) ==
@@ -188,15 +200,21 @@ class AcademicSemesterImportService(
         var semesterStartMonday: LocalDate? = null
         if (useWeeklyTimetable) {
             val landingUrl = AcademicSemesterRequestBuilder.weeklyTimetableUrl(baseUrl, semester)
-            val landing = apiProbeService.probeUrl(cookie, landingUrl)
+            val landing = apiProbeService.probeUrl(sessionCookie, landingUrl)
                 ?: error("无法连接教务服务器，打开${semester.displayName}周次课表失败")
             require(landing.httpCode in 200..299) {
                 "周次课表返回 HTTP ${landing.httpCode}"
             }
-            val landingPage = weeklyTimetableParser.parsePage(
-                landing.body,
-                hasNoon = semester.campus != CampusType.NANNING
-            )
+            consumeSessionCookie(landing)
+            validateWeeklyProbeTransport(landing, "周次课表")
+            val landingPage = runCatching {
+                weeklyTimetableParser.parsePage(
+                    landing.body,
+                    hasNoon = semester.campus != CampusType.NANNING
+                )
+            }.getOrElse {
+                error("周次课表页面无法识别，请重新登录后重试")
+            }
             require(landingPage.semesterLabel == semesterPortalLabel(semester)) {
                 "周次课表返回学期与请求不一致，已保留现有缓存"
             }
@@ -206,7 +224,7 @@ class AcademicSemesterImportService(
             val pages = buildList {
                 landingPage.availableWeeks.sorted().forEach { week ->
                     val response = apiProbeService.probeForm(
-                        cookie = cookie,
+                        cookie = sessionCookie,
                         url = AcademicSemesterRequestBuilder.weeklyTimetablePostUrl(baseUrl),
                         body = AcademicSemesterRequestBuilder.weeklyTimetableForm(semester, week),
                         referer = landingUrl
@@ -214,10 +232,16 @@ class AcademicSemesterImportService(
                     require(response.httpCode in 200..299) {
                         "第${week}周课表返回 HTTP ${response.httpCode}"
                     }
-                    val page = weeklyTimetableParser.parsePage(
-                        response.body,
-                        hasNoon = semester.campus != CampusType.NANNING
-                    )
+                    consumeSessionCookie(response)
+                    validateWeeklyProbeTransport(response, "第${week}周课表")
+                    val page = runCatching {
+                        weeklyTimetableParser.parsePage(
+                            response.body,
+                            hasNoon = semester.campus != CampusType.NANNING
+                        )
+                    }.getOrElse {
+                        error("第${week}周课表页面无法识别，请重新登录后重试")
+                    }
                     semesterStartMonday = page.validateFor(
                         expectedWeek = week,
                         expectedSemesterLabel = semesterPortalLabel(semester),
@@ -251,7 +275,8 @@ class AcademicSemesterImportService(
                 responseKind = responseKind,
                 portalMaxWeek = portalMaxWeek,
                 semesterStartMonday = semesterStartMonday,
-                skippedRowCount = skippedRowCount
+                skippedRowCount = skippedRowCount,
+                updatedCookie = sessionCookie
             )
         }
         AcademicSemesterImportPayload(
@@ -262,7 +287,8 @@ class AcademicSemesterImportService(
             responseKind = responseKind,
             portalMaxWeek = portalMaxWeek,
             semesterStartMonday = semesterStartMonday,
-            skippedRowCount = 0
+            skippedRowCount = 0,
+            updatedCookie = sessionCookie
         )
     }
 
@@ -272,5 +298,26 @@ class AcademicSemesterImportService(
             com.glut.schedule.data.model.SemesterSeason.AUTUMN -> "秋"
         }
         return "${semester.portalYear}$season"
+    }
+}
+
+/**
+ * 在解析 HTML 前识别传输层失败，避免把登录页或 POST→GET 重定向误报为表格结构变化。
+ */
+internal fun validateWeeklyProbeTransport(
+    response: ApiProbeService.ProbeResult,
+    pageLabel: String
+) {
+    if (response.redirected && !response.method.equals(response.finalMethod, ignoreCase = true)) {
+        error(
+            "$pageLabel 请求重定向后由 ${response.method.uppercase()} 变为 " +
+                "${response.finalMethod.uppercase()}，表单未正确提交"
+        )
+    }
+    if (
+        AcademicSemesterResponseValidator.classify(response.body, courseCount = 0) ==
+        AcademicSemesterResponseKind.AUTHENTICATION_EXPIRED
+    ) {
+        error("登录状态已失效，请重新登录后再导入")
     }
 }

@@ -167,6 +167,9 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
             )
         },
         commit = { semester, payload ->
+            if (payload.updatedCookie.isNotBlank()) {
+                academicSessionStore.saveCookie(payload.updatedCookie)
+            }
             scheduleRepository.replaceSemesterSchedule(
                 semester = semester,
                 courses = payload.courses,
