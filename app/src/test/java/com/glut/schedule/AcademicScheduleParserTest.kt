@@ -1,7 +1,9 @@
 package com.glut.schedule
 
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
+import com.glut.schedule.data.model.academicWeeksForText
 import com.glut.schedule.data.model.isActiveInWeek
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -46,6 +48,60 @@ class AcademicScheduleParserTest {
         assertEquals(parsedSummary, listOf(5, 5, 1), occurrences.map { it.startSection })
         assertEquals(listOf(6, 10, 6), occurrences.map { it.endSection })
     }
+
+    @Test
+    fun realWeekTextCorpusIsCapturedVerbatimAndExpandedCorrectly() {
+        // 语料取自真实教务页面（2023秋～2026秋 共 7 个学期），与小程序端共用同一份内容。
+        // 只断言「能解析」是不够的：把「1-15单周」读成「单周」同样能解析成功，
+        // 但会让课在 17/19/21 周错误出现。所以每条都同时断言必须命中与必须不命中的周次。
+        val corpus = checkNotNull(javaClass.getResourceAsStream("/week-text-corpus.json")) {
+            "缺少测试语料 week-text-corpus.json"
+        }.use { JSONObject(it.readBytes().decodeToString()) }
+        val cases = corpus.getJSONArray("cases")
+
+        for (index in 0 until cases.length()) {
+            val item = cases.getJSONObject(index)
+            val weekText = item.getString("text")
+
+            // 1) 捕获：整段周次原文必须原样保留，不能被截断成「单周」或只剩后半段
+            val captured = parser.parsePersonalSchedule(arrangementHtmlWithWeekText(weekText))
+                .flatMap { it.occurrences }
+                .map { it.weekText }
+            assertTrue("$weekText 未解析出任何课次", captured.isNotEmpty())
+            assertEquals("$weekText 被截断成了 $captured", listOf(weekText), captured.distinct())
+
+            // 2) 展开：必须命中的周
+            val weeks = academicWeeksForText(weekText)
+            val mustBeActive = item.getJSONArray("in")
+            for (i in 0 until mustBeActive.length()) {
+                val week = mustBeActive.getInt(i)
+                assertTrue("$weekText 应在第 $week 周生效", week in weeks)
+            }
+            // 3) 展开：必须不命中的周——这是防「静默放宽成全年」的关键
+            val mustBeInactive = item.getJSONArray("out")
+            for (i in 0 until mustBeInactive.length()) {
+                val week = mustBeInactive.getInt(i)
+                assertFalse("$weekText 不应在第 $week 周生效", week in weeks)
+            }
+        }
+    }
+
+    /** 课程安排表的形状取自真实页面：12 列表头 +「上课时间、地点」里的「周次 星期 节次 教室」。 */
+    private fun arrangementHtmlWithWeekText(weekText: String) = """
+        <table>
+          <tr>
+            <th>课程号</th><th>课程序号</th><th>课程名称</th><th>任课教师</th>
+            <th>学分</th><th>选课属性</th><th>考核方式</th><th>考试性质</th>
+            <th>是否缓考</th><th>上课时间、地点</th><th>教材</th><th>教学记录</th>
+          </tr>
+          <tr>
+            <td>100001</td><td>1</td><td>匿名科目甲</td><td>匿名教师甲</td>
+            <td>3</td><td>必修</td><td>考试</td><td>正常考试</td><td>非缓考</td>
+            <td>$weekText 星期三 第3、4节 06104</td><td></td><td></td>
+          </tr>
+          <tr><td>中午1</td><td>中午2</td></tr>
+        </table>
+    """.trimIndent()
 
     @Test
     fun courseArrangementKeepsRealTitleContainingCourseWord() {
