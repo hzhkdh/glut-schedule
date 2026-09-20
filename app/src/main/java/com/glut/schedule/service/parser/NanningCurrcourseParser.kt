@@ -3,6 +3,7 @@ package com.glut.schedule.service.parser
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.offsetSectionForNoon
 import java.security.MessageDigest
 
 class NanningCurrcourseParser : AcademicScheduleParser {
@@ -11,6 +12,11 @@ class NanningCurrcourseParser : AcademicScheduleParser {
         if (html.isBlank()) return emptyList()
         // currcourse.jsdo 格式特征：同时有 infolist_common 行 + 嵌套 table.none
         if (!html.contains("infolist_common") || !nestedTableRegex.containsMatchIn(html)) return emptyList()
+
+        // 桂林的 currcourse.jsdo 与南宁共用 infolist_common 结构，而 CompositeScheduleParser
+        // 把本类排在最前，所以桂林页面也会落到这里解析。差别在节次编号：桂林第 5 节起要 +2
+        // （详见 offsetSectionForNoon）。漏掉偏移会把「第5、6节」算成中午槽位，导致该课不显示。
+        val hasNoon = html.contains("中午1") || html.contains("中午2")
 
         // Step 1: Extract all <table class="none">...</table> blocks
         val nestedTables = mutableListOf<String>()
@@ -62,8 +68,10 @@ class NanningCurrcourseParser : AcademicScheduleParser {
                 val weekText = cells[0]
                 val dayOfWeek = parseWeekday(cells[1])
                 if (dayOfWeek == 0) continue
-                val (startSection, endSection) = parsePeriodRange(cells[2])
-                if (startSection == 0) continue
+                val (rawStart, rawEnd) = parsePeriodRange(cells[2])
+                if (rawStart == 0) continue
+                val startSection = offsetSectionForNoon(rawStart, hasNoon)
+                val endSection = offsetSectionForNoon(rawEnd, hasNoon)
                 val room = cells[3].takeUnless { it == "&nbsp;" || it.isBlank() }.orEmpty()
                 rawSlots.add(RawSlot(weekText, dayOfWeek, startSection, endSection, room))
             }

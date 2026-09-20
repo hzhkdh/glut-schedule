@@ -27,6 +27,7 @@ import com.glut.schedule.data.settings.ClassPeriodProfile
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
 import com.glut.schedule.data.settings.classPeriodProfile
+import com.glut.schedule.data.settings.SemesterImportMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -304,7 +305,8 @@ class ScheduleRepository(
         classPeriods: List<ClassPeriod>,
         semesterStartDate: java.time.LocalDate? = semester.semesterStartDate,
         semesterEndDate: java.time.LocalDate? = semester.semesterEndDate,
-        portalMaxWeek: Int? = semester.portalMaxWeek
+        portalMaxWeek: Int? = semester.portalMaxWeek,
+        importMode: SemesterImportMode = semester.importMode
     ) {
         val coloredCourses = CourseColorMapper.assignColors(courses, courseColorOverrides.first())
         val cachedSemester = semester.copy(
@@ -312,7 +314,8 @@ class ScheduleRepository(
             importedAtEpochMillis = System.currentTimeMillis(),
             semesterStartDate = semesterStartDate,
             semesterEndDate = semesterEndDate,
-            portalMaxWeek = portalMaxWeek
+            portalMaxWeek = portalMaxWeek,
+            importMode = importMode
         )
         dao.replaceSemesterSchedule(
             semester = cachedSemester.toEntity(),

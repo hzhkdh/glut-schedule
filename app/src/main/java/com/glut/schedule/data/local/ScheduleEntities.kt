@@ -1,5 +1,6 @@
 package com.glut.schedule.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -18,6 +19,7 @@ import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.sanitized
+import com.glut.schedule.data.settings.SemesterImportMode
 
 @Entity(tableName = "academic_semesters")
 data class AcademicSemesterEntity(
@@ -33,7 +35,14 @@ data class AcademicSemesterEntity(
     val importedAtEpochMillis: Long?,
     val semesterStartDate: String?,
     val semesterEndDate: String?,
-    val portalMaxWeek: Int? = null
+    val portalMaxWeek: Int? = null,
+    /**
+     * 必须显式声明 defaultValue：迁移用 ALTER TABLE ADD COLUMN ... DEFAULT 'WEEKLY' 加列，
+     * 若实体这边不声明，Room 生成的期望 schema 与迁移后的真实表结构不一致，
+     * 升级用户首次打开数据库就会抛 "Migration didn't properly handle" 崩溃。
+     */
+    @ColumnInfo(defaultValue = "WEEKLY")
+    val importMode: String = "WEEKLY"
 )
 
 fun AcademicSemester.toEntity(): AcademicSemesterEntity = AcademicSemesterEntity(
@@ -49,7 +58,8 @@ fun AcademicSemester.toEntity(): AcademicSemesterEntity = AcademicSemesterEntity
     importedAtEpochMillis = importedAtEpochMillis,
     semesterStartDate = semesterStartDate?.toString(),
     semesterEndDate = semesterEndDate?.toString(),
-    portalMaxWeek = portalMaxWeek
+    portalMaxWeek = portalMaxWeek,
+    importMode = importMode.name
 )
 
 fun AcademicSemesterEntity.toModel(): AcademicSemester {
@@ -72,7 +82,11 @@ fun AcademicSemesterEntity.toModel(): AcademicSemester {
         importedAtEpochMillis = importedAtEpochMillis,
         semesterStartDate = semesterStartDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
         semesterEndDate = semesterEndDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
-        portalMaxWeek = portalMaxWeek
+        portalMaxWeek = portalMaxWeek,
+        // 与 campus/season/cacheStatus 同样做防御式解析：列值异常时回退模式1，
+        // 而不是让整个学期读取失败。
+        importMode = runCatching { SemesterImportMode.valueOf(importMode) }
+            .getOrDefault(SemesterImportMode.WEEKLY)
     )
 }
 

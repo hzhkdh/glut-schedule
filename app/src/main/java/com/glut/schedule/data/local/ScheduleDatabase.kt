@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [AcademicSemesterEntity::class, CourseEntity::class, CourseOccurrenceEntity::class, ClassPeriodEntity::class, ExamEntity::class, ScoreEntity::class, GradeExamEntity::class, StudyPlanGroupEntity::class, StudyPlanCourseEntity::class, SemesterAdjustmentEntity::class],
-    version = 13,
+    version = 14,
     exportSchema = true
 )
 abstract class ScheduleDatabase : RoomDatabase() {
@@ -160,6 +160,16 @@ abstract class ScheduleDatabase : RoomDatabase() {
         val MIGRATION_12_13 = object : Migration(12, 13) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DROP TABLE IF EXISTS `course_remarks`")
+            }
+        }
+
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 升级前的历史缓存全部由逐周课表链路写入，回填 WEEKLY 才与既有语义一致。
+                // 这里只增列，不得触动 cacheStatus / importedAtEpochMillis，否则会清空用户已缓存学期。
+                db.execSQL(
+                    "ALTER TABLE `academic_semesters` ADD COLUMN `importMode` TEXT NOT NULL DEFAULT 'WEEKLY'"
+                )
             }
         }
     }

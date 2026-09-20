@@ -1,5 +1,6 @@
 package com.glut.schedule.ui.pages
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -64,9 +65,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
+import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.academic.SemesterDownloadItemStatus
 import com.glut.schedule.service.academic.SemesterDownloadMode
 import com.glut.schedule.service.academic.SemesterDownloadState
+import com.glut.schedule.ui.components.SegmentedPillRow
 
 private val LoginPrimary = Color(0xFF141821)
 private val LoginSecondary = Color(0xFF667085)
@@ -147,6 +150,29 @@ fun DirectLoginScreen(
                 )
             }
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 导入方式：模式1 依赖周次课表接口，教务侧一变就可能整体不可用；
+            // 模式2 只取个人课表，作为模式1 不可用时的备用线路。
+            Text("导入方式", color = LoginPrimary, fontSize = 14.sp, modifier = Modifier.fillMaxWidth())
+            Spacer(modifier = Modifier.height(8.dp))
+            SegmentedPillRow(
+                options = listOf("模式1", "模式2"),
+                selectedIndex = if (uiState.importMode == SemesterImportMode.PERSONAL_ONLY) 1 else 0,
+                onSelect = { index ->
+                    viewModel.setImportMode(
+                        if (index == 1) SemesterImportMode.PERSONAL_ONLY else SemesterImportMode.WEEKLY
+                    )
+                }
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                "模式1：以周次课表为准，更准确；模式2：只取个人课表，模式1 不可用时使用",
+                color = LoginSecondary,
+                fontSize = 11.sp,
+                modifier = Modifier.fillMaxWidth()
+            )
+
             Spacer(modifier = Modifier.height(8.dp))
 
             // Campus selector
@@ -196,6 +222,20 @@ fun DirectLoginScreen(
                     LoginMessageTone.INFO -> LoginSecondary
                 }
                 Text(uiState.message, color = messageColor, fontSize = 14.sp)
+
+                // 模式1 失败时就地提供换线路入口，用户不必自己去翻设置再重来一遍。
+                if (uiState.canRetryWithPersonalMode) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = viewModel::retryLastImportWithPersonalMode,
+                        enabled = !uiState.isLoggingIn,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, LoginAccent),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = LoginAccent)
+                    ) {
+                        Text("换用模式2重试", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
 
             // Import result cards

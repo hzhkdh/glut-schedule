@@ -97,7 +97,8 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
         ScheduleDatabase.MIGRATION_9_10,
         ScheduleDatabase.MIGRATION_10_11,
         ScheduleDatabase.MIGRATION_11_12,
-        ScheduleDatabase.MIGRATION_12_13
+        ScheduleDatabase.MIGRATION_12_13,
+        ScheduleDatabase.MIGRATION_13_14
     )
      .build()
 
@@ -162,7 +163,8 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
                 baseUrl = baseUrl,
                 semester = semester,
                 studentIdFallback = session.ownerStudentNumber,
-                useWeeklyTimetable = true,
+                // 在 lambda 内读设置，用户切换线路后此后所有批量下载立即按新线路执行。
+                mode = settingsStore.semesterImportMode.first(),
                 onProgress = onProgress
             )
         },
@@ -175,7 +177,8 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
                 courses = payload.courses,
                 adjustments = payload.adjustments,
                 classPeriods = scheduleRepository.currentClassPeriods.first(),
-                portalMaxWeek = payload.portalMaxWeek
+                portalMaxWeek = payload.portalMaxWeek,
+                importMode = payload.importMode
             )
         },
         updateCacheStatus = scheduleRepository::updateSemesterCacheStatus

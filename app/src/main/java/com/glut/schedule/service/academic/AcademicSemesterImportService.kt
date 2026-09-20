@@ -3,7 +3,9 @@ package com.glut.schedule.service.academic
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.countUnparsedWeekTexts
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.parser.AcademicScheduleParser
 import com.glut.schedule.service.parser.WeeklyTimetableParser
 import com.glut.schedule.service.parser.validateFor
@@ -122,7 +124,14 @@ data class AcademicSemesterImportPayload(
     val semesterStartMonday: LocalDate? = null,
     val skippedRowCount: Int = 0,
     /** 本次串行下载完成后的最新会话，只允许交回会话存储，不得用于日志。 */
-    val updatedCookie: String = ""
+    val updatedCookie: String = "",
+    /** 本次导入使用的线路，随学期落库，便于诊断以及向用户解释数据来源。 */
+    val importMode: SemesterImportMode = SemesterImportMode.WEEKLY,
+    /**
+     * 无法识别周次的课次数量。这类课次不会出现在任何一周里，必须如实反馈给用户，
+     * 否则表现就是「课程莫名其妙少了几门」，无从排查。
+     */
+    val unparsedWeekTextCount: Int = 0
 )
 
 class AcademicSemesterImportService(
@@ -135,7 +144,7 @@ class AcademicSemesterImportService(
         baseUrl: String,
         semester: AcademicSemester,
         studentIdFallback: String,
-        useWeeklyTimetable: Boolean = true,
+        mode: SemesterImportMode = SemesterImportMode.WEEKLY,
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> }
     ): Result<AcademicSemesterImportPayload> = runCatching {
         var sessionCookie = cookie
@@ -163,7 +172,7 @@ class AcademicSemesterImportService(
         if (responseKind == AcademicSemesterResponseKind.INVALID_STRUCTURE) {
             error("无法识别课表结构，未覆盖已有缓存")
         }
-        var courses = personalCourses.map { it.copy(occurrences = emptyList()) }
+        var courses = personalCourses
 
         val studentId = ApiProbeService.extractInternalIdFromCurrcourse(currcourse.body)
             .orEmpty().ifBlank { studentIdFallback }
@@ -195,10 +204,13 @@ class AcademicSemesterImportService(
         } else {
             scheduleParser.parseAdjustments(timetableHtml)
         }
-        var resolvedTimetableHtml = if (useWeeklyTimetable) "" else timetableHtml
+        var resolvedTimetableHtml = if (mode == SemesterImportMode.WEEKLY) "" else timetableHtml
         var portalMaxWeek: Int? = null
         var semesterStartMonday: LocalDate? = null
-        if (useWeeklyTimetable) {
+        if (mode == SemesterImportMode.WEEKLY) {
+            // 模式1：个人课表只提供教师/颜色等元数据，时间与教室以逐周课表为准，
+            // 因此先清空 occurrences，随后由 mergeWithMetadata 逐周回填。
+            courses = personalCourses.map { it.copy(occurrences = emptyList()) }
             val landingUrl = AcademicSemesterRequestBuilder.weeklyTimetableUrl(baseUrl, semester)
             val landing = apiProbeService.probeUrl(sessionCookie, landingUrl)
                 ?: error("无法连接教务服务器，打开${semester.displayName}周次课表失败")
@@ -276,8 +288,22 @@ class AcademicSemesterImportService(
                 portalMaxWeek = portalMaxWeek,
                 semesterStartMonday = semesterStartMonday,
                 skippedRowCount = skippedRowCount,
-                updatedCookie = sessionCookie
+                updatedCookie = sessionCookie,
+                importMode = SemesterImportMode.WEEKLY,
+                unparsedWeekTextCount = countUnparsedWeekTexts(courses)
             )
+        }
+
+        // ===== 模式2（PERSONAL_ONLY）：不逐周下载，时间/教室/教师全部来自个人课表 =====
+        // 个人课表在这里就是权威时间来源，必须保留 occurrences（模式1 会先清空再回填）。
+        //
+        // 只在南宁补调：桂林的调课/补课已经内含在个人课表页里，再对课程安排页的调课表
+        // 跑一遍 applyAdjustmentRemovals，会把本来正常的课次当成「调课原时段」误删
+        // （实测：数据库原理及应用B 整门课消失）。这与历史实现（05db024^）一致。
+        courses = if (semester.campus == CampusType.NANNING) {
+            scheduleParser.applyAdjustmentsToCourses(personalCourses, timetableHtml)
+        } else {
+            personalCourses
         }
         AcademicSemesterImportPayload(
             courses = courses,
@@ -288,7 +314,9 @@ class AcademicSemesterImportService(
             portalMaxWeek = portalMaxWeek,
             semesterStartMonday = semesterStartMonday,
             skippedRowCount = 0,
-            updatedCookie = sessionCookie
+            updatedCookie = sessionCookie,
+            importMode = SemesterImportMode.PERSONAL_ONLY,
+            unparsedWeekTextCount = countUnparsedWeekTexts(courses)
         )
     }
 

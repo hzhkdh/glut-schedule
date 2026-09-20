@@ -1,6 +1,7 @@
 package com.glut.schedule.data.model
 
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.SemesterImportMode
 import java.time.LocalDate
 
 enum class SemesterSeason { SPRING, AUTUMN }
@@ -20,7 +21,14 @@ data class AcademicSemester(
     val importedAtEpochMillis: Long? = null,
     val semesterStartDate: LocalDate? = null,
     val semesterEndDate: LocalDate? = null,
-    val portalMaxWeek: Int? = null
+    val portalMaxWeek: Int? = null,
+    /**
+     * 该学期是用哪条线路导入的。
+     *
+     * 模式2 的快照没有逐周锚点、`portalMaxWeek` 来源也不同，不记录会让后续所有诊断
+     * 退化成考古；同时缓存重下时也要靠它告诉用户「该学期原本是模式1 缓存的」。
+     */
+    val importMode: SemesterImportMode = SemesterImportMode.WEEKLY
 ) {
     companion object {
         const val LEGACY_CURRENT_ID = "legacy-current"
@@ -36,7 +44,8 @@ data class AcademicSemester(
             importedAtEpochMillis: Long? = null,
             semesterStartDate: LocalDate? = null,
             semesterEndDate: LocalDate? = null,
-            portalMaxWeek: Int? = null
+            portalMaxWeek: Int? = null,
+            importMode: SemesterImportMode = SemesterImportMode.WEEKLY
         ): AcademicSemester {
             val campusKey = campus.name.lowercase()
             val seasonKey = season.name.lowercase()
@@ -61,7 +70,8 @@ data class AcademicSemester(
                 importedAtEpochMillis = importedAtEpochMillis,
                 semesterStartDate = semesterStartDate,
                 semesterEndDate = semesterEndDate,
-                portalMaxWeek = portalMaxWeek
+                portalMaxWeek = portalMaxWeek,
+                importMode = importMode
             )
         }
     }

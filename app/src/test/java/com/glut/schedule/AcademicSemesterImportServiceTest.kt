@@ -5,6 +5,7 @@ import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.AcademicSemesterRequestBuilder
 import com.glut.schedule.service.academic.AcademicSemesterResponseKind
@@ -85,7 +86,9 @@ class AcademicSemesterImportServiceTest {
         val result = importFrom(validScheduleHtml(), courses = listOf(course))
 
         assertTrue(result.isSuccess)
-        assertEquals(listOf(course.copy(occurrences = emptyList())), result.getOrThrow().courses)
+        // 模式2 直接以个人课表为准，必须保留 occurrences——旧实现把它们清空后不回填，
+        // 产出的是「有课程名、没有任何上课时间」的课表。
+        assertEquals(listOf(course), result.getOrThrow().courses)
         assertEquals(AcademicSemesterResponseKind.VALID_NON_EMPTY_SCHEDULE, result.getOrThrow().responseKind)
     }
 
@@ -98,7 +101,9 @@ class AcademicSemesterImportServiceTest {
         )
 
         assertTrue(result.isSuccess)
-        assertEquals(listOf(course.copy(occurrences = emptyList())), result.getOrThrow().courses)
+        // 模式2 直接以个人课表为准，必须保留 occurrences——旧实现把它们清空后不回填，
+        // 产出的是「有课程名、没有任何上课时间」的课表。
+        assertEquals(listOf(course), result.getOrThrow().courses)
     }
 
     @Test
@@ -147,7 +152,7 @@ class AcademicSemesterImportServiceTest {
                     baseUrl = server.url("/").toString(),
                     semester = semester(),
                     studentIdFallback = "student-internal-id",
-                    useWeeklyTimetable = true,
+                    mode = SemesterImportMode.WEEKLY,
                     onProgress = { completed, total -> progress += completed to total }
                 )
 
@@ -204,7 +209,7 @@ class AcademicSemesterImportServiceTest {
                 baseUrl = server.url("/").toString(),
                 semester = semester(),
                 studentIdFallback = "student-internal-id",
-                useWeeklyTimetable = true
+                mode = SemesterImportMode.WEEKLY
             )
 
             assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
@@ -254,7 +259,7 @@ class AcademicSemesterImportServiceTest {
                 baseUrl = server.url("/").toString(),
                 semester = semester(),
                 studentIdFallback = "student-internal-id",
-                useWeeklyTimetable = true
+                mode = SemesterImportMode.WEEKLY
             )
 
             assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
@@ -302,7 +307,7 @@ class AcademicSemesterImportServiceTest {
                     baseUrl = server.url("/").toString(),
                     semester = semester(),
                     studentIdFallback = "",
-                    useWeeklyTimetable = true
+                    mode = SemesterImportMode.WEEKLY
                 )
 
             assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
@@ -345,7 +350,7 @@ class AcademicSemesterImportServiceTest {
                     baseUrl = server.url("/").toString(),
                     semester = semester(),
                     studentIdFallback = "",
-                    useWeeklyTimetable = true,
+                    mode = SemesterImportMode.WEEKLY,
                     onProgress = { completed, total -> progress += completed to total }
                 )
 
@@ -380,7 +385,7 @@ class AcademicSemesterImportServiceTest {
                     baseUrl = server.url("/").toString(),
                     semester = nanningSemester(),
                     studentIdFallback = "student-internal-id",
-                    useWeeklyTimetable = true
+                    mode = SemesterImportMode.WEEKLY
                 )
 
             assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
@@ -413,13 +418,47 @@ class AcademicSemesterImportServiceTest {
                     baseUrl = server.url("/").toString(),
                     semester = semester(),
                     studentIdFallback = "",
-                    useWeeklyTimetable = true
+                    mode = SemesterImportMode.WEEKLY
             )
 
             // 坏行被静默跳过 → 整页无可解析课程 → 导入失败并保留缓存
             assertTrue(result.isFailure)
             val message = result.exceptionOrNull()?.message.orEmpty()
             assertTrue(message.contains("未返回课程") || message.contains("未解析到有效上课时间"))
+        }
+    }
+
+    @Test
+    fun personalOnlyModePreservesOccurrencesAndNeverTouchesWeeklyTimetable() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            // 课程安排页仍会被访问（调课信息只存在于那里），给一个不含调课的普通页面即可。
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                FixedParser(listOf(course()))
+            ).importSemester(
+                cookie = "JSESSIONID=test",
+                baseUrl = server.url("/").toString(),
+                semester = semester(),
+                studentIdFallback = "student-internal-id",
+                mode = SemesterImportMode.PERSONAL_ONLY
+            )
+
+            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
+
+            // 模式2 最本质的验收条件：绝不请求逐周课表。周次课表接口一旦在教务侧变动，
+            // 模式1 会整体不可用，而模式2 正是为此准备的备用线路——它必须真的绕开那个接口，
+            // 而不只是绕开逐周的 POST。
+            val paths = List(server.requestCount) { server.takeRequest().path.orEmpty() }
+            assertTrue(paths.toString(), paths.none { it.contains("studentWeeklyTimetable") })
+            assertTrue(paths.toString(), paths.any { it.contains("currcourse.jsdo") })
+
+            // 个人课表在这里就是权威时间来源，occurrences 必须原样保留。
+            val payload = result.getOrThrow()
+            assertEquals(listOf(course()), payload.courses)
+            assertEquals(SemesterImportMode.PERSONAL_ONLY, payload.importMode)
         }
     }
 
@@ -436,7 +475,7 @@ class AcademicSemesterImportServiceTest {
             baseUrl = server.url("/").toString(),
             semester = semester(),
             studentIdFallback = "",
-            useWeeklyTimetable = false
+            mode = SemesterImportMode.PERSONAL_ONLY
         )
     }
 

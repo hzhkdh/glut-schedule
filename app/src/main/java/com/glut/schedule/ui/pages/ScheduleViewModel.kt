@@ -490,7 +490,7 @@ class ScheduleViewModel(
             baseUrl = campusBaseUrl,
             semester = targetSemester,
             studentIdFallback = studentId,
-            useWeeklyTimetable = true,
+            mode = settingsStore.semesterImportMode.first(),
             onProgress = { completed, total ->
                 message.value = "正在刷新${targetSemester.displayName}（第${completed}/${total}周）..."
             }
@@ -532,7 +532,8 @@ class ScheduleViewModel(
             classPeriods = repository.currentClassPeriods.first(),
             semesterStartDate = resolvedCalendar.startMonday,
             semesterEndDate = resolvedCalendar.endDate,
-            portalMaxWeek = payload.portalMaxWeek
+            portalMaxWeek = payload.portalMaxWeek,
+            importMode = payload.importMode
         )
         settingsStore.setSemesterStartMonday(resolvedCalendar.startMonday)
         settingsStore.setSemesterEndDate(resolvedCalendar.endDate)

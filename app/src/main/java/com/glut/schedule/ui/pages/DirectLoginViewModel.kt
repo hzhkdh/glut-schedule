@@ -13,6 +13,7 @@ import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.countDistinctCourseTitles
 import com.glut.schedule.data.settings.ScheduleSettingsStore
+import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginHttpClient
 import com.glut.schedule.service.academic.AcademicLoginResult
@@ -74,7 +75,13 @@ data class DirectLoginUiState(
     val importResult: ImportResult? = null,
     val semesters: List<AcademicSemester> = emptyList(),
     val viewedSemesterId: String = AcademicSemester.LEGACY_CURRENT_ID,
-    val importingSemesterId: String? = null
+    val importingSemesterId: String? = null,
+    /** 当前导入线路（模式1/模式2），与 DataStore 中的偏好保持同步。 */
+    val importMode: SemesterImportMode = SemesterImportMode.WEEKLY,
+    /** 模式1 导入失败后，是否显示「换用模式2重试」。 */
+    val canRetryWithPersonalMode: Boolean = false,
+    /** 无法识别周次的课次数量，用于向用户如实反馈而不是让课程静默消失。 */
+    val unparsedWeekTextCount: Int = 0
 )
 
 data class ImportResult(
@@ -174,6 +181,12 @@ class DirectLoginViewModel(
                 _uiState.value = _uiState.value.copy(semesters = semesters, viewedSemesterId = viewedId)
             }
         }
+        viewModelScope.launch {
+            // 导入线路是持久化偏好：启动时同步一次，之后由 setImportMode 负责写回。
+            settingsStore.semesterImportMode.collect { mode ->
+                _uiState.value = _uiState.value.copy(importMode = mode)
+            }
+        }
     }
 
     fun updateUsername(username: String) {
@@ -191,6 +204,46 @@ class DirectLoginViewModel(
         )
     }
     fun toggleNanning() { _uiState.value = _uiState.value.copy(isNanning = !_uiState.value.isNanning) }
+
+    /** 切换导入线路并立即持久化。 */
+    fun setImportMode(mode: SemesterImportMode) {
+        if (_uiState.value.importMode == mode) return
+        _uiState.value = _uiState.value.copy(importMode = mode, canRetryWithPersonalMode = false)
+        viewModelScope.launch { settingsStore.setSemesterImportMode(mode) }
+    }
+
+    /**
+     * 模式1 导入失败后，就地用模式2（纯个人课表）重跑一次。
+     *
+     * 不重新登录：登录涉及验证码等交互，为了重试把用户拽回登录流程会打断他。
+     * 会话直接从 [sessionStore] 现读，凭据一律不进入 UiState。
+     */
+    fun retryLastImportWithPersonalMode() {
+        if (_uiState.value.isLoggingIn) return
+        viewModelScope.launch {
+            val cookie = sessionStore.academicCookie.first()
+            if (cookie.isBlank()) {
+                _uiState.value = _uiState.value.copy(
+                    message = "登录状态已过期，请重新登录后再试",
+                    canRetryWithPersonalMode = false
+                )
+                return@launch
+            }
+            val baseUrl = sessionStore.campusBaseUrl.first()
+                .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
+            val studentNumber = sessionStore.authenticatedStudentNumber.first()
+            // 用户是在看到模式1 失败后主动选择模式2 的。若只本次生效，紧接着点「全部下载」
+            // 又会回到模式1，前后行为不一致，因此这里同步改持久化偏好。
+            settingsStore.setSemesterImportMode(SemesterImportMode.PERSONAL_ONLY)
+            _uiState.value = _uiState.value.copy(
+                importMode = SemesterImportMode.PERSONAL_ONLY,
+                canRetryWithPersonalMode = false,
+                isLoggingIn = true,
+                message = "正在用模式2（纯个人课表）重新导入..."
+            )
+            performImport(cookie, baseUrl, studentNumber)
+        }
+    }
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
 
     fun downloadSemester(semesterId: String) {
@@ -628,7 +681,8 @@ class DirectLoginViewModel(
                     baseUrl = campusBaseUrl,
                     semester = nextSemester,
                     studentIdFallback = studentNumber,
-                    useWeeklyTimetable = false
+                    // 轻量探测：只判断「下学期有没有课」，不需要逐周课表，与用户所选线路无关。
+                    mode = SemesterImportMode.PERSONAL_ONLY
                 ).also { result ->
                     result.getOrNull()?.updatedCookie?.takeIf(String::isNotBlank)?.let { activeCookie = it }
                 }
@@ -643,7 +697,7 @@ class DirectLoginViewModel(
                 baseUrl = campusBaseUrl,
                 semester = currentSemester,
                 studentIdFallback = studentNumber,
-                useWeeklyTimetable = true,
+                mode = settingsStore.semesterImportMode.first(),
                 onProgress = { completed, total ->
                     _uiState.value = _uiState.value.copy(
                         message = "正在下载${currentSemester.displayName}（第${completed}/${total}周）..."
@@ -678,7 +732,8 @@ class DirectLoginViewModel(
                 classPeriods = scheduleRepository.currentClassPeriods.first(),
                 semesterStartDate = resolvedCalendar.startMonday,
                 semesterEndDate = resolvedCalendar.endDate,
-                portalMaxWeek = currentPayload.portalMaxWeek
+                portalMaxWeek = currentPayload.portalMaxWeek,
+                importMode = currentPayload.importMode
             )
             courseCount = currentPayload.courses.countDistinctCourseTitles()
 
@@ -786,14 +841,22 @@ class DirectLoginViewModel(
 
             _uiState.value = _uiState.value.copy(
                 isLoggingIn = false,
-                message = importCompletionMessage(failedModules, currentPayload.skippedRowCount),
-                importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount, studyPlanCount)
+                message = importCompletionMessage(
+                    failedModules = failedModules,
+                    skippedRowCount = currentPayload.skippedRowCount,
+                    unparsedWeekTextCount = currentPayload.unparsedWeekTextCount
+                ),
+                importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount, studyPlanCount),
+                canRetryWithPersonalMode = false,
+                unparsedWeekTextCount = currentPayload.unparsedWeekTextCount
             )
         } catch (e: Exception) {
             _uiState.value = _uiState.value.copy(
                 isLoggingIn = false,
                 message = "部分导入失败: ${e.message}",
-                importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount, studyPlanCount)
+                importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount, studyPlanCount),
+                // 只有还停在模式1 时才提示换线路；已经是模式2 就没有「换模式2」可言。
+                canRetryWithPersonalMode = _uiState.value.importMode != SemesterImportMode.PERSONAL_ONLY
             )
         }
     }
@@ -941,7 +1004,8 @@ internal fun isAuthenticatedNanningResponse(
 
 internal fun importCompletionMessage(
     failedModules: Collection<String>,
-    skippedRowCount: Int = 0
+    skippedRowCount: Int = 0,
+    unparsedWeekTextCount: Int = 0
 ): String {
     val uniqueModules = failedModules.distinct()
     val message = if (uniqueModules.isEmpty()) {
@@ -949,7 +1013,14 @@ internal fun importCompletionMessage(
     } else {
         "部分导入失败：${uniqueModules.joinToString("、")}；已保留原缓存"
     }
-    return if (skippedRowCount > 0) "$message；已跳过 $skippedRowCount 条异常课程记录" else message
+    val withSkipped = if (skippedRowCount > 0) "$message；已跳过 $skippedRowCount 条异常课程记录" else message
+    // 周次无法识别的课次不会出现在任何一周。必须如实告知，否则用户看到的是
+    // 「课程莫名其妙少了几门」，无从排查。
+    return if (unparsedWeekTextCount > 0) {
+        "$withSkipped；$unparsedWeekTextCount 条上课时间的周次无法识别"
+    } else {
+        withSkipped
+    }
 }
 
 class DirectLoginViewModelFactory(

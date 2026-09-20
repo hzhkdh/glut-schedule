@@ -118,4 +118,29 @@ class ScheduleDatabaseMigrationSqlTest {
         val source = (if (module.exists()) module else File("app/$module")).readText()
         assertTrue(source.contains("ScheduleDatabase.MIGRATION_11_12"))
     }
+
+    @Test
+    fun migration13To14AddsImportModeWithoutResettingCaches() {
+        val statements = mutableListOf<String>()
+        val database = Proxy.newProxyInstance(
+            SupportSQLiteDatabase::class.java.classLoader,
+            arrayOf(SupportSQLiteDatabase::class.java)
+        ) { _, method, arguments ->
+            if (method.name == "execSQL") statements += arguments.orEmpty().first() as String
+            null
+        } as SupportSQLiteDatabase
+
+        ScheduleDatabase.MIGRATION_13_14.migrate(database)
+
+        assertTrue(statements.any {
+            it.contains("ALTER TABLE `academic_semesters` ADD COLUMN `importMode` TEXT NOT NULL DEFAULT 'WEEKLY'")
+        })
+        // 只增列。一旦顺带重置 cacheStatus 或删除行，所有用户已缓存的学期都会被清空重下。
+        assertTrue(statements.none { it.contains("`cacheStatus`") })
+        assertTrue(statements.none { it.contains("DELETE FROM") })
+
+        val module = File("src/main/java/com/glut/schedule/ScheduleApplication.kt")
+        val source = (if (module.exists()) module else File("app/$module")).readText()
+        assertTrue(source.contains("ScheduleDatabase.MIGRATION_13_14"))
+    }
 }

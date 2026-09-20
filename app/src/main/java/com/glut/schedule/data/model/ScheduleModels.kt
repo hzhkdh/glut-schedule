@@ -118,6 +118,18 @@ data class CourseOccurrence(
         get() = endSection - startSection + 1
 }
 
+/**
+ * 教务原始节次号 → 内部节次号。
+ *
+ * 桂林在「第4节」与「第5节」之间夹了「中午1/中午2」两个时段，因此第 5 节起的内部号要 +2；
+ * 南宁没有中午时段，节次直排。
+ *
+ * 桂林与南宁的解析路径必须共用这一条规则。两条路径各写一份时，其中一条漏掉偏移，
+ * 会把「第5、6节」算成内部 5/6——正好是中午的两个槽位，关闭「显示中午」后整门课不显示。
+ */
+fun offsetSectionForNoon(section: Int, hasNoon: Boolean): Int =
+    if (hasNoon && section >= 5) section + 2 else section
+
 fun CourseOccurrence.isActiveInWeek(weekNumber: Int): Boolean {
     return isWeekTextActive(weekText, clampAcademicWeek(weekNumber))
 }
@@ -126,15 +138,30 @@ fun isWeekTextActive(weekText: String, weekNumber: Int): Boolean {
     return weekNumber in academicWeeksForText(weekText)
 }
 
+/**
+ * 周次文本归一化：去掉「第」与空白，并把全角列表分隔符统一成半角。
+ * 由 [academicWeeksForText] 与 [isAllWeeksText] 共用，避免两处判断口径漂移。
+ */
+private fun normalizeWeekText(weekText: String): String = weekText
+    .replace("第", "")
+    .replace(" ", "")
+    .replace("，", ",")
+    .replace("、", ",")
+    .replace("；", ",")
+    .replace(";", ",")
+    .trim()
+
+/**
+ * 是否「显式表示整学期」。
+ *
+ * 只有空文本与「全周」才算真正的全周——其余任何无法识别的文本都必须与它区分开，
+ * 否则「解析失败」会被当成「每周都有课」。
+ */
+fun isAllWeeksText(weekText: String): Boolean =
+    normalizeWeekText(weekText).let { it.isBlank() || it == "全周" }
+
 fun academicWeeksForText(weekText: String, maxWeek: Int = 22): List<Int> {
-    val normalized = weekText
-        .replace("第", "")
-        .replace(" ", "")
-        .replace("，", ",")
-        .replace("、", ",")
-        .replace("；", ",")
-        .replace(";", ",")
-        .trim()
+    val normalized = normalizeWeekText(weekText)
 
     if (maxWeek < 1) return emptyList()
     if (normalized.isBlank() || normalized == "全周") return (1..maxWeek).toList()
@@ -163,8 +190,25 @@ fun academicWeeksForText(weekText: String, maxWeek: Int = 22): List<Int> {
             .filter { !requiresOdd || it % 2 == 1 }
             .filter { !requiresEven || it % 2 == 0 }
     }
-    return (parsed.ifEmpty { (1..maxWeek).toList() }).distinct().sorted()
+    // 不再把解析失败兜底成「全周」。教务字段格式一旦变化——例如实验课块里的课序字段
+    // 「2-1」被当成周次——静默回退会让整门课在每一周都显示，用户看到的是「错误的
+    // 数据」而不是一个「错误」。这里返回空列表，由 countUnparsedWeekTexts 如实上报。
+    return parsed.distinct().sorted()
 }
+
+/**
+ * 统计无法识别周次的课次数量。
+ *
+ * 这些课次不会出现在任何一周里。导入完成后必须把条数反馈给用户，否则表现就是
+ * 「课程莫名其妙少了几门」，无从排查。
+ */
+fun countUnparsedWeekTexts(courses: List<ScheduleCourse>): Int =
+    courses.sumOf { course ->
+        course.occurrences.count { occurrence ->
+            !isAllWeeksText(occurrence.weekText) &&
+                academicWeeksForText(occurrence.weekText).isEmpty()
+        }
+    }
 
 data class ScheduleCourse(
     val id: String,

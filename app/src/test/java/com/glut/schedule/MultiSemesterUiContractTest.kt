@@ -114,7 +114,7 @@ class MultiSemesterUiContractTest {
         assertTrue(viewModel.contains("fun viewSemester(semesterId: String)"))
         assertFalse(downloadBody.contains("scheduleRepository.selectSemester"))
         assertTrue(downloadBody.contains("semesterBulkDownloadCoordinator.startSingle(semesterId)"))
-        assertTrue(container.contains("useWeeklyTimetable = true"))
+        assertTrue(container.contains("mode = settingsStore.semesterImportMode.first()"))
         assertTrue(container.contains("onProgress = onProgress"))
         assertTrue(coordinator.contains("completedWeeks = completed"))
         assertTrue(coordinator.contains("previousStatus"))
@@ -139,9 +139,9 @@ class MultiSemesterUiContractTest {
         assertTrue(importBody.contains("AcademicSemesterProbePlanner.decide("))
         assertTrue(importBody.contains("val currentSemester = decision.currentSemester"))
         assertTrue(importBody.split("semesterImportService.importSemester(").size - 1 == 2)
-        assertTrue(importBody.contains("useWeeklyTimetable = false"))
+        assertTrue(importBody.contains("mode = SemesterImportMode.PERSONAL_ONLY"))
         assertTrue(importBody.contains("semester = currentSemester"))
-        assertTrue(importBody.contains("useWeeklyTimetable = true"))
+        assertTrue(importBody.contains("mode = settingsStore.semesterImportMode.first()"))
         assertTrue(importBody.contains("portalMaxWeek = currentPayload.portalMaxWeek"))
         assertTrue(
             importBody.indexOf("val currentPayload") <
@@ -232,7 +232,7 @@ class MultiSemesterUiContractTest {
 
         assertTrue(refreshBody.contains("uiState.value.viewedSemester"))
         assertTrue(refreshBody.contains("semesterImportService.importSemester("))
-        assertTrue(refreshBody.contains("useWeeklyTimetable = true"))
+        assertTrue(refreshBody.contains("mode = settingsStore.semesterImportMode.first()"))
         assertTrue(refreshBody.contains("repository.replaceSemesterSchedule("))
         assertTrue(refreshBody.contains("portalMaxWeek = payload.portalMaxWeek"))
         assertTrue(refreshBody.contains("probeScheduleEndpoints("))
