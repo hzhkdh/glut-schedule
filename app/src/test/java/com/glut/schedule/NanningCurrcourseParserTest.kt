@@ -116,6 +116,30 @@ class NanningCurrcourseParserTest {
     }
 
     @Test
+    fun guilinCurrcourseParsesNoonAndMixedNoonSectionRanges() {
+        // 真实个人课表既会返回单独的“中午”，也会返回跨中午的混合端点。
+        // 三种写法都必须映射到内部连续节次，不能因正则只认数字而静默丢课。
+        val html = """
+            <table class="infolist_tab"><tr class="infolist_common">
+                <td><a class="infolist">匿名课程乙</a></td>
+                <td><a href='/academic/manager/teacherinfo/showTeacherInfoItem.do?userid=1' class="infolist">匿名教师乙</a></td>
+                <td><table class="none">
+                    <tr><td>第1周</td><td>星期一</td><td>中午</td><td>01001D</td></tr>
+                    <tr><td>第2周</td><td>星期二</td><td>中午1-第8节</td><td>01001D</td></tr>
+                    <tr><td>第3周</td><td>星期三</td><td>第1节-中午2</td><td>01001D</td></tr>
+                </table></td>
+            </tr></table>
+            <table class="infolist_tab"><tr><td>中午1</td><td>中午2</td></tr></table>
+        """.trimIndent()
+
+        val occurrences = parser.parsePersonalSchedule(html).single().occurrences
+            .sortedBy { it.dayOfWeek }
+
+        assertEquals(listOf(5, 5, 1), occurrences.map { it.startSection })
+        assertEquals(listOf(6, 10, 6), occurrences.map { it.endSection })
+    }
+
+    @Test
     fun parsesCourseWithMultipleTimeSlots() {
         val html = """
             <table class="infolist_tab"><tr class="infolist_common">

@@ -11,6 +11,65 @@ class AcademicScheduleParserTest {
     private val parser = GlutAcademicScheduleParser()
 
     @Test
+    fun courseArrangementParsesNoonAndMixedNoonSectionRanges() {
+        // 桂林个人课表的课程安排列存在“中午”和跨中午混合端点；后备解析器必须与
+        // currcourse 主解析器保持同一映射，避免解析路由变化后再次出现整门课消失。
+        val html = """
+            <table>
+              <tr>
+                <th>课程号</th><th>课程序号</th><th>课程名称</th><th>任课教师</th>
+                <th>学分</th><th>选课属性</th><th>考核方式</th><th>考试性质</th>
+                <th>是否缓考</th><th>上课时间、地点</th><th>教材</th><th>教学记录</th>
+              </tr>
+              <tr>
+                <td>100002</td><td>1</td><td>匿名科目乙</td><td>匿名教师乙</td>
+                <td>3</td><td>必修</td><td>考试</td><td>正常考试</td><td>非缓考</td>
+                <td>
+                  第1周 星期一 中午 01001D<br/>
+                  第2周 星期二 中午1-第8节 01001D<br/>
+                  第3周 星期三 第1节-中午2 01001D
+                </td><td></td><td></td>
+              </tr>
+              <tr><td>中午1</td><td>中午2</td></tr>
+            </table>
+        """.trimIndent()
+
+        val parsedCourses = parser.parsePersonalSchedule(html)
+        val occurrences = parsedCourses
+            .filter { it.title == "匿名科目乙" }
+            .flatMap { it.occurrences }
+            .sortedBy { it.dayOfWeek }
+
+        val parsedSummary = parsedCourses.joinToString { course ->
+            "${course.title}:${course.occurrences.map { "${it.dayOfWeek}/${it.startSection}-${it.endSection}" }}"
+        }
+        assertEquals(parsedSummary, listOf(5, 5, 1), occurrences.map { it.startSection })
+        assertEquals(listOf(6, 10, 6), occurrences.map { it.endSection })
+    }
+
+    @Test
+    fun courseArrangementKeepsRealTitleContainingCourseWord() {
+        // “课程设计”等是正常课程名；只能排除精确表头，不能按包含关系误删整门课。
+        val html = """
+            <table>
+              <tr>
+                <th>课程号</th><th>课程序号</th><th>课程名称</th><th>任课教师</th>
+                <th>学分</th><th>选课属性</th><th>考核方式</th><th>考试性质</th>
+                <th>是否缓考</th><th>上课时间、地点</th><th>教材</th><th>教学记录</th>
+              </tr>
+              <tr>
+                <td>100004</td><td>1</td><td>软件工程课程设计</td><td>匿名教师</td>
+                <td>3</td><td>必修</td><td>考查</td><td>正常考试</td><td>非缓考</td>
+                <td>1-8周 星期一 第1、2节 01001D</td><td></td><td></td>
+              </tr>
+              <tr><td>中午1</td><td>中午2</td></tr>
+            </table>
+        """.trimIndent()
+
+        assertTrue(parser.parsePersonalSchedule(html).any { it.title == "软件工程课程设计" })
+    }
+
+    @Test
     fun parsesCourseCellsWithExplicitDayAndSectionAttributes() {
         val html = """
             <table>

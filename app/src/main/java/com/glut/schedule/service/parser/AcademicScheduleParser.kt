@@ -16,6 +16,31 @@ interface AcademicScheduleParser {
     fun applyAdjustmentsToCourses(courses: List<ScheduleCourse>, adjustmentHtml: String): List<ScheduleCourse> = courses
 }
 
+/**
+ * 解析个人课表里的显示节次范围，并统一映射为内部节次。
+ *
+ * 门户除“第5、6节”外还会返回“中午”“中午1-第8节”“第1节-中午2”。
+ * 两条个人课表解析路径必须共享这一规则，否则解析路由变化会让课程静默消失。
+ */
+internal fun parseDisplaySectionRange(value: String, hasNoon: Boolean): Pair<Int, Int>? {
+    val text = value.replace(Regex("""\s+"""), "")
+    if (text == "中午") return if (hasNoon) 5 to 6 else null
+
+    val tokens = Regex("""中午[12]|第?\d{1,2}节?""").findAll(text).map { it.value }.toList()
+    if (tokens.isEmpty() || tokens.size > 2) return null
+    fun mapEndpoint(token: String): Int? = when (token) {
+        "中午1" -> 5.takeIf { hasNoon }
+        "中午2" -> 6.takeIf { hasNoon }
+        else -> Regex("""\d{1,2}""").find(token)?.value?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?.let { offsetSectionForNoon(it, hasNoon) }
+    }
+
+    val start = mapEndpoint(tokens[0]) ?: return null
+    val end = mapEndpoint(tokens.getOrElse(1) { tokens[0] }) ?: return null
+    return (start to end).takeIf { end >= start }
+}
+
 class GlutAcademicScheduleParser : AcademicScheduleParser {
     /** Parse just the course adjustment (调课/补课) rows from the timetable HTML. */
     override fun parseAdjustments(html: String): List<SemesterAdjustment> {
@@ -169,7 +194,8 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             }
 
             val title = cells.getOrNull(titleIndex)?.trim()
-                ?.takeUnless { it.isBlank() || it.contains("课程名称") || it.contains("课程") }
+                // 只排除精确表头；“课程设计”等是正常课程名，按包含关系会静默丢课。
+                ?.takeUnless { it.isBlank() || it.replace(" ", "") in courseTitleHeaders }
                 ?: return@flatMap emptyList()
             val timeText = cells.getOrNull(timeIndex).orEmpty()
             val teacher = cells.getOrNull(teacherIndex).orEmpty().ifBlank { "待确认" }
@@ -709,18 +735,17 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         text: String,
         hasNoon: Boolean = true
     ): List<CourseOccurrence> {
-        return arrangementTimeRegex.findAll(text)
-            .mapIndexedNotNull { index, match ->
+        val prefixes = arrangementPrefixRegex.findAll(text).toList()
+        return prefixes.mapIndexedNotNull { index, match ->
+                val tailEnd = prefixes.getOrNull(index + 1)?.range?.first ?: text.length
+                val tail = text.substring(match.range.last + 1, tailEnd).trim()
+                val tailParts = tail.split(Regex("""\s+"""), limit = 2)
+                val sectionText = tailParts.getOrNull(0).orEmpty()
                 val weekText = match.groupValues[1].trim().ifBlank { "全周" }
                 val day = dayOfWeek(match.groupValues[2]) ?: return@mapIndexedNotNull null
-                val rawStart = match.groupValues[3].toIntOrNull() ?: return@mapIndexedNotNull null
-                val rawEnd = match.groupValues[4].toIntOrNull() ?: rawStart
-                // 「上课时间、地点」文本里的节次是教务的原始编号，必须和网格路径走同一条
-                // 中午偏移规则。此前这里直接用原始数字，导致桂林「第5、6节」被当成内部
-                // 节次 5/6——恰好是"中午1/中午2"两个槽位，关闭「显示中午」后整门课不显示。
-                val start = offsetSectionForNoon(rawStart, hasNoon)
-                val end = offsetSectionForNoon(rawEnd, hasNoon)
-                val room = match.groupValues[5].trim()
+                val (start, end) = parseDisplaySectionRange(sectionText, hasNoon)
+                    ?: return@mapIndexedNotNull null
+                val room = tailParts.getOrNull(1).orEmpty().trim()
 
                 CourseOccurrence(
                     id = "$courseId-occurrence-$index",
@@ -976,6 +1001,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
 
     private companion object {
         val KNOWN_TYPES = setOf("调课", "补课", "停课", "代课")
+        val courseTitleHeaders = setOf("课程", "课程名", "课程名称")
         val cellRegex = Regex("""(?is)<td\b([^>]*)>(.*?)</td>""")
         val timetableTableRegex = Regex("""(?is)<table\b(?=[^>]*\bid\s*=\s*["']timetable["'])[^>]*>.*?</table>""")
         val rowRegex = Regex("""(?is)<tr\b[^>]*>.*?</tr>""")
@@ -983,8 +1009,10 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         val tableCellWithAttrsRegex = Regex("""(?is)<t[dh]\b([^>]*)>(.*?)</t[dh]>""")
         val cellIdRegex = Regex("""\bid\s*=\s*["']([1-7])-\d+["']""")
         val glutCourseTitleRegex = Regex("""<<\s*(.+?)\s*>>""")
-        val arrangementTimeRegex = Regex(
-            """([第\d,，\-－—至单双周节、\s]*)星期([一二三四五六日天])\s*第\s*(\d{1,2})\s*(?:[、,，]|至|~|-|－|—)\s*(\d{1,2})\s*节\s*([^\s<]*)"""
+        val arrangementPrefixRegex = Regex(
+            // 先定位每个“周次 + 星期”前缀，再用下一个前缀切分尾部；节次合法性统一交给
+            // parseDisplaySectionRange，避免整行正则再次遗漏“中午”等已支持格式。
+            """((?:单周|双周|全周|[第\d][第\d,，、\-~－—至单双周节\s]*?)?)\s*星期([一二三四五六日天])"""
         )
         val periodNumberRegex = Regex("""第?\s*(\d{1,2})\s*[节大]""")
         val textBasedRegex = Regex(

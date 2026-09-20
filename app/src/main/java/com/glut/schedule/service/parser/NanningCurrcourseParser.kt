@@ -3,7 +3,6 @@ package com.glut.schedule.service.parser
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
-import com.glut.schedule.data.model.offsetSectionForNoon
 import java.security.MessageDigest
 
 class NanningCurrcourseParser : AcademicScheduleParser {
@@ -68,10 +67,8 @@ class NanningCurrcourseParser : AcademicScheduleParser {
                 val weekText = cells[0]
                 val dayOfWeek = parseWeekday(cells[1])
                 if (dayOfWeek == 0) continue
-                val (rawStart, rawEnd) = parsePeriodRange(cells[2])
-                if (rawStart == 0) continue
-                val startSection = offsetSectionForNoon(rawStart, hasNoon)
-                val endSection = offsetSectionForNoon(rawEnd, hasNoon)
+                val (startSection, endSection) = parseDisplaySectionRange(cells[2], hasNoon)
+                    ?: continue
                 val room = cells[3].takeUnless { it == "&nbsp;" || it.isBlank() }.orEmpty()
                 rawSlots.add(RawSlot(weekText, dayOfWeek, startSection, endSection, room))
             }
@@ -160,14 +157,6 @@ class NanningCurrcourseParser : AcademicScheduleParser {
         text.contains("六") -> 6
         text.contains("日") || text.contains("天") -> 7
         else -> 0
-    }
-
-    private fun parsePeriodRange(text: String): Pair<Int, Int> {
-        val clean = text.replace("第", "").replace("节", "").trim()
-        val parts = clean.split("-", "－", "—", "、")
-        val start = parts.getOrNull(0)?.toIntOrNull() ?: return 0 to 0
-        val end = parts.getOrNull(1)?.toIntOrNull() ?: start
-        return start to end
     }
 
     private fun htmlToPlainText(html: String): String {
