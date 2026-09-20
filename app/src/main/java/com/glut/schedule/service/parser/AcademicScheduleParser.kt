@@ -1012,7 +1012,13 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         val arrangementPrefixRegex = Regex(
             // 先定位每个“周次 + 星期”前缀，再用下一个前缀切分尾部；节次合法性统一交给
             // parseDisplaySectionRange，避免整行正则再次遗漏“中午”等已支持格式。
-            """((?:单周|双周|全周|[第\d][第\d,，、\-~－—至单双周节\s]*?)?)\s*星期([一二三四五六日天])"""
+            //
+            // 周次字符类里**绝不能有“节”**：周次文本从不含“节”字，而“节”一旦在类内，
+            // 扫描到上一条的节次（如“第5、6节”）时会一路吞到**下一条的周次**才碰到“星期”，
+            // 于是上一条尾巴取不到节次被整条丢弃、下一条的周次被读成“第5、6节 第13周”。
+            // 实测（currcourse.jsdo《工程伦理》那格：第 3 条教室为空）正是这个形状。
+            // 小程序 utils/parser.js 的 parseArrangementTime 有同款规则，两端必须保持一致。
+            """((?:单周|双周|全周|[第\d][第\d,，、\-~－—至单双周\s]*?)?)\s*星期([一二三四五六日天])"""
         )
         val periodNumberRegex = Regex("""第?\s*(\d{1,2})\s*[节大]""")
         val textBasedRegex = Regex(

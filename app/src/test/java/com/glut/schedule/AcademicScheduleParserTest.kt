@@ -104,6 +104,47 @@ class AcademicScheduleParserTest {
     """.trimIndent()
 
     @Test
+    fun emptyRoomCellDoesNotStealTheNextArrangementWeekText() {
+        // 真实页面（currcourse.jsdo《工程伦理》）的「上课时间、地点」形状：第 3 条课次的教室为空。
+        // 周次字符类里若含「节」，扫描到这条的节次「第5、6节」时会一路吞到**下一条的周次**才
+        // 碰到「星期」：于是这条尾巴取不到节次被整条丢弃，下一条的周次被读成「第5、6节 第13周」
+        // （展开后落在第 5、6、13 周）。两条都不能发生。
+        val html = """
+            <table>
+              <tr>
+                <th>课程号</th><th>课程序号</th><th>课程名称</th><th>任课教师</th>
+                <th>学分</th><th>选课属性</th><th>考核方式</th><th>考试性质</th>
+                <th>是否缓考</th><th>上课时间、地点</th><th>教材</th><th>教学记录</th>
+              </tr>
+              <tr>
+                <td>100001</td><td>1</td><td>匿名科目乙</td><td>匿名教师乙</td>
+                <td>3</td><td>必修</td><td>考试</td><td>正常考试</td><td>非缓考</td>
+                <td>5-12周 星期四 第5、6节 06104D<br/>第13周 星期二 第5、6节 06206D<br/>第13周 星期三 第5、6节<br/>第13周 星期三 第5、6节 06105D</td>
+                <td></td><td></td>
+              </tr>
+            </table>
+        """.trimIndent()
+
+        val occurrences = parser.parsePersonalSchedule(html)
+            .filter { it.title == "匿名科目乙" }
+            .flatMap { it.occurrences }
+
+        assertEquals("四条课次都应保留，不能有整条被丢弃", 4, occurrences.size)
+        assertEquals(
+            "星期与周次必须一一对应，周次不能被相邻课次的节次污染",
+            listOf("周2|第13周", "周3|第13周", "周3|第13周", "周4|5-12周"),
+            occurrences.map { "周${it.dayOfWeek}|${it.weekText}" }.sorted()
+        )
+        assertTrue(
+            "任何课次都不能退化成「全周」",
+            occurrences.none { it.weekText == "全周" }
+        )
+        // 注：教室不在此断言范围内。无教室的课次会被后续的课程合并步骤按「同课程上一条的教室」
+        // 回填（实测：有周四那条时回填 06104D，删掉后回填 06206D），这是既有行为，不在本次
+        // 「实习周错误显示」的修复范围。这里只要保证它不会把节次当成周次读到 weekText 里。
+    }
+
+    @Test
     fun courseArrangementKeepsRealTitleContainingCourseWord() {
         // “课程设计”等是正常课程名；只能排除精确表头，不能按包含关系误删整门课。
         val html = """
