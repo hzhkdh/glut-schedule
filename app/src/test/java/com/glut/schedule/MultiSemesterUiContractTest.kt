@@ -91,6 +91,15 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
+    fun importSemesterDropdownUsesTheWarmLightSurfaceInDarkSystemTheme() {
+        val screen = page("DirectLoginScreen.kt")
+
+        assertTrue(screen.contains("containerColor = LoginCardBg"))
+        assertTrue(screen.contains("MenuDefaults.itemColors"))
+        assertTrue(screen.contains("textColor = LoginPrimary"))
+    }
+
+    @Test
     fun semesterDownloadAndViewAreDistinctAndDownloadNeverSelects() {
         val viewModel = page("DirectLoginViewModel.kt")
         val screen = page("DirectLoginScreen.kt")

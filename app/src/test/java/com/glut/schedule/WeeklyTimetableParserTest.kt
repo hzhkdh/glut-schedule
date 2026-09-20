@@ -59,6 +59,27 @@ class WeeklyTimetableParserTest {
     }
 
     @Test
+    fun parsesMixedNoonSectionRangesWithoutSkippingCourses() {
+        val cases = listOf(
+            Triple("中午1-第8节", 5, 10),
+            Triple("中午1-第6节", 5, 8),
+            Triple("第1节-中午2", 1, 6)
+        )
+
+        cases.forEach { (section, expectedStart, expectedEnd) ->
+            val page = parser.parsePage(
+                weeklyHtml(week = 6, rows = courseRow(section = section)),
+                hasNoon = true
+            )
+
+            assertEquals("应保留跨中午课程：$section", 1, page.rows.size)
+            assertEquals(expectedStart, page.rows.single().startSection)
+            assertEquals(expectedEnd, page.rows.single().endSection)
+            assertEquals(0, page.skippedRowCount)
+        }
+    }
+
+    @Test
     fun validateForRejectsDateAndWeekdayConflict() {
         val page = parser.parsePage(
             weeklyHtml(

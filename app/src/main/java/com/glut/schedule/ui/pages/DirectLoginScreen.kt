@@ -29,6 +29,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -362,7 +363,8 @@ private fun SemesterManagementSection(
             )
             ExposedDropdownMenu(
                 expanded = expanded,
-                onDismissRequest = { expanded = false }
+                onDismissRequest = { expanded = false },
+                containerColor = LoginCardBg
             ) {
                 semesters.forEach { semester ->
                     val status = when {
@@ -383,6 +385,7 @@ private fun SemesterManagementSection(
                             selectedSemesterId = semester.id
                             expanded = false
                         },
+                        colors = MenuDefaults.itemColors(textColor = LoginPrimary),
                         modifier = Modifier.heightIn(min = 48.dp)
                     )
                 }

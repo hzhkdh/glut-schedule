@@ -265,14 +265,25 @@ class WeeklyTimetableParser {
         if (hasNoon && value.trim() == "中午" && startTime.trim() == "12:30" && endTime.trim() == "14:05") {
             return 5 to 6
         }
-        val match = Regex(
-            """^第?\s*(\d{1,2})(?:\s*(?:、|,|，|-|－|~|～|至)\s*(\d{1,2}))?\s*节?$"""
-        ).matchEntire(value.trim()) ?: return null
-        val start = match.groupValues[1].toIntOrNull() ?: return null
-        val end = match.groupValues[2].toIntOrNull() ?: start
+        // 教务会用“中午1-第8节”等混合端点表达跨午间长课，两个端点必须完整识别。
+        val endpoints = value.replace(Regex("""\s+"""), "")
+            .split(Regex("""[、,，\-－~～至]"""))
+        if (endpoints.size !in 1..2 || endpoints.any { it.isBlank() }) return null
+        val start = parseSectionEndpoint(endpoints.first(), hasNoon) ?: return null
+        val end = parseSectionEndpoint(endpoints.last(), hasNoon) ?: return null
+        val maxMappedSection = if (hasNoon) 14 else 11
+        return if (start in 1..maxMappedSection && end in 1..maxMappedSection && start <= end) start to end else null
+    }
+
+    private fun parseSectionEndpoint(value: String, hasNoon: Boolean): Int? {
+        if (hasNoon) when (value) {
+            "中午1" -> return 5
+            "中午2" -> return 6
+        }
+        val rawSection = Regex("""^第?(\d{1,2})节?$""").matchEntire(value)
+            ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return null
         val maxRawSection = if (hasNoon) 12 else 11
-        if (start !in 1..maxRawSection || end !in 1..maxRawSection || start > end) return null
-        return mapSection(start, hasNoon) to mapSection(end, hasNoon)
+        return rawSection.takeIf { it in 1..maxRawSection }?.let { mapSection(it, hasNoon) }
     }
 
     private fun mapSection(section: Int, hasNoon: Boolean): Int {
