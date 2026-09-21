@@ -284,6 +284,11 @@ class MultiSemesterUiContractTest {
         assertFalse(header.contains("semesterLabel"))
         assertTrue(header.contains("\"▾\""))
         assertTrue(header.contains("返回当前学期"))
+        // 下拉必须显式给乳白容器色：不传 containerColor 会落到 GlutScheduleTheme 里唯一的
+        // 暗色方案（Theme.kt 的 surface = 0xFF101827），这正是用户看到的「漆黑面板」。
+        assertTrue(header.contains("containerColor = MenuCardBg"))
+        // 状态标签（当前 / 已缓存 / 正在查看）必须走共用函数，不在渲染处再写一份字面量。
+        assertTrue(header.contains("semesterMenuStatusText("))
         assertTrue(screen.contains("onSemesterSelected = viewModel::selectSemester"))
         assertTrue(screen.contains("onReturnToCurrentClick = viewModel::returnToCurrentSemester"))
         assertFalse(screen.contains("本周无课程"))

@@ -6,12 +6,33 @@ import com.glut.schedule.ui.components.scheduleGridMonthHeaderStartPaddingDp
 import com.glut.schedule.ui.components.scheduleGridMonthHeaderTopPaddingDp
 import com.glut.schedule.ui.components.scheduleGridMonthText
 import com.glut.schedule.ui.components.scheduleCalendarDays
+import com.glut.schedule.ui.components.semesterMenuStatusText
+import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ScheduleWeek
+import com.glut.schedule.data.model.SemesterCacheStatus
+import com.glut.schedule.data.model.SemesterSeason
+import com.glut.schedule.data.settings.CampusType
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.LocalDate
 
 class ScheduleHeaderTest {
+    @Test
+    fun semesterMenuMarksTheViewedHistoricalSemester() {
+        val current = semester("guilin:2026:autumn", isCurrent = true)
+        val cached = semester("guilin:2025:spring", isCurrent = false)
+
+        // 当前学期永远显示「当前」——即使你正在看它，也不该因此丢掉
+        // 「哪一个是当前学期」这个信息（这是用户明确选定过的取舍）。
+        assertEquals("当前", semesterMenuStatusText(current, viewedSemesterId = "guilin:2026:autumn"))
+        assertEquals("当前", semesterMenuStatusText(current, viewedSemesterId = null))
+
+        // 正在查看的**历史**学期才显示「正在查看」。
+        assertEquals("正在查看", semesterMenuStatusText(cached, viewedSemesterId = "guilin:2025:spring"))
+        assertEquals("已缓存", semesterMenuStatusText(cached, viewedSemesterId = null))
+        assertEquals("已缓存", semesterMenuStatusText(cached, viewedSemesterId = "guilin:2024:autumn"))
+    }
+
     @Test
     fun headerPrimaryTextShowsDayOnlyForCurrentWeek() {
         assertEquals("第9周 周日", scheduleHeaderPrimaryText(9, 9, "周日"))
@@ -65,4 +86,19 @@ class ScheduleHeaderTest {
         assertEquals(7, otherWeek.size)
         assertEquals(false, otherWeek.any { it.isToday })
     }
+
+    private fun semester(
+        id: String,
+        isCurrent: Boolean
+    ) = AcademicSemester(
+        id = id,
+        campus = CampusType.GUILIN,
+        portalYear = 2026,
+        portalYearId = "46",
+        season = SemesterSeason.SPRING,
+        portalTermId = "1",
+        displayName = id,
+        isCurrent = isCurrent,
+        cacheStatus = SemesterCacheStatus.CACHED
+    )
 }

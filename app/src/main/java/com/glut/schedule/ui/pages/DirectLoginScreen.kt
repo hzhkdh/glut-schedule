@@ -327,11 +327,11 @@ private fun SemesterManagementSection(
         selectedSemester.cacheStatus == SemesterCacheStatus.FAILED -> "重新下载"
         else -> "下载并缓存"
     }
-    val bulkCandidates = semesters.count { semester ->
-        !semester.isCurrent &&
-            (semester.cacheStatus == SemesterCacheStatus.NOT_CACHED ||
-                semester.cacheStatus == SemesterCacheStatus.FAILED)
-    }
+    // 「全部下载」按下的语义是**全部重新下载**（协调器 startAll 同样不看 cacheStatus），
+    // 所以这里数的是「有几个历史学期」，不是「有几个待下载」。
+    // 数待下载会造成：历史学期一旦全部缓存，按钮就变成一条灰底状态说明，用户读成「按钮没了」。
+    // 只有「一个历史学期都没有」时按钮才该置灰——那时它确实无事可做。
+    val historicalSemesterCount = semesters.count { semester -> !semester.isCurrent }
     val completedItems = downloadState.items.count { item ->
         item.status == SemesterDownloadItemStatus.SUCCEEDED ||
             item.status == SemesterDownloadItemStatus.FAILED
@@ -347,7 +347,7 @@ private fun SemesterManagementSection(
         )
         Button(
             onClick = onDownloadAll,
-            enabled = !anyDownloadRunning && bulkCandidates > 0,
+            enabled = !anyDownloadRunning && historicalSemesterCount > 0,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = LoginAccent,
@@ -357,10 +357,11 @@ private fun SemesterManagementSection(
             ),
             shape = RoundedCornerShape(12.dp)
         ) {
+            // 文案恒为「全部下载」：不再因为「历史学期均已缓存」而改名，
+            // 否则按钮看起来像被一条状态说明取代了（与小程序 import.wxml 的写法一致）。
             val text = when {
                 downloadState.isRunning && downloadState.mode != SemesterDownloadMode.SINGLE ->
                     "已完成 $completedItems/${downloadState.items.size}"
-                bulkCandidates == 0 -> "历史学期均已缓存"
                 else -> "全部下载"
             }
             Text(text, fontWeight = FontWeight.SemiBold)

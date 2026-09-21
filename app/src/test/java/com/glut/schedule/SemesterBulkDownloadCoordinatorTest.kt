@@ -19,7 +19,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SemesterBulkDownloadCoordinatorTest {
     @Test
-    fun bulkSkipsCurrentAndCachedRunsSequentiallyAndContinuesAfterFailure() = runTest {
+    fun bulkRedownloadsEveryHistoricalSemesterAndSkipsCurrent() = runTest {
         val fetched = mutableListOf<String>()
         val committed = mutableListOf<String>()
         var active = 0
@@ -40,11 +40,15 @@ class SemesterBulkDownloadCoordinatorTest {
         val started = coordinator.startAll() as SemesterDownloadStartResult.Started
         val summary = started.completion.await()!!
 
-        assertEquals(listOf("missing", "failed", "missing-later"), fetched)
-        assertEquals(listOf("missing", "missing-later"), committed)
+        // 「全部下载」的语义是**全部重新下载**：已缓存的 cached 也要重抓一遍，否则按钮
+        // 在历史学期全缓存后就变成了空按钮（这正是本次要修的那个观感问题）。
+        // 只有当前学期例外——它由首页刷新负责，不走这条批量线路。
+        assertEquals(listOf("cached", "missing", "failed", "missing-later"), fetched)
+        assertEquals(listOf("cached", "missing", "missing-later"), committed)
         assertEquals(1, maxActive)
         assertEquals(
             listOf(
+                SemesterDownloadItemStatus.SUCCEEDED,
                 SemesterDownloadItemStatus.SUCCEEDED,
                 SemesterDownloadItemStatus.FAILED,
                 SemesterDownloadItemStatus.SUCCEEDED
@@ -52,6 +56,42 @@ class SemesterBulkDownloadCoordinatorTest {
             summary.items.map { it.status }
         )
         assertEquals(summary, coordinator.state.value.lastBulkSummary)
+    }
+
+    @Test
+    fun bulkStartsEvenWhenEveryHistoricalSemesterIsAlreadyCached() = runTest {
+        val fetched = mutableListOf<String>()
+        val coordinator = coordinator(
+            scope = backgroundScope,
+            semesters = listOf(
+                semester("current", true, SemesterCacheStatus.NOT_CACHED),
+                semester("cached-a", false, SemesterCacheStatus.CACHED),
+                semester("cached-b", false, SemesterCacheStatus.CACHED)
+            ),
+            download = { semester, _ ->
+                fetched += semester.id
+                Result.success(payload())
+            }
+        )
+
+        // 全部已缓存时绝不能再返回 NothingPending：导入页的「全部下载」必须保持可点，
+        // 点下去就是按当前模式把这几个学期重抓一遍。
+        val started = coordinator.startAll() as SemesterDownloadStartResult.Started
+        started.completion.await()
+
+        assertEquals(listOf("cached-a", "cached-b"), fetched)
+    }
+
+    @Test
+    fun bulkReportsNothingPendingOnlyWhenThereIsNoHistoricalSemester() = runTest {
+        val coordinator = coordinator(
+            scope = backgroundScope,
+            semesters = listOf(semester("current", true, SemesterCacheStatus.NOT_CACHED)),
+            download = { _, _ -> Result.success(payload()) }
+        )
+
+        // 没有任何历史学期时才是真的无事可做——此时按钮该置灰。
+        assertTrue(coordinator.startAll() is SemesterDownloadStartResult.NothingPending)
     }
 
     @Test
@@ -131,8 +171,10 @@ class SemesterBulkDownloadCoordinatorTest {
 
         (coordinator.startAll() as SemesterDownloadStartResult.Started).completion.await()
 
+        // 顺序即目录顺序（current 被跳过）：cached → missing → failed → missing-later。
+        // 失败的那次不更新会话，所以后面的学期仍带着上一个成功的 Cookie。
         assertEquals(
-            listOf("cookie", "cookie-missing", "cookie-missing"),
+            listOf("cookie", "cookie-cached", "cookie-missing", "cookie-missing"),
             seenCookies
         )
     }
@@ -140,19 +182,18 @@ class SemesterBulkDownloadCoordinatorTest {
     private fun coordinator(
         scope: kotlinx.coroutines.CoroutineScope,
         owner: suspend () -> String = { "student-a" },
+        semesters: List<AcademicSemester> = listOf(
+            semester("current", true, SemesterCacheStatus.NOT_CACHED),
+            semester("cached", false, SemesterCacheStatus.CACHED),
+            semester("missing", false, SemesterCacheStatus.NOT_CACHED),
+            semester("failed", false, SemesterCacheStatus.FAILED),
+            semester("missing-later", false, SemesterCacheStatus.NOT_CACHED)
+        ),
         download: suspend (AcademicSemester, SemesterDownloadSession) -> Result<AcademicSemesterImportPayload>,
         commit: suspend (AcademicSemester, AcademicSemesterImportPayload) -> Unit = { _, _ -> }
     ) = SemesterBulkDownloadCoordinator(
         scope = scope,
-        semestersProvider = {
-            listOf(
-                semester("current", true, SemesterCacheStatus.NOT_CACHED),
-                semester("cached", false, SemesterCacheStatus.CACHED),
-                semester("missing", false, SemesterCacheStatus.NOT_CACHED),
-                semester("failed", false, SemesterCacheStatus.FAILED),
-                semester("missing-later", false, SemesterCacheStatus.NOT_CACHED)
-            )
-        },
+        semestersProvider = { semesters },
         sessionProvider = {
             SemesterDownloadSession("student-a", "cookie", "https://jw.example")
         },
