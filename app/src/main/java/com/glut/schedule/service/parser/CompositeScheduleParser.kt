@@ -36,4 +36,15 @@ class CompositeScheduleParser(
         }
         return courses
     }
+
+    /** 同 [applyAdjustmentsToCourses]：取第一个真正改动了课程列表的实现。 */
+    override fun applyAdjustmentRemovalsOnly(courses: List<ScheduleCourse>, adjustmentHtml: String): List<ScheduleCourse> {
+        for (parser in parsers) {
+            val result = runCatching {
+                parser.applyAdjustmentRemovalsOnly(courses, adjustmentHtml)
+            }.getOrDefault(courses)
+            if (result != courses) return result
+        }
+        return courses
+    }
 }

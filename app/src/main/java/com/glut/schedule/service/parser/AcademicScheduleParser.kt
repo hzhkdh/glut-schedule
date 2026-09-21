@@ -14,7 +14,25 @@ interface AcademicScheduleParser {
     /** Apply adjustments from HTML to an existing course list (used when courses come from
      *  a different source than adjustments, e.g. Nanning currcourse.jsdo + showTimetable.do). */
     fun applyAdjustmentsToCourses(courses: List<ScheduleCourse>, adjustmentHtml: String): List<ScheduleCourse> = courses
+
+    /**
+     * 只按调课表**移除**被调走的原周次，再把补课时段去重后追加。模式2（纯个人课表）专用。
+     *
+     * 为什么不能直接用 [applyAdjustmentsToCourses]：个人课表是「只做加法」的——它已经把补课
+     * 时段列了出来，只是不会把被调走的那一周从原课次里去掉。再追加一次补课就会出现两张重叠
+     * 卡片（历史 5a774d2 的重复卡片正是这么来的），因此去重必须放宽到不看教室。
+     */
+    fun applyAdjustmentRemovalsOnly(courses: List<ScheduleCourse>, adjustmentHtml: String): List<ScheduleCourse> = courses
 }
+
+/**
+ * 教室文本规范化，仅用于等值比较：去掉全部空白并转大写。
+ *
+ * **不做包含/前缀等模糊匹配**——那会把 06105D 与 06106D 这类相邻教室混为一谈。
+ * 与小程序 `utils/parser.js` 的 `normalizeRoomText` 保持同一口径。
+ */
+private fun normalizeRoom(value: String): String =
+    value.filterNot { it.isWhitespace() }.uppercase()
 
 /**
  * 解析个人课表里的显示节次范围，并统一映射为内部节次。
@@ -89,6 +107,37 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             if (isMakeupCoveredByGrid(afterRemoval, mk.title, mkOcc.dayOfWeek,
                     mkOcc.startSection, mkOcc.endSection, mkOcc.note, adj.makeupWeek)) null else mk
         }
+        return mergeCompatibleCourses(afterRemoval + dedupedMakeups)
+    }
+
+    /**
+     * 模式2（纯个人课表）专用：按调课表移除被调走的原周次，再追加补课时段。
+     *
+     * 与 [applyAdjustmentsToCourses] 的两点差别，都源自个人课表的「只做加法」特性
+     * （它已列出补课时段，只是不删原周次）：
+     *  1) 移除走**严格教室匹配**——同一时段可能同时存在原课次与补课次，空教室通配会把补课次一起删掉；
+     *  2) 追加的**去重放宽到不看教室**——个人课表可能已用另一个教室文本列出该时段，
+     *     教室精确相等会让去重失效、追加出第二张卡片（历史 5a774d2 的重复卡片即此）。
+     * 另：没有补课时段的纯停课记录不生成课次，避免留下「第0周」的幽灵课程。
+     */
+    override fun applyAdjustmentRemovalsOnly(
+        courses: List<ScheduleCourse>,
+        adjustmentHtml: String
+    ): List<ScheduleCourse> {
+        if (courses.isEmpty() || adjustmentHtml.isBlank()) return courses
+        val hasNoonInTimetable = adjustmentHtml.contains("中午")
+        val adjustments = parseSupplementalAdjustmentRows(adjustmentHtml, hasNoonInTimetable)
+        if (adjustments.isEmpty()) return courses
+        val afterRemoval = applyAdjustmentRemovals(courses, adjustments, requireOriginalRoom = true)
+        val dedupedMakeups = adjustments
+            .filter { it.makeupWeek > 0 && it.makeupDay > 0 }
+            .mapNotNull { adj ->
+                val mk = adj.toMakeupCourse()
+                val mkOcc = mk.occurrences.single()
+                if (isMakeupCoveredByGrid(afterRemoval, mk.title, mkOcc.dayOfWeek,
+                        mkOcc.startSection, mkOcc.endSection, mkOcc.note, adj.makeupWeek,
+                        ignoreRoom = true)) null else mk
+            }
         return mergeCompatibleCourses(afterRemoval + dedupedMakeups)
     }
 
@@ -507,9 +556,18 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             makeupWeek, makeupDay, makeupStart, makeupEnd, makeupRoom)
     }
 
+    /**
+     * 移除调课对应的原周次。
+     *
+     * [requireOriginalRoom] 控制教室匹配口径：
+     *  - false（默认）：保留历史行为，即「原教室为空时通配任意教室」。南宁与模式1 依赖它。
+     *  - true：模式2 桂林专用。要求调课表的原教室**非空**，且与课次教室规范化后相等；
+     *    原教室未知时宁可少删——空教室通配会顺带命中「同天同节次同周、只是教室不同」的补课时段。
+     */
     private fun applyAdjustmentRemovals(
         courses: List<ScheduleCourse>,
-        adjustments: List<ScheduleAdjustment>
+        adjustments: List<ScheduleAdjustment>,
+        requireOriginalRoom: Boolean = false
     ): List<ScheduleCourse> {
         if (adjustments.isEmpty()) return courses
         // 代课（替课）不取消原课，只增加补课；调课/停课才需要移除原周
@@ -517,7 +575,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         if (removalAdjustments.isEmpty()) return courses
         return courses.mapNotNull { course ->
             val updatedOccurrences = course.occurrences.flatMap { occurrence ->
-                val adjustment = removalAdjustments.firstOrNull { it.matches(course, occurrence) }
+                val adjustment = removalAdjustments.firstOrNull { it.matches(course, occurrence, requireOriginalRoom) }
                 if (adjustment == null) {
                     listOf(occurrence)
                 } else {
@@ -560,11 +618,16 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
     /**
      * 检查调整产生的 makeup 是否已被网格中已有的课程覆盖。
      * 教务网格通常会直接包含调课/补课后的时间，避免重复添加导致冲突角标。
+     *
+     * [ignoreRoom] 为 true 时不比较教室，只看「课程名 + 星期 + 节次 + 周次」。模式2 专用：
+     * 个人课表可能已用**另一个教室文本**列出同一补课时段（例如原教室写「线上教学」、
+     * 补课写「05308D」），此时若仍要求教室精确相等，去重失效就会追加出第二张卡片。
      */
     private fun isMakeupCoveredByGrid(
         gridCourses: List<ScheduleCourse>,
         title: String, dayOfWeek: Int, startSection: Int, endSection: Int,
-        note: String, week: Int
+        note: String, week: Int,
+        ignoreRoom: Boolean = false
     ): Boolean {
         if (week <= 0) return false
         return gridCourses.any { gc ->
@@ -573,7 +636,7 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                 occ.dayOfWeek == dayOfWeek &&
                 occ.startSection == startSection &&
                 occ.endSection == endSection &&
-                occ.note.trim() == note.trim() &&
+                (ignoreRoom || occ.note.trim() == note.trim()) &&
                 com.glut.schedule.data.model.isWeekTextActive(occ.weekText, week)
             }
         }
@@ -968,13 +1031,24 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         val makeupEndSection: Int,
         val makeupRoom: String
     ) {
-        fun matches(course: ScheduleCourse, occurrence: CourseOccurrence): Boolean {
+        fun matches(
+            course: ScheduleCourse,
+            occurrence: CourseOccurrence,
+            requireOriginalRoom: Boolean = false
+        ): Boolean {
+            val occurrenceRoom = occurrence.note.ifBlank { course.room }
+            // 严格口径：原教室必须非空且实打实相等；原教室未知时拒绝匹配（宁可少删，不可错删）
+            val roomMatched = if (requireOriginalRoom) {
+                originalRoom.isNotBlank() && normalizeRoom(originalRoom) == normalizeRoom(occurrenceRoom)
+            } else {
+                occurrenceRoom.trim() == originalRoom.trim()
+            }
             return course.title.trim() == title.trim() &&
                 course.teacher.trim() == teacher.trim() &&
                 occurrence.dayOfWeek == originalDay &&
                 occurrence.startSection == originalStartSection &&
                 occurrence.endSection == originalEndSection &&
-                occurrence.note.trim().ifBlank { course.room.trim() } == originalRoom.trim() &&
+                roomMatched &&
                 com.glut.schedule.data.model.isWeekTextActive(occurrence.weekText, originalWeek)
         }
 

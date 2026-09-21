@@ -1,6 +1,8 @@
 package com.glut.schedule
 
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
+import com.glut.schedule.data.model.CourseOccurrence
+import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.academicWeeksForText
 import com.glut.schedule.data.model.isActiveInWeek
 import org.json.JSONObject
@@ -841,5 +843,173 @@ class AcademicScheduleParserTest {
         assertEquals(2, adjustments.map { it.id }.distinct().size)
         assertEquals(setOf(5, 7), adjustments.map { it.originalStartSection }.toSet())
         assertEquals(setOf(5, 7), adjustments.map { it.makeupStartSection }.toSet())
+    }
+
+    // ==================== 模式2：停课 / 调课 / 补课（真实数据） ====================
+    //
+    // 个人课表是「只做加法」的：它把补课时段直接列出来，却不会把被调走的那一周从原课次里
+    // 去掉；「哪一周被停掉」只写在课程安排页的调课表里。模式2 因此必须读它——
+    // 但只能移除，追加要放宽去重，否则会出现两张重叠卡片（角标「2」）。
+
+    /**
+     * 真实的课程安排页调课表形状：17 列、两行表头。
+     * 末尾的「中午1/中午2」用于让 `hasNoon` 判定为真——真实页面的大节课表网格里就有这两行，
+     * 少了它「第5、6节」会被算成内部 5、6 而不是 7、8。
+     */
+    private fun realAdjustmentTable(rows: String) = """
+        <table>
+          <tr>
+            <td>类型</td><td>课程号</td><td>课程名</td><td>课序号</td><td>教师姓名</td><td>代课人</td><td>学时</td>
+            <td>停/代课时间地点</td><td></td><td></td><td></td><td></td>
+            <td>补课时间地点</td><td></td><td></td><td></td><td></td>
+          </tr>
+          <tr>
+            <td>日期</td><td>周</td><td>星期</td><td>节次</td><td>教室</td><td>日期</td><td>周</td><td>星期</td><td>节次</td><td>教室</td>
+          </tr>
+          $rows
+        </table>
+        <table><tr><td>中午1</td><td>中午2</td></tr></table>
+    """.trimIndent()
+
+    private fun adjustmentRow(
+        type: String,
+        title: String,
+        teacher: String,
+        originalWeek: String,
+        originalDay: String,
+        originalSection: String,
+        originalRoom: String,
+        makeupWeek: String,
+        makeupDay: String,
+        makeupSection: String,
+        makeupRoom: String
+    ) = """
+        <tr>
+          <td>$type</td><td>600000</td><td>$title</td><td>1</td><td>$teacher</td><td></td><td>2.0</td>
+          <td>04-21</td><td>$originalWeek</td><td>$originalDay</td><td>$originalSection</td><td>$originalRoom</td>
+          <td>04-21</td><td>$makeupWeek</td><td>$makeupDay</td><td>$makeupSection</td><td>$makeupRoom</td>
+        </tr>
+    """.trimIndent()
+
+    private fun courseWith(
+        title: String, teacher: String, room: String,
+        day: Int, start: Int, end: Int, weekText: String
+    ): ScheduleCourse {
+        val id = "test-$title-$room-$day-$start"
+        return ScheduleCourse(
+            id = id, title = title, room = room, teacher = teacher, colorHex = "",
+            occurrences = listOf(
+                CourseOccurrence(
+                    id = "$id-occ", courseId = id,
+                    dayOfWeek = day, startSection = start, endSection = end,
+                    weekText = weekText, note = room
+                )
+            )
+        )
+    }
+
+    private fun ScheduleCourse.singleOccurrence() = occurrences.single()
+
+    private fun ScheduleCourse.singleWeekText() = singleOccurrence().weekText
+
+    @Test
+    fun removalOnlyRemovesAdjustedOriginalWeekAndKeepsMakeupOccurrence() {
+        val courses = listOf(
+            courseWith("算法设计与分析", "刘汉英", "06105D", 1, 7, 8, "1-12周"),
+            courseWith("算法设计与分析", "刘汉英", "07118D", 1, 7, 8, "第8周")
+        )
+        val html = realAdjustmentTable(
+            adjustmentRow("调课", "算法设计与分析", "刘汉英", "8", "周一", "第5、6节", "06105D",
+                "8", "周一", "第5、6节", "07118D")
+        )
+
+        val result = parser.applyAdjustmentRemovalsOnly(courses, html)
+
+        val shape = result.flatMap { c -> c.occurrences.map { "${c.room}@${it.weekText}" } }.sorted()
+        assertEquals("不得凭空多出课程：$shape", 2, result.size)
+        val original = result.single { it.room == "06105D" }
+        assertFalse("被调走的第 8 周必须移除：$shape", original.occurrences.any { it.isActiveInWeek(8) })
+        assertTrue("第 8 周两侧的正常周次必须保留：$shape", original.occurrences.any { it.isActiveInWeek(7) })
+        assertEquals("补课时段只能有一张卡片：$shape", 1, result.count { it.room == "07118D" })
+    }
+
+    @Test
+    fun removalOnlyNeverTouchesCoursesWithoutAdjustmentRows() {
+        // 历史上曾把「数据库原理及应用B 整门课消失」误归因于调课移除，这里作为回归锁：
+        // 调课表里没有它的记录，它就必须原样保留。
+        val courses = listOf(
+            courseWith("数据库原理及应用B", "樊婷", "06105D", 1, 1, 2, "1-12周"),
+            courseWith("数据库原理及应用B", "樊婷", "06409D", 3, 5, 6, "1-7周")
+        )
+        val html = realAdjustmentTable(
+            adjustmentRow("调课", "算法设计与分析", "刘汉英", "8", "周一", "第5、6节", "06105D",
+                "8", "周一", "第5、6节", "07118D")
+        )
+
+        val result = parser.applyAdjustmentRemovalsOnly(courses, html)
+
+        // 只比对这门课本身：调课表里**别的课**（算法设计与分析）的补课时段会被正常追加，
+        // 不该影响本负例的判定。
+        assertEquals(
+            courses.map { it.room to it.singleWeekText() }.toSet(),
+            result.filter { it.title == "数据库原理及应用B" }
+                .map { it.room to it.singleWeekText() }
+                .toSet()
+        )
+    }
+
+    @Test
+    fun removalOnlyIgnoresBlankOriginalRoom() {
+        // 原教室未知时宁可少删：空教室若按星期/节次通配，会连「同天同节次同周、只是教室不同」
+        // 的补课时段一起删掉。
+        val courses = listOf(
+            courseWith("算法设计与分析", "刘汉英", "06105D", 1, 7, 8, "1-12周"),
+            courseWith("算法设计与分析", "刘汉英", "07118D", 1, 7, 8, "第8周")
+        )
+        val html = realAdjustmentTable(
+            adjustmentRow("调课", "算法设计与分析", "刘汉英", "8", "周一", "第5、6节", "",
+                "8", "周一", "第5、6节", "07118D")
+        )
+
+        val result = parser.applyAdjustmentRemovalsOnly(courses, html)
+
+        assertTrue(
+            "原教室未知时必须拒绝匹配——宁可少删，不可错删",
+            result.single { it.room == "06105D" }.occurrences.any { it.isActiveInWeek(8) }
+        )
+        assertEquals("补课卡片不得被空教室通配误删", 1, result.count { it.room == "07118D" })
+    }
+
+    @Test
+    fun daikeRowsNeverRemoveOriginalWeek() {
+        // 代课（替课）只是换人上，原课次照常——不得移除任何周次，也不得生成补课。
+        val courses = listOf(courseWith("算法设计与分析", "刘汉英", "06105D", 1, 7, 8, "1-12周"))
+        val html = realAdjustmentTable(
+            adjustmentRow("代课", "算法设计与分析", "刘汉英", "8", "周一", "第5、6节", "06105D",
+                "", "", "", "")
+        )
+
+        val result = parser.applyAdjustmentRemovalsOnly(courses, html)
+
+        assertEquals(1, result.size)
+        assertTrue(result.single().occurrences.any { it.isActiveInWeek(8) })
+    }
+
+    @Test
+    fun legacyRemovalPathStaysUnchangedForNanning() {
+        // 南宁走的 applyAdjustmentsToCourses 必须保持历史口径：教室精确相等才算命中，
+        // 命中则照常移除该周。模式2 的严格口径只作用于新方法，不得回头改动这条老路径。
+        val courses = listOf(courseWith("算法设计与分析", "刘汉英", "06105D", 1, 7, 8, "1-12周"))
+        val html = realAdjustmentTable(
+            adjustmentRow("调课", "算法设计与分析", "刘汉英", "8", "周一", "第5、6节", "06105D",
+                "8", "周一", "第5、6节", "07118D")
+        )
+
+        val result = parser.applyAdjustmentsToCourses(courses, html)
+
+        assertFalse(
+            "老路径（南宁）在原教室精确相等时照常移除该周",
+            result.single { it.room == "06105D" }.occurrences.any { it.isActiveInWeek(8) }
+        )
     }
 }

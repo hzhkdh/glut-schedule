@@ -301,13 +301,21 @@ class AcademicSemesterImportService(
         // ===== 模式2（PERSONAL_ONLY）：不逐周下载，时间/教室/教师全部来自个人课表 =====
         // 个人课表在这里就是权威时间来源，必须保留 occurrences（模式1 会先清空再回填）。
         //
-        // 只在南宁补调：桂林的调课/补课已经内含在个人课表页里，再对课程安排页的调课表
-        // 跑一遍 applyAdjustmentRemovals，会把本来正常的课次当成「调课原时段」误删
-        // （实测：数据库原理及应用B 整门课消失）。这与历史实现（05db024^）一致。
+        // 个人课表是「只做加法」的：它会把补课时段直接列出来，却**不会**把被调走的那一周从原
+        // 课次里去掉；「哪一周被停掉」只写在课程安排页（timetableHtml）的调课表里。
+        // 因此桂林也必须用它——只做移除，补课时段经**宽松去重**后追加（个人课表多半已列出，
+        // 去重会命中而不重复成两张卡片）。
+        //
+        // 南宁仍走 applyAdjustmentsToCourses（移除 + 追加，教室宽松匹配），行为不变。
+        //
+        // 注：历史上曾把「数据库原理及应用B 整门课消失」归因于这里的调课移除，据此让桂林
+        // 什么都不做。复盘见 docs/桂林教务HTTPS跳转导致周次课表导入失败问题总结.md：真因是
+        // CompositeScheduleParser 把桂林页面交给了不做中午偏移的南宁解析器，导致「第5、6节」
+        // 落进中午槽位被隐藏，已由 offsetSectionForNoon 修复，与本移除逻辑无关。
         courses = if (semester.campus == CampusType.NANNING) {
             scheduleParser.applyAdjustmentsToCourses(personalCourses, timetableHtml)
         } else {
-            personalCourses
+            scheduleParser.applyAdjustmentRemovalsOnly(personalCourses, timetableHtml)
         }
         // 模式2 拿不到周次课表落地页，也就没有门户的周次列表（模式1 在 availableWeeks 里取）。
         // 这里绝不能留 null：CourseTimeStats 会把 portalMaxWeek 为 null 的学期**整学期**
