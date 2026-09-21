@@ -1,6 +1,7 @@
 package com.glut.schedule
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -93,11 +94,56 @@ class HolidayAdjustmentsUiContractTest {
     }
 
     @Test
+    fun dialogsPinLightContainerColorsInsteadOfInheritingTheDarkTheme() {
+        val adjustments = page("HolidayAdjustmentsScreen.kt")
+        val score = page("ScoreScreen.kt")
+
+        // Material3 的 AlertDialog / DatePicker 默认容器色是 surfaceContainerHigh，而本应用
+        // 主题是 darkColorScheme，其默认值是深灰 #2B2930（黑底白字）。因此凡是不显式传色的
+        // 弹窗都会渲染成黑色 UI —— 这两个页面必须显式指定。
+        // 两个 AlertDialog 各一套三件套（日期选择器的容器色走 colors 对象，见下）。
+        assertEquals(
+            2,
+            Regex("containerColor = PanelBg,\\s*titleContentColor = TextPrimary")
+                .findAll(adjustments).count()
+        )
+        assertTrue(adjustments.contains("colors = pickerColors"))
+        assertTrue(adjustments.contains("titleContentColor = TextPrimary"))
+        assertTrue(adjustments.contains("textContentColor = TextSecondary"))
+        assertTrue(adjustments.contains("DatePickerDefaults.colors("))
+        assertTrue(score.contains("containerColor = ScoreCardBg"))
+        assertTrue(score.contains("titleContentColor = ScorePrimary"))
+        assertTrue(score.contains("textContentColor = ScoreSecondary"))
+    }
+
+    @Test
     fun semesterOverviewLoadsEveryYearTheSemesterSpans() {
         val overview = page("SemesterOverviewViewModel.kt")
 
-        assertTrue(overview.contains("for (year in semesterStart.year..semesterEnd.year)"))
+        // 秋季学期跨年到次年 1 月，只取「今年」会漏掉元旦。
+        assertTrue(overview.contains("val years = semesterStart.year..semesterEnd.year"))
+        assertTrue(overview.contains("for (year in years)"))
+        // 与首页角标共用同一个取数入口，避免两条路径口径漂移。
+        assertTrue(overview.contains("refreshMissingHolidayYears("))
         assertFalse(overview.contains("private suspend fun fetchHolidays("))
+    }
+
+    @Test
+    fun holidayFetchHappensOnlyOnUserInitiatedRefresh() {
+        val schedule = page("ScheduleViewModel.kt")
+        val overview = page("SemesterOverviewViewModel.kt")
+        val import = page("DirectLoginViewModel.kt")
+
+        // 三个主动入口：刷新课表 / 刷新学期概览 / 重新导入课表。
+        assertTrue(schedule.contains("refreshHolidayYears()"))
+        assertTrue(overview.contains("loadHolidays(fetchMissing = true)"))
+        assertTrue(import.contains("refreshMissingHolidayYears("))
+        // 进入页面只读缓存，不做任何自动请求。
+        assertTrue(overview.contains("loadHolidays(fetchMissing = false)"))
+        // 不能又在 init 里自动取数——那等于把「只在主动刷新时请求」重新变成后台轮询。
+        assertFalse(schedule.contains("ensureHolidayYearsForCurrentSemester"))
+        // 出现次数就是「定义 1 次 + 刷新入口调用 1 次」；多一处即意味着又冒出了自动触发点。
+        assertEquals(2, Regex("refreshHolidayYears").findAll(schedule).count())
     }
 
     private fun source(name: String): String {

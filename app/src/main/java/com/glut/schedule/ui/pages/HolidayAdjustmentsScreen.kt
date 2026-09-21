@@ -17,6 +17,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -245,6 +246,11 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
     pendingDelete?.let { rule ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
+            // 显式指定容器色与文字色：不传会落到 Material3 的 surfaceContainerHigh，
+            // 而本应用主题是 darkColorScheme，其默认值是深灰 #2B2930（黑底白字）。
+            containerColor = PanelBg,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary,
             title = { Text("删除调课？") },
             text = { Text("${rule.sourceDate} 复制到 ${rule.targetDate} 的课程将不再显示。") },
             confirmButton = {
@@ -262,6 +268,9 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
     holidayConfirmTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { holidayConfirmTarget = null },
+            containerColor = PanelBg,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary,
             title = { Text("目标日为节假日") },
             text = { Text("该日首页仍会显示「休」，但课程会正常追加到该日期。") },
             confirmButton = {
@@ -362,8 +371,12 @@ private fun HolidayAdjustmentDatePickerDialog(
         initialSelectedDateMillis = localDateToUtcMillis(initialDate ?: start),
         selectableDates = remember(start, end) { SemesterRangeSelectableDates(start, end) }
     )
+    val pickerColors = holidayAdjustmentDatePickerColors()
     DatePickerDialog(
         onDismissRequest = onDismiss,
+        // 与两个 AlertDialog 同理：默认容器色是主题里未覆盖的 surfaceContainerHigh（深灰）。
+        // 弹窗本体与内部日历共用同一套颜色，只改其中一处会留下深色的另一半。
+        colors = pickerColors,
         confirmButton = {
             TextButton(onClick = {
                 pickerState.selectedDateMillis
@@ -373,9 +386,36 @@ private fun HolidayAdjustmentDatePickerDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     ) {
-        DatePicker(state = pickerState)
+        DatePicker(state = pickerState, colors = pickerColors)
     }
 }
+
+/**
+ * 日期选择器的配色。
+ *
+ * 这一整套都必须显式给：`DatePicker` 内部各区域（标题区、星期标签、日号、选中态、今日边框）
+ * 各有自己的槽位，只改容器色会留下深色的标题与深色的日号。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun holidayAdjustmentDatePickerColors() = DatePickerDefaults.colors(
+    containerColor = PanelBg,
+    titleContentColor = TextSecondary,
+    headlineContentColor = TextPrimary,
+    weekdayContentColor = TextSecondary,
+    subheadContentColor = TextSecondary,
+    navigationContentColor = TextPrimary,
+    yearContentColor = TextPrimary,
+    currentYearContentColor = Accent,
+    selectedYearContentColor = Color.White,
+    selectedYearContainerColor = Accent,
+    dayContentColor = TextPrimary,
+    selectedDayContainerColor = Accent,
+    selectedDayContentColor = Color.White,
+    todayContentColor = Accent,
+    todayDateBorderColor = Accent,
+    dividerColor = DividerColor
+)
 
 /** 选择范围限定在当前学期起止日期内，与小程序 `<picker mode="date">` 的 start/end 一致。 */
 private class SemesterRangeSelectableDates(

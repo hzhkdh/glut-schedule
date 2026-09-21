@@ -37,6 +37,8 @@ import com.glut.schedule.service.network.MAX_BOOLEAN_RESPONSE_BYTES
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.MAX_IMAGE_RESPONSE_BYTES
 import com.glut.schedule.service.network.readBytesLimited
+import com.glut.schedule.service.holiday.TimorHolidayClient
+import com.glut.schedule.service.holiday.refreshMissingHolidayYears
 import com.glut.schedule.service.network.readStringLimited
 import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.parser.AcademicSemesterCatalogPlan
@@ -128,7 +130,8 @@ class DirectLoginViewModel(
     private val scheduleParser: AcademicScheduleParser,
     private val scoreParser: ScoreParser,
     private val gradeExamParser: GradeExamParser = GradeExamParser(),
-    private val studyPlanParser: StudyPlanParser = StudyPlanParser()
+    private val studyPlanParser: StudyPlanParser = StudyPlanParser(),
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
 ) : ViewModel() {
     private val loginGuard = SingleFlightGuard()
 
@@ -725,6 +728,18 @@ class DirectLoginViewModel(
             settingsStore.setSemesterStartMonday(resolvedCalendar.startMonday)
             settingsStore.setSemesterEndDate(resolvedCalendar.endDate)
             settingsStore.setCurrentWeekNumber(resolvedCalendar.currentWeekNumber)
+            // 学期日期刚写定，此时补齐该学期跨越年份的节假日数据。
+            // 「重新导入课表」是新用户拿到节假日角标的唯一入口——他们必须先导入才能用，
+            // 而其余取数入口（刷新课表 / 刷新学期概览）都需要用户主动点击。
+            // 不依赖教务会话，失败也不影响导入，因此单独兜住异常。
+            runCatching {
+                refreshMissingHolidayYears(
+                    client = timorHolidayClient,
+                    years = resolvedCalendar.startMonday.year..resolvedCalendar.endDate.year,
+                    cachedYears = settingsStore.holidayCacheByYear.first(),
+                    saveYear = settingsStore::setHolidayYearCache
+                )
+            }
             scheduleRepository.replaceSemesterSchedule(
                 semester = currentSemester,
                 courses = currentPayload.courses,
@@ -1036,7 +1051,8 @@ class DirectLoginViewModelFactory(
     private val scheduleParser: AcademicScheduleParser,
     private val scoreParser: ScoreParser,
     private val gradeExamParser: GradeExamParser = GradeExamParser(),
-    private val studyPlanParser: StudyPlanParser = StudyPlanParser()
+    private val studyPlanParser: StudyPlanParser = StudyPlanParser(),
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -1044,7 +1060,7 @@ class DirectLoginViewModelFactory(
             loginService, sessionStore, credentialStore,
             scheduleRepository, settingsStore, apiProbeService,
             academicExamService, semesterImportService, semesterBulkDownloadCoordinator,
-            scheduleParser, scoreParser, gradeExamParser, studyPlanParser
+            scheduleParser, scoreParser, gradeExamParser, studyPlanParser, timorHolidayClient
         ) as T
     }
 }

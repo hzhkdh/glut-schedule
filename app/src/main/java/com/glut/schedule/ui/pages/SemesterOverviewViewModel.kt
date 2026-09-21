@@ -24,6 +24,7 @@ import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readStringLimited
 import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
 import com.glut.schedule.service.holiday.TimorHolidayClient
+import com.glut.schedule.service.holiday.refreshMissingHolidayYears
 import com.glut.schedule.ui.SingleFlightGuard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -120,7 +121,8 @@ class SemesterOverviewViewModel(
     private val _holidays = MutableStateFlow<List<HolidayDisplay>>(emptyList())
 
     init {
-        viewModelScope.launch { loadHolidays() }
+        // 进入页面只读缓存，不联网——联网只在用户点「刷新」时发生。
+        viewModelScope.launch { loadHolidays(fetchMissing = false) }
     }
 
     val uiState: StateFlow<SemesterOverviewUiState> = combine(
@@ -216,7 +218,7 @@ class SemesterOverviewViewModel(
         viewModelScope.launch {
             _message.value = "正在刷新..."
             try {
-                loadHolidays()
+                loadHolidays(fetchMissing = true)
                 _message.value = ""
             } catch (e: Exception) {
                 _message.value = "刷新失败: ${e.message}"
@@ -351,26 +353,37 @@ class SemesterOverviewViewModel(
         }
     }
 
-    private suspend fun loadHolidays() {
+    /**
+     * 载入节假日列表。
+     *
+     * [fetchMissing] 为 true 时才联网——只在用户点「刷新」时传 true；进入页面时只读缓存，
+     * 不做任何自动请求。
+     */
+    private suspend fun loadHolidays(fetchMissing: Boolean) {
         val today = LocalDate.now()
         val semesterStart = settingsStore.semesterStartMonday.first()
         val semesterEnd = settingsStore.semesterEndDate.first()
 
-        // 学期会跨越自然年（秋季学期到次年 1 月），必须逐年取；只取「今年」会漏掉
-        // 元旦之类的假期。缓存按数据所属年份存，缺哪年补哪年。
+        // 学期会跨越自然年（秋季学期到次年 1 月），必须逐年取；只取「今年」会漏掉元旦。
+        // 缓存按数据所属年份存；holidayCacheByYear 已过读闸门，被污染 / 未公布的年份
+        // 在这里就是「缺失」，用户刷新时会重新拉取。
+        val years = semesterStart.year..semesterEnd.year
+        if (fetchMissing) {
+            refreshMissingHolidayYears(
+                client = timorHolidayClient,
+                years = years,
+                cachedYears = settingsStore.holidayCacheByYear.first(),
+                saveYear = settingsStore::setHolidayYearCache
+            )
+        }
+        val cached = settingsStore.holidayCacheByYear.first()
         val allHolidays = mutableListOf<HolidayInfo>()
-        for (year in semesterStart.year..semesterEnd.year) {
-            val cached = settingsStore.holidayCacheByYear.first()[year].orEmpty()
-            val json = if (cached.isNotBlank()) {
-                Log.d(TAG, "Using cached holidays (year $year)")
-                cached
-            } else {
-                Log.d(TAG, "Fetching holidays from API (year $year)")
-                timorHolidayClient.fetchYear(year).also { raw ->
-                    if (raw.isNotBlank()) settingsStore.setHolidayYearCache(year, raw)
-                }
-            }
-            allHolidays += TimorHolidayCalendarParser.parse(json, year)?.holidays.orEmpty()
+        for (year in years) {
+            Log.d(TAG, "Using cached holidays (year $year)")
+            allHolidays += TimorHolidayCalendarParser.parse(
+                cached[year].orEmpty(),
+                year
+            )?.holidays.orEmpty()
         }
 
         val displays = allHolidays

@@ -17,13 +17,16 @@ import java.util.concurrent.TimeUnit
  * 失败一律返回空串，由调用方决定是否保留旧缓存——网络异常不该清掉已缓存的数据。
  */
 class TimorHolidayClient(
-    private val client: OkHttpClient = defaultClient()
+    private val client: OkHttpClient = defaultClient(),
+    // 可注入只是为了让测试指向本地 MockWebServer——单元测试绝不能真的访问线上接口。
+    // 生产一律用默认的 timor 地址。
+    private val baseUrl: String = BASE_URL
 ) {
     suspend fun fetchYear(year: Int): String = withContext(Dispatchers.IO) {
         if (year <= 0) return@withContext ""
         try {
             val request = Request.Builder()
-                .url("$BASE_URL$year")
+                .url("$baseUrl$year")
                 .header("User-Agent", USER_AGENT)
                 .get()
                 .build()

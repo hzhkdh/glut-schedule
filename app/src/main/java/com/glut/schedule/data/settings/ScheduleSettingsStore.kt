@@ -31,6 +31,7 @@ import com.glut.schedule.service.greeting.GreetingTemplateCache
 import com.glut.schedule.service.greeting.GreetingTemplateCacheSnapshot
 import com.glut.schedule.service.holiday.encodeHolidayYearCache
 import com.glut.schedule.service.holiday.holidayYearCache
+import com.glut.schedule.service.holiday.isUsableHolidayYearPayload
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -550,8 +551,15 @@ class ScheduleSettingsStore(
         holidayCacheYearsFrom(preferences)
     }
 
+    /**
+     * 写入年度缓存。**写闸门**：只有真能渲染出假期的载荷才落盘。
+     *
+     * timor 对未公布年份返回的是合法但内容为空的 `{"code":0,"holiday":{}}`；放行它会让
+     * 「未公布」变成「已缓存」，元旦之类的固定节日再也不会有角标。读数方另有读闸门，
+     * 这里再拦一道是为了不把坏数据写进磁盘。
+     */
     suspend fun setHolidayYearCache(year: Int, json: String) {
-        if (year <= 0 || json.isBlank()) return
+        if (year <= 0 || !isUsableHolidayYearPayload(json, year)) return
         context.scheduleSettings.edit { preferences ->
             // 合并而不是覆盖：写入前必须先经过同一个读取函数，否则「旧键兜底」的条目
             // 会在第一次写入新键后凭空消失——旧数据被静默丢弃，角标与学期概览都会短暂回退。

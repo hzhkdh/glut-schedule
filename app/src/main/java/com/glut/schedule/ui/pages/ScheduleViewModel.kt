@@ -43,6 +43,7 @@ import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
 import com.glut.schedule.service.holiday.TimorHolidayClient
+import com.glut.schedule.service.holiday.refreshMissingHolidayYears
 import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.academic.shouldUseExistingAcademicCookie
 import kotlinx.coroutines.Dispatchers
@@ -181,8 +182,6 @@ class ScheduleViewModel(
         viewModelScope.launch {
             repository.seedIfEmpty()
         }
-
-        ensureHolidayYearsForCurrentSemester()
 
         val calendarExtrasState = combine(
             holidayDatesFlow(),
@@ -484,6 +483,9 @@ class ScheduleViewModel(
         viewModelScope.launch {
             message.value = "正在刷新课表..."
             needsInteractiveLogin.value = false
+            // 用户主动刷新时顺带补齐节假日数据。与教务导入互不依赖：
+            // 即使下面登录 / 抓取失败，节假日也已经更新过了。
+            refreshHolidayYears()
             try {
                 val oldCourseCount = repository.courses.first().countDistinctCourseTitles()
                 val existingCookie = sessionStore.academicCookie.first()
@@ -642,29 +644,25 @@ class ScheduleViewModel(
     }
 
     /**
-     * 首页节假日角标的数据来源：按学期跨越的年份静默补齐本地缺失的年度数据。
+     * 补齐当前学期跨越年份的节假日数据。
      *
-     * 与小程序 `schedule.js` 的 `_ensureHolidayCache` 一致——只在查看当前学期时请求、
-     * 缺哪年补哪年、失败不提示也不清掉已有缓存，用户无需为此做任何操作。
-     * 学期起止日期设置的永远是当前学期的值，因此这里天然不会为历史学期发请求。
+     * **只在用户点「刷新」时调用**：没有定时、也没有启动时请求——用户没主动更新数据时，
+     * App 一次都不该打 timor 接口。用户刷新后即使 2027 仍未公布，也只是这次白跑一趟，
+     * 下次刷新会再问；缓存里的坏数据由读闸门剔除，不会让「已缓存」的假象挡住重试。
      */
-    private fun ensureHolidayYearsForCurrentSemester() {
-        viewModelScope.launch {
-            settingsStore.semesterStartMonday
-                .combine(settingsStore.semesterEndDate) { start, end -> start.year..end.year }
-                .distinctUntilChanged()
-                .collect { years -> fetchMissingHolidayYears(years) }
-        }
-    }
-
-    private suspend fun fetchMissingHolidayYears(years: IntRange) {
-        if (years.isEmpty() || !holidayFetchGuard.tryStart()) return
+    private suspend fun refreshHolidayYears() {
+        if (!holidayFetchGuard.tryStart()) return
         try {
-            val cached = settingsStore.holidayCacheByYear.first()
-            years.filter { cached[it].isNullOrBlank() }.forEach { year ->
-                val raw = timorHolidayClient.fetchYear(year)
-                if (raw.isNotBlank()) settingsStore.setHolidayYearCache(year, raw)
-            }
+            val years = settingsStore.semesterStartMonday.first().year..
+                settingsStore.semesterEndDate.first().year
+            if (years.isEmpty()) return
+            refreshMissingHolidayYears(
+                client = timorHolidayClient,
+                years = years,
+                // holidayCacheByYear 已过读闸门：被污染的年份在这里就是「缺失」。
+                cachedYears = settingsStore.holidayCacheByYear.first(),
+                saveYear = settingsStore::setHolidayYearCache
+            )
         } finally {
             holidayFetchGuard.finish()
         }

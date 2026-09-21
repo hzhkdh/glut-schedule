@@ -1,9 +1,13 @@
 package com.glut.schedule.widget
 
 import com.glut.schedule.data.model.ClassPeriod
+import com.glut.schedule.data.model.CourseBlock
+import com.glut.schedule.data.model.ManualDayCopyRule
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.model.isActiveInWeek
+import com.glut.schedule.data.model.manualCopyBlocksForWeek
+import com.glut.schedule.data.model.scheduleWeekForNumber
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -51,7 +55,8 @@ object ScheduleWidgetSnapshotBuilder {
         courses: List<ScheduleCourse>,
         classPeriods: List<ClassPeriod>,
         semesterStartMonday: LocalDate,
-        semesterEndDate: LocalDate
+        semesterEndDate: LocalDate,
+        manualDayCopies: List<ManualDayCopyRule> = emptyList()
     ): WidgetScheduleSnapshot {
         val today = now.toLocalDate()
         val currentWeek = academicWeekForDate(today, semesterStartMonday)
@@ -82,26 +87,40 @@ object ScheduleWidgetSnapshotBuilder {
             if (date.isBefore(semesterStartMonday) || date.isAfter(semesterEndDate)) return emptyList()
             val week = academicWeekForDate(date, semesterStartMonday)
             val day = date.dayOfWeek.value
-            return courses.flatMap { course ->
+            // 手动调休的副本与首页走同一个纯函数：源日期课程整天复制到目标日期。
+            // 不接这一步，首页有的课在小组件里会凭空消失。
+            val blocks = courses.flatMap { course ->
                 course.occurrences.asSequence()
-                    .filter { it.dayOfWeek == day && it.isActiveInWeek(week) }
-                    .map { occurrence ->
-                        WidgetCourseItem(
-                            date = date,
-                            title = course.title,
-                            room = course.room,
-                            teacher = course.teacher,
-                            startSection = occurrence.startSection,
-                            endSection = occurrence.endSection,
-                            startTime = periodsBySection[occurrence.startSection]?.startsAt.orEmpty(),
-                            endTime = periodsBySection[occurrence.endSection]?.endsAt.orEmpty(),
-                            colorHex = course.colorHex,
-                            // 日期占高位、排课 ID 占低位，跨刷新保持稳定且不同日期不会复用。
-                            stableId = (date.toEpochDay() shl 32) xor
-                                (occurrence.id.hashCode().toLong() and 0xFFFF_FFFFL)
-                        )
-                    }.toList()
-            }.sortedWith(compareBy(WidgetCourseItem::startSection, WidgetCourseItem::endSection, WidgetCourseItem::title))
+                    .filter { it.isActiveInWeek(week) }
+                    .map { occurrence -> CourseBlock(course = course, occurrence = occurrence) }
+                    .toList()
+            } + manualCopyBlocksForWeek(
+                courses = courses,
+                rules = manualDayCopies,
+                weekNumber = week,
+                weekMonday = scheduleWeekForNumber(week, semesterStartMonday).monday
+            )
+            return blocks
+                .filter { it.occurrence.dayOfWeek == day }
+                .map { block ->
+                    val occurrence = block.occurrence
+                    WidgetCourseItem(
+                        date = date,
+                        title = block.course.title,
+                        room = block.course.room,
+                        teacher = block.course.teacher,
+                        startSection = occurrence.startSection,
+                        endSection = occurrence.endSection,
+                        startTime = periodsBySection[occurrence.startSection]?.startsAt.orEmpty(),
+                        endTime = periodsBySection[occurrence.endSection]?.endsAt.orEmpty(),
+                        colorHex = block.course.colorHex,
+                        // 日期占高位、排课 ID 占低位，跨刷新保持稳定且不同日期不会复用。
+                        // 副本的 occurrence.id 带 `-manual-copy-<规则>` 后缀，不会与原课次撞 ID。
+                        stableId = (date.toEpochDay() shl 32) xor
+                            (occurrence.id.hashCode().toLong() and 0xFFFF_FFFFL)
+                    )
+                }
+                .sortedWith(compareBy(WidgetCourseItem::startSection, WidgetCourseItem::endSection, WidgetCourseItem::title))
         }
 
         // 小组件只展示尚未结束的当日课程；结束时刻触发刷新后应立即从卡片中移除。

@@ -74,13 +74,22 @@ class ScheduleApplication : Application() {
     @OptIn(FlowPreview::class)
     private fun observeWidgetDataChanges() {
         applicationScope.launch {
+            // 调休规则也要参与触发：否则用户在 App 内新增/删除规则后，
+            // 小组件要等到下一次定时刷新才会跟着变。
+            val currentSemesterManualDayCopies = combine(
+                appContainer.scheduleRepository.currentSemester,
+                appContainer.settingsStore.manualDayCopies
+            ) { semester, rulesBySemester ->
+                rulesBySemester[semester?.id.orEmpty()].orEmpty()
+            }
             combine(
                 appContainer.scheduleRepository.currentCourses,
                 appContainer.scheduleRepository.currentClassPeriods,
                 appContainer.settingsStore.semesterStartMonday,
-                appContainer.settingsStore.semesterEndDate
-            ) { courses, periods, semesterStart, semesterEnd ->
-                listOf(courses, periods, semesterStart, semesterEnd)
+                appContainer.settingsStore.semesterEndDate,
+                currentSemesterManualDayCopies
+            ) { courses, periods, semesterStart, semesterEnd, manualDayCopies ->
+                listOf(courses, periods, semesterStart, semesterEnd, manualDayCopies)
             }.debounce(500)
                 .collect { ScheduleWidgetUpdater.updateAll(this@ScheduleApplication) }
         }
