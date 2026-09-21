@@ -430,11 +430,15 @@ class AcademicSemesterImportServiceTest {
     }
 
     @Test
-    fun personalOnlyModePreservesOccurrencesAndNeverTouchesWeeklyTimetable() = runTest {
+    fun personalOnlyModePreservesOccurrencesAndOnlyGetsWeeklyLandingOnce() = runTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
             // 课程安排页仍会被访问（调课信息只存在于那里），给一个不含调课的普通页面即可。
             server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            // 模式2 只额外 GET 一次周次课表**落地页**（不带 whichWeek），用来拿学期总周数。
+            server.enqueue(
+                MockResponse().setResponseCode(200).setBody(weeklyLandingHtml((1..19).toList()))
+            )
 
             val result = AcademicSemesterImportService(
                 ApiProbeService(sessionUrlValidator = { true }),
@@ -449,20 +453,101 @@ class AcademicSemesterImportServiceTest {
 
             assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
 
-            // 模式2 最本质的验收条件：绝不请求逐周课表。周次课表接口一旦在教务侧变动，
-            // 模式1 会整体不可用，而模式2 正是为此准备的备用线路——它必须真的绕开那个接口，
-            // 而不只是绕开逐周的 POST。
+            // 契约（2026-09-21 有意放宽）：模式2 允许发**一次**周次课表落地页 GET 用于取学期总周数，
+            // 但**绝不逐周 POST**。放宽的理由：模式1 整体失败的真因是 POST→GET 重定向丢表单
+            // （见 docs/桂林教务HTTPS跳转导致周次课表导入失败问题总结.md），落地页 GET 本身安全；
+            // 而模式2 拿不到学期长度会让历史学期翻不到期末、课时统计少算。
             val paths = List(server.requestCount) { server.takeRequest().path.orEmpty() }
-            assertTrue(paths.toString(), paths.none { it.contains("studentWeeklyTimetable") })
+            assertTrue(paths.toString(), paths.count { it.contains("studentWeeklyTimetable") } <= 1)
+            assertTrue(paths.toString(), paths.none { it.contains("whichWeek") })
             assertTrue(paths.toString(), paths.any { it.contains("currcourse.jsdo") })
 
             // 个人课表在这里就是权威时间来源，occurrences 必须原样保留。
             val payload = result.getOrThrow()
             assertEquals(listOf(course()), payload.courses)
             assertEquals(SemesterImportMode.PERSONAL_ONLY, payload.importMode)
-            // 模式2 也必须给出 portalMaxWeek。留 null 会让 CourseTimeStats 把这个学期
-            // **整学期**判为不可统计——用户看到的是「这个学期的统计没了」，而不是少算一点。
-            // 本例学期没有起止日期，只能从课次周次反推：course() 是「1-16周」→ 16。
+            // 落地页给出的门户周次才是学期长度。旧实现只能反推到「最后一个有课周」16，历史学期
+            // 因此翻不到 17-19 周，课时统计也会少算第 17 周以后的课。
+            assertEquals(19, payload.portalMaxWeek)
+        }
+    }
+
+    @Test
+    fun personalOnlyModeFallsBackToCalendarEstimateWhenWeeklyLandingIsUnusable() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            // 落地页被重定向到登录页：按契约只让周数退化，绝不能让导入失败。
+            server.enqueue(
+                MockResponse().setResponseCode(200)
+                    .setBody("""<form action="j_acegi_security_check"><input type="password" /></form>""")
+            )
+
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                FixedParser(listOf(course()))
+            ).importSemester(
+                cookie = "JSESSIONID=test",
+                baseUrl = server.url("/").toString(),
+                semester = semester(),
+                studentIdFallback = "student-internal-id",
+                mode = SemesterImportMode.PERSONAL_ONLY
+            )
+
+            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
+            // 春季估算 19 周。若错误地退回「最后一个有课周」，这里会是 16。
+            assertEquals(19, result.getOrThrow().portalMaxWeek)
+        }
+    }
+
+    @Test
+    fun personalOnlyModeIgnoresWeeklyLandingWhoseSemesterLabelDiffers() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            // 落地页属于别的学期：它的周次列表绝不能拿来当本学期的长度。
+            server.enqueue(
+                MockResponse().setResponseCode(200)
+                    .setBody(weeklyLandingHtml((1..21).toList(), label = "2024秋"))
+            )
+
+            val payload = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                FixedParser(listOf(course()))
+            ).importSemester(
+                cookie = "JSESSIONID=test",
+                baseUrl = server.url("/").toString(),
+                semester = semester(),
+                studentIdFallback = "student-internal-id",
+                mode = SemesterImportMode.PERSONAL_ONLY
+            ).getOrThrow()
+
+            // 采信了错学期就会是 21；正确行为是丢弃并退化到春季估算 19。
+            assertEquals(19, payload.portalMaxWeek)
+        }
+    }
+
+    @Test
+    fun personalOnlyModeKeepsDerivedMaxWeekAsLowerBound() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            // 落地页只给出 1-15 周，但课次里有「1-16周」——反推值是**下界**，不能被抹掉。
+            server.enqueue(
+                MockResponse().setResponseCode(200).setBody(weeklyLandingHtml((1..15).toList()))
+            )
+
+            val payload = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                FixedParser(listOf(course()))
+            ).importSemester(
+                cookie = "JSESSIONID=test",
+                baseUrl = server.url("/").toString(),
+                semester = semester(),
+                studentIdFallback = "student-internal-id",
+                mode = SemesterImportMode.PERSONAL_ONLY
+            ).getOrThrow()
+
             assertEquals(16, payload.portalMaxWeek)
         }
     }
@@ -490,7 +575,8 @@ class AcademicSemesterImportServiceTest {
                 mode = SemesterImportMode.PERSONAL_ONLY
             ).getOrThrow()
 
-            // 学期自带起止日期时必须优先用校历（与刷新路径 academicMaxWeekForCalendar 同算法）。
+            // 学期自带起止日期时必须优先用校历（与刷新路径 academicMaxWeekForCalendar 同算法），
+            // **且不为拿周数再发落地页请求**——日期已足够权威。
             // 若错误地走了反推分支，这里会是 16，与本断言（20）不等——失败即说明优先级反了。
             assertEquals(academicMaxWeekForCalendar(start, end), payload.portalMaxWeek)
         }
@@ -501,6 +587,11 @@ class AcademicSemesterImportServiceTest {
         courses: List<ScheduleCourse> = emptyList()
     ) = MockWebServer().use { server ->
         server.enqueue(MockResponse().setResponseCode(200).setBody(body))
+        // 这些用例都传 studentIdFallback = ""，拿不到内部学号就不会访问课程安排页；
+        // 成功走到模式2 尾部的用例会再发一次周次课表落地页，这里备好响应避免 MockWebServer 空队列阻塞。
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(weeklyLandingHtml((1..19).toList()))
+        )
         AcademicSemesterImportService(
             ApiProbeService(sessionUrlValidator = { true }),
             FixedParser(courses)
@@ -519,8 +610,8 @@ class AcademicSemesterImportServiceTest {
         <table id="manualArrangeCourseTable"></table>
     """.trimIndent()
 
-    private fun weeklyLandingHtml(weeks: List<Int> = listOf(1)) = """
-        <html><body><form><span>2025春 第 </span><select name="whichWeek">
+    private fun weeklyLandingHtml(weeks: List<Int> = listOf(1), label: String = "2025春") = """
+        <html><body><form><span>$label 第 </span><select name="whichWeek">
         <option value=""></option>${weeks.joinToString("") { "<option value=\"$it\">$it</option>" }}</select><span> 周 周次课表</span></form>
         <table><tr><th>日期</th><th>课程名</th><th>选课属性</th><th>考试性质</th><th>星期</th>
         <th>节次</th><th>开始时间</th><th>结束时间</th><th>教学楼</th><th>教室</th><th></th></tr></table>

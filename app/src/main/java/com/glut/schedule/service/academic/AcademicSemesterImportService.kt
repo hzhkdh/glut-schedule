@@ -317,17 +317,34 @@ class AcademicSemesterImportService(
         } else {
             scheduleParser.applyAdjustmentRemovalsOnly(personalCourses, timetableHtml)
         }
-        // 模式2 拿不到周次课表落地页，也就没有门户的周次列表（模式1 在 availableWeeks 里取）。
-        // 这里绝不能留 null：CourseTimeStats 会把 portalMaxWeek 为 null 的学期**整学期**
-        // 判为不可统计，用户看到的是「这个学期的统计没了」。两级来源，精度从高到低：
-        //   1) 学期自带的起止日期 —— 与刷新路径 academicMaxWeekForCalendar 同一算法；
-        //   2) 从课次周次反推 —— 与 historicalAcademicMaxWeek 共用同一份实现。
-        // 两级都拿不到（例如整学期课次都没有周次数字）才保持 null，让统计如实报「学期长度未知」。
-        portalMaxWeek = semester.semesterStartDate
+        // 模式2 也必须给出学期总周数。这里绝不能留 null：CourseTimeStats 会把 portalMaxWeek
+        // 为 null 的学期**整学期**判为不可统计，用户看到的是「这个学期的统计没了」。
+        //
+        // 三级来源，精度从高到低：
+        //   1) 学期自带的起止日期 —— 与刷新路径 academicMaxWeekForCalendar 同一算法。可用即为
+        //      权威值，此时**不再发任何请求**（当前学期走模式2 时由 AcademicSemesterCalendarResolver
+        //      提供，可能是门户校历或估算）；
+        //   2) 周次课表**落地页**的门户周次列表 —— 只 GET 一次、绝不逐周 POST（契约见
+        //      probeWeeklyLandingMaxWeek 的注释）。历史学期没有起止日期，这是唯一能拿到门户真实周数的途径；
+        //   3) 学期长度估算 —— 与当前学期模式2 的兜底同一份实现。
+        // 最后与被反推值取较大者：反推值是「学期至少有这么长」的下界，取大保证不丢任何课次。
+        // 缺了第 2、3 级，历史学期就只能反推到「最后一个有课周」，翻不到期末、课时统计也会少算。
+        val calendarMaxWeek = semester.semesterStartDate
             ?.let { start ->
                 semester.semesterEndDate?.let { end -> academicMaxWeekForCalendar(start, end) }
             }
-            ?: derivedAcademicMaxWeek(courses)?.coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
+        val landingMaxWeek = if (calendarMaxWeek == null) {
+            probeWeeklyLandingMaxWeek(sessionCookie, baseUrl, semester, ::consumeSessionCookie)
+        } else {
+            null
+        }
+        val estimatedMaxWeek = AcademicSemesterCalendarEstimator.estimate(semester, LocalDate.now())
+            .let { academicMaxWeekForCalendar(it.startMonday, it.endDate) }
+        portalMaxWeek = calendarMaxWeek
+            ?: maxOf(
+                landingMaxWeek ?: estimatedMaxWeek,
+                derivedAcademicMaxWeek(courses) ?: MIN_ACADEMIC_WEEK
+            ).coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
         AcademicSemesterImportPayload(
             courses = courses,
             adjustments = adjustments,
@@ -342,6 +359,45 @@ class AcademicSemesterImportService(
             unparsedWeekTextCount = countUnparsedWeekTexts(courses)
         )
     }
+
+    /**
+     * 模式2 的「最佳努力」周次探测：取门户周次课表**落地页**里的可下载周次最大值。
+     *
+     * **契约（2026-09-21 有意放宽）**：模式2 原先「绝不请求 studentWeeklyTimetable」，现放宽为
+     * 「允许发一次落地页 GET、绝不逐周 POST」。理由有两条：
+     *   1. 模式1 整体失败的真因是表单 POST→GET 重定向丢参数（见
+     *      docs/桂林教务HTTPS跳转导致周次课表导入失败问题总结.md），落地页 GET 本身是安全的；
+     *   2. 不拿门户周数就只能反推到「最后一个有课周」，历史学期翻不到期末，课时统计也会少算。
+     *
+     * 因此这里**任何失败都只返回 null**（网络异常、非 2xx、登录页、结构异常、学期标签不符），
+     * 由调用方退化到学期长度估算——导入成功与否绝不受它影响。
+     */
+    private suspend fun probeWeeklyLandingMaxWeek(
+        cookie: String,
+        baseUrl: String,
+        semester: AcademicSemester,
+        onSessionRotated: (ApiProbeService.ProbeResult) -> Unit
+    ): Int? = runCatching {
+        val landing = apiProbeService.probeUrl(
+            cookie,
+            AcademicSemesterRequestBuilder.weeklyTimetableUrl(baseUrl, semester)
+        ) ?: return@runCatching null
+        if (landing.httpCode !in 200..299) return@runCatching null
+        // 会话轮换必须吃回去，否则后续请求会掉登录。
+        onSessionRotated(landing)
+        if (
+            AcademicSemesterResponseValidator.classify(landing.body, courseCount = 0) ==
+            AcademicSemesterResponseKind.AUTHENTICATION_EXPIRED
+        ) {
+            return@runCatching null
+        }
+        weeklyTimetableParser
+            .parsePage(landing.body, hasNoon = semester.campus != CampusType.NANNING)
+            // 落地页可能停在别的学期；标签不符时它的周次列表不属于本次请求，一律丢弃。
+            .takeIf { it.semesterLabel == semesterPortalLabel(semester) }
+            ?.availableWeeks
+            ?.maxOrNull()
+    }.getOrNull()
 
     private fun semesterPortalLabel(semester: AcademicSemester): String {
         val season = when (semester.season) {
