@@ -51,17 +51,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 import com.glut.schedule.data.model.CourseBlock
+import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
+import com.glut.schedule.data.model.ManualDayCopyRule
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
+import com.glut.schedule.data.model.manualCopyBlocksForWeek
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.ScheduleHeader
 import com.glut.schedule.ui.components.ScheduleBackgroundImage
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 @Composable
 fun ScheduleScreen(
@@ -84,8 +88,23 @@ fun ScheduleScreen(
         Box(modifier = modifier.fillMaxSize())
         return
     }
-    val blocksByWeek = remember(uiState.courses, uiState.maxAcademicWeek) {
-        courseBlocksByWeek(courses = uiState.courses, maxWeek = uiState.maxAcademicWeek)
+    val blocksByWeek = remember(
+        uiState.courses,
+        uiState.maxAcademicWeek,
+        uiState.semesterStartMonday,
+        uiState.manualDayCopies
+    ) {
+        courseBlocksByWeek(
+            courses = uiState.courses,
+            maxWeek = uiState.maxAcademicWeek,
+            semesterStartMonday = uiState.semesterStartMonday,
+            rules = uiState.manualDayCopies
+        )
+    }
+    // 角标跟随调休规则本身：规则只在当前学期生效，历史学期拿到的就是空列表。
+    // Pager 的每个页面都要用，因此在进入 Pager 之前算一次。
+    val adjustmentDates = remember(uiState.manualDayCopies) {
+        uiState.manualDayCopies.mapTo(mutableSetOf()) { it.targetDate }
     }
     if (com.glut.schedule.ui.components.shouldUseCustomBackground(uiState.customBackgroundUri) &&
         customBackgroundBitmap == null
@@ -205,6 +224,8 @@ fun ScheduleScreen(
                     showWeekend = uiState.showWeekend,
                     showNoon = uiState.showNoon,
                     showCalendarDates = uiState.hasAuthoritativeCalendar,
+                    holidayDates = uiState.holidayDates,
+                    manualAdjustmentDates = adjustmentDates,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -306,7 +327,9 @@ fun pagerPageForWeekNumber(weekNumber: Int, maxWeek: Int = MAX_ACADEMIC_WEEK): I
 
 fun courseBlocksByWeek(
     courses: List<ScheduleCourse>,
-    maxWeek: Int = MAX_ACADEMIC_WEEK
+    maxWeek: Int = MAX_ACADEMIC_WEEK,
+    semesterStartMonday: LocalDate = DEFAULT_SEMESTER_START_MONDAY,
+    rules: List<ManualDayCopyRule> = emptyList()
 ): Map<Int, List<CourseBlock>> {
     val clampedMaxWeek = clampAcademicWeek(maxWeek)
     return (MIN_ACADEMIC_WEEK..clampedMaxWeek).associateWith { weekNumber ->
@@ -316,7 +339,12 @@ fun courseBlocksByWeek(
                 .map { occurrence ->
                     CourseBlock(course = course, occurrence = occurrence)
                 }
-        }
+        } + manualCopyBlocksForWeek(
+            courses = courses,
+            rules = rules,
+            weekNumber = weekNumber,
+            weekMonday = scheduleWeekForNumber(weekNumber, semesterStartMonday, clampedMaxWeek).monday
+        )
     }
 }
 

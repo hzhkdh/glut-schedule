@@ -36,6 +36,7 @@ import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.greeting.GreetingTemplateRepository
 import com.glut.schedule.service.greeting.HttpGreetingTemplateRemote
+import com.glut.schedule.service.holiday.TimorHolidayClient
 import com.glut.schedule.partner.PartnerScheduleApiService
 import com.glut.schedule.partner.PartnerScheduleStore
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
@@ -200,4 +201,6 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
     val appUpdater = AppUpdater(application)
     val partnerScheduleStore = PartnerScheduleStore(application)
     val partnerScheduleApiService = PartnerScheduleApiService()
+    // 首页课表角标与学期概览共用同一个客户端与同一份按年缓存，避免两处各自拉取、互相覆盖。
+    val timorHolidayClient = TimorHolidayClient()
 }

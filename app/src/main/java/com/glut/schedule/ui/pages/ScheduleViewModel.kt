@@ -10,12 +10,15 @@ import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.NOON_SECTIONS
 import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.ManualDayCopyRule
+import com.glut.schedule.data.model.ScheduleBackgroundPreferences
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
 import com.glut.schedule.data.model.ScheduleWeek
 import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
 import com.glut.schedule.data.model.NormalizedCropRect
+import com.glut.schedule.data.model.manualCopyBlocksForWeek
 import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.academicMaxWeekForSemester
@@ -38,14 +41,19 @@ import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.AcademicSemesterCalendarResolver
 import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
 import com.glut.schedule.service.academic.ApiProbeService
+import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
+import com.glut.schedule.service.holiday.TimorHolidayClient
 import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.academic.shouldUseExistingAcademicCookie
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -81,6 +89,10 @@ data class ScheduleUiState(
     val viewedSemester: AcademicSemester? = null,
     val isHistoricalSemester: Boolean = false,
     val hasAuthoritativeCalendar: Boolean = true,
+    /** 法定放假日，供日期栏显示「休」。历史学期不取用，角标依附于当前学期。 */
+    val holidayDates: Set<LocalDate> = emptySet(),
+    /** 当前学期的手动调休调课规则；查看历史学期时恒为空，历史快照不被污染。 */
+    val manualDayCopies: List<ManualDayCopyRule> = emptyList(),
     val isInitialized: Boolean = false
 )
 
@@ -91,6 +103,13 @@ internal fun selectedWeekAfterCalendarRefresh(
 ): Int = clampAcademicWeek(
     selectedWeek,
     academicMaxWeekForCalendar(semesterStartMonday, semesterEndDate)
+)
+
+private data class ScheduleAppearanceSettings(
+    val backgroundPreferences: ScheduleBackgroundPreferences,
+    val campusType: CampusType,
+    val guilinSubCampus: String,
+    val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>>
 )
 
 private data class ScheduleSettingsUiState(
@@ -107,7 +126,9 @@ private data class ScheduleSettingsUiState(
     val backgroundDimAmount: Float,
     val campusType: CampusType,
     val guilinSubCampus: String = GUILIN_SUB_CAMPUS_DEFAULT,
-    val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>> = emptyMap()
+    val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>> = emptyMap(),
+    val holidayDates: Set<LocalDate> = emptySet(),
+    val manualDayCopiesBySemester: Map<String, List<ManualDayCopyRule>> = emptyMap()
 )
 
 private data class ScheduleCalendarSettings(
@@ -123,18 +144,31 @@ private data class ColoredCoursesState(
     val overrides: Map<String, String>
 )
 
+/**
+ * 日期栏角标所需的附加数据。
+ *
+ * 与课程数据分开聚合：节假日缓存的更新频率远低于课表，混进主 combine 会让
+ * 每次节假日落盘都重建一遍课程块。
+ */
+private data class ScheduleCalendarExtras(
+    val holidayDates: Set<LocalDate>,
+    val manualDayCopiesBySemester: Map<String, List<ManualDayCopyRule>>
+)
+
 class ScheduleViewModel(
     private val repository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
     private val semesterImportService: AcademicSemesterImportService,
-    private val apiProbeService: ApiProbeService
+    private val apiProbeService: ApiProbeService,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
 ) : ViewModel() {
     val uiState: StateFlow<ScheduleUiState>
     private var initialWeekSet = false
     private val isRefreshing = MutableStateFlow(false)
     private val refreshGuard = SingleFlightGuard()
+    private val holidayFetchGuard = SingleFlightGuard()
     private val message = MutableStateFlow("")
     private val needsInteractiveLogin = MutableStateFlow(false)
 
@@ -146,6 +180,18 @@ class ScheduleViewModel(
 
         viewModelScope.launch {
             repository.seedIfEmpty()
+        }
+
+        ensureHolidayYearsForCurrentSemester()
+
+        val calendarExtrasState = combine(
+            holidayDatesFlow(),
+            settingsStore.manualDayCopies
+        ) { holidayDates, manualDayCopies ->
+            ScheduleCalendarExtras(
+                holidayDates = holidayDates,
+                manualDayCopiesBySemester = manualDayCopies
+            )
         }
 
         val settingsState = combine(
@@ -164,26 +210,38 @@ class ScheduleViewModel(
                     semesterEndDate = semesterEndDate
                 )
             },
-            settingsStore.backgroundPreferences,
-            settingsStore.campusType,
-            settingsStore.guilinSubCampus,
-            settingsStore.classPeriodProfileOverrides
-        ) { base, backgroundPreferences, campusType, guilinSubCampus, profileOverrides ->
+            combine(
+                settingsStore.backgroundPreferences,
+                settingsStore.campusType,
+                settingsStore.guilinSubCampus,
+                settingsStore.classPeriodProfileOverrides
+            ) { backgroundPreferences, campusType, guilinSubCampus, profileOverrides ->
+                ScheduleAppearanceSettings(
+                    backgroundPreferences = backgroundPreferences,
+                    campusType = campusType,
+                    guilinSubCampus = guilinSubCampus,
+                    classPeriodProfileOverrides = profileOverrides
+                )
+            },
+            calendarExtrasState
+        ) { base, appearance, extras ->
             ScheduleSettingsUiState(
                 weekNumber = base.weekNumber,
                 showWeekend = base.showWeekend,
                 showNoon = base.showNoon,
                 semesterStartMonday = base.semesterStartMonday,
                 semesterEndDate = base.semesterEndDate,
-                customBackgroundUri = backgroundPreferences.uri,
-                customBackgroundCrop = backgroundPreferences.crop,
-                remoteBackgroundId = backgroundPreferences.remoteId,
-                remoteBackgroundSha256 = backgroundPreferences.remoteSha256,
-                remoteBackgroundDisplayName = backgroundPreferences.remoteDisplayName,
-                backgroundDimAmount = backgroundPreferences.dimAmount,
-                campusType = campusType,
-                guilinSubCampus = guilinSubCampus,
-                classPeriodProfileOverrides = profileOverrides
+                customBackgroundUri = appearance.backgroundPreferences.uri,
+                customBackgroundCrop = appearance.backgroundPreferences.crop,
+                remoteBackgroundId = appearance.backgroundPreferences.remoteId,
+                remoteBackgroundSha256 = appearance.backgroundPreferences.remoteSha256,
+                remoteBackgroundDisplayName = appearance.backgroundPreferences.remoteDisplayName,
+                backgroundDimAmount = appearance.backgroundPreferences.dimAmount,
+                campusType = appearance.campusType,
+                guilinSubCampus = appearance.guilinSubCampus,
+                classPeriodProfileOverrides = appearance.classPeriodProfileOverrides,
+                holidayDates = extras.holidayDates,
+                manualDayCopiesBySemester = extras.manualDayCopiesBySemester
             )
         }
 
@@ -234,6 +292,13 @@ class ScheduleViewModel(
             }
             val today = LocalDate.now()
             val coloredCourses = coloredState.courses
+            // 调休调课只作用于当前学期：历史学期是只读快照，当前学期的规则不得渗进去。
+            val currentSemesterId = semesters.firstOrNull { it.isCurrent }?.id.orEmpty()
+            val manualDayCopies = if (isHistorical) {
+                emptyList()
+            } else {
+                settings.manualDayCopiesBySemester[currentSemesterId].orEmpty()
+            }
             ScheduleUiState(
                 week = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek),
                 today = today,
@@ -252,7 +317,14 @@ class ScheduleViewModel(
                         .map { occurrence ->
                             CourseBlock(course = course, occurrence = occurrence)
                         }
-                },
+                } + manualCopyBlocksForWeek(
+                    courses = coloredCourses,
+                    rules = manualDayCopies,
+                    weekNumber = clampedWeekNumber,
+                    weekMonday = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek).monday
+                ),
+                holidayDates = if (isHistorical) emptySet() else settings.holidayDates,
+                manualDayCopies = manualDayCopies,
                 showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
                 customBackgroundUri = settings.customBackgroundUri,
@@ -569,6 +641,44 @@ class ScheduleViewModel(
         return "${semester.displayName}刷新失败：$detail"
     }
 
+    /**
+     * 首页节假日角标的数据来源：按学期跨越的年份静默补齐本地缺失的年度数据。
+     *
+     * 与小程序 `schedule.js` 的 `_ensureHolidayCache` 一致——只在查看当前学期时请求、
+     * 缺哪年补哪年、失败不提示也不清掉已有缓存，用户无需为此做任何操作。
+     * 学期起止日期设置的永远是当前学期的值，因此这里天然不会为历史学期发请求。
+     */
+    private fun ensureHolidayYearsForCurrentSemester() {
+        viewModelScope.launch {
+            settingsStore.semesterStartMonday
+                .combine(settingsStore.semesterEndDate) { start, end -> start.year..end.year }
+                .distinctUntilChanged()
+                .collect { years -> fetchMissingHolidayYears(years) }
+        }
+    }
+
+    private suspend fun fetchMissingHolidayYears(years: IntRange) {
+        if (years.isEmpty() || !holidayFetchGuard.tryStart()) return
+        try {
+            val cached = settingsStore.holidayCacheByYear.first()
+            years.filter { cached[it].isNullOrBlank() }.forEach { year ->
+                val raw = timorHolidayClient.fetchYear(year)
+                if (raw.isNotBlank()) settingsStore.setHolidayYearCache(year, raw)
+            }
+        } finally {
+            holidayFetchGuard.finish()
+        }
+    }
+
+    private fun holidayDatesFlow(): Flow<Set<LocalDate>> =
+        settingsStore.holidayCacheByYear
+            .map { cache ->
+                cache.entries.flatMapTo(mutableSetOf()) { (year, json) ->
+                    TimorHolidayCalendarParser.parse(json, year)?.holidayDates.orEmpty()
+                }
+            }
+            .distinctUntilChanged()
+
     fun clearMessage() {
         message.value = ""
     }
@@ -591,7 +701,8 @@ class ScheduleViewModelFactory(
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
     private val semesterImportService: AcademicSemesterImportService,
-    private val apiProbeService: ApiProbeService
+    private val apiProbeService: ApiProbeService,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -601,7 +712,8 @@ class ScheduleViewModelFactory(
             sessionStore,
             loginService,
             semesterImportService,
-            apiProbeService
+            apiProbeService,
+            timorHolidayClient
         ) as T
     }
 }

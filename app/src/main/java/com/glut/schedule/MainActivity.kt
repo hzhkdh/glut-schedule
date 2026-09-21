@@ -192,6 +192,9 @@ import com.glut.schedule.ui.pages.ProfessionalScoreScreen
 import com.glut.schedule.ui.pages.ProfessionalScoreViewModel
 import com.glut.schedule.ui.pages.ProfessionalScoreViewModelFactory
 import com.glut.schedule.ui.pages.GradeExamScreen
+import com.glut.schedule.ui.pages.HolidayAdjustmentsScreen
+import com.glut.schedule.ui.pages.HolidayAdjustmentsViewModel
+import com.glut.schedule.ui.pages.HolidayAdjustmentsViewModelFactory
 import com.glut.schedule.ui.pages.GradeExamViewModel
 import com.glut.schedule.ui.pages.GradeExamViewModelFactory
 import com.glut.schedule.ui.pages.NoticeScreen
@@ -218,6 +221,7 @@ private enum class SettingsSubPage(val title: String) {
     ROOT("设置"),
     COURSE_COLORS("课程卡片颜色"),
     CLASS_PERIODS("上课时间"),
+    HOLIDAY_ADJUSTMENTS("调休调课"),
     BACKGROUND_GALLERY("画廊")
 }
 
@@ -293,7 +297,8 @@ class MainActivity : ComponentActivity() {
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
                         semesterImportService = container.academicSemesterImportService,
-                        apiProbeService = container.apiProbeService
+                        apiProbeService = container.apiProbeService,
+                        timorHolidayClient = container.timorHolidayClient
                     )
                 )
                 val examViewModel: ExamViewModel = viewModel(
@@ -344,7 +349,8 @@ class MainActivity : ComponentActivity() {
                         settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
                         scheduleParser = container.academicScheduleParser,
-                        loginService = container.academicLoginService
+                        loginService = container.academicLoginService,
+                        timorHolidayClient = container.timorHolidayClient
                     )
                 )
                 LaunchedEffect(Unit) {
@@ -356,6 +362,12 @@ class MainActivity : ComponentActivity() {
                 val courseTimeStatsViewModel: CourseTimeStatsViewModel = viewModel(
                     factory = CourseTimeStatsViewModelFactory(
                         sourceFlow = container.scheduleRepository.courseTimeSemesterSources
+                    )
+                )
+                val holidayAdjustmentsViewModel: HolidayAdjustmentsViewModel = viewModel(
+                    factory = HolidayAdjustmentsViewModelFactory(
+                        repository = container.scheduleRepository,
+                        settingsStore = container.settingsStore
                     )
                 )
                 val directLoginViewModel: DirectLoginViewModel = viewModel(
@@ -985,6 +997,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
                                     viewModel = scheduleViewModel,
+                                    holidayAdjustmentsViewModel = holidayAdjustmentsViewModel,
                                     backgroundStore = container.backgroundStore,
                                     remoteBackgroundGalleryViewModel = remoteBackgroundGalleryViewModel,
                                     subPage = settingsSubPage,
@@ -1382,6 +1395,7 @@ private fun PartnerScheduleDestination(
 @Composable
 private fun ScheduleSettingsDestination(
     viewModel: ScheduleViewModel,
+    holidayAdjustmentsViewModel: HolidayAdjustmentsViewModel,
     backgroundStore: ScheduleBackgroundStore,
     remoteBackgroundGalleryViewModel: RemoteBackgroundGalleryViewModel?,
     subPage: SettingsSubPage,
@@ -1402,6 +1416,9 @@ private fun ScheduleSettingsDestination(
             onSetColor = viewModel::setCourseColorOverride,
             onRemoveColor = viewModel::removeCourseColorOverride,
             onResetAll = viewModel::clearCourseColorOverrides
+        )
+        SettingsSubPage.HOLIDAY_ADJUSTMENTS -> HolidayAdjustmentsScreen(
+            viewModel = holidayAdjustmentsViewModel
         )
         SettingsSubPage.CLASS_PERIODS -> ClassPeriodSettingsScreen(
             campusType = uiState.campusType,
@@ -1446,6 +1463,7 @@ private fun ScheduleSettingsDestination(
             onBuiltInBackgrounds = { onSubPageChange(SettingsSubPage.BACKGROUND_GALLERY) },
             onCourseColors = { onSubPageChange(SettingsSubPage.COURSE_COLORS) },
             onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
+            onHolidayAdjustments = { onSubPageChange(SettingsSubPage.HOLIDAY_ADJUSTMENTS) },
             onReset = onReset
         )
     }
@@ -1589,6 +1607,7 @@ private fun SettingsPage(
     onBuiltInBackgrounds: () -> Unit = {},
     onCourseColors: () -> Unit = {},
     onClassPeriods: () -> Unit = {},
+    onHolidayAdjustments: () -> Unit = {},
     onReset: () -> Unit = {}
 ) {
     val settingsBg = Color(0xFFF6F4EF)
@@ -1711,6 +1730,22 @@ private fun SettingsPage(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("上课时间", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
+                }
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onHolidayAdjustments)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("调休调课", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
                 }
             }

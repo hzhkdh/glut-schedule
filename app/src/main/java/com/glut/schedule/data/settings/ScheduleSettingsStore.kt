@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -15,8 +16,11 @@ import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
+import com.glut.schedule.data.model.ManualDayCopyRule
 import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.data.model.ScheduleBackgroundPreferences
+import com.glut.schedule.data.model.decodeManualDayCopyRules
+import com.glut.schedule.data.model.encodeManualDayCopyRules
 import com.glut.schedule.data.model.snapBackgroundDimAmount
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterSeason
@@ -25,6 +29,8 @@ import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import com.glut.schedule.data.model.validateClassPeriods
 import com.glut.schedule.service.greeting.GreetingTemplateCache
 import com.glut.schedule.service.greeting.GreetingTemplateCacheSnapshot
+import com.glut.schedule.service.holiday.encodeHolidayYearCache
+import com.glut.schedule.service.holiday.holidayYearCache
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -129,6 +135,8 @@ class ScheduleSettingsStore(
     private val dismissedNoticePopupIdsKey = stringSetPreferencesKey("dismissed_notice_popup_ids")
     private val holidaysCacheKey = stringPreferencesKey("holidays_cache")
     private val holidaysCacheDateKey = stringPreferencesKey("holidays_cache_date")
+    private val holidaysCacheYearsKey = stringPreferencesKey("holidays_cache_years")
+    private val manualDayCopiesKey = stringSetPreferencesKey("manual_day_copies")
     private val currentSemesterIdKey = stringPreferencesKey("current_semester_id")
     private val confirmedEnrollmentYearKey = intPreferencesKey("confirmed_enrollment_year")
     private val confirmedEnrollmentSeasonKey = stringPreferencesKey("confirmed_enrollment_season")
@@ -531,23 +539,71 @@ class ScheduleSettingsStore(
 
     // ---- Holidays cache ----
 
-    /** Cached holiday JSON from timor.tech API, paired with the date it was fetched. */
-    val holidaysCache: Flow<Pair<String, String>> = context.scheduleSettings.data.map { preferences ->
-        val json = preferences[holidaysCacheKey].orEmpty()
-        val date = preferences[holidaysCacheDateKey].orEmpty()
-        json to date
+    /**
+     * 按数据所属年份缓存的 timor.tech 节假日 JSON（`年 -> 原始返回`）。
+     *
+     * 必须按年份分开存：秋季学期会跨到次年 1 月，只留一份「最后拉取的那年」会让元旦
+     * 之类的假期拿不到数据。缓存键用**数据所属年份**而不是拉取当天，跨年提前缓存
+     * 下一年的数据也能被正确识别。
+     */
+    val holidayCacheByYear: Flow<Map<Int, String>> = context.scheduleSettings.data.map { preferences ->
+        holidayCacheYearsFrom(preferences)
     }
 
-    suspend fun setHolidaysCache(json: String) {
+    suspend fun setHolidayYearCache(year: Int, json: String) {
+        if (year <= 0 || json.isBlank()) return
         context.scheduleSettings.edit { preferences ->
-            preferences[holidaysCacheKey] = json
-            preferences[holidaysCacheDateKey] = LocalDate.now().toString()
+            // 合并而不是覆盖：写入前必须先经过同一个读取函数，否则「旧键兜底」的条目
+            // 会在第一次写入新键后凭空消失——旧数据被静默丢弃，角标与学期概览都会短暂回退。
+            preferences[holidaysCacheYearsKey] =
+                encodeHolidayYearCache(holidayCacheYearsFrom(preferences) + (year to json))
+        }
+    }
+
+    /** 兼容旧读取方：仍按「当前年份的 JSON + 该年份的第一天」返回。 */
+    val holidaysCache: Flow<Pair<String, String>> = holidayCacheByYear.map { cache ->
+        val year = LocalDate.now().year
+        val json = cache[year].orEmpty()
+        // 缓存日期必须落在数据所属年份内，跨年时旧缓存应被当作未知而不是沿用。
+        if (json.isBlank()) "" to "" else json to "$year-01-01"
+    }
+
+    suspend fun setHolidaysCache(json: String) = setHolidayYearCache(LocalDate.now().year, json)
+
+    // ---- 手动调休调课规则 ----
+
+    /** 调休调课规则按学期隔离，避免当前学期的设置污染历史学期快照。 */
+    val manualDayCopies: Flow<Map<String, List<ManualDayCopyRule>>> =
+        context.scheduleSettings.data.map { preferences ->
+            decodeManualDayCopyRules(preferences[manualDayCopiesKey].orEmpty())
+        }.distinctUntilChanged()
+
+    suspend fun setManualDayCopies(semesterId: String, rules: List<ManualDayCopyRule>) {
+        if (semesterId.isBlank()) return
+        context.scheduleSettings.edit { preferences ->
+            val current = decodeManualDayCopyRules(preferences[manualDayCopiesKey].orEmpty()).toMutableMap()
+            if (rules.isEmpty()) current.remove(semesterId) else current[semesterId] = rules
+            preferences[manualDayCopiesKey] = encodeManualDayCopyRules(current)
         }
     }
 
     suspend fun clearAll() {
         context.scheduleSettings.edit { it.clear() }
     }
+
+    /**
+     * 读取年度节假日缓存（含升级前的单一旧键兼容）。
+     *
+     * 读取方与写入方共用同一个函数，保证两边看到的是同一份数据——
+     * 否则「写新键」会把旧键里已有的那一年挤掉。
+     */
+    private fun holidayCacheYearsFrom(preferences: Preferences): Map<Int, String> =
+        holidayYearCache(
+            storedYears = preferences[holidaysCacheYearsKey],
+            legacyJson = preferences[holidaysCacheKey],
+            legacyDate = preferences[holidaysCacheDateKey],
+            fallbackYear = LocalDate.now().year
+        )
 
     private fun decodeCourseColorOverrides(entries: Set<String>): Map<String, String> {
         return entries.mapNotNull { entry ->

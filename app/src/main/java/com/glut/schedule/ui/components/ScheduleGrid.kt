@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,6 +77,41 @@ data class ScheduleCalendarDay(
     val isToday: Boolean
 )
 
+/**
+ * 日期栏右下角的单字状态角标。
+ *
+ * 与小程序 `components/schedule-grid` 的 `dateMarker` 一致：一个日期只显示一个字，
+ * 「调」优先于「休」——手动调课意味着该日确实追加了课程，比假期状态更需要被看到。
+ */
+internal enum class ScheduleDayMarker(val label: String) {
+    HOLIDAY("休"),
+    ADJUSTMENT("调")
+}
+
+/** 法定放假日的角标配色（与小程序 `.date-marker--holiday` 同值）。 */
+private val HolidayMarkerColor = Color(0xFF2D9A72)
+
+/** 手动调课目标日的角标配色（与小程序 `.date-marker--adjustment` 同值）。 */
+private val AdjustmentMarkerColor = Color(0xFFE57411)
+
+/**
+ * 判定某一天该显示哪个角标。
+ *
+ * `date` 为 null（未显示日期、或历史学期缺少权威日历时）一律不显示角标——
+ * 角标依附于具体自然日，没有日期就没有落点。
+ * 只标法定放假日：补班日（节假日接口里 `holiday: false`）不会进 [holidayDates]，因此天然无角标。
+ */
+internal fun scheduleDayMarker(
+    date: LocalDate?,
+    holidayDates: Set<LocalDate>,
+    manualAdjustmentDates: Set<LocalDate>
+): ScheduleDayMarker? = when {
+    date == null -> null
+    date in manualAdjustmentDates -> ScheduleDayMarker.ADJUSTMENT
+    date in holidayDates -> ScheduleDayMarker.HOLIDAY
+    else -> null
+}
+
 /** 首页与情侣/基友课表共用同一份日期映射，避免星期、日期和今日高亮发生漂移。 */
 fun scheduleCalendarDays(
     week: ScheduleWeek,
@@ -96,6 +132,8 @@ fun ScheduleGrid(
     showWeekend: Boolean,
     showNoon: Boolean = false,
     showCalendarDates: Boolean = true,
+    holidayDates: Set<LocalDate> = emptySet(),
+    manualAdjustmentDates: Set<LocalDate> = emptySet(),
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -119,7 +157,9 @@ fun ScheduleGrid(
                 leftWidth = leftWidth,
                 dayWidth = dayWidth,
                 dayCount = dayCount,
-                showCalendarDates = showCalendarDates
+                showCalendarDates = showCalendarDates,
+                holidayDates = holidayDates,
+                manualAdjustmentDates = manualAdjustmentDates
             )
 
             Row(
@@ -148,7 +188,9 @@ fun ScheduleCalendarHeader(
     leftWidth: Dp,
     dayWidth: Dp,
     dayCount: Int,
-    showCalendarDates: Boolean = true
+    showCalendarDates: Boolean = true,
+    holidayDates: Set<LocalDate> = emptySet(),
+    manualAdjustmentDates: Set<LocalDate> = emptySet()
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
         MonthHeader(week = week, width = leftWidth, showCalendarDates = showCalendarDates)
@@ -157,7 +199,9 @@ fun ScheduleCalendarHeader(
             today = today,
             dayWidth = dayWidth,
             dayCount = dayCount,
-            showCalendarDates = showCalendarDates
+            showCalendarDates = showCalendarDates,
+            holidayDates = holidayDates,
+            manualAdjustmentDates = manualAdjustmentDates
         )
     }
 }
@@ -201,35 +245,60 @@ private fun WeekDayHeader(
     today: LocalDate,
     dayWidth: Dp,
     dayCount: Int,
-    showCalendarDates: Boolean
+    showCalendarDates: Boolean,
+    holidayDates: Set<LocalDate>,
+    manualAdjustmentDates: Set<LocalDate>
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
         scheduleCalendarDays(week, today, dayCount, showCalendarDates).forEach { item ->
-            Column(
+            val marker = scheduleDayMarker(item.date, holidayDates, manualAdjustmentDates)
+            // 用 Box 叠加而不是往列里塞第三行：角标绝对定位在右下角，
+            // 不改变日期栏高度、列宽，也不会挤动下面的课程卡片。
+            Box(
                 modifier = Modifier
                     .width(dayWidth)
-                    .padding(bottom = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(bottom = 4.dp)
             ) {
-                Text(
-                    text = item.name,
-                    color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.42f),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-                item.date?.let { date ->
+                Column(
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     Text(
-                        text = date.dayOfMonth.toString(),
-                        color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.34f),
-                        fontSize = 12.sp,
-                        modifier = if (item.isToday) {
-                            Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color.White.copy(alpha = 0.22f))
-                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                        text = item.name,
+                        color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.42f),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    item.date?.let { date ->
+                        Text(
+                            text = date.dayOfMonth.toString(),
+                            color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.34f),
+                            fontSize = 12.sp,
+                            modifier = if (item.isToday) {
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.White.copy(alpha = 0.22f))
+                                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                            } else {
+                                Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            }
+                        )
+                    }
+                }
+                if (marker != null) {
+                    Text(
+                        text = marker.label,
+                        color = if (marker == ScheduleDayMarker.ADJUSTMENT) {
+                            AdjustmentMarkerColor
                         } else {
-                            Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                        }
+                            HolidayMarkerColor
+                        },
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontStyle = FontStyle.Italic,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 3.dp)
                     )
                 }
             }
