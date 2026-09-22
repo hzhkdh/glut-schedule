@@ -147,6 +147,23 @@ class CourseTeacherBinderTest {
         assertEquals("莫梓", CourseTeacherBinder.bind(personal, metadata).single().teacher)
     }
 
+    @Test
+    fun singleGroupBranchAlsoFillsTheRoomSoBothBranchesAgree() {
+        // 课次的教室非空、课程自身的教室为空时，不拆分的路径也要补上教室，
+        // 否则同一门课「拆与不拆」两种形态的卡片信息不同。
+        val personal = listOf(
+            course("1", "岩体力学", "甲 乙", listOf(occurrence("o1", 2, 1, 2, "1-10周", "5502D")))
+                .copy(room = "")
+        )
+        val metadata = listOf(metadataCourse("岩体力学", "5502D", "王俊璇"))
+
+        val bound = CourseTeacherBinder.bind(personal, metadata)
+
+        assertEquals(1, bound.size)
+        assertEquals("5502D", bound.single().room)
+        assertEquals("王俊璇", bound.single().teacher)
+    }
+
     /**
      * 南宁的体育课没有教室，大节课表的块里也就没有教室那一行。两侧教室都为空时**不得匹配**：
      * 「都不知道教室」不是任何证据，否则会给这种课配上一个来路不明的教师。

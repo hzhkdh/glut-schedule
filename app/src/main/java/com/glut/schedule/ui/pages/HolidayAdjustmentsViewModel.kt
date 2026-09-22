@@ -67,9 +67,12 @@ class HolidayAdjustmentsViewModel(
             SemesterBase(
                 semester = semester,
                 courses = courses,
-                // 学期记录里缺少校历时退回设置值——两者是同一次导入写入的，口径一致。
-                startDate = semester?.semesterStartDate ?: fallbackStart,
-                endDate = semester?.semesterEndDate ?: fallbackEnd
+                // 以 settings 为准：首页网格的周次锚点就是它（ScheduleViewModel 用
+                // settingsStore.semesterStartMonday）。两边锚点不同时，编辑页预览的
+                // 「将复制 N 节课程」会和首页实际追加的课次对不上。
+                // 两者是同一次导入写入的，正常情况下完全一致。
+                startDate = fallbackStart ?: semester?.semesterStartDate,
+                endDate = fallbackEnd ?: semester?.semesterEndDate
             )
         }
 

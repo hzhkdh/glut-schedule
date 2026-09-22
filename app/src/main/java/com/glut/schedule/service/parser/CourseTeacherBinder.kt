@@ -100,8 +100,10 @@ internal object CourseTeacherBinder {
         }
         if (groups.size == 1) {
             val teacher = desiredTeacher(course.occurrences.first())
-            if (teacher == originalTeacher) return listOf(course)
-            return listOf(course.copy(teacher = teacher.ifBlank { "待确认" }))
+            // 教室与拆分分支保持同一口径：以课次的教室为准，缺了才退回课程自身的。
+            val room = roomOf(course, course.occurrences.first()).ifBlank { course.room }
+            if (teacher == originalTeacher && room == course.room) return listOf(course)
+            return listOf(course.copy(room = room, teacher = teacher.ifBlank { "待确认" }))
         }
 
         return groups.entries.map { (groupKey, occurrences) ->
