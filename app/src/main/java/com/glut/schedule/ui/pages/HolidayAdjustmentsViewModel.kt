@@ -7,6 +7,8 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ManualDayCopyRule
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.countManualCopySourceBlocks
+import com.glut.schedule.data.model.hiddenCardRuleHits
+import com.glut.schedule.data.model.hiddenRuleLabel
 import com.glut.schedule.data.model.validateManualDayCopy
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.ScheduleSettingsStore
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -37,7 +40,9 @@ data class HolidayAdjustmentsUiState(
     /** 法定放假日：目标日落在其中时需要二次确认。 */
     val holidayDates: Set<LocalDate> = emptySet(),
     /** 首页是否显示周末列：目标日是周末而首页未开启周末时，追加的课程在首页看不到。 */
-    val showWeekend: Boolean = false
+    val showWeekend: Boolean = false,
+    /** 长按卡片手动删掉的卡片。与调休规则同属「我手动改动了课表」的叠加层。 */
+    val hiddenItems: List<HiddenCardItem> = emptyList()
 ) {
     /** 学期起止日期缺失时无法确定可选范围，整页退化为空状态。 */
     val canEdit: Boolean
@@ -62,11 +67,20 @@ class HolidayAdjustmentsViewModel(
             repository.currentSemester,
             repository.currentCourses,
             settingsStore.semesterStartMonday,
-            settingsStore.semesterEndDate
-        ) { semester, courses, fallbackStart, fallbackEnd ->
+            settingsStore.semesterEndDate,
+            settingsStore.hiddenCourseRules
+        ) { semester, courses, fallbackStart, fallbackEnd, hiddenRulesBySemester ->
             SemesterBase(
                 semester = semester,
                 courses = courses,
+                // 手动隐藏的卡片与调休规则同属「我手动改动了课表」的叠加层，所以放在这一页。
+                hiddenItems = hiddenRulesBySemester[semester?.id.orEmpty()].orEmpty().map { rule ->
+                    HiddenCardItem(
+                        id = rule.id,
+                        label = hiddenRuleLabel(rule, courses),
+                        existsInSchedule = hiddenCardRuleHits(courses, rule)
+                    )
+                },
                 // 以 settings 为准：首页网格的周次锚点就是它（ScheduleViewModel 用
                 // settingsStore.semesterStartMonday）。两边锚点不同时，编辑页预览的
                 // 「将复制 N 节课程」会和首页实际追加的课次对不上。
@@ -98,6 +112,7 @@ class HolidayAdjustmentsViewModel(
                 semesterEndDate = base.endDate,
                 courses = base.courses,
                 rules = rulesBySemester[semesterId].orEmpty(),
+                hiddenItems = base.hiddenItems,
                 holidayDates = holidays,
                 showWeekend = showWeekend
             )
@@ -153,6 +168,23 @@ class HolidayAdjustmentsViewModel(
         return null
     }
 
+    /** 恢复一条被手动隐藏的卡片。写入前重新读一次最新列表，避免与首页的并发写入互相覆盖。 */
+    fun restoreHiddenCard(ruleId: String) {
+        val semesterId = uiState.value.semesterId
+        if (semesterId.isBlank()) return
+        viewModelScope.launch {
+            val latest = settingsStore.hiddenCourseRules.first()[semesterId].orEmpty()
+            settingsStore.setHiddenCourseRules(semesterId, latest.filterNot { it.id == ruleId })
+        }
+    }
+
+    /** 恢复本学期全部被手动隐藏的卡片。 */
+    fun restoreAllHiddenCards() {
+        val semesterId = uiState.value.semesterId
+        if (semesterId.isBlank()) return
+        viewModelScope.launch { settingsStore.clearHiddenCourseRules(semesterId) }
+    }
+
     fun deleteRule(rule: ManualDayCopyRule) {
         viewModelScope.launch {
             val latest = uiState.value
@@ -167,7 +199,8 @@ class HolidayAdjustmentsViewModel(
         val semester: AcademicSemester?,
         val courses: List<ScheduleCourse>,
         val startDate: LocalDate?,
-        val endDate: LocalDate?
+        val endDate: LocalDate?,
+        val hiddenItems: List<HiddenCardItem> = emptyList()
     )
 }
 

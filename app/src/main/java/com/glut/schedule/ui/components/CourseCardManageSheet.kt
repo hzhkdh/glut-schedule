@@ -2,6 +2,8 @@ package com.glut.schedule.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,7 +68,10 @@ internal fun CourseCardManageSheet(
     onRestoreColor: () -> Unit,
     onDelete: (HiddenCardScope) -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // 允许半展开：弹出时先停在屏幕一半处（露出颜色区），用户可以拖拽柄继续往上拉到全部内容。
+    // Material3 1.4.0 的半展开锚点是内部算的，公开 API 无法指定「正好停在卡片颜色那一行」，
+    // 但内容高于可用高度时默认就停在屏幕一半——正是想要的效果。
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     var showAdvanced by remember { mutableStateOf(false) }
 
     // 下面三条规则只用来生成按钮上的范围文案，本身不落库；真正写入的规则由上层按同样口径构造。
@@ -96,6 +101,7 @@ internal fun CourseCardManageSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 28.dp)
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(14.dp)

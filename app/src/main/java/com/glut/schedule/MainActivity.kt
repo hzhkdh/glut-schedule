@@ -145,7 +145,6 @@ import com.glut.schedule.ui.navigation.otherDrawerItems
 import com.glut.schedule.ui.navigation.prepareDrawerSelection
 import com.glut.schedule.ui.pages.AboutScreen
 import com.glut.schedule.ui.pages.FaqScreen
-import com.glut.schedule.ui.pages.HiddenCardItem
 import com.glut.schedule.ui.pages.CourseTimeStatsScreen
 import com.glut.schedule.ui.pages.CourseTimeStatsViewModel
 import com.glut.schedule.ui.pages.CourseTimeStatsViewModelFactory
@@ -1419,12 +1418,9 @@ private fun ScheduleSettingsDestination(
             // 用完整课表：隐藏掉的卡片也要能在这里改色。
             courses = uiState.allCourses,
             overrides = uiState.courseColorOverrides,
-            hiddenCards = uiState.hiddenCardItems,
             onSetColor = viewModel::setCourseColorOverride,
             onRemoveColor = viewModel::removeCourseColorOverride,
-            onResetAll = viewModel::clearCourseColorOverrides,
-            onRestoreHidden = { ruleId -> viewModel.restoreHiddenCard(uiState.currentSemesterId, ruleId) },
-            onRestoreAllHidden = { viewModel.restoreAllHiddenCards(uiState.currentSemesterId) }
+            onResetAll = viewModel::clearCourseColorOverrides
         )
         SettingsSubPage.HOLIDAY_ADJUSTMENTS -> HolidayAdjustmentsScreen(
             viewModel = holidayAdjustmentsViewModel
@@ -1981,12 +1977,9 @@ internal fun shouldRunDrawerGreetingAnimation(
 private fun CourseColorsPage(
     courses: List<ScheduleCourse>,
     overrides: Map<String, String>,
-    hiddenCards: List<HiddenCardItem>,
     onSetColor: (String, String) -> Unit,
     onRemoveColor: (String) -> Unit,
-    onResetAll: () -> Unit,
-    onRestoreHidden: (String) -> Unit,
-    onRestoreAllHidden: () -> Unit
+    onResetAll: () -> Unit
 ) {
     val background = Color(0xFFF6F4EF)
     val card = Color(0xFFFFFEFB)
@@ -2041,54 +2034,7 @@ private fun CourseColorsPage(
                 Text("恢复全部默认颜色", color = Color(0xFFDC2626))
             }
         }
-        // 手动删除的卡片在这里找回来。上面那份课程列表用的是**完整**课表，
-        // 所以隐藏的卡片也能先改色再恢复。
-        if (hiddenCards.isNotEmpty()) {
-            item {
-                Text(
-                    "已隐藏的卡片 ${hiddenCards.size} 张",
-                    color = Color(0xFF667085),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(top = 12.dp)
-                )
-            }
-            items(hiddenCards, key = { "hidden-${it.id}" }) { hidden ->
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = card,
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                hidden.label,
-                                color = Color(0xFF141821),
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            // 失效记录有意保留（课再排回来依然隐藏），但要标出来，
-                            // 否则用户会看到一条对不上任何课程的记录。
-                            if (!hidden.existsInSchedule) {
-                                Text("已不在课表中", color = Color(0xFF98A2B3), fontSize = 12.sp)
-                            }
-                        }
-                        TextButton(onClick = { onRestoreHidden(hidden.id) }) {
-                            Text("恢复", color = Color(0xFF3F7DF6))
-                        }
-                    }
-                }
-            }
-            item {
-                TextButton(modifier = Modifier.fillMaxWidth(), onClick = onRestoreAllHidden) {
-                    Text("全部恢复", color = Color(0xFF3F7DF6))
-                }
-            }
-        }
+        // 「已隐藏的卡片」已迁到「调休调课」页：两者都是「我手动改动了课表」的叠加层。
     }
 
     selectedCourse?.let { course ->
@@ -2180,14 +2126,16 @@ private fun NoticePopupDialog(
         textContentColor = Color(0xFF49454F),
         title = { Text("新通知", fontWeight = FontWeight.Bold) },
         text = {
-            LazyColumn(
+            // 公告正文没有长度上限，必须给它一个**限高的纵向滚动框**，否则弹窗会被撑得很长。
+            // 这里刻意不用 LazyColumn：LazyColumn 以 item 为粒度处理超高内容，
+            // 而正文是单个 item，滚动会不可靠（滚不到底 / 内容被裁）。
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState())
             ) {
-                item {
-                    NoticePopupContent(notice = notice)
-                }
+                NoticePopupContent(notice = notice)
             }
         },
         confirmButton = {
@@ -2356,15 +2304,19 @@ private fun UpdateDialog(
                             Text("当前版本: v${BuildConfig.VERSION_NAME}")
                             Spacer(modifier = Modifier.height(8.dp))
                             if (state.info.releaseNotes.isNotBlank()) {
-                                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                                    item {
-                                        Text(
-                                            state.info.releaseNotes,
-                                            fontSize = 14.sp,
-                                            lineHeight = 20.sp,
-                                            color = Color(0xFF3D3940)
-                                        )
-                                    }
+                                // 与公告弹窗同一个毛病：发布说明往往比公告还长，
+                                // 而这两个弹窗都禁止点外关闭，更需要框内滚动。
+                                Column(
+                                    modifier = Modifier
+                                        .heightIn(max = 300.dp)
+                                        .verticalScroll(rememberScrollState())
+                                ) {
+                                    Text(
+                                        state.info.releaseNotes,
+                                        fontSize = 14.sp,
+                                        lineHeight = 20.sp,
+                                        color = Color(0xFF3D3940)
+                                    )
                                 }
                             }
                         } else {

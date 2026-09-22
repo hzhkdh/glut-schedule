@@ -219,6 +219,38 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
                             RuleRow(row = row, onDelete = { pendingDelete = row.rule })
                         }
                     }
+
+                    // 长按卡片删掉的卡片在这里恢复：与调休规则同属「我手动改动了课表」的叠加层。
+                    if (state.hiddenItems.isNotEmpty()) {
+                        Divider()
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("已隐藏的卡片", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "${state.hiddenItems.size} 张",
+                                    color = Color(0xFF98A0AF),
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.End,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            state.hiddenItems.forEachIndexed { index, item ->
+                                if (index > 0) Divider()
+                                HiddenCardRow(
+                                    label = item.label,
+                                    // 失效记录是有意保留的（课再排回来依然隐藏），但要标出来。
+                                    missingFromSchedule = !item.existsInSchedule,
+                                    onRestore = { viewModel.restoreHiddenCard(item.id) }
+                                )
+                            }
+                            TextButton(
+                                onClick = viewModel::restoreAllHiddenCards,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("全部恢复", color = Color(0xFF3F7DF6), fontSize = 15.sp)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -319,6 +351,36 @@ private fun DateField(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
             )
         }
+    }
+}
+
+/**
+ * 「已隐藏的卡片」的一行。
+ *
+ * 与 [RuleRow] 同构，只是右侧动作从「删除」换成「恢复」——语义相反，颜色也随之从警示色换成强调蓝。
+ */
+@Composable
+private fun HiddenCardRow(
+    label: String,
+    missingFromSchedule: Boolean,
+    onRestore: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            if (missingFromSchedule) {
+                Text("已不在课表中", color = TextSecondary, fontSize = 13.sp)
+            }
+        }
+        Text(
+            text = "恢复",
+            color = Color(0xFF3F7DF6),
+            fontSize = 14.sp,
+            modifier = Modifier.clickable(onClick = onRestore)
+        )
     }
 }
 
