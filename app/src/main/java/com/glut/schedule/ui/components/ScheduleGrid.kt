@@ -2,6 +2,7 @@ package com.glut.schedule.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -134,6 +135,8 @@ fun ScheduleGrid(
     showCalendarDates: Boolean = true,
     holidayDates: Set<LocalDate> = emptySet(),
     manualAdjustmentDates: Set<LocalDate> = emptySet(),
+    /** 长按卡片时回调当前**显示中**的那一张（冲突组里只有它是可见的），打开卡片管理弹层。 */
+    onCourseLongClick: ((CourseBlock) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -175,6 +178,7 @@ fun ScheduleGrid(
                     dayWidth = dayWidth,
                     dayCount = dayCount,
                     showNoon = effectiveShowNoon,
+                    onCourseLongClick = onCourseLongClick,
                 )
             }
         }
@@ -359,6 +363,7 @@ private fun TimetableBody(
     dayWidth: Dp,
     dayCount: Int,
     showNoon: Boolean = false,
+    onCourseLongClick: ((CourseBlock) -> Unit)? = null,
 ) {
     val visiblePeriodCount = if (showNoon) periods.size else periods.size - NOON_SECTIONS.size
     val totalHeight = rowHeight * visiblePeriodCount
@@ -382,6 +387,8 @@ private fun TimetableBody(
                     block = activeBlock,
                     conflictCount = group.size,
                     onConflictClick = nextBlock,
+                    // 交给上层的始终是 activeBlock：冲突组里只有当前显示的那一张是看得见的。
+                    onLongClick = onCourseLongClick?.let { callback -> { callback(activeBlock) } },
                     modifier = Modifier
                         .offset(
                             x = dayWidth * (activeBlock.occurrence.dayOfWeek - 1) + 2.dp,
@@ -462,14 +469,18 @@ private fun CourseCard(
     block: CourseBlock,
     conflictCount: Int,
     onConflictClick: (() -> Unit)?,
+    onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val color = remember(block.course.colorHex) { Color(android.graphics.Color.parseColor(block.course.colorHex)) }
     val titleSize = courseCardTitleTextSize(block.course.title)
     val titleLineHeight = courseCardTitleLineHeight()
-    val clickableModifier = Modifier.clickable {
-            if (conflictCount > 1) onConflictClick?.invoke()
-        }
+    // 长按与「单击切换冲突课」共存：combinedClickable 保证长按时不会再触发 onClick，
+    // 长按也不推进冲突索引，两者互不干扰。
+    val clickableModifier = Modifier.combinedClickable(
+        onClick = { if (conflictCount > 1) onConflictClick?.invoke() },
+        onLongClick = onLongClick
+    )
 
     Box(
         modifier = modifier
@@ -480,7 +491,8 @@ private fun CourseCard(
             .semantics {
                 contentDescription =
                     "${block.course.title}，${block.course.teacher}，${block.course.room}" +
-                    (if (conflictCount > 1) "，共${conflictCount}门冲突课程，单击切换" else "")
+                    (if (conflictCount > 1) "，共${conflictCount}门冲突课程，单击切换" else "") +
+                    "，长按管理卡片"
             }
     ) {
         Column(

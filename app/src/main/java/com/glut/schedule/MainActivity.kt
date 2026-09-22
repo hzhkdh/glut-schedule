@@ -145,6 +145,7 @@ import com.glut.schedule.ui.navigation.otherDrawerItems
 import com.glut.schedule.ui.navigation.prepareDrawerSelection
 import com.glut.schedule.ui.pages.AboutScreen
 import com.glut.schedule.ui.pages.FaqScreen
+import com.glut.schedule.ui.pages.HiddenCardItem
 import com.glut.schedule.ui.pages.CourseTimeStatsScreen
 import com.glut.schedule.ui.pages.CourseTimeStatsViewModel
 import com.glut.schedule.ui.pages.CourseTimeStatsViewModelFactory
@@ -179,6 +180,8 @@ import com.glut.schedule.partner.PartnerScheduleViewModelFactory
 import com.glut.schedule.ui.pages.ClassPeriodSettingsScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
+import com.glut.schedule.ui.components.AdvancedColorSheet
+import com.glut.schedule.ui.components.CourseColorPaletteSection
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.components.ScheduleBackgroundImage
 import com.glut.schedule.ui.components.shouldUseCustomBackground
@@ -1413,11 +1416,15 @@ private fun ScheduleSettingsDestination(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     when (subPage) {
         SettingsSubPage.COURSE_COLORS -> CourseColorsPage(
-            courses = uiState.courses,
+            // 用完整课表：隐藏掉的卡片也要能在这里改色。
+            courses = uiState.allCourses,
             overrides = uiState.courseColorOverrides,
+            hiddenCards = uiState.hiddenCardItems,
             onSetColor = viewModel::setCourseColorOverride,
             onRemoveColor = viewModel::removeCourseColorOverride,
-            onResetAll = viewModel::clearCourseColorOverrides
+            onResetAll = viewModel::clearCourseColorOverrides,
+            onRestoreHidden = { ruleId -> viewModel.restoreHiddenCard(uiState.currentSemesterId, ruleId) },
+            onRestoreAllHidden = { viewModel.restoreAllHiddenCards(uiState.currentSemesterId) }
         )
         SettingsSubPage.HOLIDAY_ADJUSTMENTS -> HolidayAdjustmentsScreen(
             viewModel = holidayAdjustmentsViewModel
@@ -1974,9 +1981,12 @@ internal fun shouldRunDrawerGreetingAnimation(
 private fun CourseColorsPage(
     courses: List<ScheduleCourse>,
     overrides: Map<String, String>,
+    hiddenCards: List<HiddenCardItem>,
     onSetColor: (String, String) -> Unit,
     onRemoveColor: (String) -> Unit,
-    onResetAll: () -> Unit
+    onResetAll: () -> Unit,
+    onRestoreHidden: (String) -> Unit,
+    onRestoreAllHidden: () -> Unit
 ) {
     val background = Color(0xFFF6F4EF)
     val card = Color(0xFFFFFEFB)
@@ -2029,6 +2039,54 @@ private fun CourseColorsPage(
         item {
             TextButton(modifier = Modifier.fillMaxWidth(), onClick = onResetAll) {
                 Text("恢复全部默认颜色", color = Color(0xFFDC2626))
+            }
+        }
+        // 手动删除的卡片在这里找回来。上面那份课程列表用的是**完整**课表，
+        // 所以隐藏的卡片也能先改色再恢复。
+        if (hiddenCards.isNotEmpty()) {
+            item {
+                Text(
+                    "已隐藏的卡片 ${hiddenCards.size} 张",
+                    color = Color(0xFF667085),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+            }
+            items(hiddenCards, key = { "hidden-${it.id}" }) { hidden ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = card,
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                hidden.label,
+                                color = Color(0xFF141821),
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            // 失效记录有意保留（课再排回来依然隐藏），但要标出来，
+                            // 否则用户会看到一条对不上任何课程的记录。
+                            if (!hidden.existsInSchedule) {
+                                Text("已不在课表中", color = Color(0xFF98A2B3), fontSize = 12.sp)
+                            }
+                        }
+                        TextButton(onClick = { onRestoreHidden(hidden.id) }) {
+                            Text("恢复", color = Color(0xFF3F7DF6))
+                        }
+                    }
+                }
+            }
+            item {
+                TextButton(modifier = Modifier.fillMaxWidth(), onClick = onRestoreAllHidden) {
+                    Text("全部恢复", color = Color(0xFF3F7DF6))
+                }
             }
         }
     }
@@ -2088,208 +2146,18 @@ private fun PresetColorSheet(
                 Text(course.title, color = Color(0xFF141821), fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("选择课程卡片颜色", color = Color(0xFF667085), fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
             }
-            CourseColorMapper.presetPalette.chunked(5).forEach { row ->
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    row.forEach { color ->
-                        Surface(
-                            modifier = Modifier.size(52.dp).clickable { onSelect(color) },
-                            color = Color(AndroidColor.parseColor(color)),
-                            shape = RoundedCornerShape(16.dp)
-                        ) {}
-                    }
-                }
-            }
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = onRestore) { Text("恢复自动配色", color = Color(0xFF667085), fontSize = 15.sp) }
-                TextButton(onClick = onAdvanced) { Text("高级调色", color = Color(0xFF3F7DF6), fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AdvancedColorSheet(
-    initialColor: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    val initialHsv = remember(initialColor) { hexToHsv(initialColor) }
-    var hue by remember(initialColor) { mutableStateOf(initialHsv[0]) }
-    var saturation by remember(initialColor) { mutableStateOf(initialHsv[1]) }
-    var value by remember(initialColor) { mutableStateOf(initialHsv[2]) }
-    var hexField by remember(initialColor) { mutableStateOf(TextFieldValue(initialColor, TextRange(0))) }
-
-    fun updateFromHsv(nextHue: Float = hue, nextSaturation: Float = saturation, nextValue: Float = value) {
-        hue = nextHue
-        saturation = nextSaturation
-        value = nextValue
-        val nextHex = hsvToHex(hue, saturation, value)
-        hexField = TextFieldValue(nextHex, TextRange(nextHex.length))
-    }
-
-    var planeSize by remember { mutableStateOf(IntSize.Zero) }
-    var hueTrackSize by remember { mutableStateOf(IntSize.Zero) }
-    val normalizedColor = CourseColorMapper.normalizeHexColor(hexField.text)
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scrollState = rememberScrollState()
-    val hexBringIntoViewRequester = remember { BringIntoViewRequester() }
-    val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
-    val planeThumbSizePx = with(density) { 20.dp.toPx() }
-    val hueThumbSizePx = with(density) { 22.dp.toPx() }
-
-    fun updatePlane(position: Offset) {
-        if (planeSize.width == 0 || planeSize.height == 0) return
-        updateFromHsv(
-            nextSaturation = (position.x / planeSize.width).coerceIn(0f, 1f),
-            nextValue = (1f - position.y / planeSize.height).coerceIn(0f, 1f)
-        )
-    }
-
-    fun updateHue(position: Offset) {
-        if (hueTrackSize.width == 0) return
-        updateFromHsv(nextHue = (position.x / hueTrackSize.width * 360f).coerceIn(0f, 360f))
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = Color(0xFFFFFEFB),
-        tonalElevation = 0.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 28.dp)
-                .verticalScroll(scrollState)
-                .imePadding()
-                .navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("高级调色", color = Color(0xFF141821), fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text("嵌入式系统", color = Color(0xFF667085), fontSize = 13.sp)
-            }
-            Surface(
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                color = Color(AndroidColor.parseColor(normalizedColor ?: "#3B82F6")),
-                shape = RoundedCornerShape(16.dp)
-            ) {}
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(248.dp)
-                    .background(
-                        Brush.horizontalGradient(listOf(Color.White, Color(AndroidColor.parseColor(hsvToHex(hue, 1f, 1f))))),
-                        RoundedCornerShape(16.dp)
-                    )
-                    .onSizeChanged { planeSize = it }
-                    .pointerInput(planeSize, hue) {
-                        detectDragGestures(
-                            onDragStart = ::updatePlane,
-                            onDrag = { change, _ -> updatePlane(change.position) }
-                        )
-                    }
-            ) {
-                Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)), RoundedCornerShape(16.dp)))
-                Box(
-                    modifier = Modifier
-                        .offset {
-                            IntOffset(
-                                (saturation * maxOf(0f, planeSize.width - planeThumbSizePx)).toInt(),
-                                ((1f - value) * maxOf(0f, planeSize.height - planeThumbSizePx)).toInt()
-                            )
-                        }
-                        .size(20.dp)
-                        .border(2.dp, Color.White, CircleShape)
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("色相", color = Color(0xFF344054), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text("拖动切换基础颜色", color = Color(0xFF98A2B3), fontSize = 13.sp)
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(28.dp)
-                    .background(
-                        Brush.horizontalGradient(listOf(
-                            Color(0xFFF04438), Color(0xFFF79009), Color(0xFFFDE272),
-                            Color(0xFF12B76A), Color(0xFF2E90FA), Color(0xFF9E77ED),
-                            Color(0xFFEE46BC), Color(0xFFF04438)
-                        )),
-                        RoundedCornerShape(14.dp)
-                    )
-                    .onSizeChanged { hueTrackSize = it }
-                    .pointerInput(hueTrackSize) {
-                        detectDragGestures(
-                            onDragStart = ::updateHue,
-                            onDrag = { change, _ -> updateHue(change.position) }
-                        )
-                    }
-            ) {
-                Box(
-                    modifier = Modifier
-                        .offset {
-                            IntOffset(
-                                (hue / 360f * maxOf(0f, hueTrackSize.width - hueThumbSizePx)).toInt(),
-                                ((hueTrackSize.height - hueThumbSizePx) / 2f).toInt()
-                            )
-                        }
-                        .size(22.dp)
-                        .background(Color.White, CircleShape)
-                        .border(2.dp, Color(0xFF667085), CircleShape)
-                )
-            }
-            OutlinedTextField(
-                value = hexField,
-                onValueChange = { input ->
-                    hexField = input
-                    CourseColorMapper.normalizeHexColor(input.text)?.let { color ->
-                        val hsv = hexToHsv(color)
-                        hue = hsv[0]
-                        saturation = hsv[1]
-                        value = hsv[2]
-                    }
-                },
-                label = { Text("HEX 颜色") },
-                placeholder = { Text("#154173") },
-                singleLine = true,
-                isError = hexField.text.isNotBlank() && normalizedColor == null,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF141821)),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color(0xFF141821),
-                    unfocusedTextColor = Color(0xFF141821),
-                    focusedBorderColor = Color(0xFF3F7DF6),
-                    unfocusedBorderColor = Color(0xFF98A2B3),
-                    cursorColor = Color(0xFF3F7DF6)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .bringIntoViewRequester(hexBringIntoViewRequester)
-                    .onFocusEvent { focusState ->
-                        if (focusState.isFocused) scope.launch { hexBringIntoViewRequester.bringIntoView() }
-                    }
+            // 预设色网格与两个按钮已提取到共享组件，与长按卡片的「卡片管理」弹层共用同一套。
+            CourseColorPaletteSection(
+                onSelect = onSelect,
+                onAdvanced = onAdvanced,
+                onRestore = onRestore
             )
-            Text("支持 #RRGGBB 或 RRGGBB；每组十六进制取值为 00 到 FF。", color = Color(0xFF667085), fontSize = 12.sp)
-            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onDismiss) { Text("取消") }
-                TextButton(enabled = normalizedColor != null, onClick = { normalizedColor?.let(onConfirm) }) { Text("完成") }
-            }
         }
     }
 }
 
-private fun hexToHsv(hex: String): FloatArray {
-    val hsv = FloatArray(3)
-    AndroidColor.colorToHSV(AndroidColor.parseColor(CourseColorMapper.normalizeHexColor(hex) ?: "#3B82F6"), hsv)
-    return hsv
-}
-
-private fun hsvToHex(hue: Float, saturation: Float, value: Float): String {
-    return "#%06X".format(AndroidColor.HSVToColor(floatArrayOf(hue, saturation, value)) and 0xFFFFFF)
-}
+// AdvancedColorSheet 与它的 hexToHsv / hsvToHex 已移到 ui/components/CourseColorPalette.kt，
+// 与长按卡片的「卡片管理」弹层共用。
 
 // ---- Notice Popup Dialog ----
 

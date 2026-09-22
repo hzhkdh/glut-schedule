@@ -24,6 +24,9 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 
@@ -60,7 +63,11 @@ import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.manualCopyBlocksForWeek
 import com.glut.schedule.data.model.scheduleWeekForNumber
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.ui.components.CourseCardManageSheet
 import com.glut.schedule.ui.components.ScheduleGrid
+import com.glut.schedule.ui.components.isManualCopyBlock
 import com.glut.schedule.ui.components.ScheduleHeader
 import com.glut.schedule.ui.components.ScheduleBackgroundImage
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -81,6 +88,8 @@ fun ScheduleScreen(
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     var showAddActions by remember { mutableStateOf(false) }
+    /** 长按打开「卡片管理」的那一张卡。冲突组里传上来的是当前显示的那一门。 */
+    var managedBlock by remember { mutableStateOf<CourseBlock?>(null) }
     val coroutineScope = rememberCoroutineScope()
     if (!uiState.isInitialized) {
         // 背景设置尚未恢复时只显示中性占位，避免把临时空值误绘制成默认《花》。
@@ -184,7 +193,9 @@ fun ScheduleScreen(
                 },
                 onRefreshClick = {
                     showAddActions = false
-                    viewModel.refreshSchedule()
+                    // 走 requestRefresh 而不是直接刷新：藏着卡片时会先弹一次确认。
+                    // 没藏着卡片时它内部直接走同一条刷新路径，交互与之前完全一样。
+                    viewModel.requestRefresh()
                 },
                 semesters = uiState.semesters,
                 isHistorical = uiState.isHistoricalSemester,
@@ -195,7 +206,9 @@ fun ScheduleScreen(
                 onDrawerOpen = onDrawerOpen,
                 isRefreshing = uiState.isRefreshing
             )
-            if (uiState.courses.isEmpty()) {
+            // 空态判定必须用**完整**课表：用户把某周或某课次的卡片全隐藏之后，
+            // 展示列表会变空，但课表本身还在，不该整页变成「还没有课表 / 去导入课表」。
+            if (uiState.allCourses.isEmpty()) {
                 ScheduleEmptyState(onImportClick, Modifier.weight(1f).fillMaxWidth())
             } else HorizontalPager(
                 state = pagerState,
@@ -226,6 +239,13 @@ fun ScheduleScreen(
                     showCalendarDates = uiState.hasAuthoritativeCalendar,
                     holidayDates = uiState.holidayDates,
                     manualAdjustmentDates = adjustmentDates,
+                    onCourseLongClick = { block ->
+                        // 历史学期是只读快照，隐藏记录只对当前学期生效，这里直接不响应，
+                        // 免得用户在一份永不生效的学期上删了卡片还看不到任何反应。
+                        if (!uiState.isHistoricalSemester && !block.isManualCopyBlock()) {
+                            managedBlock = block
+                        }
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -269,6 +289,83 @@ fun ScheduleScreen(
             snackbarHostState.showSnackbar(message)
             viewModel.clearMessage()
         }
+    }
+
+    // 删除后的撤销入口。走独立通道而不是复用 uiState.message：那条通道会被 clearMessage()
+    // 立刻清掉，而且带不了 action 按钮。
+    val hiddenUndo by viewModel.hiddenUndo.collectAsStateWithLifecycle()
+    LaunchedEffect(hiddenUndo?.id) {
+        val undo = hiddenUndo ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = "已隐藏该卡片",
+            actionLabel = "撤销",
+            duration = SnackbarDuration.Short
+        )
+        if (result == SnackbarResult.ActionPerformed) {
+            viewModel.undoHideCards()
+        } else {
+            viewModel.clearHiddenUndo()
+        }
+    }
+
+    managedBlock?.let { block ->
+        CourseCardManageSheet(
+            block = block,
+            courses = uiState.allCourses,
+            currentWeekNumber = uiState.week.number,
+            onDismiss = { managedBlock = null },
+            onSelectColor = { color ->
+                viewModel.setCourseColorOverride(
+                    CourseColorMapper.colorKey(block.course.id, block.course.title),
+                    color
+                )
+                managedBlock = null
+            },
+            onRestoreColor = {
+                viewModel.removeCourseColorOverride(
+                    CourseColorMapper.colorKey(block.course.id, block.course.title)
+                )
+                managedBlock = null
+            },
+            onDelete = { scope ->
+                viewModel.hideCard(block, scope)
+                managedBlock = null
+            }
+        )
+    }
+
+    // 刷新确认：只有当前学期确实还藏着卡片时才会出现。
+    val refreshConfirm by viewModel.refreshConfirm.collectAsStateWithLifecycle()
+    refreshConfirm?.let { confirm ->
+        var keepHidden by remember(confirm) { mutableStateOf(true) }
+        AlertDialog(
+            onDismissRequest = viewModel::dismissRefreshConfirm,
+            containerColor = Color(0xFFFFFEFB),
+            titleContentColor = Color(0xFF141821),
+            textContentColor = Color(0xFF667085),
+            title = { Text("刷新课表") },
+            text = {
+                Column {
+                    Text("检测到你手动删除了 ${confirm.count} 张卡片。")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { keepHidden = !keepHidden }
+                            .padding(top = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = keepHidden, onCheckedChange = { keepHidden = it })
+                        Text("保留我手动删除的 ${confirm.count} 张卡片")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmRefresh(keepHidden) }) { Text("刷新") }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissRefreshConfirm) { Text("取消") }
+            }
+        )
     }
 }
 

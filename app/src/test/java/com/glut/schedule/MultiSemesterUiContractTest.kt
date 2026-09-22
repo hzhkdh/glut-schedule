@@ -28,14 +28,24 @@ class MultiSemesterUiContractTest {
         assertFalse(loadingBranch.contains("ScheduleBackgroundImage("))
     }
 
+    /**
+     * 卡片只暴露「长按管理卡片」这一个新手势。
+     *
+     * 这条测试的前身是 `scheduleCardsDoNotExposeRemarkGesturesOrBadges`，当时明确断言
+     * `ScheduleGrid.kt` 里**不许出现** `combinedClickable` —— 那是「卡片不做长按备注手势」
+     * 刻意立的规矩。现在长按改用来打开「卡片管理」弹层，规矩随之收窄而不是取消：
+     * 备注相关的入口与角标仍然一律不许回来，长按本身则被正向锁住，防止有人把备注手势
+     * 借道加回来。这是一次有意识的推翻，不是把测试删掉了事。
+     */
     @Test
-    fun scheduleCardsDoNotExposeRemarkGesturesOrBadges() {
+    fun scheduleCardsOnlyExposeTheLongPressManageGesture() {
         val screen = page("ScheduleScreen.kt")
         val grid = component("ScheduleGrid.kt")
         assertFalse(screen.contains("viewModel.saveCourseRemark"))
         assertFalse(screen.contains("viewModel.deleteCourseRemark"))
         assertFalse(grid.contains("Icons.Rounded.ChatBubble"))
-        assertFalse(grid.contains("combinedClickable"))
+        assertTrue(grid.contains("combinedClickable"))
+        assertTrue(grid.contains("onCourseLongClick"))
     }
 
     @Test
