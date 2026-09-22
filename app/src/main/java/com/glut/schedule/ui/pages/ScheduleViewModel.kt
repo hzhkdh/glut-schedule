@@ -13,12 +13,12 @@ import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.HiddenCardScope
 import com.glut.schedule.data.model.HiddenCourseRule
 import com.glut.schedule.data.model.ManualDayCopyRule
+import com.glut.schedule.data.model.ScheduleRefreshDiff
 import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.buildScheduleRefreshDiff
 import com.glut.schedule.data.model.applyHiddenCourseRules
 import com.glut.schedule.data.model.hiddenCardCount
-import com.glut.schedule.data.model.hiddenCardRuleHits
 import com.glut.schedule.data.model.hiddenCourseKey
-import com.glut.schedule.data.model.hiddenRuleLabel
 import com.glut.schedule.data.model.ScheduleBackgroundPreferences
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
@@ -88,10 +88,8 @@ data class ScheduleUiState(
     val hiddenCardRules: List<HiddenCourseRule> = emptyList(),
     /** 真正命中现有课次的隐藏规则数，用于刷新弹窗与设置页上的「N 张」。 */
     val hiddenCardCount: Int = 0,
-    /** 当前学期 id。隐藏记录按它写入，设置页恢复时也要用它。 */
+    /** 当前学期 id。隐藏记录按它写入。 */
     val currentSemesterId: String = "",
-    /** 设置页「已隐藏的卡片」列表；含已失效的记录，由 [HiddenCardItem.existsInSchedule] 标注。 */
-    val hiddenCardItems: List<HiddenCardItem> = emptyList(),
     val courseBlocks: List<CourseBlock> = emptyList(),
     val showWeekend: Boolean = false,
     val showNoon: Boolean = false,
@@ -243,6 +241,18 @@ class ScheduleViewModel(
     /** 刷新前确认弹窗的状态；为空表示不需要弹（没藏着卡片，或用户已处理）。 */
     private val _refreshConfirm = MutableStateFlow<RefreshConfirmState?>(null)
     val refreshConfirm: StateFlow<RefreshConfirmState?> = _refreshConfirm.asStateFlow()
+
+    /**
+     * 本次刷新的变化明细；为空表示没有变化（或提示已被消除）。
+     *
+     * 与 `_refreshConfirm` 一样单独开一个 Flow：`ScheduleUiState` 的 combine 已经排满，
+     * 而这批数据的消费方只有首页一个。
+     */
+    private val _refreshDiff = MutableStateFlow<ScheduleRefreshDiff?>(null)
+    val refreshDiff: StateFlow<ScheduleRefreshDiff?> = _refreshDiff.asStateFlow()
+
+    /** 刷新开始时记下的旧课表，供保存成功后比对。 */
+    private var refreshBaseCourses: List<ScheduleCourse> = emptyList()
 
     /**
      * 正在查看的学期的教务调课记录，用于给卡片打「调」/「补」角标。
@@ -414,14 +424,6 @@ class ScheduleViewModel(
                 // 只统计「确实命中现有课次」的规则，避免弹窗写「保留了 8 张」却一张都看不见。
                 hiddenCardCount = hiddenCardCount(coloredState.allCourses, coloredState.hiddenRules),
                 currentSemesterId = currentSemesterId,
-                hiddenCardItems = coloredState.hiddenRules.map { rule ->
-                    HiddenCardItem(
-                        id = rule.id,
-                        // 文案在 ViewModel 里算好，Composable 里不拼字符串。
-                        label = hiddenRuleLabel(rule, coloredState.allCourses),
-                        existsInSchedule = hiddenCardRuleHits(coloredState.allCourses, rule)
-                    )
-                },
                 courseBlocks = visibleCourses.flatMap { course ->
                     course.occurrences
                         .filter { occurrence -> occurrence.isActiveInWeek(clampedWeekNumber) }
@@ -608,19 +610,6 @@ class ScheduleViewModel(
         _hiddenUndo.value = null
     }
 
-    fun restoreHiddenCard(semesterId: String, ruleId: String) {
-        if (semesterId.isBlank()) return
-        viewModelScope.launch {
-            val latest = settingsStore.hiddenCourseRules.first()[semesterId].orEmpty()
-            settingsStore.setHiddenCourseRules(semesterId, latest.filterNot { it.id == ruleId })
-        }
-    }
-
-    fun restoreAllHiddenCards(semesterId: String) {
-        if (semesterId.isBlank()) return
-        viewModelScope.launch { settingsStore.clearHiddenCourseRules(semesterId) }
-    }
-
     // ---- 刷新确认 ----
 
     /**
@@ -692,7 +681,10 @@ class ScheduleViewModel(
             // 即使下面登录 / 抓取失败，节假日也已经更新过了。
             refreshHolidayYears()
             try {
-                val oldCourseCount = repository.courses.first().countDistinctCourseTitles()
+                // 除了门数，还要把完整旧课表留下来算差异明细（对齐小程序的刷新反馈）。
+                val oldCourses = repository.courses.first()
+                refreshBaseCourses = oldCourses
+                val oldCourseCount = oldCourses.countDistinctCourseTitles()
                 val existingCookie = sessionStore.academicCookie.first()
                 var refreshCookie = existingCookie
                 var importResult: Result<AcademicSemesterImportPayload>? = null
@@ -835,9 +827,28 @@ class ScheduleViewModel(
         } else {
             "${targetSemester.displayName}课表未发生变化（$newCourseCount 门课程）"
         }
-        message.value = if (payload.skippedRowCount > 0) {
-            "$completionMessage；已跳过 ${payload.skippedRowCount} 条异常课程记录"
-        } else completionMessage
+        // 有变化时改用明细卡片说明（与小程序同构），Snackbar 只留下异常行提示，
+        // 免得同一件事在两处各说一遍。没变化时保持原来那条简短提示。
+        val diff = buildScheduleRefreshDiff(refreshBaseCourses, payload.courses)
+        refreshBaseCourses = emptyList()
+        if (diff.hasChanges) {
+            _refreshDiff.value = diff
+            message.value = if (payload.skippedRowCount > 0) {
+                "已跳过 ${payload.skippedRowCount} 条异常课程记录"
+            } else {
+                ""
+            }
+        } else {
+            message.value = if (payload.skippedRowCount > 0) {
+                "$completionMessage；已跳过 ${payload.skippedRowCount} 条异常课程记录"
+            } else {
+                completionMessage
+            }
+        }
+    }
+
+    fun clearRefreshDiff() {
+        _refreshDiff.value = null
     }
 
     private fun isAuthenticationFailure(error: Throwable?): Boolean =

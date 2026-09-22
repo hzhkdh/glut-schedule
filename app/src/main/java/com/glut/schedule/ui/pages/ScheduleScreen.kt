@@ -63,8 +63,20 @@ import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.manualCopyBlocksForWeek
 import com.glut.schedule.data.model.scheduleWeekForNumber
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.ScheduleRefreshDiff
+import com.glut.schedule.data.model.ScheduleRefreshDiffItem
 import com.glut.schedule.ui.components.CourseCardManageSheet
 import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.isManualCopyBlock
@@ -90,6 +102,15 @@ fun ScheduleScreen(
     var showAddActions by remember { mutableStateOf(false) }
     /** 长按打开「卡片管理」的那一张卡。冲突组里传上来的是当前显示的那一门。 */
     var managedBlock by remember { mutableStateOf<CourseBlock?>(null) }
+    /** 刷新变化明细弹层是否可见。 */
+    var showRefreshDetail by remember { mutableStateOf(false) }
+    // 刷新后的变化明细。单独一个 Flow，不进 ScheduleUiState（那边的 combine 已经排满）。
+    val refreshDiff by viewModel.refreshDiff.collectAsStateWithLifecycle()
+    if (showRefreshDetail) {
+        refreshDiff?.let { diff ->
+            RefreshDiffDetailDialog(diff = diff, onDismiss = { showRefreshDetail = false })
+        }
+    }
     // 「调」/「补」角标要用它反查：卡片本身没有任何字段能说明自己来自哪种调整。
     val semesterAdjustments by viewModel.semesterAdjustments.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
@@ -278,6 +299,21 @@ fun ScheduleScreen(
                     .padding(top = 52.dp, end = 52.dp)
             )
         }
+        // 刷新后的变化明细（与小程序同构）：有变化时用卡片说明，可展开看全部。
+        val diff = refreshDiff
+        if (diff != null) {
+            RefreshDiffCard(
+                summary = diff.summary,
+                itemCount = diff.items.size,
+                onOpenDetail = { showRefreshDetail = true },
+                onDismiss = viewModel::clearRefreshDiff,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 78.dp)
+                    .navigationBarsPadding()
+            )
+        }
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
@@ -370,6 +406,131 @@ fun ScheduleScreen(
             }
         )
     }
+}
+
+/**
+ * 刷新后的变化摘要卡片。
+ *
+ * 与小程序 `refresh-feedback-card` 同构：标题「课表已更新」+ 摘要「新增 X 项 · 移除 Y 项 ·
+ * 调整 Z 项」+「查看全部 N 项」+ 关闭。只在**确实有变化**时出现，没变化时仍走 Snackbar 短提示。
+ */
+@Composable
+private fun RefreshDiffCard(
+    summary: String,
+    itemCount: Int,
+    onOpenDetail: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = Color(0xFFFFFEFB),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color(0xFFE4E0D7)),
+        shadowElevation = 6.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier.size(26.dp).clip(CircleShape).background(Color(0xFF3F7DF6)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("✓", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+            Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                Text("课表已更新", color = Color(0xFF141821), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(summary, color = Color(0xFF667085), fontSize = 13.sp)
+                if (itemCount > 0) {
+                    Text(
+                        text = "查看全部 $itemCount 项",
+                        color = Color(0xFF3F7DF6),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .padding(top = 2.dp)
+                            .clickable(onClick = onOpenDetail)
+                    )
+                }
+            }
+            Text(
+                text = "×",
+                color = Color(0xFF98A2B3),
+                fontSize = 22.sp,
+                modifier = Modifier.clickable(onClick = onDismiss).padding(horizontal = 4.dp)
+            )
+        }
+    }
+}
+
+/** 变化明细：逐条列出「新增/移除/调整 + 课程名 + 原/现」。 */
+@Composable
+private fun RefreshDiffDetailDialog(
+    diff: ScheduleRefreshDiff,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFFFFFEFB),
+        titleContentColor = Color(0xFF141821),
+        textContentColor = Color(0xFF667085),
+        title = { Text("本次课表变更") },
+        text = {
+            // 条目可能很多，用限高的纵向滚动框，别让弹窗被撑长。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                diff.items.forEachIndexed { index, item ->
+                    if (index > 0) HorizontalDivider(color = Color(0xFFF0EDE7))
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(color = item.kind.badgeBackground(), shape = RoundedCornerShape(6.dp)) {
+                                Text(
+                                    text = item.kind.label,
+                                    color = item.kind.badgeForeground(),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                            Text(
+                                text = item.title,
+                                color = Color(0xFF141821),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                        if (item.beforeText.isNotBlank()) {
+                            Text("原：${item.beforeText}", color = Color(0xFF667085), fontSize = 12.sp)
+                        }
+                        if (item.afterText.isNotBlank()) {
+                            Text("现：${item.afterText}", color = Color(0xFF344054), fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("知道了") }
+        }
+    )
+}
+
+private fun ScheduleRefreshDiffItem.Kind.badgeBackground(): Color = when (this) {
+    ScheduleRefreshDiffItem.Kind.ADDED -> Color(0xFFEAF8F0)
+    ScheduleRefreshDiffItem.Kind.REMOVED -> Color(0xFFFFF0EE)
+    ScheduleRefreshDiffItem.Kind.CHANGED -> Color(0xFFEEF4FF)
+}
+
+private fun ScheduleRefreshDiffItem.Kind.badgeForeground(): Color = when (this) {
+    ScheduleRefreshDiffItem.Kind.ADDED -> Color(0xFF16794A)
+    ScheduleRefreshDiffItem.Kind.REMOVED -> Color(0xFFC24135)
+    ScheduleRefreshDiffItem.Kind.CHANGED -> Color(0xFF3F7DF6)
 }
 
 @Composable
