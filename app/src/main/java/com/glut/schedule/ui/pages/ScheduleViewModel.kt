@@ -13,6 +13,7 @@ import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.HiddenCardScope
 import com.glut.schedule.data.model.HiddenCourseRule
 import com.glut.schedule.data.model.ManualDayCopyRule
+import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.applyHiddenCourseRules
 import com.glut.schedule.data.model.hiddenCardCount
 import com.glut.schedule.data.model.hiddenCardRuleHits
@@ -242,6 +243,16 @@ class ScheduleViewModel(
     /** 刷新前确认弹窗的状态；为空表示不需要弹（没藏着卡片，或用户已处理）。 */
     private val _refreshConfirm = MutableStateFlow<RefreshConfirmState?>(null)
     val refreshConfirm: StateFlow<RefreshConfirmState?> = _refreshConfirm.asStateFlow()
+
+    /**
+     * 正在查看的学期的教务调课记录，用于给卡片打「调」/「补」角标。
+     *
+     * 单独一个 Flow 而不是并进 `ScheduleUiState`：那个 state 的 combine 已经排满五路，
+     * 再加一路要牵动整条 copy 链路，而这批数据的消费方只有课表网格一个。
+     * 历史学期同样有记录（快照里存着），所以这里不做学期过滤——网格自己会按周次匹配。
+     */
+    val semesterAdjustments: StateFlow<List<SemesterAdjustment>> = repository.semesterAdjustments
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     init {
         val initialWeek = scheduleWeekForNumber(

@@ -49,6 +49,9 @@ import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.NOON_SECTIONS
 import com.glut.schedule.data.model.periodLabel
 import com.glut.schedule.data.model.CourseBlock
+import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.adjustmentMarkerFor
+import com.glut.schedule.data.model.readableMarkerColor
 import com.glut.schedule.data.model.ScheduleWeek
 import com.glut.schedule.data.model.visibleDayCount
 import java.time.LocalDate
@@ -137,6 +140,8 @@ fun ScheduleGrid(
     manualAdjustmentDates: Set<LocalDate> = emptySet(),
     /** 长按卡片时回调当前**显示中**的那一张（冲突组里只有它是可见的），打开卡片管理弹层。 */
     onCourseLongClick: ((CourseBlock) -> Unit)? = null,
+    /** 该学期的教务调课记录，用来给调课/补课产生的卡片打「调」/「补」角标。 */
+    adjustments: List<SemesterAdjustment> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -179,6 +184,8 @@ fun ScheduleGrid(
                     dayCount = dayCount,
                     showNoon = effectiveShowNoon,
                     onCourseLongClick = onCourseLongClick,
+                    weekNumber = week.number,
+                    adjustments = adjustments,
                 )
             }
         }
@@ -364,6 +371,8 @@ private fun TimetableBody(
     dayCount: Int,
     showNoon: Boolean = false,
     onCourseLongClick: ((CourseBlock) -> Unit)? = null,
+    weekNumber: Int = 0,
+    adjustments: List<SemesterAdjustment> = emptyList(),
 ) {
     val visiblePeriodCount = if (showNoon) periods.size else periods.size - NOON_SECTIONS.size
     val totalHeight = rowHeight * visiblePeriodCount
@@ -389,6 +398,12 @@ private fun TimetableBody(
                     onConflictClick = nextBlock,
                     // 交给上层的始终是 activeBlock：冲突组里只有当前显示的那一张是看得见的。
                     onLongClick = onCourseLongClick?.let { callback -> { callback(activeBlock) } },
+                    marker = adjustmentMarkerFor(
+                        occurrence = activeBlock.occurrence,
+                        courseTitle = activeBlock.course.title,
+                        weekNumber = weekNumber,
+                        adjustments = adjustments
+                    ),
                     modifier = Modifier
                         .offset(
                             x = dayWidth * (activeBlock.occurrence.dayOfWeek - 1) + 2.dp,
@@ -470,6 +485,8 @@ private fun CourseCard(
     conflictCount: Int,
     onConflictClick: (() -> Unit)?,
     onLongClick: (() -> Unit)? = null,
+    /** 「调」/「补」角标文本；为空表示这张卡不是调课/补课产生的。 */
+    marker: String? = null,
     modifier: Modifier = Modifier
 ) {
     val color = remember(block.course.colorHex) { Color(android.graphics.Color.parseColor(block.course.colorHex)) }
@@ -520,6 +537,20 @@ private fun CourseCard(
                 color = Color.White.copy(alpha = 0.95f),
                 fontSize = courseCardTeacherTextSize(),
                 lineHeight = courseCardTeacherLineHeight()
+            )
+        }
+
+        if (marker != null) {
+            // 左下角与右下角的冲突角标互不干涉。字色按卡片底色自适应：底色是任意可选的，
+            // 固定字色必然会在某些卡上糊掉（详见 readableMarkerColor 的注释）。
+            Text(
+                text = marker,
+                modifier = Modifier.align(Alignment.BottomStart),
+                color = Color(android.graphics.Color.parseColor(readableMarkerColor(block.course.colorHex))),
+                fontSize = 10.sp,
+                lineHeight = 10.sp,
+                fontStyle = FontStyle.Italic,
+                fontWeight = FontWeight.ExtraBold
             )
         }
 

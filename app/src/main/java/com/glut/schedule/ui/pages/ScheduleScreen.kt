@@ -90,6 +90,8 @@ fun ScheduleScreen(
     var showAddActions by remember { mutableStateOf(false) }
     /** 长按打开「卡片管理」的那一张卡。冲突组里传上来的是当前显示的那一门。 */
     var managedBlock by remember { mutableStateOf<CourseBlock?>(null) }
+    // 「调」/「补」角标要用它反查：卡片本身没有任何字段能说明自己来自哪种调整。
+    val semesterAdjustments by viewModel.semesterAdjustments.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
     if (!uiState.isInitialized) {
         // 背景设置尚未恢复时只显示中性占位，避免把临时空值误绘制成默认《花》。
@@ -239,6 +241,7 @@ fun ScheduleScreen(
                     showCalendarDates = uiState.hasAuthoritativeCalendar,
                     holidayDates = uiState.holidayDates,
                     manualAdjustmentDates = adjustmentDates,
+                    adjustments = semesterAdjustments,
                     onCourseLongClick = { block ->
                         // 历史学期是只读快照，隐藏记录只对当前学期生效，这里直接不响应，
                         // 免得用户在一份永不生效的学期上删了卡片还看不到任何反应。
