@@ -4,9 +4,9 @@ import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
-import com.glut.schedule.data.model.academicWeeksForText
 import com.glut.schedule.data.model.normalizeRoomKey
 import com.glut.schedule.data.model.offsetSectionForNoon
+import com.glut.schedule.data.model.weekTextWithoutWeek
 import java.security.MessageDigest
 
 interface AcademicScheduleParser {
@@ -934,40 +934,6 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                 id = "$id-adjusted-$index",
                 weekText = remainingWeekText
             )
-        }
-    }
-
-    private fun weekTextWithoutWeek(weekText: String, removedWeek: Int): List<String> {
-        val remainingWeeks = expandActiveWeeks(weekText)
-            .filter { it != removedWeek }
-        return compactWeekNumbers(remainingWeeks)
-    }
-
-    private fun expandActiveWeeks(weekText: String): List<Int> {
-        return academicWeeksForText(weekText)
-    }
-
-    private fun compactWeekNumbers(weeks: List<Int>): List<String> {
-        if (weeks.isEmpty()) return emptyList()
-        val ranges = mutableListOf<IntRange>()
-        var start = weeks.first()
-        var previous = start
-        weeks.drop(1).forEach { week ->
-            if (week == previous + 1) {
-                previous = week
-            } else {
-                ranges += start..previous
-                start = week
-                previous = week
-            }
-        }
-        ranges += start..previous
-        return ranges.map { range ->
-            if (range.first == range.last) {
-                "第${range.first}周"
-            } else {
-                "${range.first}-${range.last}周"
-            }
         }
     }
 

@@ -16,10 +16,13 @@ import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
+import com.glut.schedule.data.model.HiddenCourseRule
 import com.glut.schedule.data.model.ManualDayCopyRule
 import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.data.model.ScheduleBackgroundPreferences
+import com.glut.schedule.data.model.decodeHiddenCourseRules
 import com.glut.schedule.data.model.decodeManualDayCopyRules
+import com.glut.schedule.data.model.encodeHiddenCourseRules
 import com.glut.schedule.data.model.encodeManualDayCopyRules
 import com.glut.schedule.data.model.snapBackgroundDimAmount
 import com.glut.schedule.data.model.AcademicSemester
@@ -138,6 +141,7 @@ class ScheduleSettingsStore(
     private val holidaysCacheDateKey = stringPreferencesKey("holidays_cache_date")
     private val holidaysCacheYearsKey = stringPreferencesKey("holidays_cache_years")
     private val manualDayCopiesKey = stringSetPreferencesKey("manual_day_copies")
+    private val hiddenCourseCardsKey = stringSetPreferencesKey("hidden_course_cards")
     private val currentSemesterIdKey = stringPreferencesKey("current_semester_id")
     private val confirmedEnrollmentYearKey = intPreferencesKey("confirmed_enrollment_year")
     private val confirmedEnrollmentSeasonKey = stringPreferencesKey("confirmed_enrollment_season")
@@ -594,6 +598,30 @@ class ScheduleSettingsStore(
             preferences[manualDayCopiesKey] = encodeManualDayCopyRules(current)
         }
     }
+
+    // ---- 手动隐藏的课程卡片 ----
+
+    /**
+     * 按学期隔离的用户隐藏记录。
+     *
+     * 与 [manualDayCopies] 同样是「读时叠加」的覆盖层：刷新课表是整表替换，隐藏记录只有
+     * 存在课程数据之外才不会被冲掉。
+     */
+    val hiddenCourseRules: Flow<Map<String, List<HiddenCourseRule>>> =
+        context.scheduleSettings.data.map { preferences ->
+            decodeHiddenCourseRules(preferences[hiddenCourseCardsKey].orEmpty())
+        }.distinctUntilChanged()
+
+    suspend fun setHiddenCourseRules(semesterId: String, rules: List<HiddenCourseRule>) {
+        if (semesterId.isBlank()) return
+        context.scheduleSettings.edit { preferences ->
+            val current = decodeHiddenCourseRules(preferences[hiddenCourseCardsKey].orEmpty()).toMutableMap()
+            if (rules.isEmpty()) current.remove(semesterId) else current[semesterId] = rules
+            preferences[hiddenCourseCardsKey] = encodeHiddenCourseRules(current)
+        }
+    }
+
+    suspend fun clearHiddenCourseRules(semesterId: String) = setHiddenCourseRules(semesterId, emptyList())
 
     suspend fun clearAll() {
         context.scheduleSettings.edit { it.clear() }
