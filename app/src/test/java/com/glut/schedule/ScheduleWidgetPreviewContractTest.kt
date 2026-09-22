@@ -96,7 +96,10 @@ class ScheduleWidgetPreviewContractTest {
         assertTrue(workerSource.contains("setInitialDelay"))
         assertTrue(workerSource.contains("ScheduleWidgetRefreshPlanner.nextRefreshAt"))
         assertTrue(workerSource.contains("runAttemptCount + 1 < MAX_RETRY_ATTEMPTS"))
-        assertTrue(workerSource.contains("if (policy == ExistingWorkPolicy.REPLACE)"))
+        // 「没有小组件就停链」这个判断只在**显式重排**（REPLACE，即 updateAll 之后）时成立。
+        // worker 自我续期（APPEND_OR_REPLACE）时不能这么判：那一轮刚渲染过，小组件显然存在，
+        // 而 getGlanceIds 在进程刚重启时可能瞬时返回空——一判就永久断链，当天再没有事件刷新。
+        assertTrue(workerSource.contains("policy == ExistingWorkPolicy.REPLACE && !hasInstalledWidgets(appContext)"))
         assertTrue(updater.contains("ScheduleWidgetRefreshScheduler.scheduleNext"))
     }
 
