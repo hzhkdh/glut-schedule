@@ -161,6 +161,24 @@ fun partnerInviteExpiryText(
     return "有效期至 ${localExpiry.format(formatter)}"
 }
 
+/**
+ * 邀请码是否已经到期。
+ *
+ * 与小程序 `utils/partnerScheduleContract.js` 的 `isInviteExpired` 同口径：
+ * - `expiresAt` 解析不出来时一律当作「未过期」——坏数据不该让用户莫名其妙丢掉还能用的邀请码；
+ * - 恰好等于当前时刻算过期，因为服务端 KV 到点即不可用，客户端不能比服务端更宽松。
+ *
+ * 「解析不出来」以各自平台为准：`Instant.parse` 只认 ISO-8601，比 JS 的 `Date` 严格。
+ * 服务端一律返回 `toISOString()`，真实数据恒为 ISO-8601，所以两端不会因此产生行为差异。
+ *
+ * 权威判定在服务端（`schedule-share-worker` 的 `readRecord` 用服务端时钟比较），
+ * 这里只负责让本地界面跟上，所以用本机时钟。
+ */
+fun isPartnerInviteExpired(expiresAt: String, now: Instant = Instant.now()): Boolean {
+    val expiry = runCatching { Instant.parse(expiresAt) }.getOrNull() ?: return false
+    return !expiry.isAfter(now)
+}
+
 fun canGeneratePartnerInvite(
     hasCourses: Boolean,
     isBusy: Boolean,

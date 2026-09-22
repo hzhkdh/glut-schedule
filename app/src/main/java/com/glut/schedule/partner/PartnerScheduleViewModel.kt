@@ -309,6 +309,23 @@ class PartnerScheduleViewModel(
         }
     }
 
+    /**
+     * 邀请码到点自动撤销，**全程静默**：卡片消失、身份色解锁，不产生任何提示文案。
+     *
+     * 为什么不用 [launchOperation]：那个函数会把成功/失败写进 `message`，而 `message`
+     * 会弹成提示——到点这件事应该是无声的。所以这里自己起协程，并且把网络失败整个吞掉：
+     * 本地已经清干净了，用户不该因为一次兜底请求失败被打扰。
+     *
+     * 那次 DELETE 只是幂等兜底（服务端 KV 到点自己会失效，404 在 gateway 里已被当成成功）。
+     */
+    fun expireInviteSilently() {
+        val invite = storage.activeInvite.value ?: return
+        if (!storage.clearActiveInviteIfExpired()) return
+        viewModelScope.launch {
+            runCatching { gateway.revokeInvite(invite.code, invite.revokeToken) }
+        }
+    }
+
     fun renameProfile(id: String, name: String) {
         val normalized = name.trim().take(20)
         if (normalized.isBlank()) {

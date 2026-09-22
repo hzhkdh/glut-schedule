@@ -1389,7 +1389,8 @@ private fun PartnerScheduleDestination(
         customBackgroundUri = scheduleState.customBackgroundUri,
         customBackgroundBitmap = backgroundBitmap,
         backgroundDimAmount = scheduleState.backgroundDimAmount,
-        onDrawerOpen = onDrawerOpen
+        onDrawerOpen = onDrawerOpen,
+        onInviteExpired = viewModel::expireInviteSilently
     )
 }
 

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +24,14 @@ interface PartnerScheduleStorage {
     fun saveProfiles(profiles: List<ImportedPartnerProfile>)
     fun saveActiveInvite(invite: PartnerInvite)
     fun clearActiveInvite()
+
+    /**
+     * 邀请码到点后静默撤销：只有确实过期时才清理，并返回是否真的清了。
+     *
+     * 调用方靠返回值区分「我清了」和「还没到点」，避免把系统提前唤醒误当成过期。
+     */
+    fun clearActiveInviteIfExpired(now: Instant = Instant.now()): Boolean
+
     fun setMyColor(color: PartnerIdentityColor)
 }
 
@@ -68,12 +77,29 @@ class PartnerScheduleStore(context: Context) : PartnerScheduleStorage {
     }
 
     override fun clearActiveInvite() {
+        removeInviteKeys()
+        _activeInvite.value = null
+    }
+
+    override fun clearActiveInviteIfExpired(now: Instant): Boolean {
+        val invite = _activeInvite.value ?: return false
+        if (!isPartnerInviteExpired(invite.expiresAt, now)) return false
+        clearActiveInvite()
+        return true
+    }
+
+    /**
+     * 只清存储、不动 [_activeInvite]。
+     *
+     * 单独拆出来是给构造期的 [readInvite] 用的：那时 `_activeInvite` 这个属性还没完成初始化，
+     * 里面若去写 `_activeInvite.value` 会读到 null（Kotlin 属性初始化顺序）。
+     */
+    private fun removeInviteKeys() {
         securePrefs.edit()
             .remove(KEY_INVITE_CODE)
             .remove(KEY_REVOKE_TOKEN)
             .remove(KEY_EXPIRES_AT)
             .commit()
-        _activeInvite.value = null
     }
 
     override fun setMyColor(color: PartnerIdentityColor) {
@@ -120,11 +146,16 @@ class PartnerScheduleStore(context: Context) : PartnerScheduleStorage {
         val code = securePrefs.getString(KEY_INVITE_CODE, "").orEmpty()
         val revokeToken = securePrefs.getString(KEY_REVOKE_TOKEN, "").orEmpty()
         val expiresAt = securePrefs.getString(KEY_EXPIRES_AT, "").orEmpty()
-        return if (code.isBlank() || revokeToken.isBlank() || expiresAt.isBlank()) {
-            null
-        } else {
-            StoredPartnerInvite(code, revokeToken, expiresAt)
+        if (code.isBlank() || revokeToken.isBlank() || expiresAt.isBlank()) return null
+
+        // 冷启动时邀请码可能早就过期了。这里不判的话，卡片会一直挂到用户手动点「撤销」，
+        // 而且因为身份色被 `activeInvite != null` 锁着，用户连颜色都改不了。
+        // 顺手把存储也清掉，避免每次启动都重走一遍这个分支。
+        if (isPartnerInviteExpired(expiresAt)) {
+            removeInviteKeys()
+            return null
         }
+        return StoredPartnerInvite(code, revokeToken, expiresAt)
     }
 
     private companion object {
