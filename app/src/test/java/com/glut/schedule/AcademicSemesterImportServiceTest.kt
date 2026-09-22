@@ -472,6 +472,73 @@ class AcademicSemesterImportServiceTest {
         }
     }
 
+    /**
+     * 模式2 的教师必须按教室从大节课表绑定。
+     *
+     * 个人课表把一门课的所有老师写在同一个格子里、与「上课时间、地点」完全脱钩，
+     * 所以它只能给出课程级的一串名字；大节课表才有 `教室 -> 教师`。
+     */
+    @Test
+    fun personalOnlyModeBindsEachRoomToItsOwnTeacherFromTimetableMetadata() = runTest {
+        MockWebServer().use { server ->
+            // 个人课表：整门课一个教师串，两个课次分属两个教室。
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml() + "个人课表来源"))
+            // 大节课表：每个教室各自的教师。
+            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            server.enqueue(
+                MockResponse().setResponseCode(200).setBody(weeklyLandingHtml((1..19).toList()))
+            )
+
+            val personal = ScheduleCourse(
+                id = "personal-1",
+                title = "微机原理与接口技术",
+                room = "06104D",
+                teacher = "蒋志军 陈守学 康燕萍",
+                colorHex = "#4477AA",
+                occurrences = listOf(
+                    CourseOccurrence("o1", "personal-1", 5, 1, 2, "1-10周", "06104D"),
+                    CourseOccurrence("o2", "personal-1", 5, 1, 2, "11周", "014102S")
+                )
+            )
+            val metadata = listOf(
+                metadataCourse("微机原理与接口技术", "06104D", "蒋志军"),
+                metadataCourse("微机原理与接口技术", "014102S", "陈守学")
+            )
+
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                SourceAwareParser(
+                    courseArrangementCourses = metadata,
+                    personalTimetableCourses = listOf(personal)
+                )
+            ).importSemester(
+                cookie = "JSESSIONID=test",
+                baseUrl = server.url("/").toString(),
+                semester = semester(),
+                studentIdFallback = "student-internal-id",
+                mode = SemesterImportMode.PERSONAL_ONLY
+            )
+
+            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
+
+            val courses = result.getOrThrow().courses
+            val byRoom = courses.associateBy { it.room }
+            assertEquals("蒋志军", byRoom.getValue("06104D").teacher)
+            assertEquals("陈守学", byRoom.getValue("014102S").teacher)
+            // 拆分只是把不同教室的课次分开成卡，按课程名仍是一门课。
+            assertEquals(1, courses.map { it.title }.distinct().size)
+        }
+    }
+
+    private fun metadataCourse(title: String, room: String, teacher: String) = ScheduleCourse(
+        id = "meta-$room",
+        title = title,
+        room = room,
+        teacher = teacher,
+        colorHex = "#4477AA",
+        occurrences = listOf(CourseOccurrence("m1", "meta-$room", 5, 1, 2, "1-10周", room))
+    )
+
     @Test
     fun personalOnlyModeFallsBackToCalendarEstimateWhenWeeklyLandingIsUnusable() = runTest {
         MockWebServer().use { server ->

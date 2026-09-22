@@ -130,6 +130,25 @@ data class CourseOccurrence(
 fun offsetSectionForNoon(section: Int, hasNoon: Boolean): Int =
     if (hasNoon && section >= 5) section + 2 else section
 
+/**
+ * 教室文本的匹配键：去掉全部空白并转大写。
+ *
+ * **不做包含/前缀等模糊匹配**——那会把 06105D 与 06106D 这类相邻教室混为一谈。
+ * 全仓只保留这一份实现（与小程序 `utils/parser.js` 的 `normalizeRoomText` 同口径）：
+ * 「同一规则各写一份」已经在南宁/桂林解析器与中午节次偏移上踩过两次坑。
+ */
+internal fun normalizeRoomKey(value: String): String =
+    value.filterNot { it.isWhitespace() }.uppercase()
+
+/**
+ * 课程名的匹配键：去掉全部空白。
+ *
+ * 教务课名里会带空格（如「大学英语 4」），不同页面的空格数不一定一致，
+ * 只 trim 会让「同一门课」在两页之间匹配不上。
+ */
+internal fun normalizeTitleKey(value: String): String =
+    value.filterNot { it.isWhitespace() }
+
 fun CourseOccurrence.isActiveInWeek(weekNumber: Int): Boolean {
     return isWeekTextActive(weekText, clampAcademicWeek(weekNumber))
 }

@@ -11,6 +11,7 @@ import com.glut.schedule.data.model.derivedAcademicMaxWeek
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.parser.AcademicScheduleParser
+import com.glut.schedule.service.parser.CourseTeacherBinder
 import com.glut.schedule.service.parser.WeeklyTimetableParser
 import com.glut.schedule.service.parser.validateFor
 import java.net.URLEncoder
@@ -298,8 +299,10 @@ class AcademicSemesterImportService(
             )
         }
 
-        // ===== 模式2（PERSONAL_ONLY）：不逐周下载，时间/教室/教师全部来自个人课表 =====
+        // ===== 模式2（PERSONAL_ONLY）：不逐周下载，时间/教室以个人课表为准 =====
         // 个人课表在这里就是权威时间来源，必须保留 occurrences（模式1 会先清空再回填）。
+        // **教师不是**：个人课表把一门课的所有老师并列写在「任课教师」格里，与「上课时间、
+        // 地点」那格没有任何对应关系，只能按教室从大节课表绑定（见下方的 CourseTeacherBinder）。
         //
         // 个人课表是「只做加法」的：它会把补课时段直接列出来，却**不会**把被调走的那一周从原
         // 课次里去掉；「哪一周被停掉」只写在课程安排页（timetableHtml）的调课表里。
@@ -312,10 +315,16 @@ class AcademicSemesterImportService(
         // 什么都不做。复盘见 docs/桂林教务HTTPS跳转导致周次课表导入失败问题总结.md：真因是
         // CompositeScheduleParser 把桂林页面交给了不做中午偏移的南宁解析器，导致「第5、6节」
         // 落进中午槽位被隐藏，已由 offsetSectionForNoon 修复，与本移除逻辑无关。
+        //
+        // 教师必须按教室从大节课表绑定：个人课表的「任课教师」与「上课时间、地点」是两格，
+        // 教师和教室完全脱钩，从那一页推不出谁教哪一节。绑定放在调课移除**之前**，
+        // 移除侧用宽容教师匹配（见 applyAdjustmentRemovalsOnly 的注释）。
+        // preferredMetadataCourses 是上面已经解析好的结果，不新增请求；为空时绑定是恒等操作。
+        val teacherBoundCourses = CourseTeacherBinder.bind(personalCourses, preferredMetadataCourses)
         courses = if (semester.campus == CampusType.NANNING) {
-            scheduleParser.applyAdjustmentsToCourses(personalCourses, timetableHtml)
+            scheduleParser.applyAdjustmentsToCourses(teacherBoundCourses, timetableHtml)
         } else {
-            scheduleParser.applyAdjustmentRemovalsOnly(personalCourses, timetableHtml)
+            scheduleParser.applyAdjustmentRemovalsOnly(teacherBoundCourses, timetableHtml)
         }
         // 模式2 也必须给出学期总周数。这里绝不能留 null：CourseTimeStats 会把 portalMaxWeek
         // 为 null 的学期**整学期**判为不可统计，用户看到的是「这个学期的统计没了」。

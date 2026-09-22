@@ -934,6 +934,47 @@ class AcademicScheduleParserTest {
     }
 
     @Test
+    fun removalOnlyMatchesSingleAdjustmentTeacherAgainstConcatenatedCourseTeacher() {
+        // 个人课表把一门课的多位老师写在同一个格子里（拼接串），而调课表只写实际被调走
+        // 那节课的老师。精确相等会让这类调课永远匹配不上，被调走的原周次会留在卡上。
+        val courses = listOf(
+            courseWith("微机原理与接口技术", "蒋志军 陈守学 康燕萍", "06104D", 1, 7, 8, "1-12周")
+        )
+        // 调课表的节次是**显示节次**（含中午偏移），第5、6节对应内部 7、8——与课程课次一致。
+        val html = realAdjustmentTable(
+            adjustmentRow("停课", "微机原理与接口技术", "陈守学", "8", "周一", "第5、6节", "06104D",
+                "", "", "", "")
+        )
+
+        val result = parser.applyAdjustmentRemovalsOnly(courses, html)
+
+        val target = result.single { it.title == "微机原理与接口技术" && it.room == "06104D" }
+        val weeks = target.occurrences.map { it.weekText }
+        assertFalse("调课表教师是单名、课程侧是拼接串时必须仍能移除第 8 周：$weeks",
+            target.occurrences.any { it.isActiveInWeek(8) })
+        assertTrue("其余周次必须保留：$weeks", target.occurrences.any { it.isActiveInWeek(7) })
+    }
+
+    @Test
+    fun removalOnlyKeepsExactMatchingWhenTeachersAreUnrelated() {
+        // 反向锁：宽容匹配不是「课程名对上就删」——教师毫无交集时必须不命中。
+        val courses = listOf(
+            courseWith("微机原理与接口技术", "蒋志军", "06104D", 1, 7, 8, "1-12周")
+        )
+        val html = realAdjustmentTable(
+            adjustmentRow("停课", "微机原理与接口技术", "另一个人", "8", "周一", "第5、6节", "06104D",
+                "", "", "", "")
+        )
+
+        val result = parser.applyAdjustmentRemovalsOnly(courses, html)
+
+        assertTrue(
+            "教师完全不同时不得误删：${result.single().occurrences.map { it.weekText }}",
+            result.single().occurrences.any { it.isActiveInWeek(8) }
+        )
+    }
+
+    @Test
     fun removalOnlyNeverTouchesCoursesWithoutAdjustmentRows() {
         // 历史上曾把「数据库原理及应用B 整门课消失」误归因于调课移除，这里作为回归锁：
         // 调课表里没有它的记录，它就必须原样保留。

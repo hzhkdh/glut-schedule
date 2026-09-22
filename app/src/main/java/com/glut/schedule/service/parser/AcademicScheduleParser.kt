@@ -5,6 +5,7 @@ import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.academicWeeksForText
+import com.glut.schedule.data.model.normalizeRoomKey
 import com.glut.schedule.data.model.offsetSectionForNoon
 import java.security.MessageDigest
 
@@ -26,13 +27,25 @@ interface AcademicScheduleParser {
 }
 
 /**
- * 教室文本规范化，仅用于等值比较：去掉全部空白并转大写。
+ * 调课记录的教师与该课次教师是否指同一位老师。
  *
- * **不做包含/前缀等模糊匹配**——那会把 06105D 与 06106D 这类相邻教室混为一谈。
- * 与小程序 `utils/parser.js` 的 `normalizeRoomText` 保持同一口径。
+ * 默认是**精确相等**；[tolerant] 打开后按空白切词、任一 token 相同即算命中。
+ *
+ * 为什么要宽容版：一门课由多位老师分担时，课程侧的教师可能是「蒋志军 陈守学 康燕萍」
+ * 这样的拼接串（个人课表把多个链接写在同一格），而调课表里只写实际被调走那节课的老师
+ * （如「陈守学」）。精确相等会让这类调课**永远匹配不上**，被调走的原周次留在卡上。
+ *
+ * 宽容匹配是精确相等的**严格超集**（只会多命中、绝不少命中），而多命中的前提是
+ * 课程名 + 星期 + 节次 + 原教室 + 周次全部一致——那本来就是同一节课，误删概率可忽略。
  */
-private fun normalizeRoom(value: String): String =
-    value.filterNot { it.isWhitespace() }.uppercase()
+internal fun teacherMatches(adjustmentTeacher: String, courseTeacher: String, tolerant: Boolean): Boolean {
+    val left = adjustmentTeacher.trim()
+    val right = courseTeacher.trim()
+    if (left == right) return true
+    if (!tolerant || left.isEmpty() || right.isEmpty()) return false
+    val rightTokens = right.split(Regex("""\s+""")).filter { it.isNotEmpty() }.toSet()
+    return left.split(Regex("""\s+""")).any { it.isNotEmpty() && it in rightTokens }
+}
 
 /**
  * 解析个人课表里的显示节次范围，并统一映射为内部节次。
@@ -128,7 +141,14 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         val hasNoonInTimetable = adjustmentHtml.contains("中午")
         val adjustments = parseSupplementalAdjustmentRows(adjustmentHtml, hasNoonInTimetable)
         if (adjustments.isEmpty()) return courses
-        val afterRemoval = applyAdjustmentRemovals(courses, adjustments, requireOriginalRoom = true)
+        // 模式2 专用路径：教师可能是「蒋志军 陈守学 康燕萍」这样的拼接串，而调课表只写
+        // 实际被调走那节课的老师，必须宽容匹配，否则被调走的原周次会留在卡上。
+        val afterRemoval = applyAdjustmentRemovals(
+            courses,
+            adjustments,
+            requireOriginalRoom = true,
+            tolerantTeacher = true
+        )
         val dedupedMakeups = adjustments
             .filter { it.makeupWeek > 0 && it.makeupDay > 0 }
             .mapNotNull { adj ->
@@ -567,7 +587,8 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
     private fun applyAdjustmentRemovals(
         courses: List<ScheduleCourse>,
         adjustments: List<ScheduleAdjustment>,
-        requireOriginalRoom: Boolean = false
+        requireOriginalRoom: Boolean = false,
+        tolerantTeacher: Boolean = false
     ): List<ScheduleCourse> {
         if (adjustments.isEmpty()) return courses
         // 代课（替课）不取消原课，只增加补课；调课/停课才需要移除原周
@@ -575,7 +596,9 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         if (removalAdjustments.isEmpty()) return courses
         return courses.mapNotNull { course ->
             val updatedOccurrences = course.occurrences.flatMap { occurrence ->
-                val adjustment = removalAdjustments.firstOrNull { it.matches(course, occurrence, requireOriginalRoom) }
+                val adjustment = removalAdjustments.firstOrNull {
+                    it.matches(course, occurrence, requireOriginalRoom, tolerantTeacher)
+                }
                 if (adjustment == null) {
                     listOf(occurrence)
                 } else {
@@ -972,10 +995,13 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
     }
 
     private fun looksLikeClassHourType(value: String): Boolean {
+        // 南宁的块用「课程学时」标注，桂林用讲课/实验/上机学时。少了南宁这一种，
+        // 它就会在「不是教室、不是周次」的兜底规则里被当成教师名。
         return value.contains("讲课学时") ||
             value.contains("实验学时") ||
             value.contains("上机学时") ||
-            value.contains("实践学时")
+            value.contains("实践学时") ||
+            value.contains("课程学时")
     }
 
     private fun dayOfWeek(value: String): Int? {
@@ -1034,17 +1060,18 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         fun matches(
             course: ScheduleCourse,
             occurrence: CourseOccurrence,
-            requireOriginalRoom: Boolean = false
+            requireOriginalRoom: Boolean = false,
+            tolerantTeacher: Boolean = false
         ): Boolean {
             val occurrenceRoom = occurrence.note.ifBlank { course.room }
             // 严格口径：原教室必须非空且实打实相等；原教室未知时拒绝匹配（宁可少删，不可错删）
             val roomMatched = if (requireOriginalRoom) {
-                originalRoom.isNotBlank() && normalizeRoom(originalRoom) == normalizeRoom(occurrenceRoom)
+                originalRoom.isNotBlank() && normalizeRoomKey(originalRoom) == normalizeRoomKey(occurrenceRoom)
             } else {
                 occurrenceRoom.trim() == originalRoom.trim()
             }
             return course.title.trim() == title.trim() &&
-                course.teacher.trim() == teacher.trim() &&
+                teacherMatches(teacher, course.teacher, tolerantTeacher) &&
                 occurrence.dayOfWeek == originalDay &&
                 occurrence.startSection == originalStartSection &&
                 occurrence.endSection == originalEndSection &&
