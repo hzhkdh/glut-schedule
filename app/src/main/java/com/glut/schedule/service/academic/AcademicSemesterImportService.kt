@@ -8,12 +8,8 @@ import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.countUnparsedWeekTexts
 import com.glut.schedule.data.model.derivedAcademicMaxWeek
-import com.glut.schedule.data.settings.CampusType
-import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.parser.AcademicScheduleParser
-import com.glut.schedule.service.parser.CourseTeacherBinder
-import com.glut.schedule.service.parser.WeeklyTimetableParser
-import com.glut.schedule.service.parser.validateFor
+import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.time.LocalDate
 
@@ -22,6 +18,13 @@ object AcademicSemesterRequestBuilder {
         "${normalizedBaseUrl(baseUrl)}/academic/student/currcourse/currcourse.jsdo" +
             "?year=${encode(semester.portalYearId)}&term=${encode(semester.portalTermId)}"
 
+    /**
+     * 大节课表（`sectionType=BASE`）——**唯一**的课程数据源。
+     *
+     * 它与「小节课表」（`sectionType=COMBINE`）只是行粒度不同：BASE 一行一个小节
+     * （并含桂林特有的「中午1/中午2」两行），COMBINE 一行一个大节且两行内容相同。
+     * 取 BASE 是因为单元格 id 的节次分量与内部节次号能直接对应。
+     */
     fun timetableUrl(baseUrl: String, studentId: String, semester: AcademicSemester): String =
         "${normalizedBaseUrl(baseUrl)}/academic/manager/coursearrange/showTimetable.do" +
             "?id=${encode(studentId)}" +
@@ -29,15 +32,18 @@ object AcademicSemesterRequestBuilder {
             "&termid=${encode(semester.portalTermId)}" +
             "&timetableType=STUDENT&sectionType=BASE"
 
+    /**
+     * 周次课表**落地页**（GET）。
+     *
+     * 统一导入路径后周次课表不再是课程数据源，本方法只剩一个用途：读页面上的
+     * `select[name=whichWeek]` 得到学期总周数——大节课表本身没有周次下拉。
+     *
+     * **绝不逐周 POST**：表单 POST 曾被 301 重定向降级为 GET 而整体失败，
+     * 详见 docs/桂林教务HTTPS跳转导致周次课表导入失败问题总结.md。
+     */
     fun weeklyTimetableUrl(baseUrl: String, semester: AcademicSemester): String =
         "${normalizedBaseUrl(baseUrl)}/academic/manager/coursearrange/studentWeeklyTimetable.do" +
             "?yearid=${encode(semester.portalYearId)}&termid=${encode(semester.portalTermId)}"
-
-    fun weeklyTimetablePostUrl(baseUrl: String): String =
-        "${normalizedBaseUrl(baseUrl)}/academic/manager/coursearrange/studentWeeklyTimetable.do"
-
-    fun weeklyTimetableForm(semester: AcademicSemester, week: Int): String =
-        "yearid=${encode(semester.portalYearId)}&termid=${encode(semester.portalTermId)}&whichWeek=$week"
 
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
 
@@ -130,8 +136,6 @@ data class AcademicSemesterImportPayload(
     val skippedRowCount: Int = 0,
     /** 本次串行下载完成后的最新会话，只允许交回会话存储，不得用于日志。 */
     val updatedCookie: String = "",
-    /** 本次导入使用的线路，随学期落库，便于诊断以及向用户解释数据来源。 */
-    val importMode: SemesterImportMode = SemesterImportMode.WEEKLY,
     /**
      * 无法识别周次的课次数量。这类课次不会出现在任何一周里，必须如实反馈给用户，
      * 否则表现就是「课程莫名其妙少了几门」，无从排查。
@@ -139,24 +143,72 @@ data class AcademicSemesterImportPayload(
     val unparsedWeekTextCount: Int = 0
 )
 
+/**
+ * 周次课表**落地页**的最小解析结果。
+ *
+ * 只保留两项：[semesterLabel] 用于判断落地页是否停在别的学期，[availableWeeks]
+ * 用于取学期总周数。周次课表本身已不再是课程数据源，因此不保留整套行解析。
+ */
+internal data class WeeklyLandingSummary(
+    val semesterLabel: String,
+    val availableWeeks: List<Int>
+)
+
+internal object WeeklyLandingPageParser {
+    /** 与门户「2026秋」标签同格式：门户年份 + 中文季节字。 */
+    private val semesterLabelRegex = Regex("""(20\d{2})\s*([春秋])""")
+
+    fun parse(html: String): WeeklyLandingSummary {
+        val document = Jsoup.parse(html)
+        val semesterLabel = semesterLabelRegex.find(document.body().text())
+            ?.let { "${it.groupValues[1]}${it.groupValues[2]}" }
+            .orEmpty()
+        val availableWeeks = document.selectFirst("select[name=whichWeek]")
+            ?.select("option")
+            ?.mapNotNull { it.attr("value").trim().toIntOrNull() }
+            ?.distinct()
+            ?.sorted()
+            .orEmpty()
+        return WeeklyLandingSummary(semesterLabel, availableWeeks)
+    }
+}
+
+/**
+ * 学期课表导入：**统一只抓一次大节课表**。
+ *
+ * 为什么一个端点就够（2026-09-23 双端教务实测结论）：
+ *  1. 网格单元格形如 `<<课程名>>;课序号 ⏎ 教室 ⏎ 教师 ⏎ 周次 ⏎ 学时类型`，
+ *     **教师与教室同格**——个人课表那种「教师与时间分列两格、必须靠绑定器猜」的
+ *     前提不复存在，`CourseTeacherBinder` 随之作废；
+ *  2. 页面**底部自带调课表**（类型/原时段/补课时段），无需再从周次课表取调课；
+ *  3. 节次跨度由相邻行重复表达，`mergeAdjacentOccurrences` 已能合并成区间。
+ *
+ * 于是旧的「模式1 逐周 POST + 周次课表」与「模式2 个人课表 + 大节课表补教师」
+ * 两条链路整体删除，导入请求数从最多 20 次降到 2 次。
+ *
+ * 仍然保留的那次个人课表**请求**只做两件事：校验学期、从链接里取内部学号
+ * （`showTimetable.do?id=...` 的 id）。**课程不再从该页解析。** 南宁的周次课表
+ * 实测不返回任何排课行，因此这次请求对南宁同样必需。
+ *
+ * 唯一缺口是学期总周数（大节课表没有 `whichWeek` 下拉），由
+ * [probeWeeklyLandingMaxWeek] 发一次落地页 GET 补齐——**绝不逐周 POST**。
+ */
 class AcademicSemesterImportService(
     private val apiProbeService: ApiProbeService,
-    private val scheduleParser: AcademicScheduleParser,
-    private val weeklyTimetableParser: WeeklyTimetableParser = WeeklyTimetableParser()
+    private val scheduleParser: AcademicScheduleParser
 ) {
     suspend fun importSemester(
         cookie: String,
         baseUrl: String,
         semester: AcademicSemester,
-        studentIdFallback: String,
-        mode: SemesterImportMode = SemesterImportMode.WEEKLY,
-        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> }
+        studentIdFallback: String
     ): Result<AcademicSemesterImportPayload> = runCatching {
         var sessionCookie = cookie
         fun consumeSessionCookie(response: ApiProbeService.ProbeResult) {
             if (response.updatedCookie.isNotBlank()) sessionCookie = response.updatedCookie
         }
 
+        // ── 1. 个人课表页：只用来取内部学号与校验学期，课程不从这一页解析 ──
         val currcourse = apiProbeService.probeUrl(sessionCookie, AcademicSemesterRequestBuilder.currcourseUrl(baseUrl, semester))
             ?: error("无法连接教务服务器，下载${semester.displayName}课表失败")
         require(currcourse.httpCode in 200..299) {
@@ -172,170 +224,49 @@ class AcademicSemesterImportService(
         }
         consumeSessionCookie(currcourse)
 
-        val personalCourses = scheduleParser.parsePersonalSchedule(currcourse.body)
-        val responseKind = AcademicSemesterResponseValidator.classify(currcourse.body, personalCourses.size)
-        if (responseKind == AcademicSemesterResponseKind.INVALID_STRUCTURE) {
-            error("无法识别课表结构，未覆盖已有缓存")
-        }
-        var courses = personalCourses
-
         val studentId = ApiProbeService.extractInternalIdFromCurrcourse(currcourse.body)
             .orEmpty().ifBlank { studentIdFallback }
-        val timetable = if (studentId.isNotBlank()) {
-            apiProbeService.probeUrl(
-                sessionCookie,
-                AcademicSemesterRequestBuilder.timetableUrl(baseUrl, studentId, semester)
-            )
-        } else null
-        timetable?.let(::consumeSessionCookie)
-        val timetableHtml = timetable?.takeIf { it.httpCode in 200..299 }?.body.orEmpty()
-        if (timetableHtml.isNotBlank() &&
-            AcademicSemesterResponseValidator.classify(timetableHtml, courseCount = 0) ==
+        require(studentId.isNotBlank()) {
+            "无法从教务页面解析学号，下载${semester.displayName}课表失败"
+        }
+
+        // ── 2. 大节课表：唯一的数据源 ──
+        val timetable = apiProbeService.probeUrl(
+            sessionCookie,
+            AcademicSemesterRequestBuilder.timetableUrl(baseUrl, studentId, semester)
+        ) ?: error("无法连接教务服务器，下载${semester.displayName}课表失败")
+        require(timetable.httpCode in 200..299) {
+            "教务系统返回 HTTP ${timetable.httpCode}，下载${semester.displayName}课表失败"
+        }
+        consumeSessionCookie(timetable)
+        val timetableHtml = timetable.body
+        if (AcademicSemesterResponseValidator.classify(timetableHtml, courseCount = 0) ==
             AcademicSemesterResponseKind.AUTHENTICATION_EXPIRED
         ) {
             error("登录状态已失效，请重新登录后再导入")
         }
-        // 个人课表把每个教室精确绑定到实际教师，仅作为逐周课表的优先元数据；
-        // 解析失败时保持空列表，继续回退到课程安排页，避免新增导入失败条件。
-        val preferredMetadataCourses = if (timetableHtml.isBlank()) {
-            emptyList()
-        } else {
-            runCatching { scheduleParser.parsePersonalSchedule(timetableHtml) }
-                .getOrDefault(emptyList())
-        }
 
-        var adjustments = if (timetableHtml.isBlank()) {
-            emptyList()
-        } else {
-            scheduleParser.parseAdjustments(timetableHtml)
+        // ── 3. 解析：网格 + 底部调课表一次做完 ──
+        // parsePersonalSchedule 内部已按调课表移除被调走的周次，并把补课时段去重追加，
+        // 因此这里不需要任何后续的绑定/调整步骤。
+        val courses = scheduleParser.parsePersonalSchedule(timetableHtml)
+        val responseKind = AcademicSemesterResponseValidator.classify(timetableHtml, courses.size)
+        require(responseKind != AcademicSemesterResponseKind.INVALID_STRUCTURE) {
+            "无法识别课表结构，未覆盖已有缓存"
         }
-        var resolvedTimetableHtml = if (mode == SemesterImportMode.WEEKLY) "" else timetableHtml
-        var portalMaxWeek: Int? = null
-        var semesterStartMonday: LocalDate? = null
-        if (mode == SemesterImportMode.WEEKLY) {
-            // 模式1：个人课表只提供教师/颜色等元数据，时间与教室以逐周课表为准，
-            // 因此先清空 occurrences，随后由 mergeWithMetadata 逐周回填。
-            courses = personalCourses.map { it.copy(occurrences = emptyList()) }
-            val landingUrl = AcademicSemesterRequestBuilder.weeklyTimetableUrl(baseUrl, semester)
-            val landing = apiProbeService.probeUrl(sessionCookie, landingUrl)
-                ?: error("无法连接教务服务器，打开${semester.displayName}周次课表失败")
-            require(landing.httpCode in 200..299) {
-                "周次课表返回 HTTP ${landing.httpCode}"
-            }
-            consumeSessionCookie(landing)
-            validateWeeklyProbeTransport(landing, "周次课表")
-            val landingPage = runCatching {
-                weeklyTimetableParser.parsePage(
-                    landing.body,
-                    hasNoon = semester.campus != CampusType.NANNING
-                )
-            }.getOrElse {
-                error("周次课表页面无法识别，请重新登录后重试")
-            }
-            require(landingPage.semesterLabel == semesterPortalLabel(semester)) {
-                "周次课表返回学期与请求不一致，已保留现有缓存"
-            }
-            require(landingPage.availableWeeks.isNotEmpty()) { "周次课表未提供可下载周次" }
-            portalMaxWeek = landingPage.availableWeeks.maxOrNull()
-            var skippedRowCount = 0
-            val pages = buildList {
-                landingPage.availableWeeks.sorted().forEach { week ->
-                    val response = apiProbeService.probeForm(
-                        cookie = sessionCookie,
-                        url = AcademicSemesterRequestBuilder.weeklyTimetablePostUrl(baseUrl),
-                        body = AcademicSemesterRequestBuilder.weeklyTimetableForm(semester, week),
-                        referer = landingUrl
-                    ) ?: error("第${week}周课表下载失败：网络请求返回空")
-                    require(response.httpCode in 200..299) {
-                        "第${week}周课表返回 HTTP ${response.httpCode}"
-                    }
-                    consumeSessionCookie(response)
-                    validateWeeklyProbeTransport(response, "第${week}周课表")
-                    val page = runCatching {
-                        weeklyTimetableParser.parsePage(
-                            response.body,
-                            hasNoon = semester.campus != CampusType.NANNING
-                        )
-                    }.getOrElse {
-                        error("第${week}周课表页面无法识别，请重新登录后重试")
-                    }
-                    semesterStartMonday = page.validateFor(
-                        expectedWeek = week,
-                        expectedSemesterLabel = semesterPortalLabel(semester),
-                        expectedSemesterMonday = semesterStartMonday
-                    )
-                    skippedRowCount += page.skippedRowCount
-                    add(page)
-                    onProgress(size, landingPage.availableWeeks.size)
-                }
-            }
-            require(pages.any { it.rows.isNotEmpty() } || courses.isEmpty()) {
-                "周次课表未返回课程，已保留现有缓存"
-            }
-            val mergedCourses = weeklyTimetableParser.mergeWithMetadata(
-                baseCourses = courses,
-                pages = pages,
-                preferredMetadataCourses = preferredMetadataCourses
-            )
-            require(courses.isEmpty() || mergedCourses.any { it.occurrences.isNotEmpty() }) {
-                "周次课表未解析到有效上课时间，已保留现有缓存"
-            }
-            courses = mergedCourses
-            val weeklyAdjustments = scheduleParser.parseAdjustments(landing.body)
-            if (weeklyAdjustments.isNotEmpty()) adjustments = weeklyAdjustments
-            resolvedTimetableHtml = landing.body
-            return@runCatching AcademicSemesterImportPayload(
-                courses = courses,
-                adjustments = adjustments,
-                currcourseHtml = currcourse.body,
-                timetableHtml = resolvedTimetableHtml,
-                responseKind = responseKind,
-                portalMaxWeek = portalMaxWeek,
-                semesterStartMonday = semesterStartMonday,
-                skippedRowCount = skippedRowCount,
-                updatedCookie = sessionCookie,
-                importMode = SemesterImportMode.WEEKLY,
-                unparsedWeekTextCount = countUnparsedWeekTexts(courses)
-            )
-        }
+        val adjustments = scheduleParser.parseAdjustments(timetableHtml)
 
-        // ===== 模式2（PERSONAL_ONLY）：不逐周下载，时间/教室以个人课表为准 =====
-        // 个人课表在这里就是权威时间来源，必须保留 occurrences（模式1 会先清空再回填）。
-        // **教师不是**：个人课表把一门课的所有老师并列写在「任课教师」格里，与「上课时间、
-        // 地点」那格没有任何对应关系，只能按教室从大节课表绑定（见下方的 CourseTeacherBinder）。
-        //
-        // 个人课表是「只做加法」的：它会把补课时段直接列出来，却**不会**把被调走的那一周从原
-        // 课次里去掉；「哪一周被停掉」只写在课程安排页（timetableHtml）的调课表里。
-        // 因此桂林也必须用它——只做移除，补课时段经**宽松去重**后追加（个人课表多半已列出，
-        // 去重会命中而不重复成两张卡片）。
-        //
-        // 南宁仍走 applyAdjustmentsToCourses（移除 + 追加，教室宽松匹配），行为不变。
-        //
-        // 注：历史上曾把「数据库原理及应用B 整门课消失」归因于这里的调课移除，据此让桂林
-        // 什么都不做。复盘见 docs/桂林教务HTTPS跳转导致周次课表导入失败问题总结.md：真因是
-        // CompositeScheduleParser 把桂林页面交给了不做中午偏移的南宁解析器，导致「第5、6节」
-        // 落进中午槽位被隐藏，已由 offsetSectionForNoon 修复，与本移除逻辑无关。
-        //
-        // 教师必须按教室从大节课表绑定：个人课表的「任课教师」与「上课时间、地点」是两格，
-        // 教师和教室完全脱钩，从那一页推不出谁教哪一节。绑定放在调课移除**之前**，
-        // 移除侧用宽容教师匹配（见 applyAdjustmentRemovalsOnly 的注释）。
-        // preferredMetadataCourses 是上面已经解析好的结果，不新增请求；为空时绑定是恒等操作。
-        val teacherBoundCourses = CourseTeacherBinder.bind(personalCourses, preferredMetadataCourses)
-        courses = if (semester.campus == CampusType.NANNING) {
-            scheduleParser.applyAdjustmentsToCourses(teacherBoundCourses, timetableHtml)
-        } else {
-            scheduleParser.applyAdjustmentRemovalsOnly(teacherBoundCourses, timetableHtml)
-        }
-        // 模式2 也必须给出学期总周数。这里绝不能留 null：CourseTimeStats 会把 portalMaxWeek
-        // 为 null 的学期**整学期**判为不可统计，用户看到的是「这个学期的统计没了」。
+        // ── 4. 学期总周数 ──
+        // 这里绝不能留 null：CourseTimeStats 会把 portalMaxWeek 为 null 的学期**整学期**
+        // 判为不可统计，用户看到的是「这个学期的统计没了」。
         //
         // 三级来源，精度从高到低：
-        //   1) 学期自带的起止日期 —— 与刷新路径 academicMaxWeekForCalendar 同一算法。可用即为
-        //      权威值，此时**不再发任何请求**（当前学期走模式2 时由 AcademicSemesterCalendarResolver
-        //      提供，可能是门户校历或估算）；
-        //   2) 周次课表**落地页**的门户周次列表 —— 只 GET 一次、绝不逐周 POST（契约见
-        //      probeWeeklyLandingMaxWeek 的注释）。历史学期没有起止日期，这是唯一能拿到门户真实周数的途径；
-        //   3) 学期长度估算 —— 与当前学期模式2 的兜底同一份实现。
+        //   1) 学期自带的起止日期 —— 与刷新路径 academicMaxWeekForCalendar 同一算法。
+        //      可用即为权威值，此时**不再发任何请求**；
+        //   2) 周次课表**落地页**的门户周次列表 —— 只 GET 一次、绝不逐周 POST
+        //      （契约见 probeWeeklyLandingMaxWeek 的注释）。历史学期没有起止日期，
+        //      这是唯一能拿到门户真实周数的途径；
+        //   3) 学期长度估算 —— 兜底，同一份实现也服务于日历解析。
         // 最后与被反推值取较大者：反推值是「学期至少有这么长」的下界，取大保证不丢任何课次。
         // 缺了第 2、3 级，历史学期就只能反推到「最后一个有课周」，翻不到期末、课时统计也会少算。
         val calendarMaxWeek = semester.semesterStartDate
@@ -349,32 +280,31 @@ class AcademicSemesterImportService(
         }
         val estimatedMaxWeek = AcademicSemesterCalendarEstimator.estimate(semester, LocalDate.now())
             .let { academicMaxWeekForCalendar(it.startMonday, it.endDate) }
-        portalMaxWeek = calendarMaxWeek
+        val portalMaxWeek = calendarMaxWeek
             ?: maxOf(
                 landingMaxWeek ?: estimatedMaxWeek,
                 derivedAcademicMaxWeek(courses) ?: MIN_ACADEMIC_WEEK
             ).coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
+
         AcademicSemesterImportPayload(
             courses = courses,
             adjustments = adjustments,
             currcourseHtml = currcourse.body,
-            timetableHtml = resolvedTimetableHtml,
+            timetableHtml = timetableHtml,
             responseKind = responseKind,
             portalMaxWeek = portalMaxWeek,
-            semesterStartMonday = semesterStartMonday,
+            semesterStartMonday = null,
             skippedRowCount = 0,
             updatedCookie = sessionCookie,
-            importMode = SemesterImportMode.PERSONAL_ONLY,
             unparsedWeekTextCount = countUnparsedWeekTexts(courses)
         )
     }
 
     /**
-     * 模式2 的「最佳努力」周次探测：取门户周次课表**落地页**里的可下载周次最大值。
+     * 「最佳努力」的周次探测：取门户周次课表**落地页**里的可下载周次最大值。
      *
-     * **契约（2026-09-21 有意放宽）**：模式2 原先「绝不请求 studentWeeklyTimetable」，现放宽为
-     * 「允许发一次落地页 GET、绝不逐周 POST」。理由有两条：
-     *   1. 模式1 整体失败的真因是表单 POST→GET 重定向丢参数（见
+     * **契约**：允许发一次落地页 GET、**绝不逐周 POST**。理由有两条：
+     *   1. 逐周 POST 曾因 301 转发把表单降级为 GET 而整体失败（见
      *      docs/桂林教务HTTPS跳转导致周次课表导入失败问题总结.md），落地页 GET 本身是安全的；
      *   2. 不拿门户周数就只能反推到「最后一个有课周」，历史学期翻不到期末，课时统计也会少算。
      *
@@ -400,8 +330,7 @@ class AcademicSemesterImportService(
         ) {
             return@runCatching null
         }
-        weeklyTimetableParser
-            .parsePage(landing.body, hasNoon = semester.campus != CampusType.NANNING)
+        WeeklyLandingPageParser.parse(landing.body)
             // 落地页可能停在别的学期；标签不符时它的周次列表不属于本次请求，一律丢弃。
             .takeIf { it.semesterLabel == semesterPortalLabel(semester) }
             ?.availableWeeks
@@ -414,26 +343,5 @@ class AcademicSemesterImportService(
             com.glut.schedule.data.model.SemesterSeason.AUTUMN -> "秋"
         }
         return "${semester.portalYear}$season"
-    }
-}
-
-/**
- * 在解析 HTML 前识别传输层失败，避免把登录页或 POST→GET 重定向误报为表格结构变化。
- */
-internal fun validateWeeklyProbeTransport(
-    response: ApiProbeService.ProbeResult,
-    pageLabel: String
-) {
-    if (response.redirected && !response.method.equals(response.finalMethod, ignoreCase = true)) {
-        error(
-            "$pageLabel 请求重定向后由 ${response.method.uppercase()} 变为 " +
-                "${response.finalMethod.uppercase()}，表单未正确提交"
-        )
-    }
-    if (
-        AcademicSemesterResponseValidator.classify(response.body, courseCount = 0) ==
-        AcademicSemesterResponseKind.AUTHENTICATION_EXPIRED
-    ) {
-        error("登录状态已失效，请重新登录后再导入")
     }
 }

@@ -23,10 +23,9 @@ import com.glut.schedule.service.campus.CampusImageService
 import com.glut.schedule.service.background.RemoteBackgroundAssetStore
 import com.glut.schedule.service.background.RemoteBackgroundRepository
 import com.glut.schedule.service.background.AndroidRemoteArtworkSaver
-import com.glut.schedule.service.parser.CompositeScheduleParser
+import com.glut.schedule.service.parser.AcademicScheduleParser
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
 import com.glut.schedule.service.parser.GlutExamParser
-import com.glut.schedule.service.parser.NanningCurrcourseParser
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.GradeExamParser
 import com.glut.schedule.service.parser.FitnessParser
@@ -134,11 +133,9 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
     )
     val remoteArtworkSaver = AndroidRemoteArtworkSaver(application)
     val academicSessionStore = AcademicSessionStore(application)
-    // Nanning parser first: it checks for infolist_common and returns empty
-    // for non-Nanning HTML. Guilin parser handles everything else.
-    val academicScheduleParser = CompositeScheduleParser(
-        listOf(NanningCurrcourseParser(), GlutAcademicScheduleParser())
-    )
+    // 统一导入路径后只解析大节课表，个人课表页退化为「取学号」的一跳，
+    // 因此不再需要按校区路由的 CompositeScheduleParser / NanningCurrcourseParser。
+    val academicScheduleParser: AcademicScheduleParser = GlutAcademicScheduleParser()
     val apiProbeService = ApiProbeService()
     val examParser = GlutExamParser()
     val academicExamService = AcademicExamService(examParser)
@@ -160,7 +157,7 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
             academicSessionStore.authenticatedStudentNumber.first()
                 .ifBlank { credentialStore.getUsername() }
         },
-        download = { semester, session, onProgress ->
+        download = { semester, session ->
             val baseUrl = session.baseUrl.ifBlank {
                 if (semester.campus == com.glut.schedule.data.settings.CampusType.NANNING) {
                     com.glut.schedule.service.academic.AcademicLoginResult.NANNING_URL
@@ -172,23 +169,21 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
                 cookie = session.cookie,
                 baseUrl = baseUrl,
                 semester = semester,
-                studentIdFallback = session.ownerStudentNumber,
-                // 在 lambda 内读设置，用户切换线路后此后所有批量下载立即按新线路执行。
-                mode = settingsStore.semesterImportMode.first(),
-                onProgress = onProgress
+                studentIdFallback = session.ownerStudentNumber
             )
         },
         commit = { semester, payload ->
             if (payload.updatedCookie.isNotBlank()) {
                 academicSessionStore.saveCookie(payload.updatedCookie)
             }
+            // 不传 importMode：保留该学期原有的值（DB 列仍在，避免迁移），
+            // 统一路径后它已不参与任何分支。
             scheduleRepository.replaceSemesterSchedule(
                 semester = semester,
                 courses = payload.courses,
                 adjustments = payload.adjustments,
                 classPeriods = scheduleRepository.currentClassPeriods.first(),
-                portalMaxWeek = payload.portalMaxWeek,
-                importMode = payload.importMode
+                portalMaxWeek = payload.portalMaxWeek
             )
         },
         updateCacheStatus = scheduleRepository::updateSemesterCacheStatus

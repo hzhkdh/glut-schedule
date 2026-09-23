@@ -10,20 +10,14 @@ import com.glut.schedule.data.model.weekTextWithoutWeek
 import java.security.MessageDigest
 
 interface AcademicScheduleParser {
-    fun parsePersonalSchedule(html: String): List<ScheduleCourse>
-    fun parseAdjustments(html: String): List<SemesterAdjustment> = emptyList()
-    /** Apply adjustments from HTML to an existing course list (used when courses come from
-     *  a different source than adjustments, e.g. Nanning currcourse.jsdo + showTimetable.do). */
-    fun applyAdjustmentsToCourses(courses: List<ScheduleCourse>, adjustmentHtml: String): List<ScheduleCourse> = courses
-
     /**
-     * 只按调课表**移除**被调走的原周次，再把补课时段去重后追加。模式2（纯个人课表）专用。
-     *
-     * 为什么不能直接用 [applyAdjustmentsToCourses]：个人课表是「只做加法」的——它已经把补课
-     * 时段列了出来，只是不会把被调走的那一周从原课次里去掉。再追加一次补课就会出现两张重叠
-     * 卡片（历史 5a774d2 的重复卡片正是这么来的），因此去重必须放宽到不看教室。
+     * 解析课表页为课程列表。**统一导入路径后只对「大节课表」调用**：
+     * 网格、底部调课表、补课时段的移除与追加都由这一次解析完成，
+     * 调用方拿到的就是可直接落库的结果。
      */
-    fun applyAdjustmentRemovalsOnly(courses: List<ScheduleCourse>, adjustmentHtml: String): List<ScheduleCourse> = courses
+    fun parsePersonalSchedule(html: String): List<ScheduleCourse>
+
+    fun parseAdjustments(html: String): List<SemesterAdjustment> = emptyList()
 }
 
 /**
@@ -106,60 +100,9 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         }
     }
 
-    /** Apply adjustments from HTML to an existing course list (used for Nanning where courses
-     *  come from currcourse.jsdo but adjustments come from showTimetable.do). */
-    override fun applyAdjustmentsToCourses(courses: List<ScheduleCourse>, adjustmentHtml: String): List<ScheduleCourse> {
-        if (adjustmentHtml.isBlank()) return courses
-        val hasNoonInTimetable = adjustmentHtml.contains("中午")
-        val adjustments = parseSupplementalAdjustmentRows(adjustmentHtml, hasNoonInTimetable)
-        if (adjustments.isEmpty()) return courses
-        val afterRemoval = applyAdjustmentRemovals(courses, adjustments)
-        val dedupedMakeups = adjustments.mapNotNull { adj ->
-            val mk = adj.toMakeupCourse()
-            val mkOcc = mk.occurrences.single()
-            if (isMakeupCoveredByGrid(afterRemoval, mk.title, mkOcc.dayOfWeek,
-                    mkOcc.startSection, mkOcc.endSection, mkOcc.note, adj.makeupWeek)) null else mk
-        }
-        return mergeCompatibleCourses(afterRemoval + dedupedMakeups)
-    }
-
-    /**
-     * 模式2（纯个人课表）专用：按调课表移除被调走的原周次，再追加补课时段。
-     *
-     * 与 [applyAdjustmentsToCourses] 的两点差别，都源自个人课表的「只做加法」特性
-     * （它已列出补课时段，只是不删原周次）：
-     *  1) 移除走**严格教室匹配**——同一时段可能同时存在原课次与补课次，空教室通配会把补课次一起删掉；
-     *  2) 追加的**去重放宽到不看教室**——个人课表可能已用另一个教室文本列出该时段，
-     *     教室精确相等会让去重失效、追加出第二张卡片（历史 5a774d2 的重复卡片即此）。
-     * 另：没有补课时段的纯停课记录不生成课次，避免留下「第0周」的幽灵课程。
-     */
-    override fun applyAdjustmentRemovalsOnly(
-        courses: List<ScheduleCourse>,
-        adjustmentHtml: String
-    ): List<ScheduleCourse> {
-        if (courses.isEmpty() || adjustmentHtml.isBlank()) return courses
-        val hasNoonInTimetable = adjustmentHtml.contains("中午")
-        val adjustments = parseSupplementalAdjustmentRows(adjustmentHtml, hasNoonInTimetable)
-        if (adjustments.isEmpty()) return courses
-        // 模式2 专用路径：教师可能是「蒋志军 陈守学 康燕萍」这样的拼接串，而调课表只写
-        // 实际被调走那节课的老师，必须宽容匹配，否则被调走的原周次会留在卡上。
-        val afterRemoval = applyAdjustmentRemovals(
-            courses,
-            adjustments,
-            requireOriginalRoom = true,
-            tolerantTeacher = true
-        )
-        val dedupedMakeups = adjustments
-            .filter { it.makeupWeek > 0 && it.makeupDay > 0 }
-            .mapNotNull { adj ->
-                val mk = adj.toMakeupCourse()
-                val mkOcc = mk.occurrences.single()
-                if (isMakeupCoveredByGrid(afterRemoval, mk.title, mkOcc.dayOfWeek,
-                        mkOcc.startSection, mkOcc.endSection, mkOcc.note, adj.makeupWeek,
-                        ignoreRoom = true)) null else mk
-            }
-        return mergeCompatibleCourses(afterRemoval + dedupedMakeups)
-    }
+    // applyAdjustmentsToCourses / applyAdjustmentRemovalsOnly 已随导入路径统一而删除：
+    // 它们是「课程来自 A 页、调课来自 B 页」时代的胶水，现在课程与调课表同在大节课表，
+    // 由下面的 parsePersonalSchedule 一次做完（内部走 applyAdjustmentRemovals）。
 
     override fun parsePersonalSchedule(html: String): List<ScheduleCourse> {
         require(html.isNotBlank()) { "课表 HTML 不能为空" }

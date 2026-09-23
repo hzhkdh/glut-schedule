@@ -381,7 +381,6 @@ class MainActivity : ComponentActivity() {
                         settingsStore = container.settingsStore,
                         apiProbeService = container.apiProbeService,
                         academicExamService = container.academicExamService,
-                        scheduleParser = container.academicScheduleParser,
                         scoreParser = container.scoreParser,
                         timorHolidayClient = container.timorHolidayClient,
                         gradeExamParser = container.gradeExamParser,

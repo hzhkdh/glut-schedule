@@ -30,8 +30,6 @@ data class SemesterDownloadItemState(
     val semesterId: String,
     val displayName: String,
     val status: SemesterDownloadItemStatus,
-    val completedWeeks: Int = 0,
-    val totalWeeks: Int = 0,
     val skippedRowCount: Int = 0,
     val errorMessage: String? = null
 )
@@ -73,8 +71,7 @@ class SemesterBulkDownloadCoordinator(
     private val currentOwnerProvider: suspend () -> String,
     private val download: suspend (
         semester: AcademicSemester,
-        session: SemesterDownloadSession,
-        onProgress: (completed: Int, total: Int) -> Unit
+        session: SemesterDownloadSession
     ) -> Result<AcademicSemesterImportPayload>,
     private val commit: suspend (AcademicSemester, AcademicSemesterImportPayload) -> Unit,
     private val updateCacheStatus: suspend (String, SemesterCacheStatus) -> Unit,
@@ -89,16 +86,17 @@ class SemesterBulkDownloadCoordinator(
     val completionEvents: SharedFlow<SemesterBulkDownloadSummary> = _completionEvents.asSharedFlow()
 
     /**
-     * 「全部下载」：把**所有历史学期**按当前导入模式重抓一遍并覆盖缓存。
+     * 「全部下载」：把**所有历史学期**重抓一遍并覆盖缓存。
      *
      * 这里刻意**不看 cacheStatus**。曾经只挑「未缓存 / 失败」的学期，结果是历史学期一旦
      * 全部缓存，这个入口就无事可做——界面只能把它置灰或换成一条状态说明，用户会读成
      * 「按钮没了」。现在的语义是「全部重新下载」：已缓存的学期也照样重抓，让用户能一键
-     * 把旧缓存刷成当前模式，不必先手动清缓存。
+     * 把旧缓存刷新一遍，不必先手动清缓存。
      *
      * 当前学期始终排除：它由首页刷新负责，且它正是「正在查看」的那个，不该被批量覆盖。
-     * 代价要说清楚——模式1 每学期要逐周下载约 20 次请求，6 个学期上百次，会明显耗时；
-     * 但它只由用户点按触发（无自动调用），协调器串行执行，且随时可以离开页面。
+     *
+     * 成本：统一走大节课表后每学期只有 2 次 GET（原先模式1 是逐周 POST 约 20 次），
+     * 6 个学期也就十来次请求，但仍是串行执行，随时可以离开页面。
      */
     suspend fun startAll(): SemesterDownloadStartResult = startMutex.withLock {
         if (activeCompletion?.isActive == true) return@withLock SemesterDownloadStartResult.AlreadyRunning
@@ -181,11 +179,7 @@ class SemesterBulkDownloadCoordinator(
             runCatching {
                 verifyOwner(runGeneration, session.ownerStudentNumber)
                 updateCacheStatus(semester.id, SemesterCacheStatus.DOWNLOADING)
-                val payload = download(semester, activeSession) { completed, total ->
-                    updateItem(runGeneration, semester.id) {
-                        it.copy(completedWeeks = completed, totalWeeks = total)
-                    }
-                }.getOrThrow()
+                val payload = download(semester, activeSession).getOrThrow()
                 if (payload.updatedCookie.isNotBlank()) {
                     // 教务可能在下载学期时轮换会话，后续学期必须接续本次响应的最新 Cookie。
                     activeSession = activeSession.copy(cookie = payload.updatedCookie)

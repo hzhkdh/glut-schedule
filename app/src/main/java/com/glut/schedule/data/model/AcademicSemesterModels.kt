@@ -77,32 +77,8 @@ data class AcademicSemester(
     }
 }
 
-/** 线路标签，与导入页线路选择器上的文案保持一致。 */
-fun SemesterImportMode.displayLabel(): String = when (this) {
-    SemesterImportMode.WEEKLY -> "模式1"
-    SemesterImportMode.PERSONAL_ONLY -> "模式2"
-}
-
-/**
- * 「重下会换线路」的提前说明；不需要提示时返回空串。
- *
- * 重下会改变课表时间/教室的取值口径（模式1 以周次课表为准，模式2 全部来自个人课表），
- * 用户不知情就会以为数据出错或丢了，所以必须在按下「重新下载」之前说清楚。
- *
- * 只在「确实可以重下」的学期上提示：当前学期是「正在查看」、没有重下入口；
- * 未缓存的学期也没有可对比的线路。判据必须与界面上的 canRedownload 保持一致，
- * 否则会出现「有提示却没有重下按钮」的悬空文案。
- */
-fun semesterImportModeSwitchHint(
-    semester: AcademicSemester,
-    currentMode: SemesterImportMode
-): String {
-    if (semester.isCurrent) return ""
-    if (semester.cacheStatus != SemesterCacheStatus.CACHED) return ""
-    if (semester.importMode == currentMode) return ""
-    return "该学期原用${semester.importMode.displayLabel()}缓存，" +
-        "重新下载将改用${currentMode.displayLabel()}"
-}
+// 线路标签（displayLabel）与「重下会换线路」提示（semesterImportModeSwitchHint）已随
+// 导入线路统一而删除：课表只有一个数据源，学期之间不再存在取值口径差异。
 
 data class AcademicEnrollment(
     val entranceDate: LocalDate?,

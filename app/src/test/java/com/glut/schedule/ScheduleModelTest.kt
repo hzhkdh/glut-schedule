@@ -16,9 +16,7 @@ import com.glut.schedule.data.model.offsetSectionForNoon
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
-import com.glut.schedule.data.model.semesterImportModeSwitchHint
 import com.glut.schedule.data.settings.CampusType
-import com.glut.schedule.data.settings.SemesterImportMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -201,57 +199,6 @@ class ScheduleModelTest {
         // 南宁没有中午时段，节次直排，任何节次都不偏移。
         assertEquals(5, offsetSectionForNoon(5, hasNoon = false))
         assertEquals(12, offsetSectionForNoon(12, hasNoon = false))
-    }
-
-    @Test
-    fun semesterImportModeSwitchHintOnlyShowsWhenRedownloadWouldChangeMode() {
-        // 重下会改变时间/教室的取值口径，必须提前说明；但只在「确实能重下」的学期上提示，
-        // 否则会出现「有提示却没有重下按钮」的悬空文案。
-        fun semester(
-            isCurrent: Boolean,
-            cacheStatus: SemesterCacheStatus,
-            importMode: SemesterImportMode
-        ) = AcademicSemester.create(
-            campus = CampusType.GUILIN,
-            portalYear = 2026,
-            portalYearId = "46",
-            season = SemesterSeason.AUTUMN,
-            portalTermId = "2",
-            isCurrent = isCurrent,
-            cacheStatus = cacheStatus,
-            importMode = importMode
-        )
-
-        val cachedWeekly = semester(false, SemesterCacheStatus.CACHED, SemesterImportMode.WEEKLY)
-        assertEquals(
-            "该学期原用模式1缓存，重新下载将改用模式2",
-            semesterImportModeSwitchHint(cachedWeekly, SemesterImportMode.PERSONAL_ONLY)
-        )
-        // 反过来同样要提示。
-        val cachedPersonal = semester(false, SemesterCacheStatus.CACHED, SemesterImportMode.PERSONAL_ONLY)
-        assertEquals(
-            "该学期原用模式2缓存，重新下载将改用模式1",
-            semesterImportModeSwitchHint(cachedPersonal, SemesterImportMode.WEEKLY)
-        )
-
-        // 线路一致 → 不提示。
-        assertEquals("", semesterImportModeSwitchHint(cachedWeekly, SemesterImportMode.WEEKLY))
-        // 当前学期没有重下入口。
-        assertEquals(
-            "",
-            semesterImportModeSwitchHint(
-                semester(true, SemesterCacheStatus.CACHED, SemesterImportMode.WEEKLY),
-                SemesterImportMode.PERSONAL_ONLY
-            )
-        )
-        // 未缓存 → 没有可对比的线路。
-        assertEquals(
-            "",
-            semesterImportModeSwitchHint(
-                semester(false, SemesterCacheStatus.NOT_CACHED, SemesterImportMode.WEEKLY),
-                SemesterImportMode.PERSONAL_ONLY
-            )
-        )
     }
 
     private fun occurrenceWithWeek(weekText: String): CourseOccurrence {

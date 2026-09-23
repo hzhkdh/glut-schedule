@@ -198,7 +198,7 @@ class SemesterBulkDownloadCoordinatorTest {
             SemesterDownloadSession("student-a", "cookie", "https://jw.example")
         },
         currentOwnerProvider = owner,
-        download = { semester, session, _ -> download(semester, session) },
+        download = { semester, session -> download(semester, session) },
         commit = commit,
         updateCacheStatus = { _, _ -> },
         now = { 123L }

@@ -124,9 +124,11 @@ class MultiSemesterUiContractTest {
         assertTrue(viewModel.contains("fun viewSemester(semesterId: String)"))
         assertFalse(downloadBody.contains("scheduleRepository.selectSemester"))
         assertTrue(downloadBody.contains("semesterBulkDownloadCoordinator.startSingle(semesterId)"))
-        assertTrue(container.contains("mode = settingsStore.semesterImportMode.first()"))
-        assertTrue(container.contains("onProgress = onProgress"))
-        assertTrue(coordinator.contains("completedWeeks = completed"))
+        // 统一导入路径后批量下载没有线路可选，也没有逐周进度可言：
+        // 这三个旧接口必须彻底消失，而不是留着空跑。
+        assertFalse(container.contains("semesterImportMode.first()"))
+        assertFalse(container.contains("onProgress = onProgress"))
+        assertFalse(coordinator.contains("completedWeeks"))
         assertTrue(coordinator.contains("previousStatus"))
         assertTrue(screen.contains("canRedownload"))
         assertTrue(screen.contains("onDownloadSemester(selectedSemester.id)"))
@@ -140,7 +142,7 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
-    fun loginImportProbesImmediateNextThenImportsCurrentFromWeeklyTimetable() {
+    fun loginImportProbesImmediateNextThenImportsCurrentFromTimetable() {
         val viewModel = page("DirectLoginViewModel.kt")
         val importBody = viewModel.substringAfter("private suspend fun performImport(")
             .substringBefore("private suspend fun fetchAndSaveScores(")
@@ -148,10 +150,12 @@ class MultiSemesterUiContractTest {
         assertTrue(importBody.contains("AcademicSemesterParser.parseCatalogPlan("))
         assertTrue(importBody.contains("AcademicSemesterProbePlanner.decide("))
         assertTrue(importBody.contains("val currentSemester = decision.currentSemester"))
+        // 两次调用：先探测紧邻下学期，再正式导入当前学期。
         assertTrue(importBody.split("semesterImportService.importSemester(").size - 1 == 2)
-        assertTrue(importBody.contains("mode = SemesterImportMode.PERSONAL_ONLY"))
         assertTrue(importBody.contains("semester = currentSemester"))
-        assertTrue(importBody.contains("mode = settingsStore.semesterImportMode.first()"))
+        // 没有线路可选之后，导入调用不得再传 mode。
+        assertFalse(importBody.contains("mode = SemesterImportMode"))
+        assertFalse(importBody.contains("mode = settingsStore.semesterImportMode"))
         assertTrue(importBody.contains("portalMaxWeek = currentPayload.portalMaxWeek"))
         assertTrue(
             importBody.indexOf("val currentPayload") <
@@ -166,16 +170,21 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
-    fun weeklyTimetableImportIsSequentialAndValidatesEveryPage() {
+    fun unifiedImportNeverDownloadsWeeksAndKeepsLandingAsMaxWeekSourceOnly() {
         val service = service("AcademicSemesterImportService.kt")
 
-        assertFalse(service.contains("WEEKLY_TIMETABLE_PARALLELISM"))
+        // 逐周下载整段作废：解析器、POST 表单、进度回调都不应再出现在服务里。
+        assertFalse(service.contains("WeeklyTimetableParser"))
+        assertFalse(service.contains("weeklyTimetablePostUrl"))
+        assertFalse(service.contains("weeklyTimetableForm"))
+        assertFalse(service.contains("probeForm("))
+        assertFalse(service.contains("onProgress"))
         assertFalse(service.contains("Semaphore"))
-        assertFalse(service.contains("async"))
         assertFalse(service.contains("awaitAll"))
-        assertTrue(service.contains("availableWeeks.sorted().forEach"))
-        assertTrue(service.contains("page.validateFor("))
-        assertTrue(service.contains("expectedSemesterMonday"))
+        // 周次课表只剩「读一次落地页拿学期总周数」这一个用途，且失败只降级。
+        assertTrue(service.contains("probeWeeklyLandingMaxWeek("))
+        assertTrue(service.contains("WeeklyLandingPageParser.parse("))
+        assertTrue(service.contains("availableWeeks"))
     }
 
     @Test
@@ -235,30 +244,17 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
-    fun importPagePutsCampusSelectorBeforeImportModeAndKeepsBothExplained() {
+    fun importPageKeepsCampusSelectorAndHasNoImportModeSelector() {
         val screen = page("DirectLoginScreen.kt")
 
-        // 顺序：先选校区（登哪个教务），再选线路（用哪条导入）。
-        // 标签文字与小程序一致（「导入模式」），两端说同一句话。
-        val campusIndex = screen.indexOf("Text(\"南宁分校\"")
-        val modeIndex = screen.indexOf("Text(\"导入模式\"")
-        assertTrue("未找到「南宁分校」标题", campusIndex >= 0)
-        assertTrue("未找到「导入模式」标签", modeIndex >= 0)
-        assertTrue("「南宁分校」必须排在「导入模式」之前", campusIndex < modeIndex)
-        assertFalse(
-            "线路标签不能退回铺满整行的「导入方式」大标题",
-            screen.contains("Text(\"导入方式\"")
-        )
-
-        // 线路说明必须是两行图例，而不是连成一句的推荐语：
-        // 连成一句时选中态摆在哪条都会和文字分属两边，且长句会在「模式1」中间断行。
-        // 文案只描述「解析什么、快慢」，不评判哪条更准。
-        assertTrue(screen.contains("模式1 · 解析[个人课表]+[周次课表]，稍慢"))
-        assertTrue(screen.contains("模式2 · 解析[个人课表]，稍快(备用)"))
-        assertFalse(
-            "线路说明不能退回连成一句的写法",
-            screen.contains("模式1：以周次课表为准，更准确；模式2：只取个人课表")
-        )
+        // 校区仍要选（登哪个教务），线路不再要选（只有一个数据源）。
+        assertTrue("未找到「南宁分校」标题", screen.contains("Text(\"南宁分校\""))
+        assertFalse("「导入模式」标签应随线路统一而删除", screen.contains("Text(\"导入模式\""))
+        assertFalse("不应再有「导入方式」等同义标签", screen.contains("Text(\"导入方式\""))
+        assertFalse("不应再渲染线路选择胶囊", screen.contains("listOf(\"模式1\", \"模式2\")"))
+        assertFalse("线路两行图例应删除", screen.contains("模式1 · 解析"))
+        assertFalse("「换用模式2重试」入口应删除", screen.contains("换用模式2重试"))
+        assertFalse("「重下会换线路」提示应删除", screen.contains("semesterImportModeSwitchHint"))
     }
 
     @Test
@@ -269,9 +265,9 @@ class MultiSemesterUiContractTest {
 
         assertTrue(refreshBody.contains("uiState.value.viewedSemester"))
         assertTrue(refreshBody.contains("semesterImportService.importSemester("))
-        // 刷新必须沿用**该学期当初的**导入线路：读全局偏好会让「一次失败后切到模式2」的连锁
-        // 静默改写已缓存学期的线路，课表时间/教室的取值口径随之改变，而用户没有要求改它。
-        assertTrue(refreshBody.contains("mode = targetSemester.importMode"))
+        // 线路已统一，刷新不再需要也不得携带 mode：过去要靠「沿用该学期当初的线路」
+        // 才能避免跨学期改写取值口径，现在这条约束随单一数据源一起消失了。
+        assertFalse(refreshBody.contains("mode = targetSemester.importMode"))
         assertFalse(refreshBody.contains("mode = settingsStore.semesterImportMode.first()"))
         assertTrue(refreshBody.contains("repository.replaceSemesterSchedule("))
         assertTrue(refreshBody.contains("portalMaxWeek = payload.portalMaxWeek"))

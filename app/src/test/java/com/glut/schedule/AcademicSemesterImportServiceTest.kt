@@ -6,14 +6,13 @@ import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.settings.CampusType
-import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.AcademicSemesterRequestBuilder
 import com.glut.schedule.service.academic.AcademicSemesterResponseKind
 import com.glut.schedule.service.academic.ApiProbeService
-import com.glut.schedule.service.academic.validateWeeklyProbeTransport
 import com.glut.schedule.service.parser.AcademicScheduleParser
 import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
@@ -21,44 +20,43 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
-import java.util.Collections
-import java.util.concurrent.atomic.AtomicInteger
 
+/**
+ * 统一导入路径（只抓大节课表）的服务层测试。
+ *
+ * 三条铁律，用例都围绕它们：
+ *  1. **只解析大节课表**——个人课表页退化为「取学号」的一跳，课程一律来自 `showTimetable.do`；
+ *  2. **绝不逐周 POST**——`studentWeeklyTimetable.do` 只允许发一次落地页 GET，且失败只降级不报错；
+ *  3. **绝不留 null 学期总周数**——否则课时统计会把整学期判为不可统计。
+ */
 class AcademicSemesterImportServiceTest {
+
+    // ── URL 构造：统一路径下最要紧的是「发出去之前就没有重定向」 ──
+
     @Test
-    fun guilinWeeklyPostUrlIsHttpsEvenWhenLegacyBaseUrlIsProvided() {
-        assertEquals(
-            "https://jw.glut.edu.cn/academic/manager/coursearrange/studentWeeklyTimetable.do",
-            AcademicSemesterRequestBuilder.weeklyTimetablePostUrl("http://jw.glut.edu.cn")
+    fun guilinUrlsAreNormalizedToHttpsWhileNanningStaysHttp() {
+        val guilin = AcademicSemesterRequestBuilder.timetableUrl(
+            "http://jw.glut.edu.cn", "712170", semester()
         )
+        assertTrue(guilin, guilin.startsWith("https://jw.glut.edu.cn/academic/"))
+
+        val guilinLanding = AcademicSemesterRequestBuilder.weeklyTimetableUrl("http://jw.glut.edu.cn", semester())
+        assertTrue(guilinLanding, guilinLanding.startsWith("https://jw.glut.edu.cn/academic/"))
+
+        // 南宁维持 HTTP：它没有被强制跳转，改成 https 反而会连不上。
+        val nanning = AcademicSemesterRequestBuilder.timetableUrl(
+            "http://jw.glutnn.cn", "237607", nanningSemester()
+        )
+        assertTrue(nanning, nanning.startsWith("http://jw.glutnn.cn/academic/"))
     }
 
-    @Test
-    fun weeklyPostMethodChangeIsReportedAsRedirectFailure() {
-        val error = runCatching {
-            validateWeeklyProbeTransport(
-                response = ApiProbeService.ProbeResult(
-                    url = "https://jw.glut.edu.cn/academic/manager/coursearrange/studentWeeklyTimetable.do",
-                    method = "POST",
-                    httpCode = 200,
-                    contentType = "text/html",
-                    body = "<html></html>",
-                    bodyLength = 13,
-                    finalMethod = "GET",
-                    redirected = true
-                ),
-                pageLabel = "第1周课表"
-            )
-        }.exceptionOrNull()
-
-        assertTrue(error?.message.orEmpty().contains("重定向"))
-        assertTrue(error?.message.orEmpty().contains("POST"))
-        assertTrue(error?.message.orEmpty().contains("GET"))
-    }
+    // ── 认证与结构 ──
 
     @Test
     fun loginPageFailsAsAuthenticationExpiry() = runTest {
-        val result = importFrom("""<form action="j_acegi_security_check"><input type="password" /></form>""")
+        val result = importFrom(
+            currcourseBody = """<form action="j_acegi_security_check"><input type="password" /></form>"""
+        )
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("登录状态已失效"))
@@ -66,45 +64,22 @@ class AcademicSemesterImportServiceTest {
 
     @Test
     fun randomSuccessfulHtmlFailsAsUnrecognizedStructure() = runTest {
-        val result = importFrom("<html><h1>系统公告</h1></html>")
+        val result = importFrom(timetableBody = "<html><h1>系统公告</h1></html>")
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("无法识别课表结构"))
     }
 
     @Test
-    fun validEmptyScheduleReturnsSuccessfulEmptyPayload() = runTest {
-        val result = importFrom(validScheduleHtml(), courses = emptyList())
-
-        assertTrue(result.isSuccess)
-        assertEquals(emptyList<ScheduleCourse>(), result.getOrThrow().courses)
-        assertEquals(AcademicSemesterResponseKind.VALID_EMPTY_SCHEDULE, result.getOrThrow().responseKind)
-    }
-
-    @Test
-    fun validNonEmptyScheduleReturnsSuccessfulNonEmptyPayload() = runTest {
-        val course = course()
-        val result = importFrom(validScheduleHtml(), courses = listOf(course))
-
-        assertTrue(result.isSuccess)
-        // 模式2 直接以个人课表为准，必须保留 occurrences——旧实现把它们清空后不回填，
-        // 产出的是「有课程名、没有任何上课时间」的课表。
-        assertEquals(listOf(course), result.getOrThrow().courses)
-        assertEquals(AcademicSemesterResponseKind.VALID_NON_EMPTY_SCHEDULE, result.getOrThrow().responseKind)
-    }
-
-    @Test
-    fun parsedHistoricalCoursesAreNotRejectedByUnknownPageWrapper() = runTest {
-        val course = course()
+    fun missingStudentIdFailsWithReadableMessage() = runTest {
+        // 个人课表页里没有 showTimetable 链接，也拿不到兜底学号 —— 没法定位大节课表。
         val result = importFrom(
-            "<html><body><table class=\"infolist\"><tr><td>历史课程</td></tr></table></body></html>",
-            courses = listOf(course)
+            currcourseBody = currcourseHtml(includeTimetableLink = false),
+            studentIdFallback = ""
         )
 
-        assertTrue(result.isSuccess)
-        // 模式2 直接以个人课表为准，必须保留 occurrences——旧实现把它们清空后不回填，
-        // 产出的是「有课程名、没有任何上课时间」的课表。
-        assertEquals(listOf(course), result.getOrThrow().courses)
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("无法从教务页面解析学号"))
     }
 
     @Test
@@ -115,7 +90,7 @@ class AcademicSemesterImportServiceTest {
             <table id="manualArrangeCourseTable"></table>
         """.trimIndent()
 
-        val result = importFrom(body, courses = listOf(course()))
+        val result = importFrom(currcourseBody = body)
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("返回学期与请求不一致"))
@@ -129,75 +104,112 @@ class AcademicSemesterImportServiceTest {
             <table id="manualArrangeCourseTable"></table>
         """.trimIndent()
 
-        val result = importFrom(body, courses = listOf(course()))
+        val result = importFrom(currcourseBody = body)
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("返回学期与请求不一致"))
     }
 
+    // ── 课程结果 ──
+
     @Test
-    fun accurateImportGetsLandingBeforePostingEachWeek() = runTest {
+    fun validEmptyScheduleReturnsSuccessfulEmptyPayload() = runTest {
+        val result = importFrom(courses = emptyList())
+
+        assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
+        assertEquals(emptyList<ScheduleCourse>(), result.getOrThrow().courses)
+        assertEquals(AcademicSemesterResponseKind.VALID_EMPTY_SCHEDULE, result.getOrThrow().responseKind)
+    }
+
+    @Test
+    fun validNonEmptyScheduleReturnsSuccessfulNonEmptyPayload() = runTest {
+        val course = course()
+        val result = importFrom(courses = listOf(course))
+
+        assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
+        // 大节课表网格自带教师与教室，课程原样进入 payload，不经任何绑定/改写。
+        assertEquals(listOf(course), result.getOrThrow().courses)
+        assertEquals(AcademicSemesterResponseKind.VALID_NON_EMPTY_SCHEDULE, result.getOrThrow().responseKind)
+    }
+
+    @Test
+    fun coursesComeFromTimetablePageNotFromPersonalPage() = runTest {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(currcourseHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(timetableHtml()))
             server.enqueue(MockResponse().setResponseCode(200).setBody(weeklyLandingHtml()))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(weeklyWeekHtml()))
-            val progress = mutableListOf<Pair<Int, Int>>()
+
+            val timetableCourses = listOf(course().copy(title = "来自大节课表"))
+            val personalCourses = listOf(course().copy(title = "来自个人课表"))
+            val result = AcademicSemesterImportService(
+                ApiProbeService(sessionUrlValidator = { true }),
+                SourceAwareParser(
+                    timetableCourses = timetableCourses,
+                    personalCourses = personalCourses
+                )
+            ).importSemester(
+                cookie = "JSESSIONID=test",
+                baseUrl = server.url("/").toString(),
+                semester = semester(),
+                studentIdFallback = "student-internal-id"
+            )
+
+            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
+            // 个人课表里的课程不得出现在结果中——它已经不是数据源了。
+            assertEquals(listOf("来自大节课表"), result.getOrThrow().courses.map { it.title })
+        }
+    }
+
+    // ── 请求编排：这是统一路径最核心的契约 ──
+
+    @Test
+    fun unifiedImportNeverPostsWeeksAndHitsWeeklyLandingAtMostOnce() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200).setBody(currcourseHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(timetableHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(weeklyLandingHtml((1..19).toList())))
 
             val result = AcademicSemesterImportService(
                 ApiProbeService(sessionUrlValidator = { true }),
                 FixedParser(listOf(course()))
+            ).importSemester(
+                cookie = "JSESSIONID=test",
+                baseUrl = server.url("/").toString(),
+                semester = semester(),
+                studentIdFallback = "student-internal-id"
             )
-                .importSemester(
-                    cookie = "JSESSIONID=test",
-                    baseUrl = server.url("/").toString(),
-                    semester = semester(),
-                    studentIdFallback = "student-internal-id",
-                    mode = SemesterImportMode.WEEKLY,
-                    onProgress = { completed, total -> progress += completed to total }
-                )
 
             assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
-            val occurrence = result.getOrThrow().courses.single().occurrences.single()
-            assertEquals(2, occurrence.dayOfWeek)
-            assertEquals("第1周", occurrence.weekText)
-            assertEquals(1, result.getOrThrow().portalMaxWeek)
-            assertEquals(LocalDate.of(2025, 3, 3), result.getOrThrow().semesterStartMonday)
-            assertEquals(listOf(1 to 1), progress)
-            val currcourseRequest = server.takeRequest()
-            val timetableRequest = server.takeRequest()
-            val landingRequest = server.takeRequest()
-            val weekRequest = server.takeRequest()
-            assertTrue(currcourseRequest.path.orEmpty().contains("currcourse.jsdo"))
-            assertTrue(timetableRequest.path.orEmpty().contains("showTimetable.do"))
-            assertTrue(landingRequest.path.orEmpty().contains("studentWeeklyTimetable.do?yearid=45&termid=1"))
-            assertEquals("POST", weekRequest.method)
-            assertEquals("yearid=45&termid=1&whichWeek=1", weekRequest.body.readUtf8())
-            assertEquals(server.url("academic/manager/coursearrange/studentWeeklyTimetable.do?yearid=45&termid=1").toString(), weekRequest.getHeader("Referer"))
+
+            val requests = List(server.requestCount) { server.takeRequest() }
+            val paths = requests.map { it.path.orEmpty() }
+            // 逐周 POST 属于旧的模式1，整条链路已删除：任何请求都不允许再是 POST 表单。
+            assertTrue(paths.toString(), requests.none { it.method == "POST" })
+            assertTrue(paths.toString(), paths.none { it.contains("whichWeek") })
+            assertTrue(paths.toString(), paths.count { it.contains("studentWeeklyTimetable") } <= 1)
+            assertTrue(paths.toString(), paths.any { it.contains("showTimetable.do") })
+            assertTrue(paths.toString(), paths.any { it.contains("currcourse.jsdo") })
         }
     }
 
     @Test
-    fun accurateImportCarriesRotatedSessionCookieIntoWeeklyRequests() = runTest {
+    fun rotatedSessionCookieIsCarriedIntoSubsequentRequests() = runTest {
         MockWebServer().use { server ->
-            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     val path = request.path.orEmpty()
                     return when {
                         path.contains("currcourse.jsdo") -> MockResponse()
                             .setResponseCode(200)
                             .addHeader("Set-Cookie", "JSESSIONID=rotated; Path=/")
-                            .setBody(validScheduleHtml())
-                        path.contains("showTimetable.do") -> MockResponse()
-                            .setResponseCode(200)
-                            .setBody(validScheduleHtml())
-                        request.method == "GET" && request.getHeader("Cookie")?.contains("JSESSIONID=rotated") == true -> MockResponse()
+                            .setBody(currcourseHtml())
+                        path.contains("studentWeeklyTimetable") -> MockResponse()
                             .setResponseCode(200)
                             .setBody(weeklyLandingHtml())
-                        request.method == "POST" && request.getHeader("Cookie")?.contains("JSESSIONID=rotated") == true -> MockResponse()
+                        path.contains("showTimetable.do") -> MockResponse()
                             .setResponseCode(200)
-                            .setBody(weeklyWeekHtml())
-                        else -> MockResponse().setResponseCode(200).setBody("<html><body>提示信息</body></html>")
+                            .setBody(timetableHtml())
+                        else -> MockResponse().setResponseCode(404)
                     }
                 }
             }
@@ -209,455 +221,108 @@ class AcademicSemesterImportServiceTest {
                 cookie = "JSESSIONID=initial",
                 baseUrl = server.url("/").toString(),
                 semester = semester(),
-                studentIdFallback = "student-internal-id",
-                mode = SemesterImportMode.WEEKLY
+                studentIdFallback = "student-internal-id"
             )
 
             assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
             assertEquals("JSESSIONID=rotated", result.getOrThrow().updatedCookie)
+
+            // 教务在切学期时会轮换会话，后续请求必须接续新 Cookie，否则会掉登录。
+            val cookies = List(server.requestCount) { server.takeRequest().getHeader("Cookie").orEmpty() }
+            assertTrue(cookies.toString(), cookies.drop(1).all { it.contains("JSESSIONID=rotated") })
         }
     }
 
     @Test
-    fun personalTimetableTeacherOverridesCourseArrangementTeacherForExactRoom() = runTest {
-        val mainTeacherCourse = course().copy(
-            title = "微机原理与接口技术",
-            room = "014102S",
-            teacher = "蒋志军"
-        )
-        val experimentTeacherCourse = mainTeacherCourse.copy(teacher = "陈守学")
-
+    fun weeklyLandingIsSkippedWhenSemesterCarriesCalendarDates() = runTest {
         MockWebServer().use { server ->
-            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
-                override fun dispatch(request: RecordedRequest): MockResponse {
-                    val path = request.path.orEmpty()
-                    return when {
-                        path.contains("currcourse.jsdo") ->
-                            MockResponse().setResponseCode(200)
-                                .setBody(validScheduleHtml() + "<div>课程安排来源</div>")
-                        path.contains("showTimetable.do") ->
-                            MockResponse().setResponseCode(200)
-                                .setBody("<html><body>个人课表来源</body></html>")
-                        request.method == "GET" ->
-                            MockResponse().setResponseCode(200)
-                                .setBody(weeklyLandingHtml(listOf(11)))
-                        else ->
-                            MockResponse().setResponseCode(200)
-                                .setBody(experimentWeeklyWeekHtml())
-                    }
-                }
-            }
-            val parser = SourceAwareParser(
-                courseArrangementCourses = listOf(mainTeacherCourse),
-                personalTimetableCourses = listOf(experimentTeacherCourse)
-            )
-
-            val result = AcademicSemesterImportService(
-                ApiProbeService(sessionUrlValidator = { true }),
-                parser
-            ).importSemester(
-                cookie = "JSESSIONID=test",
-                baseUrl = server.url("/").toString(),
-                semester = semester(),
-                studentIdFallback = "student-internal-id",
-                mode = SemesterImportMode.WEEKLY
-            )
-
-            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
-            val imported = result.getOrThrow().courses.single()
-            assertEquals("陈守学", imported.teacher)
-            assertEquals("014102S", imported.room)
-            assertEquals("第11周", imported.occurrences.single().weekText)
-        }
-    }
-
-    @Test
-    fun accurateImportRequestsWeeksStrictlySequentiallyInSortedOrder() = runTest {
-        val active = AtomicInteger(0)
-        val maximumActive = AtomicInteger(0)
-        val requestedWeeks = Collections.synchronizedList(mutableListOf<Int>())
-        MockWebServer().use { server ->
-            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
-                override fun dispatch(request: RecordedRequest): MockResponse {
-                    return when {
-                        request.path.orEmpty().contains("currcourse.jsdo") ->
-                            MockResponse().setResponseCode(200).setBody(validScheduleHtml())
-                        request.method == "GET" ->
-                            MockResponse().setResponseCode(200)
-                                .setBody(weeklyLandingHtml(listOf(6, 3, 1, 5, 2, 4)))
-                        else -> {
-                            val week = Regex("whichWeek=(\\d+)").find(request.body.readUtf8())
-                                ?.groupValues?.get(1)?.toInt() ?: 0
-                            requestedWeeks += week
-                            val now = active.incrementAndGet()
-                            maximumActive.updateAndGet { current -> maxOf(current, now) }
-                            Thread.sleep(120)
-                            active.decrementAndGet()
-                            MockResponse().setResponseCode(200).setBody(weeklyWeekHtml(week, (1..6).toList()))
-                        }
-                    }
-                }
-            }
-
-            val result = AcademicSemesterImportService(
-                ApiProbeService(sessionUrlValidator = { true }),
-                FixedParser(listOf(course()))
-            )
-                .importSemester(
-                    cookie = "JSESSIONID=test",
-                    baseUrl = server.url("/").toString(),
-                    semester = semester(),
-                    studentIdFallback = "",
-                    mode = SemesterImportMode.WEEKLY
-                )
-
-            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
-            assertEquals(6, result.getOrThrow().portalMaxWeek)
-            assertEquals(1, maximumActive.get())
-            assertEquals((1..6).toList(), requestedWeeks)
-        }
-    }
-
-    @Test
-    fun accurateImportRejectsSelectedWeekWhoseBodyBelongsToAnotherNaturalWeek() = runTest {
-        MockWebServer().use { server ->
-            val oldCache = listOf(course().copy(title = "旧缓存课程"))
-            var visibleCache = oldCache
-            var replaceCount = 0
-            val progress = mutableListOf<Pair<Int, Int>>()
-            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
-                override fun dispatch(request: RecordedRequest): MockResponse {
-                    if (request.path.orEmpty().contains("currcourse.jsdo")) {
-                        return MockResponse().setResponseCode(200).setBody(validScheduleHtml())
-                    }
-                    if (request.method == "GET") {
-                        return MockResponse().setResponseCode(200)
-                            .setBody(weeklyLandingHtml(listOf(1, 2)))
-                    }
-                    val week = Regex("whichWeek=(\\d+)").find(request.body.readUtf8())
-                        ?.groupValues?.get(1)?.toInt() ?: 0
-                    return MockResponse().setResponseCode(200).setBody(
-                        weeklyWeekHtml(week, listOf(1, 2), bodyWeek = 1)
-                    )
-                }
-            }
-
-            val result = AcademicSemesterImportService(
-                ApiProbeService(sessionUrlValidator = { true }),
-                FixedParser(listOf(course()))
-            )
-                .importSemester(
-                    cookie = "JSESSIONID=test",
-                    baseUrl = server.url("/").toString(),
-                    semester = semester(),
-                    studentIdFallback = "",
-                    mode = SemesterImportMode.WEEKLY,
-                    onProgress = { completed, total -> progress += completed to total }
-                )
-
-            // 调用方协议：只有完整导入成功才允许执行原子 replace；失败 Result 不得消费 payload。
-            result.onSuccess { payload ->
-                replaceCount += 1
-                visibleCache = payload.courses
-            }
-
-            assertTrue(result.isFailure)
-            assertEquals(0, replaceCount)
-            assertEquals(oldCache, visibleCache)
-            assertEquals(listOf(1 to 2), progress)
-        }
-    }
-
-    @Test
-    fun nanningDiscardsPersonalOccurrencesAndKeepsWeeklySectionsOneThroughElevenUnshifted() = runTest {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml(term = "2")))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml(term = "2")))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(weeklyLandingHtml()))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(nanningWeeklyWeekHtml()))
-            val parser = FailIfPersonalOccurrencesAreAppliedParser(listOf(course()))
-
-            val result = AcademicSemesterImportService(
-                ApiProbeService(sessionUrlValidator = { true }),
-                parser
-            )
-                .importSemester(
-                    cookie = "JSESSIONID=test",
-                    baseUrl = server.url("/").toString(),
-                    semester = nanningSemester(),
-                    studentIdFallback = "student-internal-id",
-                    mode = SemesterImportMode.WEEKLY
-                )
-
-            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
-            val occurrences = result.getOrThrow().courses.single().occurrences
-            assertEquals(1, occurrences.size)
-            assertEquals(3, occurrences.single().dayOfWeek)
-            assertEquals(10, occurrences.single().startSection)
-            assertEquals(11, occurrences.single().endSection)
-            assertEquals("第1周", occurrences.single().weekText)
-            assertEquals(0, parser.applyAdjustmentsCalls)
-        }
-    }
-
-    @Test
-    fun accurateImportRejectsRawRowsWithoutUsableOccurrences() = runTest {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(weeklyLandingHtml()))
-            server.enqueue(
-                MockResponse().setResponseCode(200)
-                    .setBody(weeklyWeekHtml().replace("星期二", "未知星期"))
-            )
-
-            val result = AcademicSemesterImportService(
-                ApiProbeService(sessionUrlValidator = { true }),
-                FixedParser(listOf(course()))
-            )
-                .importSemester(
-                    cookie = "JSESSIONID=test",
-                    baseUrl = server.url("/").toString(),
-                    semester = semester(),
-                    studentIdFallback = "",
-                    mode = SemesterImportMode.WEEKLY
-            )
-
-            // 坏行被静默跳过 → 整页无可解析课程 → 导入失败并保留缓存
-            assertTrue(result.isFailure)
-            val message = result.exceptionOrNull()?.message.orEmpty()
-            assertTrue(message.contains("未返回课程") || message.contains("未解析到有效上课时间"))
-        }
-    }
-
-    @Test
-    fun personalOnlyModePreservesOccurrencesAndOnlyGetsWeeklyLandingOnce() = runTest {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            // 课程安排页仍会被访问（调课信息只存在于那里），给一个不含调课的普通页面即可。
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            // 模式2 只额外 GET 一次周次课表**落地页**（不带 whichWeek），用来拿学期总周数。
-            server.enqueue(
-                MockResponse().setResponseCode(200).setBody(weeklyLandingHtml((1..19).toList()))
-            )
-
-            val result = AcademicSemesterImportService(
-                ApiProbeService(sessionUrlValidator = { true }),
-                FixedParser(listOf(course()))
-            ).importSemester(
-                cookie = "JSESSIONID=test",
-                baseUrl = server.url("/").toString(),
-                semester = semester(),
-                studentIdFallback = "student-internal-id",
-                mode = SemesterImportMode.PERSONAL_ONLY
-            )
-
-            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
-
-            // 契约（2026-09-21 有意放宽）：模式2 允许发**一次**周次课表落地页 GET 用于取学期总周数，
-            // 但**绝不逐周 POST**。放宽的理由：模式1 整体失败的真因是 POST→GET 重定向丢表单
-            // （见 docs/桂林教务HTTPS跳转导致周次课表导入失败问题总结.md），落地页 GET 本身安全；
-            // 而模式2 拿不到学期长度会让历史学期翻不到期末、课时统计少算。
-            val paths = List(server.requestCount) { server.takeRequest().path.orEmpty() }
-            assertTrue(paths.toString(), paths.count { it.contains("studentWeeklyTimetable") } <= 1)
-            assertTrue(paths.toString(), paths.none { it.contains("whichWeek") })
-            assertTrue(paths.toString(), paths.any { it.contains("currcourse.jsdo") })
-
-            // 个人课表在这里就是权威时间来源，occurrences 必须原样保留。
-            val payload = result.getOrThrow()
-            assertEquals(listOf(course()), payload.courses)
-            assertEquals(SemesterImportMode.PERSONAL_ONLY, payload.importMode)
-            // 落地页给出的门户周次才是学期长度。旧实现只能反推到「最后一个有课周」16，历史学期
-            // 因此翻不到 17-19 周，课时统计也会少算第 17 周以后的课。
-            assertEquals(19, payload.portalMaxWeek)
-        }
-    }
-
-    /**
-     * 模式2 的教师必须按教室从大节课表绑定。
-     *
-     * 个人课表把一门课的所有老师写在同一个格子里、与「上课时间、地点」完全脱钩，
-     * 所以它只能给出课程级的一串名字；大节课表才有 `教室 -> 教师`。
-     */
-    @Test
-    fun personalOnlyModeBindsEachRoomToItsOwnTeacherFromTimetableMetadata() = runTest {
-        MockWebServer().use { server ->
-            // 个人课表：整门课一个教师串，两个课次分属两个教室。
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml() + "个人课表来源"))
-            // 大节课表：每个教室各自的教师。
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            server.enqueue(
-                MockResponse().setResponseCode(200).setBody(weeklyLandingHtml((1..19).toList()))
-            )
-
-            val personal = ScheduleCourse(
-                id = "personal-1",
-                title = "微机原理与接口技术",
-                room = "06104D",
-                teacher = "蒋志军 陈守学 康燕萍",
-                colorHex = "#4477AA",
-                occurrences = listOf(
-                    CourseOccurrence("o1", "personal-1", 5, 1, 2, "1-10周", "06104D"),
-                    CourseOccurrence("o2", "personal-1", 5, 1, 2, "11周", "014102S")
-                )
-            )
-            val metadata = listOf(
-                metadataCourse("微机原理与接口技术", "06104D", "蒋志军"),
-                metadataCourse("微机原理与接口技术", "014102S", "陈守学")
-            )
-
-            val result = AcademicSemesterImportService(
-                ApiProbeService(sessionUrlValidator = { true }),
-                SourceAwareParser(
-                    courseArrangementCourses = metadata,
-                    personalTimetableCourses = listOf(personal)
-                )
-            ).importSemester(
-                cookie = "JSESSIONID=test",
-                baseUrl = server.url("/").toString(),
-                semester = semester(),
-                studentIdFallback = "student-internal-id",
-                mode = SemesterImportMode.PERSONAL_ONLY
-            )
-
-            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
-
-            val courses = result.getOrThrow().courses
-            val byRoom = courses.associateBy { it.room }
-            assertEquals("蒋志军", byRoom.getValue("06104D").teacher)
-            assertEquals("陈守学", byRoom.getValue("014102S").teacher)
-            // 拆分只是把不同教室的课次分开成卡，按课程名仍是一门课。
-            assertEquals(1, courses.map { it.title }.distinct().size)
-        }
-    }
-
-    private fun metadataCourse(title: String, room: String, teacher: String) = ScheduleCourse(
-        id = "meta-$room",
-        title = title,
-        room = room,
-        teacher = teacher,
-        colorHex = "#4477AA",
-        occurrences = listOf(CourseOccurrence("m1", "meta-$room", 5, 1, 2, "1-10周", room))
-    )
-
-    @Test
-    fun personalOnlyModeFallsBackToCalendarEstimateWhenWeeklyLandingIsUnusable() = runTest {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            // 落地页被重定向到登录页：按契约只让周数退化，绝不能让导入失败。
-            server.enqueue(
-                MockResponse().setResponseCode(200)
-                    .setBody("""<form action="j_acegi_security_check"><input type="password" /></form>""")
-            )
-
-            val result = AcademicSemesterImportService(
-                ApiProbeService(sessionUrlValidator = { true }),
-                FixedParser(listOf(course()))
-            ).importSemester(
-                cookie = "JSESSIONID=test",
-                baseUrl = server.url("/").toString(),
-                semester = semester(),
-                studentIdFallback = "student-internal-id",
-                mode = SemesterImportMode.PERSONAL_ONLY
-            )
-
-            assertTrue(result.exceptionOrNull()?.stackTraceToString().orEmpty(), result.isSuccess)
-            // 春季估算 19 周。若错误地退回「最后一个有课周」，这里会是 16。
-            assertEquals(19, result.getOrThrow().portalMaxWeek)
-        }
-    }
-
-    @Test
-    fun personalOnlyModeIgnoresWeeklyLandingWhoseSemesterLabelDiffers() = runTest {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            // 落地页属于别的学期：它的周次列表绝不能拿来当本学期的长度。
-            server.enqueue(
-                MockResponse().setResponseCode(200)
-                    .setBody(weeklyLandingHtml((1..21).toList(), label = "2024秋"))
-            )
-
-            val payload = AcademicSemesterImportService(
-                ApiProbeService(sessionUrlValidator = { true }),
-                FixedParser(listOf(course()))
-            ).importSemester(
-                cookie = "JSESSIONID=test",
-                baseUrl = server.url("/").toString(),
-                semester = semester(),
-                studentIdFallback = "student-internal-id",
-                mode = SemesterImportMode.PERSONAL_ONLY
-            ).getOrThrow()
-
-            // 采信了错学期就会是 21；正确行为是丢弃并退化到春季估算 19。
-            assertEquals(19, payload.portalMaxWeek)
-        }
-    }
-
-    @Test
-    fun personalOnlyModeKeepsDerivedMaxWeekAsLowerBound() = runTest {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            // 落地页只给出 1-15 周，但课次里有「1-16周」——反推值是**下界**，不能被抹掉。
-            server.enqueue(
-                MockResponse().setResponseCode(200).setBody(weeklyLandingHtml((1..15).toList()))
-            )
-
-            val payload = AcademicSemesterImportService(
-                ApiProbeService(sessionUrlValidator = { true }),
-                FixedParser(listOf(course()))
-            ).importSemester(
-                cookie = "JSESSIONID=test",
-                baseUrl = server.url("/").toString(),
-                semester = semester(),
-                studentIdFallback = "student-internal-id",
-                mode = SemesterImportMode.PERSONAL_ONLY
-            ).getOrThrow()
-
-            assertEquals(16, payload.portalMaxWeek)
-        }
-    }
-
-    @Test
-    fun personalOnlyModePrefersSemesterCalendarOverDerivedMaxWeek() = runTest {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
-            server.enqueue(MockResponse().setResponseCode(200).setBody(validScheduleHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(currcourseHtml()))
+            server.enqueue(MockResponse().setResponseCode(200).setBody(timetableHtml()))
 
             val start = LocalDate.of(2026, 9, 7)
             val end = LocalDate.of(2027, 1, 24)
-
             val payload = AcademicSemesterImportService(
                 ApiProbeService(sessionUrlValidator = { true }),
                 FixedParser(listOf(course()))
             ).importSemester(
                 cookie = "JSESSIONID=test",
                 baseUrl = server.url("/").toString(),
-                semester = semester().copy(
-                    semesterStartDate = start,
-                    semesterEndDate = end
-                ),
-                studentIdFallback = "student-internal-id",
-                mode = SemesterImportMode.PERSONAL_ONLY
+                semester = semester().copy(semesterStartDate = start, semesterEndDate = end),
+                studentIdFallback = "student-internal-id"
             ).getOrThrow()
 
-            // 学期自带起止日期时必须优先用校历（与刷新路径 academicMaxWeekForCalendar 同算法），
-            // **且不为拿周数再发落地页请求**——日期已足够权威。
-            // 若错误地走了反推分支，这里会是 16，与本断言（20）不等——失败即说明优先级反了。
+            // 校历已足够权威，不为拿周数再发落地页请求。
+            assertEquals(2, server.requestCount)
             assertEquals(academicMaxWeekForCalendar(start, end), payload.portalMaxWeek)
         }
     }
 
+    // ── 学期总周数：三级回退 ──
+
+    @Test
+    fun portalMaxWeekComesFromWeeklyLandingPage() = runTest {
+        val payload = importFrom(
+            courses = listOf(course()),
+            landingWeeks = (1..19).toList()
+        ).getOrThrow()
+
+        // 落地页给出的门户周次才是学期长度。旧实现只能反推到「最后一个有课周」16，
+        // 历史学期因此翻不到 17-19 周，课时统计也会少算第 17 周以后的课。
+        assertEquals(19, payload.portalMaxWeek)
+    }
+
+    @Test
+    fun portalMaxWeekIgnoresWeeklyLandingWhoseSemesterLabelDiffers() = runTest {
+        val payload = importFrom(
+            courses = listOf(course()),
+            landingWeeks = (1..21).toList(),
+            landingLabel = "2024秋"
+        ).getOrThrow()
+
+        // 采信了错学期就会是 21；正确行为是丢弃并退化到春季估算 19。
+        assertEquals(19, payload.portalMaxWeek)
+    }
+
+    @Test
+    fun portalMaxWeekKeepsDerivedValueAsLowerBound() = runTest {
+        val payload = importFrom(
+            courses = listOf(course()),
+            landingWeeks = (1..15).toList()
+        ).getOrThrow()
+
+        // 落地页只给出 1-15 周，但课次里有「1-16周」——反推值是**下界**，不能被抹掉。
+        assertEquals(16, payload.portalMaxWeek)
+    }
+
+    @Test
+    fun portalMaxWeekSurvivesUnusableWeeklyLanding() = runTest {
+        val payload = importFrom(
+            courses = listOf(course()),
+            landingBody = """<form action="j_acegi_security_check"><input type="password" /></form>"""
+        ).getOrThrow()
+
+        // 落地页被重定向到登录页：按契约只让周数退化，绝不能让导入失败。
+        // 春季估算 19 周；若错误地退回「最后一个有课周」，这里会是 16。
+        assertEquals(19, payload.portalMaxWeek)
+    }
+
+    // ── 测试夹具 ──
+
     private suspend fun importFrom(
-        body: String,
-        courses: List<ScheduleCourse> = emptyList()
+        currcourseBody: String = currcourseHtml(),
+        timetableBody: String = timetableHtml(),
+        courses: List<ScheduleCourse> = emptyList(),
+        studentIdFallback: String = "student-internal-id",
+        semester: AcademicSemester = semester(),
+        landingWeeks: List<Int> = listOf(1),
+        landingLabel: String = "2025春",
+        landingBody: String? = null
     ) = MockWebServer().use { server ->
-        server.enqueue(MockResponse().setResponseCode(200).setBody(body))
-        // 这些用例都传 studentIdFallback = ""，拿不到内部学号就不会访问课程安排页；
-        // 成功走到模式2 尾部的用例会再发一次周次课表落地页，这里备好响应避免 MockWebServer 空队列阻塞。
+        server.enqueue(MockResponse().setResponseCode(200).setBody(currcourseBody))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(timetableBody))
         server.enqueue(
-            MockResponse().setResponseCode(200).setBody(weeklyLandingHtml((1..19).toList()))
+            MockResponse().setResponseCode(200)
+                .setBody(landingBody ?: weeklyLandingHtml(landingWeeks, landingLabel))
         )
         AcademicSemesterImportService(
             ApiProbeService(sessionUrlValidator = { true }),
@@ -665,60 +330,45 @@ class AcademicSemesterImportServiceTest {
         ).importSemester(
             cookie = "JSESSIONID=test",
             baseUrl = server.url("/").toString(),
-            semester = semester(),
-            studentIdFallback = "",
-            mode = SemesterImportMode.PERSONAL_ONLY
+            semester = semester,
+            studentIdFallback = studentIdFallback
         )
     }
 
-    private fun validScheduleHtml(term: String = "1") = """
-        <form><select name="year"><option value="45" selected>2025</option></select>
-        <select name="term"><option value="$term" selected>春</option></select></form>
-        <table id="manualArrangeCourseTable"></table>
+    /**
+     * 个人课表页。默认带一条大节课表链接——内部学号只能从这里取到。
+     *
+     * 注意：它**不再**是课程数据源，这里放什么课程内容都不影响结果。
+     */
+    private fun currcourseHtml(
+        term: String = "1",
+        includeTimetableLink: Boolean = true
+    ): String {
+        val link = if (includeTimetableLink) {
+            """<a href="showTimetable.do?id=712170&yearid=45&termid=$term&timetableType=STUDENT&sectionType=BASE">学生课表</a>"""
+        } else {
+            ""
+        }
+        return """
+            <form><select name="year"><option value="45" selected>2025</option></select>
+            <select name="term"><option value="$term" selected>春</option></select></form>
+            $link
+        """.trimIndent()
+    }
+
+    /** 大节课表页。含 `id="timetable"` 才算可识别的课表结构。 */
+    private fun timetableHtml(): String = """
+        <html><body><table id="timetable">
+        <tr><th></th><th>周一</th><th>周二</th></tr>
+        <tr><th>第1节</th><td id="1-1">&nbsp;</td><td id="2-1">&nbsp;</td></tr>
+        </table></body></html>
     """.trimIndent()
 
-    private fun weeklyLandingHtml(weeks: List<Int> = listOf(1), label: String = "2025春") = """
+    private fun weeklyLandingHtml(weeks: List<Int> = listOf(1), label: String = "2025春"): String = """
         <html><body><form><span>$label 第 </span><select name="whichWeek">
         <option value=""></option>${weeks.joinToString("") { "<option value=\"$it\">$it</option>" }}</select><span> 周 周次课表</span></form>
         <table><tr><th>日期</th><th>课程名</th><th>选课属性</th><th>考试性质</th><th>星期</th>
         <th>节次</th><th>开始时间</th><th>结束时间</th><th>教学楼</th><th>教室</th><th></th></tr></table>
-        </body></html>
-    """.trimIndent()
-
-    private fun weeklyWeekHtml(
-        week: Int = 1,
-        weeks: List<Int> = listOf(1),
-        bodyWeek: Int = week
-    ): String {
-        val date = LocalDate.of(2025, 3, 4).plusWeeks((bodyWeek - 1).toLong())
-        return """
-        <html><body><form><span>2025春 第 </span><select name="whichWeek">
-        ${weeks.joinToString("") { "<option value=\"$it\"${if (it == week) " selected" else ""}>$it</option>" }}</select><span> 周 周次课表</span></form>
-        <table><tr><th>日期</th><th>课程名</th><th>选课属性</th><th>考试性质</th><th>星期</th>
-        <th>节次</th><th>开始时间</th><th>结束时间</th><th>教学楼</th><th>教室</th><th></th></tr>
-        <tr><td>$date</td><td>测试课程</td><td>必修</td><td>正常考试</td><td>星期二</td>
-        <td>第1、2节</td><td>08:20</td><td>10:00</td><td>教学楼</td><td>A101</td><td></td></tr></table>
-        </body></html>
-    """.trimIndent()
-    }
-
-    private fun nanningWeeklyWeekHtml() = """
-        <html><body><form><span>2025春 第 </span><select name="whichWeek">
-        <option value="1" selected>1</option></select><span> 周 周次课表</span></form>
-        <table><tr><th>日期</th><th>课程名</th><th>选课属性</th><th>考试性质</th><th>星期</th>
-        <th>节次</th><th>开始时间</th><th>结束时间</th><th>教学楼</th><th>教室</th><th></th></tr>
-        <tr><td>2025-03-05</td><td>测试课程</td><td>必修</td><td>正常考试</td><td>星期三</td>
-        <td>第10、11节</td><td>18:30</td><td>20:10</td><td>教学楼</td><td>A101</td><td></td></tr></table>
-        </body></html>
-    """.trimIndent()
-
-    private fun experimentWeeklyWeekHtml() = """
-        <html><body><form><span>2025春 第 </span><select name="whichWeek">
-        <option value="11" selected>11</option></select><span> 周 周次课表</span></form>
-        <table><tr><th>日期</th><th>课程名</th><th>选课属性</th><th>考试性质</th><th>星期</th>
-        <th>节次</th><th>开始时间</th><th>结束时间</th><th>教学楼</th><th>教室</th><th></th></tr>
-        <tr><td>2025-05-14</td><td>微机原理与接口技术</td><td>必修</td><td>正常考试</td><td>星期三</td>
-        <td>第7、8节</td><td>16:20</td><td>18:00</td><td>雁山14号楼</td><td>014102S</td><td></td></tr></table>
         </body></html>
     """.trimIndent()
 
@@ -743,32 +393,12 @@ class AcademicSemesterImportServiceTest {
         override fun parsePersonalSchedule(html: String): List<ScheduleCourse> = courses
     }
 
+    /** 按 HTML 里的表 id 区分大节课表页与个人课表页，用于验证「谁才是数据源」。 */
     private class SourceAwareParser(
-        private val courseArrangementCourses: List<ScheduleCourse>,
-        private val personalTimetableCourses: List<ScheduleCourse>
+        private val timetableCourses: List<ScheduleCourse>,
+        private val personalCourses: List<ScheduleCourse>
     ) : AcademicScheduleParser {
-        override fun parsePersonalSchedule(html: String): List<ScheduleCourse> {
-            return if (html.contains("个人课表来源")) {
-                personalTimetableCourses
-            } else {
-                courseArrangementCourses
-            }
-        }
-    }
-
-    private class FailIfPersonalOccurrencesAreAppliedParser(
-        private val courses: List<ScheduleCourse>
-    ) : AcademicScheduleParser {
-        var applyAdjustmentsCalls = 0
-
-        override fun parsePersonalSchedule(html: String): List<ScheduleCourse> = courses
-
-        override fun applyAdjustmentsToCourses(
-            courses: List<ScheduleCourse>,
-            adjustmentHtml: String
-        ): List<ScheduleCourse> {
-            applyAdjustmentsCalls += 1
-            error("个人课表 occurrence 不得进入周次结果")
-        }
+        override fun parsePersonalSchedule(html: String): List<ScheduleCourse> =
+            if (html.contains("id=\"timetable\"")) timetableCourses else personalCourses
     }
 }

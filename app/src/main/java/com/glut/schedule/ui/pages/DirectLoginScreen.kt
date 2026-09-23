@@ -65,12 +65,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
-import com.glut.schedule.data.model.semesterImportModeSwitchHint
-import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.academic.SemesterDownloadItemStatus
 import com.glut.schedule.service.academic.SemesterDownloadMode
 import com.glut.schedule.service.academic.SemesterDownloadState
-import com.glut.schedule.ui.components.SegmentedPillRow
 
 private val LoginPrimary = Color(0xFF141821)
 private val LoginSecondary = Color(0xFF667085)
@@ -175,39 +172,9 @@ fun DirectLoginScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 导入线路：和上面的「南宁分校」一样是「标签在左、控件在右」的一行式，
-            // 两个同样影响本次导入的参数视觉重量才一致。
-            // 模式1 依赖周次课表接口，教务侧一变就可能整体不可用；
-            // 模式2 只取个人课表，作为模式1 不可用时的备用线路。
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("导入模式", color = LoginPrimary, fontSize = 14.sp)
-                SegmentedPillRow(
-                    options = listOf("模式1", "模式2"),
-                    selectedIndex = if (uiState.importMode == SemesterImportMode.PERSONAL_ONLY) 1 else 0,
-                    onSelect = { index ->
-                        viewModel.setImportMode(
-                            if (index == 1) SemesterImportMode.PERSONAL_ONLY else SemesterImportMode.WEEKLY
-                        )
-                    }
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            // 两条线路各占一行，而不是连成一句「模式1：……；模式2：……」。
-            // 连成一句时它读起来像推荐语，选中态摆在哪条都会和文字分属两边；
-            // 拆成两行后是「图例」——每条线路各是什么，高亮在哪条都不打架。
-            // 文案只说「解析什么、快慢」，不评判哪条更准：模式1 更准是有代价的（要逐周下载）。
-            Text(
-                "模式1 · 解析[个人课表]+[周次课表]，稍慢\n模式2 · 解析[个人课表]，稍快(备用)",
-                color = LoginSecondary,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-                modifier = Modifier.fillMaxWidth()
-            )
-
+            // 导入线路选择已移除：统一只抓大节课表，没有可选项，也就没有那两个
+            // 「标签在左、控件在右」的一行。这里保留间距，让登录按钮与上方开关的距离
+            // 与改动前一致。
             Spacer(modifier = Modifier.height(20.dp))
 
             // Login button
@@ -236,20 +203,6 @@ fun DirectLoginScreen(
                     LoginMessageTone.INFO -> LoginSecondary
                 }
                 Text(uiState.message, color = messageColor, fontSize = 14.sp)
-
-                // 模式1 失败时就地提供换线路入口，用户不必自己去翻设置再重来一遍。
-                if (uiState.canRetryWithPersonalMode) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedButton(
-                        onClick = viewModel::retryLastImportWithPersonalMode,
-                        enabled = !uiState.isLoggingIn,
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, LoginAccent),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = LoginAccent)
-                    ) {
-                        Text("换用模式2重试", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
             }
 
             // Import result cards
@@ -266,7 +219,6 @@ fun DirectLoginScreen(
                 Spacer(modifier = Modifier.height(24.dp))
                 SemesterManagementSection(
                     semesters = uiState.semesters,
-                    currentImportMode = uiState.importMode,
                     viewedSemesterId = uiState.viewedSemesterId,
                     importingSemesterId = uiState.importingSemesterId,
                     downloadState = semesterDownloadState,
@@ -299,7 +251,6 @@ fun DirectLoginScreen(
 @Composable
 private fun SemesterManagementSection(
     semesters: List<AcademicSemester>,
-    currentImportMode: SemesterImportMode,
     viewedSemesterId: String,
     importingSemesterId: String?,
     downloadState: SemesterDownloadState,
@@ -478,17 +429,8 @@ private fun SemesterManagementSection(
             ) {
                 Text("重新下载", color = LoginAccent, fontWeight = FontWeight.SemiBold)
             }
-            // 重下会按**当前**线路走，与缓存时的线路不同就必须提前说明，
-            // 否则用户重下完发现时间/教室口径变了，会以为数据出错或丢了。
-            val modeSwitchHint = semesterImportModeSwitchHint(selectedSemester, currentImportMode)
-            if (modeSwitchHint.isNotEmpty()) {
-                Text(
-                    modeSwitchHint,
-                    color = LoginSecondary,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
+            // 原先这里有一行「该学期原用模式X缓存，重下将改用模式Y」的提示。导入线路已统一，
+            // 重下不再改变取值口径，提示随之删除。
         }
     }
 }
