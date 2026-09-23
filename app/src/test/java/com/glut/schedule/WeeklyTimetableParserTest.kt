@@ -373,6 +373,80 @@ class WeeklyTimetableParserTest {
         assertEquals("第11周", merged.single().occurrences.single().weekText)
     }
 
+    @Test
+    fun modeOneSplitsTeachersWhenTheSameRoomChangesTeacherByWeek() {
+        val pages = listOf(
+            weeklyPage(1, weeklyRow(day = 1, start = 1, end = 2)),
+            weeklyPage(2, weeklyRow(day = 1, start = 1, end = 2))
+        )
+        val metadata = listOf(
+            course("联合实践", "教师甲", "014102S", "第1周", 1, 1, 2),
+            course("联合实践", "教师乙", "014102S", "第2周", 1, 1, 2)
+        )
+
+        val merged = parser.mergeWithMetadata(
+            baseCourses = listOf(course("联合实践", "教师甲 教师乙", "014102S", "1-2周", 1, 1, 2)),
+            pages = pages,
+            preferredMetadataCourses = metadata
+        )
+
+        assertEquals(2, merged.size)
+        val byTeacher = merged.associateBy { it.teacher }
+        assertEquals("第1周", byTeacher.getValue("教师甲").occurrences.single().weekText)
+        assertEquals("第2周", byTeacher.getValue("教师乙").occurrences.single().weekText)
+    }
+
+    @Test
+    fun modeOneSplitsTeachersWhenTheSameRoomAndWeekUseDifferentSlots() {
+        val page = weeklyPage(
+            2,
+            weeklyRow(day = 1, start = 1, end = 2),
+            weeklyRow(day = 2, start = 3, end = 4)
+        )
+        val metadata = listOf(
+            course("联合实践", "教师甲", "014102S", "第2周", 1, 1, 2),
+            course("联合实践", "教师乙", "014102S", "第2周", 2, 3, 4)
+        )
+
+        val merged = parser.mergeWithMetadata(
+            baseCourses = listOf(course("联合实践", "教师甲 教师乙", "014102S", "第2周", 1, 1, 4)),
+            pages = listOf(page),
+            preferredMetadataCourses = metadata
+        )
+
+        assertEquals(2, merged.size)
+        val byTeacher = merged.associateBy { it.teacher }
+        assertEquals(1, byTeacher.getValue("教师甲").occurrences.single().dayOfWeek)
+        assertEquals(2, byTeacher.getValue("教师乙").occurrences.single().dayOfWeek)
+        assertEquals(3, byTeacher.getValue("教师乙").occurrences.single().startSection)
+        assertEquals(4, byTeacher.getValue("教师乙").occurrences.single().endSection)
+    }
+
+    private fun weeklyPage(week: Int, vararg rows: com.glut.schedule.service.parser.WeeklyTimetableRow) =
+        com.glut.schedule.service.parser.WeeklyTimetablePage(
+            semesterLabel = "2026秋",
+            selectedWeek = week,
+            availableWeeks = listOf(1, 2),
+            rows = rows.toList()
+        )
+
+    private fun weeklyRow(
+        day: Int,
+        start: Int,
+        end: Int,
+        title: String = "联合实践",
+        room: String = "014102S"
+    ) = com.glut.schedule.service.parser.WeeklyTimetableRow(
+        date = "2026-09-07",
+        title = title,
+        dayOfWeek = day,
+        startSection = start,
+        endSection = end,
+        building = "雁山14号楼",
+        room = room,
+        status = ""
+    )
+
     private fun course(
         title: String,
         teacher: String,

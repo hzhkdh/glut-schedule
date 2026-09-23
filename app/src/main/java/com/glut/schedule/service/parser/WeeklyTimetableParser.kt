@@ -3,6 +3,7 @@ package com.glut.schedule.service.parser
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.isActiveInWeek
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.security.MessageDigest
@@ -127,33 +128,34 @@ class WeeklyTimetableParser {
             .distinctBy { (week, row) ->
                 "$week|${normalizeTitle(row.title)}|${row.dayOfWeek}|${row.startSection}|${row.endSection}|${row.room}"
             }
-        val rowsByCourse = finalRows.groupBy { (_, row) ->
-            "${normalizeTitle(row.title)}|${row.room.trim()}"
+        // 模式1的周页决定最终时间与教室；教师必须针对**每一周、每个时段**单独解析。
+        // 完整规则见 `docs/模式1多教师合并规则.md`。逻辑变化必须同步更新小程序、双端测试和文档。
+        val resolvedRows = finalRows.mapNotNull { (selectedWeek, row) ->
+            val week = selectedWeek ?: return@mapNotNull null
+            // showTimetable.do 的精确教师元数据优先；缺失时再退回个人课表课程元数据。
+            val metadata = metadataForRow(preferredMetadataCourses, row, week)
+                ?: metadataForRow(baseCourses, row, week)
+            ResolvedWeeklyRow(
+                week = week,
+                row = row,
+                metadata = metadata,
+                teacher = metadata?.teacher.orEmpty().ifBlank { "待确认" }
+            )
+        }
+        val rowsByCourse = resolvedRows.groupBy { resolved ->
+            "${normalizeTitle(resolved.row.title)}|${resolved.row.room.trim()}|${resolved.teacher}"
         }
 
         val scheduled = rowsByCourse.map { (_, entries) ->
-            val sample = entries.first().second
-            val titleCandidates = baseCourses.filter {
-                normalizeTitle(it.title) == normalizeTitle(sample.title)
-            }
-            // 个人课表能够把实验教师精确绑定到教室，优先级高于课程安排页的教师集合。
-            val preferredMetadata = preferredMetadataCourses.firstOrNull {
-                normalizeTitle(it.title) == normalizeTitle(sample.title) &&
-                    (it.room.trim() == sample.room.trim() ||
-                        it.occurrences.any { occurrence ->
-                            occurrence.note.trim() == sample.room.trim()
-                        })
-            }
-            val metadata = preferredMetadata ?: titleCandidates.firstOrNull {
-                it.room.trim() == sample.room.trim() ||
-                    it.occurrences.any { occurrence -> occurrence.note.trim() == sample.room.trim() }
-            } ?: titleCandidates.firstOrNull()
-            val teacher = metadata?.teacher.orEmpty().ifBlank { "待确认" }
-            val courseId = "weekly-${stableId("${sample.title}|$teacher|${sample.room}")}"
-            val occurrences = entries.groupBy { (_, row) ->
-                Triple(row.dayOfWeek, row.startSection, row.endSection)
+            val sample = entries.first()
+            val row = sample.row
+            val metadata = sample.metadata
+            val teacher = sample.teacher
+            val courseId = "weekly-${stableId("${row.title}|$teacher|${row.room}")}"
+            val occurrences = entries.groupBy { resolved ->
+                Triple(resolved.row.dayOfWeek, resolved.row.startSection, resolved.row.endSection)
             }.map { (slot, slotRows) ->
-                val weeks = slotRows.mapNotNull { it.first }.distinct().sorted()
+                val weeks = slotRows.map { it.week }.distinct().sorted()
                 CourseOccurrence(
                     id = "$courseId-${slot.first}-${slot.second}-${slot.third}",
                     courseId = courseId,
@@ -161,15 +163,15 @@ class WeeklyTimetableParser {
                     startSection = slot.second,
                     endSection = slot.third,
                     weekText = compactWeeks(weeks),
-                    note = sample.room
+                    note = row.room
                 )
             }
             ScheduleCourse(
                 id = courseId,
-                title = sample.title,
-                room = sample.room,
+                title = row.title,
+                room = row.room,
                 teacher = teacher,
-                colorHex = metadata?.colorHex ?: CourseColorMapper.colorForCourse(courseId, sample.title),
+                colorHex = metadata?.colorHex ?: CourseColorMapper.colorForCourse(courseId, row.title),
                 occurrences = occurrences
             )
         }
@@ -177,6 +179,43 @@ class WeeklyTimetableParser {
         val unscheduled = baseCourses.filter { normalizeTitle(it.title) !in scheduledTitles }
             .map { it.copy(occurrences = emptyList()) }
         return scheduled + unscheduled
+    }
+
+    private data class ResolvedWeeklyRow(
+        val week: Int,
+        val row: WeeklyTimetableRow,
+        val metadata: ScheduleCourse?,
+        val teacher: String
+    )
+
+    /** 与小程序 `metadataForRow` 同口径：先按课次精确匹配，再做唯一的无课次元数据回退。 */
+    private fun metadataForRow(
+        courses: List<ScheduleCourse>,
+        row: WeeklyTimetableRow,
+        week: Int
+    ): ScheduleCourse? {
+        val titleMatches = courses.filter {
+            normalizeTitle(it.title) == normalizeTitle(row.title)
+        }
+        titleMatches.firstOrNull { course ->
+            course.occurrences.any { occurrence ->
+                val occurrenceRoom = occurrence.note.ifBlank { course.room }.trim()
+                occurrenceRoom == row.room.trim() &&
+                    occurrence.dayOfWeek == row.dayOfWeek &&
+                    occurrence.startSection <= row.startSection &&
+                    occurrence.endSection >= row.endSection &&
+                    occurrence.isActiveInWeek(week)
+            }
+        }?.let { return it }
+
+        // 没有课次的旧元数据无法按周次和时段判断，只在候选唯一时安全回退。
+        val roomWithoutOccurrences = titleMatches.filter { course ->
+            course.occurrences.isEmpty() && course.room.trim() == row.room.trim()
+        }
+        if (roomWithoutOccurrences.size == 1) return roomWithoutOccurrences.single()
+
+        val titleWithoutOccurrences = titleMatches.filter { it.occurrences.isEmpty() }
+        return titleWithoutOccurrences.singleOrNull()
     }
 
     private fun isCourseHeaderRow(row: Element): Boolean {

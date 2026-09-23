@@ -24,6 +24,9 @@ import java.security.MessageDigest
  *
  * ## 口径（必须与小程序 `utils/parser.js` 的 `bindCourseTeachers` 逐条一致）
  *
+ * 完整规则见 `docs/模式2多教师绑定规则.md`。任何匹配键、消歧优先级、失败回退、课程拆分或
+ * 缓存生效时机的变化，都必须同步更新 Android、小程序、双端测试以及两边的同名文档。
+ *
  * 1. 匹配键 `(normalizeTitleKey(课程名), normalizeRoomKey(教室))`；教室取 `occurrence.note`，
  *    为空时退回 `course.room`。**教室为空不做通配**。
  * 2. 同一键出现多个不同教师时，先用「周次交集」缩小（`occurrence.weekText` ∩ 元数据课次的
