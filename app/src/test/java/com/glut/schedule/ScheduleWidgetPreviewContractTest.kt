@@ -5,8 +5,27 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import javax.xml.parsers.DocumentBuilderFactory
 
 class ScheduleWidgetPreviewContractTest {
+    @Test
+    fun mainActivityUsesSingleTaskLaunchModeToAvoidWidgetStacking() {
+        val manifest = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+        }.newDocumentBuilder().parse(appFile("src/main/AndroidManifest.xml"))
+        val activities = manifest.getElementsByTagName("activity")
+        val androidNamespace = "http://schemas.android.com/apk/res/android"
+        val mainActivity = (0 until activities.length)
+            .map { activities.item(it) }
+            .first { it.attributes.getNamedItemNS(androidNamespace, "name")?.nodeValue == ".MainActivity" }
+
+        // 小组件与桌面图标反复打开应用时必须复用同一实例，避免后台残留多套 Compose/ViewModel。
+        assertEquals(
+            "singleTask",
+            mainActivity.attributes.getNamedItemNS(androidNamespace, "launchMode")?.nodeValue
+        )
+    }
+
     @Test
     fun everyWidgetProvidesLegacyAndScalablePreviews() {
         val variants = listOf(

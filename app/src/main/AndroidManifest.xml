@@ -18,9 +18,14 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.GlutSchedule">
+        <!--
+            App 采用单 Activity 架构；桌面小组件会直接启动 MainActivity。
+            必须复用现有任务实例，避免每次点击小组件都残留一套 Compose 页面与 ViewModel。
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
