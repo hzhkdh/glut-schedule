@@ -95,7 +95,7 @@ class SemesterBulkDownloadCoordinator(
      *
      * 当前学期始终排除：它由首页刷新负责，且它正是「正在查看」的那个，不该被批量覆盖。
      *
-     * 成本：统一走大节课表后每学期只有 2 次 GET（原先模式1 是逐周 POST 约 20 次），
+     * 成本：统一走大节课表后每学期只有 2～3 次 GET（旧逐周链路约 20 次 POST），
      * 6 个学期也就十来次请求，但仍是串行执行，随时可以离开页面。
      */
     suspend fun startAll(): SemesterDownloadStartResult = startMutex.withLock {

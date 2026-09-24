@@ -54,25 +54,6 @@ enum class PartnerScheduleViewMode(val storageValue: String) {
     }
 }
 
-/**
- * 课表导入线路。
- *
- * - [WEEKLY]（模式1，默认）：个人课表 + 逐周课表合并。时间与教室以周次课表为准，教师以个人课表为准。
- * - [PERSONAL_ONLY]（模式2）：只取个人课表、不逐周下载，全部字段都来自个人课表。
- *
- * 模式1 依赖周次课表接口，教务侧变动会让它整体不可用；模式2 只依赖个人课表页，作为备用线路。
- * 未知旧值必须安全回退到模式1，避免历史数据被误判成模式2。
- */
-enum class SemesterImportMode(val storageValue: String) {
-    WEEKLY("weekly"),
-    PERSONAL_ONLY("personal");
-
-    companion object {
-        fun fromStorageValue(value: String?): SemesterImportMode =
-            entries.firstOrNull { it.storageValue == value } ?: WEEKLY
-    }
-}
-
 enum class GuilinSubCampus(val storageValue: String) {
     YANSHAN(GUILIN_SUB_CAMPUS_DEFAULT),
     PINGFENG(GUILIN_SUB_CAMPUS_PINGFENG);
@@ -131,7 +112,6 @@ class ScheduleSettingsStore(
     private val guilinPingfengClassPeriodsKey = stringSetPreferencesKey("guilin_pingfeng_class_periods")
     private val nanningClassPeriodsKey = stringSetPreferencesKey("nanning_class_periods")
     private val campusTypeKey = stringPreferencesKey("campus_type")
-    private val semesterImportModeKey = stringPreferencesKey("semester_import_mode")
     private val updateAvailableVersionKey = stringPreferencesKey("update_available_version")
     private val dismissedUpdatePopupVersionKey = stringPreferencesKey("dismissed_update_popup_version")
     private val cachedNoticesJsonKey = stringPreferencesKey("cached_notices_json")
@@ -166,11 +146,6 @@ class ScheduleSettingsStore(
 
     val partnerViewMode: Flow<PartnerScheduleViewMode> = context.scheduleSettings.data.map { preferences ->
         PartnerScheduleViewMode.fromStorageValue(preferences[partnerViewModeKey])
-    }.distinctUntilChanged()
-
-    /** 导入线路偏好；读取时即做未知值回退，调用方无需再判空。 */
-    val semesterImportMode: Flow<SemesterImportMode> = context.scheduleSettings.data.map { preferences ->
-        SemesterImportMode.fromStorageValue(preferences[semesterImportModeKey])
     }.distinctUntilChanged()
 
     val semesterStartMonday: Flow<LocalDate> = context.scheduleSettings.data.map { preferences ->
@@ -319,12 +294,6 @@ class ScheduleSettingsStore(
     suspend fun setPartnerViewMode(mode: PartnerScheduleViewMode) {
         context.scheduleSettings.edit { preferences ->
             preferences[partnerViewModeKey] = mode.storageValue
-        }
-    }
-
-    suspend fun setSemesterImportMode(mode: SemesterImportMode) {
-        context.scheduleSettings.edit { preferences ->
-            preferences[semesterImportModeKey] = mode.storageValue
         }
     }
 

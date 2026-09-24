@@ -116,6 +116,28 @@ interface ScheduleDao {
         insertSemesterAdjustments(adjustments)
     }
 
+    /**
+     * 课程来源切换到大节课表时，只作废动态学期缓存；学期目录及应用设置由各自存储保留。
+     */
+    @Transaction
+    suspend fun invalidateSemesterScheduleCaches(semesters: List<AcademicSemesterEntity>) {
+        semesters.forEach { semester ->
+            deleteOccurrencesForSemester(semester.id)
+            deleteCoursesForSemester(semester.id)
+            // legacy-current 承载当前生效作息，来源迁移不得把用户作息一起清掉。
+            if (semester.id != com.glut.schedule.data.model.AcademicSemester.LEGACY_CURRENT_ID) {
+                deleteClassPeriodsForSemester(semester.id)
+            }
+            deleteSemesterAdjustmentsForSemester(semester.id)
+            insertSemester(
+                semester.copy(
+                    cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.NOT_CACHED.name,
+                    importedAtEpochMillis = null
+                )
+            )
+        }
+    }
+
     @Query("SELECT * FROM exams ORDER BY examDate, startTime")
     fun observeExams(): Flow<List<ExamEntity>>
 

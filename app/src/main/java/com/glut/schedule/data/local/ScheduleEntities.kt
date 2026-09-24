@@ -19,7 +19,6 @@ import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.sanitized
-import com.glut.schedule.data.settings.SemesterImportMode
 
 @Entity(tableName = "academic_semesters")
 data class AcademicSemesterEntity(
@@ -59,7 +58,8 @@ fun AcademicSemester.toEntity(): AcademicSemesterEntity = AcademicSemesterEntity
     semesterStartDate = semesterStartDate?.toString(),
     semesterEndDate = semesterEndDate?.toString(),
     portalMaxWeek = portalMaxWeek,
-    importMode = importMode.name
+    // Room 旧列为升级兼容保留，统一导入后领域模型不再读取该值。
+    importMode = "WEEKLY"
 )
 
 fun AcademicSemesterEntity.toModel(): AcademicSemester {
@@ -82,11 +82,7 @@ fun AcademicSemesterEntity.toModel(): AcademicSemester {
         importedAtEpochMillis = importedAtEpochMillis,
         semesterStartDate = semesterStartDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
         semesterEndDate = semesterEndDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() },
-        portalMaxWeek = portalMaxWeek,
-        // 与 campus/season/cacheStatus 同样做防御式解析：列值异常时回退模式1，
-        // 而不是让整个学期读取失败。
-        importMode = runCatching { SemesterImportMode.valueOf(importMode) }
-            .getOrDefault(SemesterImportMode.WEEKLY)
+        portalMaxWeek = portalMaxWeek
     )
 }
 

@@ -181,8 +181,8 @@ class MultiSemesterUiContractTest {
         assertFalse(service.contains("onProgress"))
         assertFalse(service.contains("Semaphore"))
         assertFalse(service.contains("awaitAll"))
-        // 周次课表只剩「读一次落地页拿学期总周数」这一个用途，且失败只降级。
-        assertTrue(service.contains("probeWeeklyLandingMaxWeek("))
+        // 周次课表只剩一次落地页元数据读取：最大周、当前周和服务器日期；失败只降级。
+        assertTrue(service.contains("probeWeeklyLandingMetadata("))
         assertTrue(service.contains("WeeklyLandingPageParser.parse("))
         assertTrue(service.contains("availableWeeks"))
     }

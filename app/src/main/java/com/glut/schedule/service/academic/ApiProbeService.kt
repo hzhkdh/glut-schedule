@@ -12,6 +12,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 
 class ApiProbeService(
@@ -35,7 +38,9 @@ class ApiProbeService(
         val updatedCookie: String = "",
         /** 最终 HTTP 方法仅用于识别 301 把 POST 改成 GET，不包含请求参数。 */
         val finalMethod: String = method,
-        val redirected: Boolean = false
+        val redirected: Boolean = false,
+        /** 服务器响应时间转换为上海本地日期，仅用于当前学期周次锚点推导。 */
+        val serverDate: LocalDate? = null
     )
 
     data class AcademicCalendar(
@@ -71,7 +76,8 @@ class ApiProbeService(
                     bodyLength = body.length,
                     updatedCookie = cookieJar.cookieHeader().ifBlank { cookie },
                     finalMethod = response.request.method,
-                    redirected = response.priorResponse != null
+                    redirected = response.priorResponse != null,
+                    serverDate = parseServerDate(response.header("Date"))
                 )
             }
             }.getOrNull()
@@ -109,7 +115,8 @@ class ApiProbeService(
                     bodyLength = responseBody.length,
                     updatedCookie = cookieJar.cookieHeader().ifBlank { cookie },
                     finalMethod = response.request.method,
-                    redirected = response.priorResponse != null
+                    redirected = response.priorResponse != null,
+                    serverDate = parseServerDate(response.header("Date"))
                 )
             }
             }.getOrNull()
@@ -206,6 +213,13 @@ class ApiProbeService(
     }
 
     companion object {
+        private val SHANGHAI_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
+
+        private fun parseServerDate(value: String?): LocalDate? = runCatching {
+            ZonedDateTime.parse(value.orEmpty(), DateTimeFormatter.RFC_1123_DATE_TIME)
+                .withZoneSameInstant(SHANGHAI_ZONE)
+                .toLocalDate()
+        }.getOrNull()
         private const val TAG = "ApiProbeService"
         private const val IMPORT_PROBE_TIMEOUT_MILLIS = 60_000L
 

@@ -140,7 +140,8 @@ data class AcademicSemesterImportPayload(
      * 无法识别周次的课次数量。这类课次不会出现在任何一周里，必须如实反馈给用户，
      * 否则表现就是「课程莫名其妙少了几门」，无从排查。
      */
-    val unparsedWeekTextCount: Int = 0
+    val unparsedWeekTextCount: Int = 0,
+    val unscheduledCourseCount: Int = 0
 )
 
 /**
@@ -151,7 +152,8 @@ data class AcademicSemesterImportPayload(
  */
 internal data class WeeklyLandingSummary(
     val semesterLabel: String,
-    val availableWeeks: List<Int>
+    val availableWeeks: List<Int>,
+    val selectedWeek: Int
 )
 
 internal object WeeklyLandingPageParser {
@@ -169,7 +171,12 @@ internal object WeeklyLandingPageParser {
             ?.distinct()
             ?.sorted()
             .orEmpty()
-        return WeeklyLandingSummary(semesterLabel, availableWeeks)
+        val selectedWeek = document.selectFirst("select[name=whichWeek] option[selected]")
+            ?.attr("value")
+            ?.trim()
+            ?.toIntOrNull()
+            ?: 0
+        return WeeklyLandingSummary(semesterLabel, availableWeeks, selectedWeek)
     }
 }
 
@@ -273,8 +280,8 @@ class AcademicSemesterImportService(
             ?.let { start ->
                 semester.semesterEndDate?.let { end -> academicMaxWeekForCalendar(start, end) }
             }
-        val landingMaxWeek = if (calendarMaxWeek == null) {
-            probeWeeklyLandingMaxWeek(sessionCookie, baseUrl, semester, ::consumeSessionCookie)
+        val landingMetadata = if (calendarMaxWeek == null) {
+            probeWeeklyLandingMetadata(sessionCookie, baseUrl, semester, ::consumeSessionCookie)
         } else {
             null
         }
@@ -282,7 +289,7 @@ class AcademicSemesterImportService(
             .let { academicMaxWeekForCalendar(it.startMonday, it.endDate) }
         val portalMaxWeek = calendarMaxWeek
             ?: maxOf(
-                landingMaxWeek ?: estimatedMaxWeek,
+                landingMetadata?.maxWeek ?: estimatedMaxWeek,
                 derivedAcademicMaxWeek(courses) ?: MIN_ACADEMIC_WEEK
             ).coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
 
@@ -293,10 +300,11 @@ class AcademicSemesterImportService(
             timetableHtml = timetableHtml,
             responseKind = responseKind,
             portalMaxWeek = portalMaxWeek,
-            semesterStartMonday = null,
+            semesterStartMonday = landingMetadata?.startMonday,
             skippedRowCount = 0,
             updatedCookie = sessionCookie,
-            unparsedWeekTextCount = countUnparsedWeekTexts(courses)
+            unparsedWeekTextCount = countUnparsedWeekTexts(courses),
+            unscheduledCourseCount = scheduleParser.countUnscheduledCourses(timetableHtml)
         )
     }
 
@@ -311,12 +319,17 @@ class AcademicSemesterImportService(
      * 因此这里**任何失败都只返回 null**（网络异常、非 2xx、登录页、结构异常、学期标签不符），
      * 由调用方退化到学期长度估算——导入成功与否绝不受它影响。
      */
-    private suspend fun probeWeeklyLandingMaxWeek(
+    private data class WeeklyLandingMetadata(
+        val maxWeek: Int?,
+        val startMonday: LocalDate?
+    )
+
+    private suspend fun probeWeeklyLandingMetadata(
         cookie: String,
         baseUrl: String,
         semester: AcademicSemester,
         onSessionRotated: (ApiProbeService.ProbeResult) -> Unit
-    ): Int? = runCatching {
+    ): WeeklyLandingMetadata? = runCatching {
         val landing = apiProbeService.probeUrl(
             cookie,
             AcademicSemesterRequestBuilder.weeklyTimetableUrl(baseUrl, semester)
@@ -330,11 +343,23 @@ class AcademicSemesterImportService(
         ) {
             return@runCatching null
         }
-        WeeklyLandingPageParser.parse(landing.body)
+        val summary = WeeklyLandingPageParser.parse(landing.body)
             // 落地页可能停在别的学期；标签不符时它的周次列表不属于本次请求，一律丢弃。
             .takeIf { it.semesterLabel == semesterPortalLabel(semester) }
-            ?.availableWeeks
-            ?.maxOrNull()
+            ?: return@runCatching null
+        val maxWeek = summary.availableWeeks.maxOrNull()
+        val startMonday = if (
+            semester.isCurrent &&
+            maxWeek != null &&
+            summary.selectedWeek in 1..maxWeek &&
+            landing.serverDate != null
+        ) {
+            val currentMonday = landing.serverDate.minusDays((landing.serverDate.dayOfWeek.value - 1).toLong())
+            currentMonday.minusWeeks((summary.selectedWeek - 1).toLong())
+        } else {
+            null
+        }
+        WeeklyLandingMetadata(maxWeek, startMonday)
     }.getOrNull()
 
     private fun semesterPortalLabel(semester: AcademicSemester): String {

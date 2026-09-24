@@ -15,6 +15,125 @@ class AcademicScheduleParserTest {
     private val parser = GlutAcademicScheduleParser()
 
     @Test
+    fun timetableGridKeepsFragmentLevelOddEvenWeeks() {
+        val html = singleCellTimetable("01001D", "匿名教师甲", "6-14双,16-18")
+
+        val course = parser.parsePersonalSchedule(html).single { it.title == "匿名课程甲" }
+
+        assertEquals("6-14双,16-18", course.occurrences.single().weekText)
+        assertEquals(listOf(6, 8, 10, 12, 14, 16, 17, 18), academicWeeksForText(course.occurrences.single().weekText))
+    }
+
+    @Test
+    fun timetableGridRecognizesFullWidthRoomSuffixWithoutChangingDisplayText() {
+        val html = singleCellTimetable("8208Ｄ", "匿名教师乙", "1-8周")
+
+        val course = parser.parsePersonalSchedule(html).single { it.title == "匿名课程甲" }
+
+        assertEquals("8208Ｄ", course.room)
+        assertEquals("匿名教师乙", course.teacher)
+    }
+
+    @Test
+    fun cancellationRemovesOriginalWeekWithoutCreatingZeroWeekCourse() {
+        val html = singleCellTimetable("01001D", "匿名教师丙", "1-8周") + """
+            <table>
+              <tr><th>类型</th><th>课程号</th><th>课程名</th><th>课序号</th><th>教师姓名</th><th>代课人</th><th>学时</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th></tr>
+              <tr><td>停课</td><td>100001</td><td>匿名课程甲</td><td>1</td><td>匿名教师丙</td><td></td><td>2</td>
+                <td>09-14</td><td>2</td><td>周一</td><td>第1节</td><td>01001D</td>
+                <td></td><td></td><td></td><td></td><td></td></tr>
+            </table>
+        """.trimIndent()
+
+        val courses = parser.parsePersonalSchedule(html)
+        val course = courses.single { it.title == "匿名课程甲" }
+
+        assertFalse(course.occurrences.flatMap { academicWeeksForText(it.weekText) }.contains(2))
+        assertFalse(courses.flatMap { it.occurrences }.any {
+            it.dayOfWeek !in 1..7 || it.startSection !in 1..14 || it.weekText == "第0周"
+        })
+    }
+
+    @Test
+    fun adjustmentRowsUseSharedCrossMiddaySectionParser() {
+        val html = singleCellTimetable("01001D", "匿名教师丁", "1-8周") + """
+            <table>
+              <tr><th>类型</th><th>课程号</th><th>课程名</th><th>课序号</th><th>教师姓名</th><th>代课人</th><th>学时</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th></tr>
+              <tr><td>调课</td><td>100002</td><td>匿名课程甲</td><td>1</td><td>匿名教师丁</td><td></td><td>2</td>
+                <td>09-14</td><td>2</td><td>周一</td><td>中午1-第8节</td><td>01001D</td>
+                <td>09-15</td><td>2</td><td>周二</td><td>中午1-第6节</td><td>01002D</td></tr>
+            </table>
+        """.trimIndent()
+
+        val adjustment = parser.parseAdjustments(html).single()
+
+        assertEquals(listOf(5, 10, 5, 8), listOf(
+            adjustment.originalStartSection,
+            adjustment.originalEndSection,
+            adjustment.makeupStartSection,
+            adjustment.makeupEndSection
+        ))
+    }
+
+    @Test
+    fun timetableGridKeepsUnknownWeekTextAndAllTeacherLines() {
+        val html = singleCellTimetable("01001D", "教师甲<br>教师乙", "未知周次")
+
+        val course = parser.parsePersonalSchedule(html).single { it.title == "匿名课程甲" }
+
+        assertEquals("教师甲 教师乙", course.teacher)
+        assertEquals("未知周次", course.occurrences.single().weekText)
+        assertTrue(academicWeeksForText(course.occurrences.single().weekText).isEmpty())
+    }
+
+    @Test
+    fun substituteRecordKeepsGridTeacherAndDoesNotAppendSecondCourse() {
+        val html = singleCellTimetable("01001D", "页面教师", "1-8周") + """
+            <table>
+              <tr><th>类型</th><th>课程号</th><th>课程名</th><th>课序号</th><th>教师姓名</th><th>代课人</th><th>学时</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th></tr>
+              <tr><td>代课</td><td>100003</td><td>匿名课程甲</td><td>1</td><td>原教师</td><td>页面教师</td><td>2</td>
+                <td>09-14</td><td>2</td><td>周一</td><td>第1节</td><td>01001D</td>
+                <td></td><td></td><td></td><td></td><td></td></tr>
+            </table>
+        """.trimIndent()
+
+        val courses = parser.parsePersonalSchedule(html).filter { it.title == "匿名课程甲" }
+
+        assertEquals(1, courses.size)
+        assertEquals("页面教师", courses.single().teacher)
+        assertEquals("01001D", courses.single().room)
+    }
+
+    @Test
+    fun unscheduledRowsAreCountedWithoutCreatingCards() {
+        val html = singleCellTimetable("", "", "") + """
+            <table id="noArrangement">
+              <tr><th>课程号</th><th>课程名称</th><th>任课教师</th></tr>
+              <tr><td>100004</td><td>匿名实践课程</td><td>匿名教师</td></tr>
+            </table>
+        """.trimIndent()
+
+        assertEquals(1, parser.countUnscheduledCourses(html))
+        assertFalse(parser.parsePersonalSchedule(html).any { it.title == "匿名实践课程" })
+    }
+
+    private fun singleCellTimetable(room: String, teacher: String, weekText: String): String = """
+        <html><body><table id="timetable" class="infolist_hr">
+          <tr><th></th><th>周一</th><th>周二</th><th>周三</th><th>周四</th><th>周五</th><th>周六</th><th>周日</th></tr>
+          <tr><th>第1节</th><td id="1-1">&lt;&lt;匿名课程甲&gt;&gt;;1<br>$room<br>$teacher<br>$weekText<br>讲课学时</td>
+            <td id="2-1"></td><td id="3-1"></td><td id="4-1"></td><td id="5-1"></td><td id="6-1"></td><td id="7-1"></td></tr>
+          <tr><th>中午1</th><td id="1-5"></td><td id="2-5"></td><td id="3-5"></td><td id="4-5"></td><td id="5-5"></td><td id="6-5"></td><td id="7-5"></td></tr>
+          <tr><th>中午2</th><td id="1-6"></td><td id="2-6"></td><td id="3-6"></td><td id="4-6"></td><td id="5-6"></td><td id="6-6"></td><td id="7-6"></td></tr>
+        </table></body></html>
+    """.trimIndent()
+
+    @Test
     fun courseArrangementParsesNoonAndMixedNoonSectionRanges() {
         // 桂林个人课表的课程安排列存在“中午”和跨中午混合端点；后备解析器必须与
         // currcourse 主解析器保持同一映射，避免解析路由变化后再次出现整门课消失。

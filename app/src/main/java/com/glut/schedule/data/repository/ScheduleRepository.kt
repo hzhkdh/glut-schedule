@@ -27,7 +27,6 @@ import com.glut.schedule.data.settings.ClassPeriodProfile
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
 import com.glut.schedule.data.settings.classPeriodProfile
-import com.glut.schedule.data.settings.SemesterImportMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -158,6 +157,13 @@ class ScheduleRepository(
         if (dao.courseCount() > 0) {
             clearLegacyBundledSampleCoursesIfPresent()
         }
+    }
+
+    /** 定向清理旧模式1/2写入的学期课表，保留学期目录和其他业务数据。 */
+    suspend fun invalidateLegacyImportCaches() {
+        val dynamicSemesters = semesters.first()
+            .map { it.toEntity() }
+        dao.invalidateSemesterScheduleCaches(dynamicSemesters)
     }
 
     private suspend fun repairInterruptedDownloads() {
@@ -305,8 +311,7 @@ class ScheduleRepository(
         classPeriods: List<ClassPeriod>,
         semesterStartDate: java.time.LocalDate? = semester.semesterStartDate,
         semesterEndDate: java.time.LocalDate? = semester.semesterEndDate,
-        portalMaxWeek: Int? = semester.portalMaxWeek,
-        importMode: SemesterImportMode = semester.importMode
+        portalMaxWeek: Int? = semester.portalMaxWeek
     ) {
         val coloredCourses = CourseColorMapper.assignColors(courses, courseColorOverrides.first())
         val cachedSemester = semester.copy(
@@ -314,8 +319,7 @@ class ScheduleRepository(
             importedAtEpochMillis = System.currentTimeMillis(),
             semesterStartDate = semesterStartDate,
             semesterEndDate = semesterEndDate,
-            portalMaxWeek = portalMaxWeek,
-            importMode = importMode
+            portalMaxWeek = portalMaxWeek
         )
         dao.replaceSemesterSchedule(
             semester = cachedSemester.toEntity(),
@@ -338,11 +342,7 @@ class ScheduleRepository(
                 importedAtEpochMillis = existing?.importedAtEpochMillis,
                 semesterStartDate = existing?.semesterStartDate,
                 semesterEndDate = existing?.semesterEndDate,
-                portalMaxWeek = existing?.portalMaxWeek,
-                // 目录里的学期由 AcademicSemester.create() 生成，importMode 恒为缺省 WEEKLY。
-                // 不回填就会在每次保存目录时抹掉「该学期原本是模式几缓存的」这一事实——
-                // 导入页的「重下会换线路」提示正是靠它判断，抹掉后提示会说反。
-                importMode = existing?.importMode ?: incoming.importMode
+                portalMaxWeek = existing?.portalMaxWeek
             ).toEntity())
         }
         catalog.singleOrNull { it.isCurrent }?.let { current ->

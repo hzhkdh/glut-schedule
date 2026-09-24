@@ -13,7 +13,6 @@ import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.countDistinctCourseTitles
 import com.glut.schedule.data.settings.ScheduleSettingsStore
-import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginHttpClient
 import com.glut.schedule.service.academic.AcademicLoginResult
@@ -25,7 +24,6 @@ import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.SemesterBulkDownloadCoordinator
 import com.glut.schedule.service.academic.SemesterDownloadStartResult
 import com.glut.schedule.service.academic.AcademicSemesterCalendarResolver
-import com.glut.schedule.service.academic.AcademicSemesterCurrentImportPlanner
 import com.glut.schedule.service.academic.AcademicSemesterProbePlanner
 import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
 import com.glut.schedule.service.academic.ApiProbeService

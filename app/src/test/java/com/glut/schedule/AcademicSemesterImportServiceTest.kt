@@ -133,6 +133,18 @@ class AcademicSemesterImportServiceTest {
     }
 
     @Test
+    fun currentSemesterDerivesStartMondayFromLandingWeekAndServerDate() = runTest {
+        val payload = importFrom(
+            landingWeeks = (1..19).toList(),
+            landingSelectedWeek = 3,
+            landingServerDate = "Thu, 20 Mar 2025 04:00:00 GMT"
+        ).getOrThrow()
+
+        assertEquals(19, payload.portalMaxWeek)
+        assertEquals(LocalDate.of(2025, 3, 3), payload.semesterStartMonday)
+    }
+
+    @Test
     fun coursesComeFromTimetablePageNotFromPersonalPage() = runTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setResponseCode(200).setBody(currcourseHtml()))
@@ -316,13 +328,16 @@ class AcademicSemesterImportServiceTest {
         semester: AcademicSemester = semester(),
         landingWeeks: List<Int> = listOf(1),
         landingLabel: String = "2025春",
-        landingBody: String? = null
+        landingBody: String? = null,
+        landingSelectedWeek: Int = 0,
+        landingServerDate: String? = null
     ) = MockWebServer().use { server ->
         server.enqueue(MockResponse().setResponseCode(200).setBody(currcourseBody))
         server.enqueue(MockResponse().setResponseCode(200).setBody(timetableBody))
         server.enqueue(
             MockResponse().setResponseCode(200)
-                .setBody(landingBody ?: weeklyLandingHtml(landingWeeks, landingLabel))
+                .setBody(landingBody ?: weeklyLandingHtml(landingWeeks, landingLabel, landingSelectedWeek))
+                .apply { landingServerDate?.let { addHeader("Date", it) } }
         )
         AcademicSemesterImportService(
             ApiProbeService(sessionUrlValidator = { true }),
@@ -364,9 +379,15 @@ class AcademicSemesterImportServiceTest {
         </table></body></html>
     """.trimIndent()
 
-    private fun weeklyLandingHtml(weeks: List<Int> = listOf(1), label: String = "2025春"): String = """
+    private fun weeklyLandingHtml(
+        weeks: List<Int> = listOf(1),
+        label: String = "2025春",
+        selectedWeek: Int = 0
+    ): String = """
         <html><body><form><span>$label 第 </span><select name="whichWeek">
-        <option value=""></option>${weeks.joinToString("") { "<option value=\"$it\">$it</option>" }}</select><span> 周 周次课表</span></form>
+        <option value=""></option>${weeks.joinToString("") {
+            "<option value=\"$it\"${if (it == selectedWeek) " selected" else ""}>$it</option>"
+        }}</select><span> 周 周次课表</span></form>
         <table><tr><th>日期</th><th>课程名</th><th>选课属性</th><th>考试性质</th><th>星期</th>
         <th>节次</th><th>开始时间</th><th>结束时间</th><th>教学楼</th><th>教室</th><th></th></tr></table>
         </body></html>

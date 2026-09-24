@@ -23,7 +23,6 @@ import com.glut.schedule.data.model.pingfengClassPeriods
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.ClassPeriodProfile
-import com.glut.schedule.data.settings.SemesterImportMode
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
 import kotlinx.coroutines.async
@@ -449,29 +448,34 @@ class ScheduleRepositoryTest {
     }
 
     @Test
-    fun savingSemesterCatalogKeepsTheImportModeOfAlreadyCachedSemesters() = runTest {
-        // 目录里的学期由 AcademicSemester.create() 生成，importMode 恒为缺省 WEEKLY。
-        // saveSemesterCatalog 若只回填 cacheStatus / 日期 / portalMaxWeek 而漏掉 importMode，
-        // 每次保存目录都会把「该学期原本是模式2 缓存的」这个事实抹掉，而「重下会换线路」
-        // 的提示正是靠它判断——被抹掉后提示会说反。
-        val cachedPersonal = AcademicSemester.create(
-            CampusType.GUILIN, 2025, "45", SemesterSeason.AUTUMN, "2",
-            isCurrent = false,
-            cacheStatus = SemesterCacheStatus.CACHED,
-            importMode = SemesterImportMode.PERSONAL_ONLY
+    fun invalidatingLegacyImportCachesKeepsSemesterCatalogButClearsSchedulePayload() = runTest {
+        val semester = AcademicSemester.create(
+            CampusType.GUILIN,
+            2025,
+            "45",
+            SemesterSeason.AUTUMN,
+            "2",
+            isCurrent = false
         )
-        val dao = FakeScheduleDao(initialSemesters = listOf(cachedPersonal.toEntity()))
+        val legacy = semester.copy(id = AcademicSemester.LEGACY_CURRENT_ID, isCurrent = true)
+        val dao = FakeScheduleDao(initialSemesters = listOf(semester.toEntity(), legacy.toEntity()))
         val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
-
-        // 目录重新解析后，该学期的 importMode 回到缺省 WEEKLY。
-        repository.saveSemesterCatalog(
-            listOf(cachedPersonal.copy(importMode = SemesterImportMode.WEEKLY))
+        repository.replaceSemesterSchedule(
+            semester = semester,
+            courses = listOf(course("legacy-source", "旧来源课程")),
+            adjustments = emptyList(),
+            classPeriods = guilinClassPeriods(),
+            portalMaxWeek = 20
         )
+        dao.insertCourses(listOf(course("legacy-current-course", "旧单学期课程").toEntity(AcademicSemester.LEGACY_CURRENT_ID)))
 
-        assertEquals(
-            SemesterImportMode.PERSONAL_ONLY,
-            repository.semesters.first().single().importMode
-        )
+        repository.invalidateLegacyImportCaches()
+
+        val remainingSemester = repository.semesters.first().single { it.id == semester.id }
+        assertEquals(semester.id, remainingSemester.id)
+        assertEquals(SemesterCacheStatus.NOT_CACHED, remainingSemester.cacheStatus)
+        assertTrue(repository.courses.first().none { it.id == "legacy-source" })
+        assertTrue(repository.courses.first().none { it.id == "legacy-current-course" })
     }
 
     @Test

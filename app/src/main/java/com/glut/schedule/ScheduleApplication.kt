@@ -49,6 +49,20 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+/**
+ * 大节课表来源迁移只执行一次；清理失败时不写完成标记，下次启动继续重试。
+ */
+internal suspend fun migrateScheduleSourceIfNeeded(
+    alreadyMigrated: Boolean,
+    invalidateCaches: suspend () -> Unit,
+    markMigrated: suspend () -> Unit
+): Boolean {
+    if (alreadyMigrated) return false
+    invalidateCaches()
+    markMigrated()
+    return true
+}
+
 class ScheduleApplication : Application() {
     lateinit var appContainer: AppContainer
         private set
@@ -58,6 +72,25 @@ class ScheduleApplication : Application() {
         super.onCreate()
         appContainer = AppContainer(this, applicationScope)
         applicationScope.launch {
+            val migrationFlags = getSharedPreferences("schedule_migration_flags", MODE_PRIVATE)
+            try {
+                migrateScheduleSourceIfNeeded(
+                    alreadyMigrated = migrationFlags.getBoolean(
+                        "show_timetable_source_v1",
+                        false
+                    ),
+                    invalidateCaches = appContainer.scheduleRepository::invalidateLegacyImportCaches,
+                    markMigrated = {
+                        check(
+                            migrationFlags.edit()
+                                .putBoolean("show_timetable_source_v1", true)
+                                .commit()
+                        ) { "无法保存课表来源迁移标记" }
+                    }
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("ScheduleApp", "Failed to migrate schedule source", e)
+            }
             try {
                 appContainer.scheduleRepository.resetViewedSemesterToCurrent()
             } catch (e: Exception) {
@@ -176,8 +209,7 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
             if (payload.updatedCookie.isNotBlank()) {
                 academicSessionStore.saveCookie(payload.updatedCookie)
             }
-            // 不传 importMode：保留该学期原有的值（DB 列仍在，避免迁移），
-            // 统一路径后它已不参与任何分支。
+            // Room 的旧 importMode 列仅为数据库兼容保留，领域层不再参与任何分支。
             scheduleRepository.replaceSemesterSchedule(
                 semester = semester,
                 courses = payload.courses,
