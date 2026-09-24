@@ -1,7 +1,7 @@
 {
-  "version": "v0.23.1",
-  "versionCode": 40,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.23.1",
-  "releaseNotes": "## fix\r\n- 修复基友课表在“一起”模式下不融合本机课表问题\r\n\r\n## improve\r\n- 优化基友课表重叠课程点击后弹起窗口的UI显示\r\n- 优化短文案轮播的权重，避免特殊时间节点（如周末、考试日等）一直轮播某些特定短句，“greeting”池权重调整80%",
-  "publishedAt": "2026-09-13T13:25:32Z"
+  "version": "v0.24.0",
+  "versionCode": 41,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.24.0",
+  "releaseNotes": "## feature\r\n- 长按卡片打开「卡片管理」，可改色，并按课次 / 按周 / 整课三档删除\r\n- 卡片左下角新增调整角标：调课「调」、补课「补」、停课「停」、代课「代」\r\n- 刷新后显示变化摘要（新增 / 移除 / 调整）\\n· 支持自定义调休；节假日与调休在日期栏常驻「休」「调」\r\n- 全部下载改为「全部重新下载」\r\n\r\n## refactor\r\n- 导入链路重写：只抓大节课表，删除双模式�,
+  "publishedAt": "2026-09-24T20:30:57Z"
 }
