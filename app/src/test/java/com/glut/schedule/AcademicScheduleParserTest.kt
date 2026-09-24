@@ -469,6 +469,30 @@ class AcademicScheduleParserTest {
     }
 
     @Test
+    fun explicitWeekTextOverridesValidLookingClassGroupField() {
+        val html = """
+            <html><body><table id="timetable" class="infolist_hr">
+              <tr><th></th><th>周一</th><th>周二</th><th>周三</th><th>周四</th><th>周五</th><th>周六</th><th>周日</th></tr>
+              <tr class="infolist_hr_common">
+                <th>第1节</th>
+                <td id="1-1"></td><td id="2-1"></td><td id="3-1"></td><td id="4-1"></td><td id="5-1"></td>
+                <td id="6-1">&lt;&lt;匿名课程&gt;&gt;;1<br>02421S<br>匿名教师<br>3-3<br>第14周<br>上机学时</td>
+                <td id="7-1"></td>
+              </tr>
+            </table></body></html>
+        """.trimIndent()
+
+        val occurrence = parser.parsePersonalSchedule(html)
+            .single { it.title == "匿名课程" }
+            .occurrences
+            .single()
+
+        assertEquals("第14周", occurrence.weekText)
+        assertFalse(academicWeeksForText(occurrence.weekText).contains(3))
+        assertTrue(academicWeeksForText(occurrence.weekText).contains(14))
+    }
+
+    @Test
     fun keepsFullGridWhenPartialExplicitCellsExist() {
         val html = """
             <html><body>
