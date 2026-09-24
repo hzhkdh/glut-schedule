@@ -55,6 +55,31 @@ class AdjustmentMarkerTest {
         makeupRoom = "06104D"
     )
 
+    /** 停课记录的真实形态：只有原时段，补课侧全为 0/空。 */
+    private fun suspended(
+        title: String = "数据库系统",
+        originalWeek: Int = 5,
+        originalDay: Int = 2,
+        originalStartSection: Int = 3,
+        originalEndSection: Int = 4,
+        originalRoom: String = "04105"
+    ) = SemesterAdjustment(
+        id = "adj-停课-$title",
+        type = "停课",
+        title = title,
+        teacher = "张老师",
+        originalWeek = originalWeek,
+        originalDay = originalDay,
+        originalStartSection = originalStartSection,
+        originalEndSection = originalEndSection,
+        originalRoom = originalRoom,
+        makeupWeek = 0,
+        makeupDay = 0,
+        makeupStartSection = 0,
+        makeupEndSection = 0,
+        makeupRoom = ""
+    )
+
     // ---- 判定 ----
 
     @Test
@@ -84,16 +109,66 @@ class AdjustmentMarkerTest {
     }
 
     @Test
-    fun substituteTeachingIsNotMarked() {
-        // 代课在 Android 侧也会生成一张补课卡，不显式滤掉就会被错标。
-        assertNull(adjustmentMarkerFor(occurrence(), "数据库系统", 5, listOf(adjustment("代课"))))
+    fun substituteTeachingIsMarkedWithDai() {
+        // 代课没有补课侧，卡片就是原来那张，只能按**原时段**反查。
+        assertEquals("代", adjustmentMarkerFor(occurrence(), "数据库系统", 5, listOf(adjustment("代课"))))
     }
 
     @Test
-    fun suspendedClassIsNotMarked() {
-        // 停课的 makeupWeek = 0，天然不命中任何周。
-        val suspended = adjustment("停课", makeupWeek = 0)
-        assertNull(adjustmentMarkerFor(occurrence(), "数据库系统", 5, listOf(suspended)))
+    fun suspendedClassIsMarkedWithTing() {
+        // 停课不再删卡，改为在原卡上标「停」；它的 makeupWeek = 0，同样只能按原时段反查。
+        assertEquals("停", adjustmentMarkerFor(occurrence(), "数据库系统", 5, listOf(suspended())))
+    }
+
+    @Test
+    fun suspendedAndSubstituteRecordsAreNotMatchedInAnotherWeek() {
+        assertNull(adjustmentMarkerFor(occurrence(), "数据库系统", 6, listOf(suspended())))
+        assertNull(adjustmentMarkerFor(occurrence(), "数据库系统", 6, listOf(adjustment("代课"))))
+    }
+
+    @Test
+    fun adjustedRecordIsNotMatchedByItsOriginalSide() {
+        // 调课会把原周次从卡片上摘掉；若同时按原时段匹配，残留的常规卡会被误标「调」。
+        val shifted = adjustment(
+            "调课", makeupWeek = 5, makeupDay = 5, makeupStartSection = 7, makeupEndSection = 8
+        )
+        assertNull(adjustmentMarkerFor(occurrence(), "数据库系统", 5, listOf(shifted)))
+    }
+
+    @Test
+    fun suspendedRecordWithAnotherRoomIsNotMarked() {
+        assertNull(
+            adjustmentMarkerFor(occurrence(), "数据库系统", 5, listOf(suspended(originalRoom = "06104D")))
+        )
+    }
+
+    @Test
+    fun roomComparisonIgnoresWhitespaceAndCase() {
+        assertEquals(
+            "停",
+            adjustmentMarkerFor(occurrence(), "数据库系统", 5, listOf(suspended(originalRoom = " 04105 ")))
+        )
+    }
+
+    @Test
+    fun blankOriginalRoomMatchesAnyRoom() {
+        // 原教室未知时通配——与移除路径既有的宽松口径一致；角标只是显示，误标代价可接受。
+        assertEquals("停", adjustmentMarkerFor(occurrence(), "数据库系统", 5, listOf(suspended(originalRoom = ""))))
+    }
+
+    @Test
+    fun teacherDoesNotParticipateInMarkerMatching() {
+        // 代课行的「教师姓名」写的是原教师，而网格里有时写的是代课人，纳入教师会直接漏标。
+        val record = adjustment("代课").copy(teacher = "另一位老师")
+        assertEquals("代", adjustmentMarkerFor(occurrence(), "数据库系统", 5, listOf(record)))
+    }
+
+    @Test
+    fun timeLessSuspendedRecordMarksNothing() {
+        // 南宁真实形态：学时 0.0，日期/周/星期/节次/教室全空。它定位不到课次，
+        // 因此不该在整门课上乱标——今天的行为就是「什么都不做」，这里把它固定住。
+        val blank = suspended(originalWeek = 0, originalDay = 0, originalStartSection = 0, originalEndSection = 0, originalRoom = "")
+        assertNull(adjustmentMarkerFor(occurrence(), "数据库系统", 5, listOf(blank)))
     }
 
     @Test

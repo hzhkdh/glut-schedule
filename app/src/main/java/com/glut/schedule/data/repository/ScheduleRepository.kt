@@ -112,11 +112,19 @@ class ScheduleRepository(
      */
     val courseTimeSemesterSources: Flow<List<CourseTimeSemesterSource>> = combine(
         semesters,
-        dao.observeCourses(),
-        dao.observeOccurrences(),
-        dao.observeClassPeriods(),
-        currentClassPeriods
-    ) { semesterList, courseEntities, occurrenceEntities, periodEntities, liveCurrentPeriods ->
+        // 课程/课次/作息先合成一路：typed combine 最多吃 5 个流，直接加第 6 个会掉到
+        // Array<Any?> 那版重载，类型全丢。
+        combine(
+            dao.observeCourses(),
+            dao.observeOccurrences(),
+            dao.observeClassPeriods()
+        ) { courseEntities, occurrenceEntities, periodEntities ->
+            Triple(courseEntities, occurrenceEntities, periodEntities)
+        },
+        currentClassPeriods,
+        dao.observeSemesterAdjustments()
+    ) { semesterList, scheduleTables, liveCurrentPeriods, adjustmentEntities ->
+        val (courseEntities, occurrenceEntities, periodEntities) = scheduleTables
         semesterList
             .sortedWith(
                 compareByDescending<AcademicSemester> { it.isCurrent }
@@ -137,7 +145,11 @@ class ScheduleRepository(
                         periodEntities
                             .filter { it.semesterId == semester.id }
                             .map { it.toModel() }
-                    }
+                    },
+                    // 停课周次要按学期从课时里扣掉，所以调课记录必须一起进统计源。
+                    adjustments = adjustmentEntities
+                        .filter { it.semesterId == semester.id }
+                        .map { it.toModel() }
                 )
             }
     }

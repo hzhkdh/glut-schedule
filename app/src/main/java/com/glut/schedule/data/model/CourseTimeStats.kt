@@ -35,7 +35,12 @@ data class CourseTimeSemesterSource(
     val isDownloaded: Boolean,
     val portalMaxWeek: Int?,
     val courses: List<ScheduleCourse>,
-    val classPeriods: List<ClassPeriod>
+    val classPeriods: List<ClassPeriod>,
+    /**
+     * 该学期的调课记录。停课的周次要从课时里扣掉，所以统计必须拿得到它。
+     * 默认空列表：没传就等价于「这个学期没有停课」。
+     */
+    val adjustments: List<SemesterAdjustment> = emptyList()
 )
 
 data class CourseTimeStatsExcludedSemester(
@@ -174,7 +179,12 @@ object CourseTimeStatsCalculator {
                     ?: return SemesterAggregation.Unavailable(
                         CourseTimeStatsUnavailableReason.INVALID_WEEK_TEXT
                     )
-                val occurrenceMinutes = minutesPerWeek * activeWeeks.size
+                // 停课的周次不计入：卡片此时仍然显示并带「停」角标，但那一周确实没上课。
+                // 复用角标那份匹配口径（同一份 isStoppedWeek），避免出现
+                // 「卡片标着停、统计里照样算课时」的自相矛盾。
+                val occurrenceMinutes = minutesPerWeek * activeWeeks.count { week ->
+                    !isStoppedWeek(occurrence, course.title, week, source.adjustments)
+                }
                 labelsFor(course, occurrence, dimension).forEach { label ->
                     val key = normalizeKey(label)
                     val item = totals.getOrPut(key) {

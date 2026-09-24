@@ -35,7 +35,9 @@ class AcademicScheduleParserTest {
     }
 
     @Test
-    fun cancellationRemovesOriginalWeekWithoutCreatingZeroWeekCourse() {
+    fun cancellationKeepsOriginalWeekWithoutCreatingZeroWeekCourse() {
+        // 停课不再删卡：教务网格里那一周本来就在（实测 `1-9周` 这类范围把停课周也算在内），
+        // 卡片应当保留、由左下角「停」角标标出。同时确认不会退化成第 0 周/0 节的伪课次。
         val html = singleCellTimetable("01001D", "匿名教师丙", "1-8周") + """
             <table>
               <tr><th>类型</th><th>课程号</th><th>课程名</th><th>课序号</th><th>教师姓名</th><th>代课人</th><th>学时</th>
@@ -50,10 +52,19 @@ class AcademicScheduleParserTest {
         val courses = parser.parsePersonalSchedule(html)
         val course = courses.single { it.title == "匿名课程甲" }
 
-        assertFalse(course.occurrences.flatMap { academicWeeksForText(it.weekText) }.contains(2))
+        assertTrue(course.occurrences.flatMap { academicWeeksForText(it.weekText) }.contains(2))
         assertFalse(courses.flatMap { it.occurrences }.any {
             it.dayOfWeek !in 1..7 || it.startSection !in 1..14 || it.weekText == "第0周"
         })
+
+        // 角标靠这条记录的原时段反查，所以解析结果必须带完整 original 侧、且不出补课卡。
+        val adjustment = parser.parseAdjustments(html).single()
+        assertEquals("停课", adjustment.type)
+        assertEquals(2, adjustment.originalWeek)
+        assertEquals(1, adjustment.originalDay)
+        assertEquals(1, adjustment.originalStartSection)
+        assertEquals("01001D", adjustment.originalRoom)
+        assertEquals(0, adjustment.makeupWeek)
     }
 
     @Test
@@ -108,6 +119,15 @@ class AcademicScheduleParserTest {
         assertEquals(1, courses.size)
         assertEquals("页面教师", courses.single().teacher)
         assertEquals("01001D", courses.single().room)
+
+        // 代课必须保留 original 侧：角标锚在原卡上，靠 makeup 侧永远反查不到。
+        val adjustment = parser.parseAdjustments(html).single()
+        assertEquals("代课", adjustment.type)
+        assertEquals(2, adjustment.originalWeek)
+        assertEquals(1, adjustment.originalDay)
+        assertEquals(1, adjustment.originalStartSection)
+        assertEquals("01001D", adjustment.originalRoom)
+        assertEquals(0, adjustment.makeupWeek)
     }
 
     @Test
@@ -700,6 +720,178 @@ class AcademicScheduleParserTest {
                 it.endSection == 10 &&
                 it.weekText == "第11周"
         })
+    }
+
+    /**
+     * 同一个课次被调走**多周**时，每一条调课记录都要生效。
+     *
+     * 真实案例（2026春桂林 人工智能与机器学习 / 06409D）：网格里写 `8-16周`，调课表里
+     * 第14周与第16周两条都指向它。只应用第一条会让第16周留下一张「幽灵卡」——
+     * 那节课教务已经调到第17周周一了，用户按课表去教室会扑空，课时统计也跟着偏大。
+     */
+    @Test
+    fun everyMatchingAdjustmentRemovesItsOwnWeek() {
+        val html = singleCellTimetable("01001D", "匿名教师甲", "8-16周") + """
+            <table>
+              <tr><th>类型</th><th>课程号</th><th>课程名</th><th>课序号</th><th>教师姓名</th><th>代课人</th><th>学时</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th></tr>
+              <tr><td>调课</td><td>100009</td><td>匿名课程甲</td><td>1</td><td>匿名教师甲</td><td></td><td>2</td>
+                <td>09-14</td><td>14</td><td>周一</td><td>第1节</td><td>01001D</td>
+                <td>09-16</td><td>15</td><td>周三</td><td>第3节</td><td>01002D</td></tr>
+              <tr><td>调课</td><td>100009</td><td>匿名课程甲</td><td>1</td><td>匿名教师甲</td><td></td><td>2</td>
+                <td>09-30</td><td>16</td><td>周一</td><td>第1节</td><td>01001D</td>
+                <td>10-02</td><td>17</td><td>周三</td><td>第3节</td><td>01002D</td></tr>
+            </table>
+        """.trimIndent()
+
+        val original = parser.parsePersonalSchedule(html).single { it.room == "01001D" }
+        val weeks = original.occurrences.flatMap { academicWeeksForText(it.weekText) }.toSet()
+
+        assertEquals("第 14 周与第 16 周都要被调走", setOf(8, 9, 10, 11, 12, 13, 15), weeks)
+    }
+
+    /**
+     * 南宁的停课/代课记录同样写成短横线，且只有「停/代课时间地点」侧有数据。
+     *
+     * 停课不再删卡：那一周要保留并供角标反查；代课保留 original 侧。两类的 makeup 侧都必须是 0，
+     * 否则角标会锚到根本不存在的补课时段上。
+     */
+    @Test
+    fun nanningStopAndSubstituteRecordsKeepOriginalSide() {
+        val html = """
+            <html><body>
+              <table id="timetable" class="infolist_hr">
+                <tr><th>&nbsp;</th><th>周一</th><th>周二</th><th>周三</th><th>周四</th><th>周五</th><th>周六</th><th>周日</th></tr>
+                <tr class="infolist_hr_common">
+                  <th>第5节<br>14:30<br>┆<br>15:10</th>
+                  <td id="1-5">&nbsp;</td><td id="2-5">&nbsp;</td><td id="3-5">&nbsp;</td>
+                  <td id="4-5">&nbsp;</td><td id="5-5">&lt;&lt;形势与政策（四）&gt;&gt;;22<br>8201D<br>俸芳娜<br>1-15周<br>课程学时</td>
+                </tr>
+                <tr class="infolist_hr_common">
+                  <th>第6节<br>15:15<br>┆<br>15:55</th>
+                  <td id="1-6">&nbsp;</td><td id="2-6">&nbsp;</td><td id="3-6">&nbsp;</td>
+                  <td id="4-6">&nbsp;</td><td id="5-6">&lt;&lt;形势与政策（四）&gt;&gt;;22<br>8201D<br>俸芳娜<br>1-15周<br>课程学时</td>
+                </tr>
+              </table>
+              <table>
+                <tr>
+                  <th>类型</th><th>课程号</th><th>课程名</th><th>课序号</th><th>教师姓名</th><th>代课人</th><th>学时</th>
+                  <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                  <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                </tr>
+                <tr>
+                  <td>停课</td><td>G72A000314</td><td>形势与政策（四）</td><td>22</td><td>俸芳娜</td><td></td><td>2.0</td>
+                  <td>05-08</td><td>13</td><td>周五</td><td>第5-6节</td><td>8201D</td>
+                  <td></td><td></td><td></td><td></td><td></td>
+                </tr>
+                <tr>
+                  <td>代课</td><td>G72A000314</td><td>形势与政策（四）</td><td>22</td><td>俸芳娜</td><td></td><td>2.0</td>
+                  <td>04-10</td><td>7</td><td>周五</td><td>第5-6节</td><td>8201D</td>
+                  <td></td><td></td><td></td><td></td><td></td>
+                </tr>
+              </table>
+            </body></html>
+        """.trimIndent()
+
+        val adjustments = parser.parseAdjustments(html)
+        assertEquals(listOf("停课", "代课"), adjustments.map { it.type })
+        assertEquals(listOf(13, 7), adjustments.map { it.originalWeek })
+        adjustments.forEach { adjustment ->
+            // 南宁没有中午时段，第5-6节就是内部 5-6（桂林会是 7-8）。
+            assertEquals(5, adjustment.originalStartSection)
+            assertEquals(6, adjustment.originalEndSection)
+            assertEquals("8201D", adjustment.originalRoom)
+            assertEquals(0, adjustment.makeupWeek)
+        }
+
+        val occurrence = parser.parsePersonalSchedule(html)
+            .single { it.title == "形势与政策（四）" }
+            .occurrences
+            .single()
+        assertEquals(5, occurrence.dayOfWeek)
+        assertEquals(5, occurrence.startSection)
+        assertEquals(6, occurrence.endSection)
+        assertTrue("代课周次保留", occurrence.isActiveInWeek(7))
+        assertTrue("停课周次保留", occurrence.isActiveInWeek(13))
+    }
+
+    /**
+     * 真实抓包（2025春桂林）：一条代课记录用 rowspan=2 覆盖**两个原时段**
+     * （周二第7、8节 与 周四第7、8节，同教室 014201J），续行只写时间地点、课程信息靠 rowspan 继承。
+     * 续行若被当成补课时段，第二个时段就静默消失，卡片上少一个「代」角标。
+     */
+    @Test
+    fun substituteRowspanContinuationKeepsBothOriginalSlots() {
+        // 前置的网格带「中午1/中午2」行，hasNoon 才会为真，`第7、8节` 才映射到内部 9-10
+        // （与真实抓包一致）。少了这两行会退化成 7-8。
+        val html = singleCellTimetable("014201J", "敬超", "16周") + """
+            <table>
+              <tr>
+                <th rowspan="2">类型</th><th rowspan="2">课程号</th><th rowspan="2">课程名</th>
+                <th rowspan="2">课序号</th><th rowspan="2">教师姓名</th><th rowspan="2">代课人</th><th rowspan="2">学时</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+              </tr>
+              <tr><th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th></tr>
+              <tr>
+                <td rowspan="2">代课</td><td rowspan="2">377740</td><td rowspan="2">算法设计与分析</td>
+                <td rowspan="2">1</td><td rowspan="2">敬超</td><td rowspan="2"></td><td rowspan="2">4.0</td>
+                <td>06-23</td><td>16</td><td>周二</td><td>第7、8节</td><td>014201J</td>
+                <td></td><td></td><td></td><td></td><td></td>
+              </tr>
+              <tr>
+                <td>06-25</td><td>16</td><td>周四</td><td>第7、8节</td><td>014201J</td>
+                <td></td><td></td><td></td><td></td><td></td>
+              </tr>
+            </table>
+        """.trimIndent()
+
+        val adjustments = parser.parseAdjustments(html)
+        assertEquals("两个原时段都要留下记录", 2, adjustments.size)
+        adjustments.forEach { assertEquals("代课", it.type) }
+        assertEquals(
+            listOf(
+                listOf(16, 2, 9, 10, "014201J"),
+                listOf(16, 4, 9, 10, "014201J")
+            ),
+            adjustments.map {
+                listOf(it.originalWeek, it.originalDay, it.originalStartSection, it.originalEndSection, it.originalRoom)
+            }
+        )
+        adjustments.forEach { assertEquals(0, it.makeupWeek) }
+    }
+
+    /**
+     * 南宁另一种真实形态：停课记录的**学时是 0.0、五列时间全空**——它只说「这门课停了」，
+     * 定位不到具体课次。既不能删卡，也不能标角标，保持「什么都不做」。
+     */
+    @Test
+    fun timeLessSuspendedRecordKeepsEveryWeek() {
+        val html = singleCellTimetable("8201D", "俸芳娜", "12-13周") + """
+            <table>
+              <tr><th>类型</th><th>课程号</th><th>课程名</th><th>课序号</th><th>教师姓名</th><th>代课人</th><th>学时</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th>
+                <th>日期</th><th>周</th><th>星期</th><th>节次</th><th>教室</th></tr>
+              <tr><td>停课</td><td>G72A000314</td><td>匿名课程甲</td><td>22</td><td>俸芳娜</td><td></td><td>0.0</td>
+                <td></td><td></td><td></td><td></td><td></td>
+                <td></td><td></td><td></td><td></td><td></td></tr>
+            </table>
+        """.trimIndent()
+
+        val occurrence = parser.parsePersonalSchedule(html)
+            .single { it.title == "匿名课程甲" }
+            .occurrences
+            .single()
+        assertTrue(occurrence.isActiveInWeek(12))
+        assertTrue(occurrence.isActiveInWeek(13))
+
+        // Android 保留这条记录（停课豁免了 hasValidTime 判定），但它没有任何时间可供反查。
+        val adjustment = parser.parseAdjustments(html).single()
+        assertEquals("停课", adjustment.type)
+        assertEquals(0, adjustment.originalWeek)
+        assertEquals(0, adjustment.makeupWeek)
     }
 
     @Test

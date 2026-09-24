@@ -445,11 +445,16 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
                 pendingType = typeCell; pendingTitle = title; pendingTeacher = teacher
                 val adj = parseAdjustmentRow(cells, typeCell, title, teacher, hasNoonInTimetable)
                 if (adj != null) {
-                    // 代课/补课主行若无补课时间（仅停/代课侧有数据），则只用于 pending，
-                    // 实际调整由续行（rowspan 拆分出的补课行）创建。
-                    if (typeCell !in setOf("代课", "补课") || adj.makeupWeek > 0) {
-                        results.add(adj)
+                    // 补课主行若没有补课时间，就只用于给续行提供课程信息，本身不入列。
+                    //
+                    // 代课主行则要入列：代课保留 original 侧，主行有 original 时段就是一条有效记录。
+                    // （rowspan 覆盖两个时段时，第二个时段由续行补充成另一条记录。）
+                    val keepMainRow = when (typeCell) {
+                        "代课" -> adj.originalWeek > 0 || adj.makeupWeek > 0
+                        "补课" -> adj.makeupWeek > 0
+                        else -> true
                     }
+                    if (keepMainRow) results.add(adj)
                 }
             }
             // 续行：MM-DD 日期开头，10 列纯时间数据，继承课程信息
@@ -478,11 +483,14 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             ?.let { parseDisplaySectionRange(it, hasNoon) } ?: Pair(0, 0)
         val cellsMkRoom = cells.getOrNull(makeupBase + 4).orEmpty()
 
-        // 代课：停/代课侧有数据但补课侧为空时，将停/代课时间作为 makeup（代课地点）
-        // 补课：同理，补课侧有数据但停/代课侧为空时，直接作为 makeup
+        // 补课：停/代课侧有数据但补课侧为空时，把这一组时间直接当补课时段——补课记录本来
+        // 就只有补课侧有意义。
+        //
+        // 代课**不参与**这个交换：代课只是换个授课人，课仍在原时段上，角标锚在原卡上，
+        // 必须保留 original 侧。一旦搬到 makeup 侧，originalWeek 就归零，反查永远落空。
         val originalWeek: Int; val originalDay: Int; val originalStart: Int; val originalEnd: Int; val originalRoom: String
         val makeupWeek: Int; val makeupDay: Int; val makeupStart: Int; val makeupEnd: Int; val makeupRoom: String
-        if (type in setOf("代课", "补课") && cellsMkWeek == 0 && cellsOrigWeek > 0) {
+        if (type == "补课" && cellsMkWeek == 0 && cellsOrigWeek > 0) {
             originalWeek = 0; originalDay = 0; originalStart = 0; originalEnd = 0; originalRoom = ""
             makeupWeek = cellsOrigWeek; makeupDay = cellsOrigDay; makeupStart = cellsOrigStart; makeupEnd = cellsOrigEnd; makeupRoom = cellsOrigRoom
         } else {
@@ -516,13 +524,18 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
             ?.let { parseDisplaySectionRange(it, hasNoon) } ?: Pair(0, 0)
         val secondRoom = cells.getOrNull(9).orEmpty()
 
-        // 续行可能只包含补课数据（cells[0]-[4] 有效，cells[5]-[9] 全空）
-        // 此时 first* 实际是补课时间，应将其移到 makeup 侧，original 侧清空
+        // 续行的 cells[0]-[4] 在**调课/补课**记录里可能装的是纯补课时间（第二组全空），
+        // 那时要搬到 makeup 侧。
+        //
+        // 停课与代课的时间一律写在「停/代课时间地点」侧、第二组恒为空：对它们来说
+        // cells[0]-[4] 就是**原时段**，必须留在 original 侧。搬走会让第二个时段静默消失，
+        // 卡片上就少一个「停」/「代」角标。
         val secondHasValidTime = secondWeek > 0 && secondDay > 0
         val firstHasValidTime = firstDateWeek > 0 && firstDay > 0
+        val firstGroupIsMakeup = type !in setOf("停课", "代课") && !secondHasValidTime && firstHasValidTime
         val originalWeek: Int; val originalDay: Int; val originalStart: Int; val originalEnd: Int; val originalRoom: String
         val makeupWeek: Int; val makeupDay: Int; val makeupStart: Int; val makeupEnd: Int; val makeupRoom: String
-        if (!secondHasValidTime && firstHasValidTime) {
+        if (firstGroupIsMakeup) {
             // 仅 cells[0]-[4] 有数据 → 视为纯补课时间
             originalWeek = 0; originalDay = 0; originalStart = 0; originalEnd = 0; originalRoom = ""
             makeupWeek = firstDateWeek; makeupDay = firstDay; makeupStart = firstStartSection; makeupEnd = firstEndSection; makeupRoom = firstRoom
@@ -553,18 +566,28 @@ class GlutAcademicScheduleParser : AcademicScheduleParser {
         tolerantTeacher: Boolean = false
     ): List<ScheduleCourse> {
         if (adjustments.isEmpty()) return courses
-        // 代课（替课）不取消原课，只增加补课；调课/停课才需要移除原周
-        val removalAdjustments = adjustments.filter { it.type != "代课" }
+        // 停课与代课都不取消原课：代课只是换个授课人；停课那一周教务网格里本来就在
+        // （实测 `1-9周` 这类范围把停课周也算在内），卡片保留、由左下角「停」角标标出。
+        // 只有调课需要把被调走的原周次摘掉。
+        val removalAdjustments = adjustments.filter { it.type !in setOf("代课", "停课") }
         if (removalAdjustments.isEmpty()) return courses
         return courses.mapNotNull { course ->
             val updatedOccurrences = course.occurrences.flatMap { occurrence ->
-                val adjustment = removalAdjustments.firstOrNull {
-                    it.matches(course, occurrence, requireOriginalRoom, tolerantTeacher)
-                }
-                if (adjustment == null) {
+                // 一个课次可能被调走**多周**（实测 `8-16周` 同时挂着第14周与第16周两条调课），
+                // 必须把所有命中的周次一起摘掉。只应用第一条会在后面那几周留下一张「幽灵卡」：
+                // 那节课早已调到别的周，用户按课表去教室会扑空，课时统计也会偏大。
+                val weeksToRemove = removalAdjustments
+                    .filter { it.matches(course, occurrence, requireOriginalRoom, tolerantTeacher) }
+                    .map { it.originalWeek }
+                    .toSet()
+                if (weeksToRemove.isEmpty()) {
                     listOf(occurrence)
                 } else {
-                    occurrence.withoutWeek(adjustment.originalWeek)
+                    // withoutWeek 会把周次拆成多段（`8-16周` 摘掉第14周得 `8-13周` + `15-16周`），
+                    // 所以每摘一周都要在**拆出来的每一条**上继续摘，不能只处理原对象。
+                    weeksToRemove.fold(listOf(occurrence)) { remaining, week ->
+                        remaining.flatMap { it.withoutWeek(week) }
+                    }
                 }
             }
             if (updatedOccurrences.isEmpty()) null else course.copy(occurrences = updatedOccurrences)

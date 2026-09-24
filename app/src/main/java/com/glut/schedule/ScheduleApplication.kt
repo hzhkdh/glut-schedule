@@ -74,16 +74,19 @@ class ScheduleApplication : Application() {
         applicationScope.launch {
             val migrationFlags = getSharedPreferences("schedule_migration_flags", MODE_PRIVATE)
             try {
+                // v2：停课不再从课程周次里移除（改为保留卡片 + 左下角「停」角标）。旧快照里
+                // 停课周的 occurrence 已被物理剥掉，不重导恢复不了，所以升标记键让所有已缓存
+                // 学期定向失效、重新导入一次。
                 migrateScheduleSourceIfNeeded(
                     alreadyMigrated = migrationFlags.getBoolean(
-                        "show_timetable_source_v1",
+                        "show_timetable_source_v2",
                         false
                     ),
                     invalidateCaches = appContainer.scheduleRepository::invalidateLegacyImportCaches,
                     markMigrated = {
                         check(
                             migrationFlags.edit()
-                                .putBoolean("show_timetable_source_v1", true)
+                                .putBoolean("show_timetable_source_v2", true)
                                 .commit()
                         ) { "无法保存课表来源迁移标记" }
                     }

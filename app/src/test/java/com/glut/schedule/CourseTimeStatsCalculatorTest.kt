@@ -7,6 +7,7 @@ import com.glut.schedule.data.model.CourseTimeSemesterSource
 import com.glut.schedule.data.model.CourseTimeStatsCalculator
 import com.glut.schedule.data.model.CourseTimeStatsUnavailableReason
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.allocateCourseTimeStatsColors
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -330,7 +331,8 @@ class CourseTimeStatsCalculatorTest {
         periods: List<ClassPeriod> = listOf(
             ClassPeriod(1, "08:00", "08:45"),
             ClassPeriod(2, "08:55", "09:40")
-        )
+        ),
+        adjustments: List<SemesterAdjustment> = emptyList()
     ) = CourseTimeSemesterSource(
         semesterId = id,
         semesterLabel = label,
@@ -338,8 +340,100 @@ class CourseTimeStatsCalculatorTest {
         isDownloaded = true,
         portalMaxWeek = portalMaxWeek,
         courses = courses,
-        classPeriods = periods
+        classPeriods = periods,
+        adjustments = adjustments
     )
+
+    /** 停课记录的真实形态：只有原时段，补课侧全为 0/空。 */
+    private fun suspended(
+        week: Int,
+        title: String = "课程",
+        dayOfWeek: Int = 1,
+        startSection: Int = 1,
+        endSection: Int = 1,
+        room: String = "A101"
+    ) = SemesterAdjustment(
+        id = "adj-停课-$week",
+        type = "停课",
+        title = title,
+        teacher = "教师",
+        originalWeek = week,
+        originalDay = dayOfWeek,
+        originalStartSection = startSection,
+        originalEndSection = endSection,
+        originalRoom = room,
+        makeupWeek = 0,
+        makeupDay = 0,
+        makeupStartSection = 0,
+        makeupEndSection = 0,
+        makeupRoom = ""
+    )
+
+    @Test
+    fun stoppedWeeksAreExcludedFromTotalMinutes() {
+        // 停课卡片仍然显示（带「停」角标），但那一周确实没上课——统计口径保持「停课=没上」。
+        // 第 1 节 45 分钟，1-4 周共 4 周；第 2 周停课 → 只算 3 周。
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(
+                    courses = listOf(course(weekText = "1-4周")),
+                    adjustments = listOf(suspended(week = 2))
+                )
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertEquals(135, result.totalMinutes)
+    }
+
+    @Test
+    fun stopRecordsThatDoNotMatchTheOccurrenceChangeNothing() {
+        // 周次、节次、教室、课程名任一对不上都不该扣课时。
+        listOf(
+            suspended(week = 9),
+            suspended(week = 2, startSection = 2, endSection = 2),
+            suspended(week = 2, room = "B202"),
+            suspended(week = 2, title = "另一门课")
+        ).forEach { record ->
+            val result = CourseTimeStatsCalculator.calculate(
+                sources = listOf(
+                    source(courses = listOf(course(weekText = "1-4周")), adjustments = listOf(record))
+                ),
+                dimension = CourseTimeDimension.COURSE
+            )
+            assertEquals("不该被扣掉", 180, result.totalMinutes)
+        }
+    }
+
+    @Test
+    fun substituteTeachingDoesNotReduceMinutes() {
+        // 代课照常上课，只是换了老师。
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(
+                    courses = listOf(course(weekText = "1-4周")),
+                    adjustments = listOf(suspended(week = 2).copy(type = "代课"))
+                )
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertEquals(180, result.totalMinutes)
+    }
+
+    @Test
+    fun timeLessStopRecordChangesNothing() {
+        // 南宁真实形态：学时 0.0、五列全空。定位不到课次，不能凭它扣掉任何一周。
+        val blank = suspended(week = 0, dayOfWeek = 0, startSection = 0, endSection = 0, room = "")
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(courses = listOf(course(weekText = "1-4周")), adjustments = listOf(blank))
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertEquals(180, result.totalMinutes)
+    }
 
     private fun course(
         id: String = "course",
