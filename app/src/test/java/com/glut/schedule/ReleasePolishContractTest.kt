@@ -87,7 +87,10 @@ class ReleasePolishContractTest {
 
         listOf(
             "维护者能看到吗",
-            "直接连接学校体测系统",
+            // 「体测成绩」菜单那条 FAQ 已按产品要求删除，披露改由「隐私安全」段承载：
+            // 那句仍写着「财务和体测都由手机直接连接学校系统」。断言跟着挪到这句话上，
+            // 覆盖的仍是同一件事——数据直达学校系统、不经维护者服务器。
+            "直接连接学校系统",
             "不会经过项目维护者的服务器",
             "HTTP",
             "无法获得与 HTTPS 相同的传输保护",
@@ -107,14 +110,17 @@ class ReleasePolishContractTest {
         ).forEach { phrase -> assertFalse("FAQ should not contain: $phrase", faq.contains(phrase)) }
     }
 
+    // 这条契约原本叫 faqExplainsTheThreeRecentlyAddedMenus，盯着「专业成绩 / 财务 / 体测」
+    // 三条菜单介绍。财务与体测两条已按产品要求从 FAQ 删除，剩下的检查改成盯「本机算出来的
+    // 统计口径有没有写进 FAQ」——专业成绩与课时统计都属于这一类，正是用户最容易怀疑
+    // 「数字是怎么来的」的地方。
     @Test
-    fun faqExplainsTheThreeRecentlyAddedMenus() {
+    fun faqExplainsTheLocallyComputedStatistics() {
         val faq = source("FaqScreen.kt")
 
         listOf(
             "“专业成绩”是怎么计算的？",
-            "“财务”菜单能做什么？可以直接缴费吗？",
-            "“体测成绩”菜单包含哪些功能？"
+            "课时统计是怎么算出来的？"
         ).forEach { question -> assertTrue("Missing FAQ question: $question", faq.contains(question)) }
     }
 

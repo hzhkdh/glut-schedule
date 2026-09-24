@@ -28,51 +28,24 @@ class MultiSemesterUiContractTest {
         assertFalse(loadingBranch.contains("ScheduleBackgroundImage("))
     }
 
+    /**
+     * 卡片只暴露「长按管理卡片」这一个新手势。
+     *
+     * 这条测试的前身是 `scheduleCardsDoNotExposeRemarkGesturesOrBadges`，当时明确断言
+     * `ScheduleGrid.kt` 里**不许出现** `combinedClickable` —— 那是「卡片不做长按备注手势」
+     * 刻意立的规矩。现在长按改用来打开「卡片管理」弹层，规矩随之收窄而不是取消：
+     * 备注相关的入口与角标仍然一律不许回来，长按本身则被正向锁住，防止有人把备注手势
+     * 借道加回来。这是一次有意识的推翻，不是把测试删掉了事。
+     */
     @Test
-    fun courseRemarkDialogUsesMinimalLightSurface() {
+    fun scheduleCardsOnlyExposeTheLongPressManageGesture() {
         val screen = page("ScheduleScreen.kt")
-        val dialog = screen
-            .substringAfter("private fun CourseRemarkEditDialog(")
-            .substringBefore("private fun ScheduleAddActionsPanel(")
-
-        assertTrue(dialog.contains("containerColor = Color(0xFFFFFBF3)"))
-        assertTrue(dialog.contains("placeholder = { Text(\"例如：带实验报告\") }"))
-        assertFalse(dialog.contains("记录这节课需要携带的物品或其他提醒"))
-        assertFalse(dialog.contains("label = { Text(\"简要备注\") }"))
-    }
-
-    @Test
-    fun remarkedCourseUsesHighContrastChatBubbleBadge() {
         val grid = component("ScheduleGrid.kt")
-
-        assertTrue(grid.contains("Icons.Rounded.ChatBubble"))
-        assertTrue(grid.contains(".size(20.dp)"))
-        assertTrue(grid.contains(".size(48.dp)"))
-        assertFalse(grid.contains("Icons.AutoMirrored.Rounded.StickyNote2"))
-    }
-
-    @Test
-    fun courseRemarkViewerShowsOnlyContentAndActions() {
-        val screen = page("ScheduleScreen.kt")
-        val viewer = screen
-            .substringAfter("private fun CourseRemarkViewDialog(")
-            .substringBefore("private fun CourseRemarkEditDialog(")
-
-        assertFalse(viewer.contains("OutlinedTextField("))
-        assertFalse(viewer.contains("/80"))
-        assertFalse(viewer.contains("title = {"))
-        assertFalse(viewer.contains("text = \"课程备注\""))
-        assertFalse(viewer.contains("第${'$'}{target.weekNumber}周"))
-        assertFalse(viewer.contains("Icons.Rounded.Close"))
-        assertTrue(viewer.contains("onDismissRequest = onDismiss"))
-        assertTrue(viewer.contains("text = target.block.remark.orEmpty()"))
-        assertTrue(viewer.contains("Text(\"删除\""))
-        assertTrue(viewer.contains("Text(\"编辑\""))
-        assertTrue(screen.contains("private fun CourseRemarkDeleteConfirmDialog("))
-        assertTrue(screen.contains("删除这条备注？"))
-        assertTrue(screen.contains("returnToView = true"))
-        assertTrue(screen.contains("returnToView = false"))
-        assertTrue(screen.contains("if (overlay.returnToView)"))
+        assertFalse(screen.contains("viewModel.saveCourseRemark"))
+        assertFalse(screen.contains("viewModel.deleteCourseRemark"))
+        assertFalse(grid.contains("Icons.Rounded.ChatBubble"))
+        assertTrue(grid.contains("combinedClickable"))
+        assertTrue(grid.contains("onCourseLongClick"))
     }
 
     @Test
@@ -128,6 +101,15 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
+    fun importSemesterDropdownUsesTheWarmLightSurfaceInDarkSystemTheme() {
+        val screen = page("DirectLoginScreen.kt")
+
+        assertTrue(screen.contains("containerColor = LoginCardBg"))
+        assertTrue(screen.contains("MenuDefaults.itemColors"))
+        assertTrue(screen.contains("textColor = LoginPrimary"))
+    }
+
+    @Test
     fun semesterDownloadAndViewAreDistinctAndDownloadNeverSelects() {
         val viewModel = page("DirectLoginViewModel.kt")
         val screen = page("DirectLoginScreen.kt")
@@ -142,9 +124,11 @@ class MultiSemesterUiContractTest {
         assertTrue(viewModel.contains("fun viewSemester(semesterId: String)"))
         assertFalse(downloadBody.contains("scheduleRepository.selectSemester"))
         assertTrue(downloadBody.contains("semesterBulkDownloadCoordinator.startSingle(semesterId)"))
-        assertTrue(container.contains("useWeeklyTimetable = true"))
-        assertTrue(container.contains("onProgress = onProgress"))
-        assertTrue(coordinator.contains("completedWeeks = completed"))
+        // 统一导入路径后批量下载没有线路可选，也没有逐周进度可言：
+        // 这三个旧接口必须彻底消失，而不是留着空跑。
+        assertFalse(container.contains("semesterImportMode.first()"))
+        assertFalse(container.contains("onProgress = onProgress"))
+        assertFalse(coordinator.contains("completedWeeks"))
         assertTrue(coordinator.contains("previousStatus"))
         assertTrue(screen.contains("canRedownload"))
         assertTrue(screen.contains("onDownloadSemester(selectedSemester.id)"))
@@ -158,7 +142,7 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
-    fun loginImportProbesImmediateNextThenImportsCurrentFromWeeklyTimetable() {
+    fun loginImportProbesImmediateNextThenImportsCurrentFromTimetable() {
         val viewModel = page("DirectLoginViewModel.kt")
         val importBody = viewModel.substringAfter("private suspend fun performImport(")
             .substringBefore("private suspend fun fetchAndSaveScores(")
@@ -166,10 +150,12 @@ class MultiSemesterUiContractTest {
         assertTrue(importBody.contains("AcademicSemesterParser.parseCatalogPlan("))
         assertTrue(importBody.contains("AcademicSemesterProbePlanner.decide("))
         assertTrue(importBody.contains("val currentSemester = decision.currentSemester"))
+        // 两次调用：先探测紧邻下学期，再正式导入当前学期。
         assertTrue(importBody.split("semesterImportService.importSemester(").size - 1 == 2)
-        assertTrue(importBody.contains("useWeeklyTimetable = false"))
         assertTrue(importBody.contains("semester = currentSemester"))
-        assertTrue(importBody.contains("useWeeklyTimetable = true"))
+        // 没有线路可选之后，导入调用不得再传 mode。
+        assertFalse(importBody.contains("mode = SemesterImportMode"))
+        assertFalse(importBody.contains("mode = settingsStore.semesterImportMode"))
         assertTrue(importBody.contains("portalMaxWeek = currentPayload.portalMaxWeek"))
         assertTrue(
             importBody.indexOf("val currentPayload") <
@@ -184,16 +170,21 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
-    fun weeklyTimetableImportIsSequentialAndValidatesEveryPage() {
+    fun unifiedImportNeverDownloadsWeeksAndKeepsLandingAsMaxWeekSourceOnly() {
         val service = service("AcademicSemesterImportService.kt")
 
-        assertFalse(service.contains("WEEKLY_TIMETABLE_PARALLELISM"))
+        // 逐周下载整段作废：解析器、POST 表单、进度回调都不应再出现在服务里。
+        assertFalse(service.contains("WeeklyTimetableParser"))
+        assertFalse(service.contains("weeklyTimetablePostUrl"))
+        assertFalse(service.contains("weeklyTimetableForm"))
+        assertFalse(service.contains("probeForm("))
+        assertFalse(service.contains("onProgress"))
         assertFalse(service.contains("Semaphore"))
-        assertFalse(service.contains("async"))
         assertFalse(service.contains("awaitAll"))
-        assertTrue(service.contains("availableWeeks.sorted().forEach"))
-        assertTrue(service.contains("page.validateFor("))
-        assertTrue(service.contains("expectedSemesterMonday"))
+        // 周次课表只剩一次落地页元数据读取：最大周、当前周和服务器日期；失败只降级。
+        assertTrue(service.contains("probeWeeklyLandingMetadata("))
+        assertTrue(service.contains("WeeklyLandingPageParser.parse("))
+        assertTrue(service.contains("availableWeeks"))
     }
 
     @Test
@@ -253,6 +244,20 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
+    fun importPageKeepsCampusSelectorAndHasNoImportModeSelector() {
+        val screen = page("DirectLoginScreen.kt")
+
+        // 校区仍要选（登哪个教务），线路不再要选（只有一个数据源）。
+        assertTrue("未找到「南宁分校」标题", screen.contains("Text(\"南宁分校\""))
+        assertFalse("「导入模式」标签应随线路统一而删除", screen.contains("Text(\"导入模式\""))
+        assertFalse("不应再有「导入方式」等同义标签", screen.contains("Text(\"导入方式\""))
+        assertFalse("不应再渲染线路选择胶囊", screen.contains("listOf(\"模式1\", \"模式2\")"))
+        assertFalse("线路两行图例应删除", screen.contains("模式1 · 解析"))
+        assertFalse("「换用模式2重试」入口应删除", screen.contains("换用模式2重试"))
+        assertFalse("「重下会换线路」提示应删除", screen.contains("semesterImportModeSwitchHint"))
+    }
+
+    @Test
     fun currentSemesterRefreshUsesExactSemesterImportAndLightweightCalendarProbe() {
         val viewModel = page("ScheduleViewModel.kt")
         val refreshBody = viewModel.substringAfter("fun refreshSchedule(")
@@ -260,7 +265,10 @@ class MultiSemesterUiContractTest {
 
         assertTrue(refreshBody.contains("uiState.value.viewedSemester"))
         assertTrue(refreshBody.contains("semesterImportService.importSemester("))
-        assertTrue(refreshBody.contains("useWeeklyTimetable = true"))
+        // 线路已统一，刷新不再需要也不得携带 mode：过去要靠「沿用该学期当初的线路」
+        // 才能避免跨学期改写取值口径，现在这条约束随单一数据源一起消失了。
+        assertFalse(refreshBody.contains("mode = targetSemester.importMode"))
+        assertFalse(refreshBody.contains("mode = settingsStore.semesterImportMode.first()"))
         assertTrue(refreshBody.contains("repository.replaceSemesterSchedule("))
         assertTrue(refreshBody.contains("portalMaxWeek = payload.portalMaxWeek"))
         assertTrue(refreshBody.contains("probeScheduleEndpoints("))
@@ -282,6 +290,11 @@ class MultiSemesterUiContractTest {
         assertFalse(header.contains("semesterLabel"))
         assertTrue(header.contains("\"▾\""))
         assertTrue(header.contains("返回当前学期"))
+        // 下拉必须显式给乳白容器色：不传 containerColor 会落到 GlutScheduleTheme 里唯一的
+        // 暗色方案（Theme.kt 的 surface = 0xFF101827），这正是用户看到的「漆黑面板」。
+        assertTrue(header.contains("containerColor = MenuCardBg"))
+        // 状态标签（当前 / 已缓存 / 正在查看）必须走共用函数，不在渲染处再写一份字面量。
+        assertTrue(header.contains("semesterMenuStatusText("))
         assertTrue(screen.contains("onSemesterSelected = viewModel::selectSemester"))
         assertTrue(screen.contains("onReturnToCurrentClick = viewModel::returnToCurrentSemester"))
         assertFalse(screen.contains("本周无课程"))

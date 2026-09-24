@@ -22,6 +22,15 @@ data class TimorHolidayCalendar(
 ) {
     fun dayInfo(date: LocalDate): CalendarDayInfo =
         days[date] ?: CalendarDayInfo(CalendarDayKind.ORDINARY)
+
+    /**
+     * 全部法定放假日（补班日不在内）。
+     *
+     * 不能由 [holidays] 的起止日期区间展开得到：一个假期中间的补班日会让区间
+     * 覆盖到并不放假的日子，课表角标会多标。只能逐日回读原始解析结果。
+     */
+    val holidayDates: Set<LocalDate>
+        get() = days.filterValues { it.kind == CalendarDayKind.HOLIDAY }.keys
 }
 
 object TimorHolidayCalendarParser {

@@ -2,6 +2,7 @@ package com.glut.schedule
 
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
+import com.glut.schedule.data.model.ManualDayCopyRule
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.widget.ScheduleWidgetSnapshotBuilder
 import com.glut.schedule.widget.WidgetScheduleStatus
@@ -117,13 +118,104 @@ class ScheduleWidgetSnapshotBuilderTest {
         assertEquals(listOf("afternoon"), snapshot.todayCourses.map { it.title })
     }
 
-    private fun build(now: LocalDateTime, courses: List<ScheduleCourse>) =
+    // 2026-03-16 是学期第 2 周周一，其周三为 2026-03-18。
+    @Test
+    fun manualDayCopyCoursesAppearOnTheTargetDayInTheWidget() {
+        val now = LocalDateTime.of(2026, 3, 18, 8, 0) // 第 2 周周三
+        val mondayCourse = course(
+            "monday",
+            occurrence("monday", day = 1, start = 1, end = 2, weeks = "1-19周")
+        )
+
+        val snapshot = build(
+            now = now,
+            courses = listOf(mondayCourse),
+            manualDayCopies = listOf(
+                ManualDayCopyRule(
+                    sourceDate = LocalDate.of(2026, 3, 16),
+                    targetDate = LocalDate.of(2026, 3, 18)
+                )
+            )
+        )
+
+        // 首页把「周一的课整天复制到周三」，小组件必须跟着显示，否则首页有的课在桌面凭空消失。
+        assertEquals(listOf("monday"), snapshot.todayCourses.map { it.title })
+    }
+
+    @Test
+    fun manualDayCopyDoesNotLeakIntoOtherDaysOrOtherWeeks() {
+        val rule = ManualDayCopyRule(
+            sourceDate = LocalDate.of(2026, 3, 16),
+            targetDate = LocalDate.of(2026, 3, 18)
+        )
+        val mondayCourse = course(
+            "monday",
+            occurrence("monday", day = 1, start = 1, end = 2, weeks = "1-19周")
+        )
+
+        // 同日但规则未命中（周四）
+        assertEquals(
+            emptyList<String>(),
+            build(
+                now = LocalDateTime.of(2026, 3, 19, 8, 0),
+                courses = listOf(mondayCourse),
+                manualDayCopies = listOf(rule)
+            ).todayCourses.map { it.title }
+        )
+        // 下一周的周三：副本只在目标日所在的那一周生成
+        assertEquals(
+            emptyList<String>(),
+            build(
+                now = LocalDateTime.of(2026, 3, 25, 8, 0),
+                courses = listOf(mondayCourse),
+                manualDayCopies = listOf(rule)
+            ).todayCourses.map { it.title }
+        )
+    }
+
+    @Test
+    fun manualDayCopyCoexistsWithExistingCourseAndKeepsStableIdsDistinct() {
+        val now = LocalDateTime.of(2026, 3, 18, 8, 0)
+        val mondayCourse = course(
+            "monday",
+            occurrence("monday", day = 1, start = 1, end = 2, weeks = "1-19周")
+        )
+        val wednesdayCourse = course(
+            "wednesday",
+            occurrence("wednesday", day = 3, start = 3, end = 4, weeks = "1-19周")
+        )
+
+        val snapshot = build(
+            now = now,
+            courses = listOf(mondayCourse, wednesdayCourse),
+            manualDayCopies = listOf(
+                ManualDayCopyRule(
+                    sourceDate = LocalDate.of(2026, 3, 16),
+                    targetDate = LocalDate.of(2026, 3, 18)
+                )
+            )
+        )
+
+        // 目标日原有课程保留，副本并列出现，按节次排序。
+        assertEquals(listOf("monday", "wednesday"), snapshot.todayCourses.map { it.title })
+        assertEquals(
+            snapshot.todayCourses.size,
+            snapshot.todayCourses.map { it.stableId }.distinct().size
+        )
+    }
+
+    private fun build(
+        now: LocalDateTime,
+        courses: List<ScheduleCourse>,
+        manualDayCopies: List<ManualDayCopyRule> = emptyList()
+    ) =
         ScheduleWidgetSnapshotBuilder.build(
             now = now,
             courses = courses,
             classPeriods = periods,
             semesterStartMonday = semesterStart,
-            semesterEndDate = semesterEnd
+            semesterEndDate = semesterEnd,
+            manualDayCopies = manualDayCopies
         )
 
     private fun course(title: String, occurrence: CourseOccurrence) = ScheduleCourse(

@@ -86,6 +86,21 @@ class TimorHolidayCalendarTest {
     }
 
     @Test
+    fun unpublishedYearYieldsNoHolidaysSoCallersCanSpotItAsMissing() {
+        // 2027 年放假安排未公布时 timor 返回的是合法但内容为空的文档。
+        // 解析层不自作主张判失败（问候语等调用方依赖非 null），但必须解析不出任何假期，
+        // 调用方才能据此判定「这一年还没拿到数据」并重试。
+        val calendar = TimorHolidayCalendarParser.parse("""{"code":0,"holiday":{}}""", 2027)!!
+
+        assertTrue(calendar.holidays.isEmpty())
+        assertTrue(calendar.holidayDates.isEmpty())
+        assertEquals(
+            CalendarDayKind.ORDINARY,
+            calendar.dayInfo(LocalDate.of(2027, 1, 1)).kind
+        )
+    }
+
+    @Test
     fun cachedDayRequiresAValidCacheFromTheSameYear() {
         val json = """
             {

@@ -30,8 +30,7 @@ data class SemesterDownloadItemState(
     val semesterId: String,
     val displayName: String,
     val status: SemesterDownloadItemStatus,
-    val completedWeeks: Int = 0,
-    val totalWeeks: Int = 0,
+    val skippedRowCount: Int = 0,
     val errorMessage: String? = null
 )
 
@@ -72,8 +71,7 @@ class SemesterBulkDownloadCoordinator(
     private val currentOwnerProvider: suspend () -> String,
     private val download: suspend (
         semester: AcademicSemester,
-        session: SemesterDownloadSession,
-        onProgress: (completed: Int, total: Int) -> Unit
+        session: SemesterDownloadSession
     ) -> Result<AcademicSemesterImportPayload>,
     private val commit: suspend (AcademicSemester, AcademicSemesterImportPayload) -> Unit,
     private val updateCacheStatus: suspend (String, SemesterCacheStatus) -> Unit,
@@ -87,13 +85,22 @@ class SemesterBulkDownloadCoordinator(
     private val _completionEvents = MutableSharedFlow<SemesterBulkDownloadSummary>(extraBufferCapacity = 1)
     val completionEvents: SharedFlow<SemesterBulkDownloadSummary> = _completionEvents.asSharedFlow()
 
+    /**
+     * 「全部下载」：把**所有历史学期**重抓一遍并覆盖缓存。
+     *
+     * 这里刻意**不看 cacheStatus**。曾经只挑「未缓存 / 失败」的学期，结果是历史学期一旦
+     * 全部缓存，这个入口就无事可做——界面只能把它置灰或换成一条状态说明，用户会读成
+     * 「按钮没了」。现在的语义是「全部重新下载」：已缓存的学期也照样重抓，让用户能一键
+     * 把旧缓存刷新一遍，不必先手动清缓存。
+     *
+     * 当前学期始终排除：它由首页刷新负责，且它正是「正在查看」的那个，不该被批量覆盖。
+     *
+     * 成本：统一走大节课表后每学期只有 2～3 次 GET（旧逐周链路约 20 次 POST），
+     * 6 个学期也就十来次请求，但仍是串行执行，随时可以离开页面。
+     */
     suspend fun startAll(): SemesterDownloadStartResult = startMutex.withLock {
         if (activeCompletion?.isActive == true) return@withLock SemesterDownloadStartResult.AlreadyRunning
-        val candidates = semestersProvider().filter { semester ->
-            !semester.isCurrent &&
-                (semester.cacheStatus == SemesterCacheStatus.NOT_CACHED ||
-                    semester.cacheStatus == SemesterCacheStatus.FAILED)
-        }
+        val candidates = semestersProvider().filter { semester -> !semester.isCurrent }
         if (candidates.isEmpty()) return@withLock SemesterDownloadStartResult.NothingPending
         startLocked(SemesterDownloadMode.BULK, candidates)
     }
@@ -163,6 +170,7 @@ class SemesterBulkDownloadCoordinator(
         semesters: List<AcademicSemester>
     ): SemesterBulkDownloadSummary? {
         val results = mutableListOf<SemesterDownloadItemState>()
+        var activeSession = session
         semesters.forEach { semester ->
             updateItem(runGeneration, semester.id) {
                 it.copy(status = SemesterDownloadItemStatus.DOWNLOADING)
@@ -171,17 +179,20 @@ class SemesterBulkDownloadCoordinator(
             runCatching {
                 verifyOwner(runGeneration, session.ownerStudentNumber)
                 updateCacheStatus(semester.id, SemesterCacheStatus.DOWNLOADING)
-                val payload = download(semester, session) { completed, total ->
-                    updateItem(runGeneration, semester.id) {
-                        it.copy(completedWeeks = completed, totalWeeks = total)
-                    }
-                }.getOrThrow()
+                val payload = download(semester, activeSession).getOrThrow()
+                if (payload.updatedCookie.isNotBlank()) {
+                    // 教务可能在下载学期时轮换会话，后续学期必须接续本次响应的最新 Cookie。
+                    activeSession = activeSession.copy(cookie = payload.updatedCookie)
+                }
                 verifyOwner(runGeneration, session.ownerStudentNumber)
                 commit(semester, payload)
                 verifyOwner(runGeneration, session.ownerStudentNumber)
-            }.onSuccess {
+                // 提交完成后继续携带下载结果，供成功摘要展示异常行跳过数量。
+                payload
+            }.onSuccess { payload ->
                 val item = currentItem(semester.id).copy(
                     status = SemesterDownloadItemStatus.SUCCEEDED,
+                    skippedRowCount = payload.skippedRowCount,
                     errorMessage = null
                 )
                 updateItem(runGeneration, semester.id) { item }

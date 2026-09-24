@@ -7,6 +7,7 @@ import com.glut.schedule.data.model.CourseTimeSemesterSource
 import com.glut.schedule.data.model.CourseTimeStatsCalculator
 import com.glut.schedule.data.model.CourseTimeStatsUnavailableReason
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.allocateCourseTimeStatsColors
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -279,23 +280,160 @@ class CourseTimeStatsCalculatorTest {
         assertTrue(result.coverage.excludedSemesters.isEmpty())
     }
 
+    @Test
+    fun semesterImportedInPersonalOnlyModeIsStillCounted() {
+        // 模式2（纯个人课表）不请求周次课表落地页，拿不到门户的周次列表，portalMaxWeek 为 null。
+        // 旧行为在这里直接判 MISSING_MAX_WEEK，整个学期从统计里消失——用户看到的是
+        // 「这个学期的统计没了」，而不是「少算一点」。
+        // 反推口径必须与 historicalAcademicMaxWeek 一致：门户值优先，拿不到就取课次周次的最大值。
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(
+                    portalMaxWeek = null,
+                    courses = listOf(course(weekText = "1-14周"))
+                )
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertTrue(result.coverage.excludedSemesters.isEmpty())
+        // 单节 45 分钟 × 14 周
+        assertEquals(630, result.totalMinutes)
+    }
+
+    @Test
+    fun semesterWithoutAnyWeekNumberStaysUnavailable() {
+        // 反推兜底不能把「完全无从判断学期长度」也算成能统计：
+        // 课次里一个周次数字都没有（例如整门课都是「全周」）时仍应如实报 MISSING_MAX_WEEK，
+        // 否则就会把一个已知未知的学期伪装成「统计结果是 0 分钟」。
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(
+                    portalMaxWeek = null,
+                    courses = listOf(course(weekText = "全周"))
+                )
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertEquals(
+            listOf(CourseTimeStatsUnavailableReason.MISSING_MAX_WEEK),
+            result.coverage.excludedSemesters.map { it.reason }
+        )
+        assertEquals(0, result.totalMinutes)
+    }
+
     private fun source(
         id: String = "current",
         label: String = "2026·春",
         courses: List<ScheduleCourse>,
+        portalMaxWeek: Int? = 20,
         periods: List<ClassPeriod> = listOf(
             ClassPeriod(1, "08:00", "08:45"),
             ClassPeriod(2, "08:55", "09:40")
-        )
+        ),
+        adjustments: List<SemesterAdjustment> = emptyList()
     ) = CourseTimeSemesterSource(
         semesterId = id,
         semesterLabel = label,
         isCurrent = id == "current",
         isDownloaded = true,
-        portalMaxWeek = 20,
+        portalMaxWeek = portalMaxWeek,
         courses = courses,
-        classPeriods = periods
+        classPeriods = periods,
+        adjustments = adjustments
     )
+
+    /** 停课记录的真实形态：只有原时段，补课侧全为 0/空。 */
+    private fun suspended(
+        week: Int,
+        title: String = "课程",
+        dayOfWeek: Int = 1,
+        startSection: Int = 1,
+        endSection: Int = 1,
+        room: String = "A101"
+    ) = SemesterAdjustment(
+        id = "adj-停课-$week",
+        type = "停课",
+        title = title,
+        teacher = "教师",
+        originalWeek = week,
+        originalDay = dayOfWeek,
+        originalStartSection = startSection,
+        originalEndSection = endSection,
+        originalRoom = room,
+        makeupWeek = 0,
+        makeupDay = 0,
+        makeupStartSection = 0,
+        makeupEndSection = 0,
+        makeupRoom = ""
+    )
+
+    @Test
+    fun stoppedWeeksAreExcludedFromTotalMinutes() {
+        // 停课卡片仍然显示（带「停」角标），但那一周确实没上课——统计口径保持「停课=没上」。
+        // 第 1 节 45 分钟，1-4 周共 4 周；第 2 周停课 → 只算 3 周。
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(
+                    courses = listOf(course(weekText = "1-4周")),
+                    adjustments = listOf(suspended(week = 2))
+                )
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertEquals(135, result.totalMinutes)
+    }
+
+    @Test
+    fun stopRecordsThatDoNotMatchTheOccurrenceChangeNothing() {
+        // 周次、节次、教室、课程名任一对不上都不该扣课时。
+        listOf(
+            suspended(week = 9),
+            suspended(week = 2, startSection = 2, endSection = 2),
+            suspended(week = 2, room = "B202"),
+            suspended(week = 2, title = "另一门课")
+        ).forEach { record ->
+            val result = CourseTimeStatsCalculator.calculate(
+                sources = listOf(
+                    source(courses = listOf(course(weekText = "1-4周")), adjustments = listOf(record))
+                ),
+                dimension = CourseTimeDimension.COURSE
+            )
+            assertEquals("不该被扣掉", 180, result.totalMinutes)
+        }
+    }
+
+    @Test
+    fun substituteTeachingDoesNotReduceMinutes() {
+        // 代课照常上课，只是换了老师。
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(
+                    courses = listOf(course(weekText = "1-4周")),
+                    adjustments = listOf(suspended(week = 2).copy(type = "代课"))
+                )
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertEquals(180, result.totalMinutes)
+    }
+
+    @Test
+    fun timeLessStopRecordChangesNothing() {
+        // 南宁真实形态：学时 0.0、五列全空。定位不到课次，不能凭它扣掉任何一周。
+        val blank = suspended(week = 0, dayOfWeek = 0, startSection = 0, endSection = 0, room = "")
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(courses = listOf(course(weekText = "1-4周")), adjustments = listOf(blank))
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertEquals(180, result.totalMinutes)
+    }
 
     private fun course(
         id: String = "course",

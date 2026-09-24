@@ -179,6 +179,8 @@ import com.glut.schedule.partner.PartnerScheduleViewModelFactory
 import com.glut.schedule.ui.pages.ClassPeriodSettingsScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
+import com.glut.schedule.ui.components.AdvancedColorSheet
+import com.glut.schedule.ui.components.CourseColorPaletteSection
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.components.ScheduleBackgroundImage
 import com.glut.schedule.ui.components.shouldUseCustomBackground
@@ -192,6 +194,9 @@ import com.glut.schedule.ui.pages.ProfessionalScoreScreen
 import com.glut.schedule.ui.pages.ProfessionalScoreViewModel
 import com.glut.schedule.ui.pages.ProfessionalScoreViewModelFactory
 import com.glut.schedule.ui.pages.GradeExamScreen
+import com.glut.schedule.ui.pages.HolidayAdjustmentsScreen
+import com.glut.schedule.ui.pages.HolidayAdjustmentsViewModel
+import com.glut.schedule.ui.pages.HolidayAdjustmentsViewModelFactory
 import com.glut.schedule.ui.pages.GradeExamViewModel
 import com.glut.schedule.ui.pages.GradeExamViewModelFactory
 import com.glut.schedule.ui.pages.NoticeScreen
@@ -218,6 +223,7 @@ private enum class SettingsSubPage(val title: String) {
     ROOT("设置"),
     COURSE_COLORS("课程卡片颜色"),
     CLASS_PERIODS("上课时间"),
+    HOLIDAY_ADJUSTMENTS("调休调课"),
     BACKGROUND_GALLERY("画廊")
 }
 
@@ -293,7 +299,8 @@ class MainActivity : ComponentActivity() {
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
                         semesterImportService = container.academicSemesterImportService,
-                        apiProbeService = container.apiProbeService
+                        apiProbeService = container.apiProbeService,
+                        timorHolidayClient = container.timorHolidayClient
                     )
                 )
                 val examViewModel: ExamViewModel = viewModel(
@@ -344,7 +351,8 @@ class MainActivity : ComponentActivity() {
                         settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
                         scheduleParser = container.academicScheduleParser,
-                        loginService = container.academicLoginService
+                        loginService = container.academicLoginService,
+                        timorHolidayClient = container.timorHolidayClient
                     )
                 )
                 LaunchedEffect(Unit) {
@@ -358,6 +366,12 @@ class MainActivity : ComponentActivity() {
                         sourceFlow = container.scheduleRepository.courseTimeSemesterSources
                     )
                 )
+                val holidayAdjustmentsViewModel: HolidayAdjustmentsViewModel = viewModel(
+                    factory = HolidayAdjustmentsViewModelFactory(
+                        repository = container.scheduleRepository,
+                        settingsStore = container.settingsStore
+                    )
+                )
                 val directLoginViewModel: DirectLoginViewModel = viewModel(
                     factory = DirectLoginViewModelFactory(
                         loginService = container.academicLoginService,
@@ -367,8 +381,8 @@ class MainActivity : ComponentActivity() {
                         settingsStore = container.settingsStore,
                         apiProbeService = container.apiProbeService,
                         academicExamService = container.academicExamService,
-                        scheduleParser = container.academicScheduleParser,
                         scoreParser = container.scoreParser,
+                        timorHolidayClient = container.timorHolidayClient,
                         gradeExamParser = container.gradeExamParser,
                         studyPlanParser = container.studyPlanParser,
                         semesterImportService = container.academicSemesterImportService,
@@ -381,6 +395,7 @@ class MainActivity : ComponentActivity() {
                             it.status == com.glut.schedule.service.academic.SemesterDownloadItemStatus.SUCCEEDED
                         }
                         val failed = summary.items.size - succeeded
+                        val skippedRows = summary.items.sumOf { it.skippedRowCount }
                         val text = if (summary.mode == com.glut.schedule.service.academic.SemesterDownloadMode.SINGLE) {
                             if (failed == 0) "学期课表已下载" else "学期课表下载失败"
                         } else if (failed == 0) {
@@ -388,9 +403,10 @@ class MainActivity : ComponentActivity() {
                         } else {
                             "下载完成：成功 $succeeded，失败 $failed"
                         }
+                        val message = if (skippedRows > 0) "$text；已跳过 $skippedRows 条异常课程记录" else text
                         android.widget.Toast.makeText(
                             this@MainActivity,
-                            text,
+                            message,
                             android.widget.Toast.LENGTH_SHORT
                         ).show()
                     }
@@ -583,7 +599,7 @@ class MainActivity : ComponentActivity() {
                     if (info != null && info.isNewer) {
                         container.settingsStore.setUpdateAvailable(info.latestVersion)
                         val dismissedVersion = container.settingsStore.dismissedUpdatePopupVersion.first()
-                        if (dismissedVersion != info.latestVersion) {
+                        if (info.popup && dismissedVersion != info.latestVersion) {
                             autoPopupUpdateVersion = info.latestVersion
                             showUpdateDialog = UpdateDialogState.Idle(info)
                         }
@@ -622,7 +638,7 @@ class MainActivity : ComponentActivity() {
                     if (initialNoticeCheckFinished && showUpdateDialog == null && showNoticePopup == null) {
                         val alreadyShownIds = dismissedNoticePopupIds + noticePopupSessionDismissedIds
                         val latestNotice = notices.firstOrNull()
-                        if (latestNotice != null && latestNotice.id !in alreadyShownIds) {
+                        if (latestNotice != null && latestNotice.popup && latestNotice.id !in alreadyShownIds) {
                             showNoticePopup = latestNotice
                         }
                     }
@@ -983,6 +999,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
                                     viewModel = scheduleViewModel,
+                                    holidayAdjustmentsViewModel = holidayAdjustmentsViewModel,
                                     backgroundStore = container.backgroundStore,
                                     remoteBackgroundGalleryViewModel = remoteBackgroundGalleryViewModel,
                                     subPage = settingsSubPage,
@@ -1373,13 +1390,15 @@ private fun PartnerScheduleDestination(
         customBackgroundUri = scheduleState.customBackgroundUri,
         customBackgroundBitmap = backgroundBitmap,
         backgroundDimAmount = scheduleState.backgroundDimAmount,
-        onDrawerOpen = onDrawerOpen
+        onDrawerOpen = onDrawerOpen,
+        onInviteExpired = viewModel::expireInviteSilently
     )
 }
 
 @Composable
 private fun ScheduleSettingsDestination(
     viewModel: ScheduleViewModel,
+    holidayAdjustmentsViewModel: HolidayAdjustmentsViewModel,
     backgroundStore: ScheduleBackgroundStore,
     remoteBackgroundGalleryViewModel: RemoteBackgroundGalleryViewModel?,
     subPage: SettingsSubPage,
@@ -1395,11 +1414,15 @@ private fun ScheduleSettingsDestination(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     when (subPage) {
         SettingsSubPage.COURSE_COLORS -> CourseColorsPage(
-            courses = uiState.courses,
+            // 用完整课表：隐藏掉的卡片也要能在这里改色。
+            courses = uiState.allCourses,
             overrides = uiState.courseColorOverrides,
             onSetColor = viewModel::setCourseColorOverride,
             onRemoveColor = viewModel::removeCourseColorOverride,
             onResetAll = viewModel::clearCourseColorOverrides
+        )
+        SettingsSubPage.HOLIDAY_ADJUSTMENTS -> HolidayAdjustmentsScreen(
+            viewModel = holidayAdjustmentsViewModel
         )
         SettingsSubPage.CLASS_PERIODS -> ClassPeriodSettingsScreen(
             campusType = uiState.campusType,
@@ -1444,6 +1467,7 @@ private fun ScheduleSettingsDestination(
             onBuiltInBackgrounds = { onSubPageChange(SettingsSubPage.BACKGROUND_GALLERY) },
             onCourseColors = { onSubPageChange(SettingsSubPage.COURSE_COLORS) },
             onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
+            onHolidayAdjustments = { onSubPageChange(SettingsSubPage.HOLIDAY_ADJUSTMENTS) },
             onReset = onReset
         )
     }
@@ -1587,6 +1611,7 @@ private fun SettingsPage(
     onBuiltInBackgrounds: () -> Unit = {},
     onCourseColors: () -> Unit = {},
     onClassPeriods: () -> Unit = {},
+    onHolidayAdjustments: () -> Unit = {},
     onReset: () -> Unit = {}
 ) {
     val settingsBg = Color(0xFFF6F4EF)
@@ -1679,7 +1704,6 @@ private fun SettingsPage(
                     Switch(checked = greetingEnabled, onCheckedChange = onGreetingEnabledChange)
                 }
             }
-
             Text("课表外观", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -1710,6 +1734,22 @@ private fun SettingsPage(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("上课时间", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
+                }
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onHolidayAdjustments)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("调休调课", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
                 }
             }
@@ -1993,6 +2033,7 @@ private fun CourseColorsPage(
                 Text("恢复全部默认颜色", color = Color(0xFFDC2626))
             }
         }
+        // 「已隐藏的卡片」已迁到「调休调课」页：两者都是「我手动改动了课表」的叠加层。
     }
 
     selectedCourse?.let { course ->
@@ -2050,208 +2091,18 @@ private fun PresetColorSheet(
                 Text(course.title, color = Color(0xFF141821), fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("选择课程卡片颜色", color = Color(0xFF667085), fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
             }
-            CourseColorMapper.presetPalette.chunked(5).forEach { row ->
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    row.forEach { color ->
-                        Surface(
-                            modifier = Modifier.size(52.dp).clickable { onSelect(color) },
-                            color = Color(AndroidColor.parseColor(color)),
-                            shape = RoundedCornerShape(16.dp)
-                        ) {}
-                    }
-                }
-            }
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = onRestore) { Text("恢复自动配色", color = Color(0xFF667085), fontSize = 15.sp) }
-                TextButton(onClick = onAdvanced) { Text("高级调色", color = Color(0xFF3F7DF6), fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AdvancedColorSheet(
-    initialColor: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    val initialHsv = remember(initialColor) { hexToHsv(initialColor) }
-    var hue by remember(initialColor) { mutableStateOf(initialHsv[0]) }
-    var saturation by remember(initialColor) { mutableStateOf(initialHsv[1]) }
-    var value by remember(initialColor) { mutableStateOf(initialHsv[2]) }
-    var hexField by remember(initialColor) { mutableStateOf(TextFieldValue(initialColor, TextRange(0))) }
-
-    fun updateFromHsv(nextHue: Float = hue, nextSaturation: Float = saturation, nextValue: Float = value) {
-        hue = nextHue
-        saturation = nextSaturation
-        value = nextValue
-        val nextHex = hsvToHex(hue, saturation, value)
-        hexField = TextFieldValue(nextHex, TextRange(nextHex.length))
-    }
-
-    var planeSize by remember { mutableStateOf(IntSize.Zero) }
-    var hueTrackSize by remember { mutableStateOf(IntSize.Zero) }
-    val normalizedColor = CourseColorMapper.normalizeHexColor(hexField.text)
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scrollState = rememberScrollState()
-    val hexBringIntoViewRequester = remember { BringIntoViewRequester() }
-    val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
-    val planeThumbSizePx = with(density) { 20.dp.toPx() }
-    val hueThumbSizePx = with(density) { 22.dp.toPx() }
-
-    fun updatePlane(position: Offset) {
-        if (planeSize.width == 0 || planeSize.height == 0) return
-        updateFromHsv(
-            nextSaturation = (position.x / planeSize.width).coerceIn(0f, 1f),
-            nextValue = (1f - position.y / planeSize.height).coerceIn(0f, 1f)
-        )
-    }
-
-    fun updateHue(position: Offset) {
-        if (hueTrackSize.width == 0) return
-        updateFromHsv(nextHue = (position.x / hueTrackSize.width * 360f).coerceIn(0f, 360f))
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = Color(0xFFFFFEFB),
-        tonalElevation = 0.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 28.dp)
-                .verticalScroll(scrollState)
-                .imePadding()
-                .navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("高级调色", color = Color(0xFF141821), fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text("嵌入式系统", color = Color(0xFF667085), fontSize = 13.sp)
-            }
-            Surface(
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                color = Color(AndroidColor.parseColor(normalizedColor ?: "#3B82F6")),
-                shape = RoundedCornerShape(16.dp)
-            ) {}
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(248.dp)
-                    .background(
-                        Brush.horizontalGradient(listOf(Color.White, Color(AndroidColor.parseColor(hsvToHex(hue, 1f, 1f))))),
-                        RoundedCornerShape(16.dp)
-                    )
-                    .onSizeChanged { planeSize = it }
-                    .pointerInput(planeSize, hue) {
-                        detectDragGestures(
-                            onDragStart = ::updatePlane,
-                            onDrag = { change, _ -> updatePlane(change.position) }
-                        )
-                    }
-            ) {
-                Box(modifier = Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)), RoundedCornerShape(16.dp)))
-                Box(
-                    modifier = Modifier
-                        .offset {
-                            IntOffset(
-                                (saturation * maxOf(0f, planeSize.width - planeThumbSizePx)).toInt(),
-                                ((1f - value) * maxOf(0f, planeSize.height - planeThumbSizePx)).toInt()
-                            )
-                        }
-                        .size(20.dp)
-                        .border(2.dp, Color.White, CircleShape)
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("色相", color = Color(0xFF344054), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text("拖动切换基础颜色", color = Color(0xFF98A2B3), fontSize = 13.sp)
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(28.dp)
-                    .background(
-                        Brush.horizontalGradient(listOf(
-                            Color(0xFFF04438), Color(0xFFF79009), Color(0xFFFDE272),
-                            Color(0xFF12B76A), Color(0xFF2E90FA), Color(0xFF9E77ED),
-                            Color(0xFFEE46BC), Color(0xFFF04438)
-                        )),
-                        RoundedCornerShape(14.dp)
-                    )
-                    .onSizeChanged { hueTrackSize = it }
-                    .pointerInput(hueTrackSize) {
-                        detectDragGestures(
-                            onDragStart = ::updateHue,
-                            onDrag = { change, _ -> updateHue(change.position) }
-                        )
-                    }
-            ) {
-                Box(
-                    modifier = Modifier
-                        .offset {
-                            IntOffset(
-                                (hue / 360f * maxOf(0f, hueTrackSize.width - hueThumbSizePx)).toInt(),
-                                ((hueTrackSize.height - hueThumbSizePx) / 2f).toInt()
-                            )
-                        }
-                        .size(22.dp)
-                        .background(Color.White, CircleShape)
-                        .border(2.dp, Color(0xFF667085), CircleShape)
-                )
-            }
-            OutlinedTextField(
-                value = hexField,
-                onValueChange = { input ->
-                    hexField = input
-                    CourseColorMapper.normalizeHexColor(input.text)?.let { color ->
-                        val hsv = hexToHsv(color)
-                        hue = hsv[0]
-                        saturation = hsv[1]
-                        value = hsv[2]
-                    }
-                },
-                label = { Text("HEX 颜色") },
-                placeholder = { Text("#154173") },
-                singleLine = true,
-                isError = hexField.text.isNotBlank() && normalizedColor == null,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF141821)),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color(0xFF141821),
-                    unfocusedTextColor = Color(0xFF141821),
-                    focusedBorderColor = Color(0xFF3F7DF6),
-                    unfocusedBorderColor = Color(0xFF98A2B3),
-                    cursorColor = Color(0xFF3F7DF6)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .bringIntoViewRequester(hexBringIntoViewRequester)
-                    .onFocusEvent { focusState ->
-                        if (focusState.isFocused) scope.launch { hexBringIntoViewRequester.bringIntoView() }
-                    }
+            // 预设色网格与两个按钮已提取到共享组件，与长按卡片的「卡片管理」弹层共用同一套。
+            CourseColorPaletteSection(
+                onSelect = onSelect,
+                onAdvanced = onAdvanced,
+                onRestore = onRestore
             )
-            Text("支持 #RRGGBB 或 RRGGBB；每组十六进制取值为 00 到 FF。", color = Color(0xFF667085), fontSize = 12.sp)
-            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onDismiss) { Text("取消") }
-                TextButton(enabled = normalizedColor != null, onClick = { normalizedColor?.let(onConfirm) }) { Text("完成") }
-            }
         }
     }
 }
 
-private fun hexToHsv(hex: String): FloatArray {
-    val hsv = FloatArray(3)
-    AndroidColor.colorToHSV(AndroidColor.parseColor(CourseColorMapper.normalizeHexColor(hex) ?: "#3B82F6"), hsv)
-    return hsv
-}
-
-private fun hsvToHex(hue: Float, saturation: Float, value: Float): String {
-    return "#%06X".format(AndroidColor.HSVToColor(floatArrayOf(hue, saturation, value)) and 0xFFFFFF)
-}
+// AdvancedColorSheet 与它的 hexToHsv / hsvToHex 已移到 ui/components/CourseColorPalette.kt，
+// 与长按卡片的「卡片管理」弹层共用。
 
 // ---- Notice Popup Dialog ----
 
@@ -2274,14 +2125,16 @@ private fun NoticePopupDialog(
         textContentColor = Color(0xFF49454F),
         title = { Text("新通知", fontWeight = FontWeight.Bold) },
         text = {
-            LazyColumn(
+            // 公告正文没有长度上限，必须给它一个**限高的纵向滚动框**，否则弹窗会被撑得很长。
+            // 这里刻意不用 LazyColumn：LazyColumn 以 item 为粒度处理超高内容，
+            // 而正文是单个 item，滚动会不可靠（滚不到底 / 内容被裁）。
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState())
             ) {
-                item {
-                    NoticePopupContent(notice = notice)
-                }
+                NoticePopupContent(notice = notice)
             }
         },
         confirmButton = {
@@ -2450,15 +2303,19 @@ private fun UpdateDialog(
                             Text("当前版本: v${BuildConfig.VERSION_NAME}")
                             Spacer(modifier = Modifier.height(8.dp))
                             if (state.info.releaseNotes.isNotBlank()) {
-                                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                                    item {
-                                        Text(
-                                            state.info.releaseNotes,
-                                            fontSize = 14.sp,
-                                            lineHeight = 20.sp,
-                                            color = Color(0xFF3D3940)
-                                        )
-                                    }
+                                // 与公告弹窗同一个毛病：发布说明往往比公告还长，
+                                // 而这两个弹窗都禁止点外关闭，更需要框内滚动。
+                                Column(
+                                    modifier = Modifier
+                                        .heightIn(max = 300.dp)
+                                        .verticalScroll(rememberScrollState())
+                                ) {
+                                    Text(
+                                        state.info.releaseNotes,
+                                        fontSize = 14.sp,
+                                        lineHeight = 20.sp,
+                                        color = Color(0xFF3D3940)
+                                    )
                                 }
                             }
                         } else {

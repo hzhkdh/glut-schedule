@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 开机后重新武装小组件刷新链；没有这个权限 BOOT_COMPLETED 收不到 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
@@ -16,9 +18,14 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.GlutSchedule">
+        <!--
+            App 采用单 Activity 架构；桌面小组件会直接启动 MainActivity。
+            必须复用现有任务实例，避免每次点击小组件都残留一套 Compose 页面与 ViewModel。
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -61,6 +68,19 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_color_timeline_info" />
+        </receiver>
+
+        <!--
+            重启与 App 升级后重新武装小组件的刷新链：那条「一次性任务 + 自我续期」的链条
+            在进程被系统清掉后不会自动回来，而 30 分钟的兜底广播在 Doze 下极不可靠。
+        -->
+        <receiver
+            android:name=".widget.ScheduleWidgetRearmReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
         </receiver>
 
         <provider

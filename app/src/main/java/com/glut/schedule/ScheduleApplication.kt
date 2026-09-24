@@ -23,10 +23,9 @@ import com.glut.schedule.service.campus.CampusImageService
 import com.glut.schedule.service.background.RemoteBackgroundAssetStore
 import com.glut.schedule.service.background.RemoteBackgroundRepository
 import com.glut.schedule.service.background.AndroidRemoteArtworkSaver
-import com.glut.schedule.service.parser.CompositeScheduleParser
+import com.glut.schedule.service.parser.AcademicScheduleParser
 import com.glut.schedule.service.parser.GlutAcademicScheduleParser
 import com.glut.schedule.service.parser.GlutExamParser
-import com.glut.schedule.service.parser.NanningCurrcourseParser
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.GradeExamParser
 import com.glut.schedule.service.parser.FitnessParser
@@ -36,6 +35,7 @@ import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.greeting.GreetingTemplateRepository
 import com.glut.schedule.service.greeting.HttpGreetingTemplateRemote
+import com.glut.schedule.service.holiday.TimorHolidayClient
 import com.glut.schedule.partner.PartnerScheduleApiService
 import com.glut.schedule.partner.PartnerScheduleStore
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
@@ -49,6 +49,20 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+/**
+ * 大节课表来源迁移只执行一次；清理失败时不写完成标记，下次启动继续重试。
+ */
+internal suspend fun migrateScheduleSourceIfNeeded(
+    alreadyMigrated: Boolean,
+    invalidateCaches: suspend () -> Unit,
+    markMigrated: suspend () -> Unit
+): Boolean {
+    if (alreadyMigrated) return false
+    invalidateCaches()
+    markMigrated()
+    return true
+}
+
 class ScheduleApplication : Application() {
     lateinit var appContainer: AppContainer
         private set
@@ -58,6 +72,28 @@ class ScheduleApplication : Application() {
         super.onCreate()
         appContainer = AppContainer(this, applicationScope)
         applicationScope.launch {
+            val migrationFlags = getSharedPreferences("schedule_migration_flags", MODE_PRIVATE)
+            try {
+                // v2：停课不再从课程周次里移除（改为保留卡片 + 左下角「停」角标）。旧快照里
+                // 停课周的 occurrence 已被物理剥掉，不重导恢复不了，所以升标记键让所有已缓存
+                // 学期定向失效、重新导入一次。
+                migrateScheduleSourceIfNeeded(
+                    alreadyMigrated = migrationFlags.getBoolean(
+                        "show_timetable_source_v2",
+                        false
+                    ),
+                    invalidateCaches = appContainer.scheduleRepository::invalidateLegacyImportCaches,
+                    markMigrated = {
+                        check(
+                            migrationFlags.edit()
+                                .putBoolean("show_timetable_source_v2", true)
+                                .commit()
+                        ) { "无法保存课表来源迁移标记" }
+                    }
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("ScheduleApp", "Failed to migrate schedule source", e)
+            }
             try {
                 appContainer.scheduleRepository.resetViewedSemesterToCurrent()
             } catch (e: Exception) {
@@ -73,13 +109,22 @@ class ScheduleApplication : Application() {
     @OptIn(FlowPreview::class)
     private fun observeWidgetDataChanges() {
         applicationScope.launch {
+            // 调休规则也要参与触发：否则用户在 App 内新增/删除规则后，
+            // 小组件要等到下一次定时刷新才会跟着变。
+            val currentSemesterManualDayCopies = combine(
+                appContainer.scheduleRepository.currentSemester,
+                appContainer.settingsStore.manualDayCopies
+            ) { semester, rulesBySemester ->
+                rulesBySemester[semester?.id.orEmpty()].orEmpty()
+            }
             combine(
                 appContainer.scheduleRepository.currentCourses,
                 appContainer.scheduleRepository.currentClassPeriods,
                 appContainer.settingsStore.semesterStartMonday,
-                appContainer.settingsStore.semesterEndDate
-            ) { courses, periods, semesterStart, semesterEnd ->
-                listOf(courses, periods, semesterStart, semesterEnd)
+                appContainer.settingsStore.semesterEndDate,
+                currentSemesterManualDayCopies
+            ) { courses, periods, semesterStart, semesterEnd, manualDayCopies ->
+                listOf(courses, periods, semesterStart, semesterEnd, manualDayCopies)
             }.debounce(500)
                 .collect { ScheduleWidgetUpdater.updateAll(this@ScheduleApplication) }
         }
@@ -96,7 +141,9 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
         ScheduleDatabase.MIGRATION_8_9,
         ScheduleDatabase.MIGRATION_9_10,
         ScheduleDatabase.MIGRATION_10_11,
-        ScheduleDatabase.MIGRATION_11_12
+        ScheduleDatabase.MIGRATION_11_12,
+        ScheduleDatabase.MIGRATION_12_13,
+        ScheduleDatabase.MIGRATION_13_14
     )
      .build()
 
@@ -122,11 +169,9 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
     )
     val remoteArtworkSaver = AndroidRemoteArtworkSaver(application)
     val academicSessionStore = AcademicSessionStore(application)
-    // Nanning parser first: it checks for infolist_common and returns empty
-    // for non-Nanning HTML. Guilin parser handles everything else.
-    val academicScheduleParser = CompositeScheduleParser(
-        listOf(NanningCurrcourseParser(), GlutAcademicScheduleParser())
-    )
+    // 统一导入路径后只解析大节课表，个人课表页退化为「取学号」的一跳，
+    // 因此不再需要按校区路由的 CompositeScheduleParser / NanningCurrcourseParser。
+    val academicScheduleParser: AcademicScheduleParser = GlutAcademicScheduleParser()
     val apiProbeService = ApiProbeService()
     val examParser = GlutExamParser()
     val academicExamService = AcademicExamService(examParser)
@@ -148,7 +193,7 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
             academicSessionStore.authenticatedStudentNumber.first()
                 .ifBlank { credentialStore.getUsername() }
         },
-        download = { semester, session, onProgress ->
+        download = { semester, session ->
             val baseUrl = session.baseUrl.ifBlank {
                 if (semester.campus == com.glut.schedule.data.settings.CampusType.NANNING) {
                     com.glut.schedule.service.academic.AcademicLoginResult.NANNING_URL
@@ -160,12 +205,14 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
                 cookie = session.cookie,
                 baseUrl = baseUrl,
                 semester = semester,
-                studentIdFallback = session.ownerStudentNumber,
-                useWeeklyTimetable = true,
-                onProgress = onProgress
+                studentIdFallback = session.ownerStudentNumber
             )
         },
         commit = { semester, payload ->
+            if (payload.updatedCookie.isNotBlank()) {
+                academicSessionStore.saveCookie(payload.updatedCookie)
+            }
+            // Room 的旧 importMode 列仅为数据库兼容保留，领域层不再参与任何分支。
             scheduleRepository.replaceSemesterSchedule(
                 semester = semester,
                 courses = payload.courses,
@@ -193,4 +240,6 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
     val appUpdater = AppUpdater(application)
     val partnerScheduleStore = PartnerScheduleStore(application)
     val partnerScheduleApiService = PartnerScheduleApiService()
+    // 首页课表角标与学期概览共用同一个客户端与同一份按年缓存，避免两处各自拉取、互相覆盖。
+    val timorHolidayClient = TimorHolidayClient()
 }

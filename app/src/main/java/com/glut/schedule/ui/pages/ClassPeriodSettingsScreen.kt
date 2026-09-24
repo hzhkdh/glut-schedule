@@ -319,30 +319,24 @@ fun ClassPeriodSettingsScreen(
     }
 }
 
-/** 雁山/屏风校区切换 Pill 按钮 */
+/**
+ * 雁山/屏风校区切换 Pill 按钮。
+ *
+ * 视觉实现已提取到 [com.glut.schedule.ui.components.SegmentedPill]，这里保留原函数名与
+ * 调用点，避免为一次抽取改动多处 UI 代码。
+ */
 @Composable
 private fun SubCampusPill(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier.clickable(onClick = onClick),
-        color = if (selected) Color(0xFF3F7DF6) else Color.Transparent,
-        shape = RoundedCornerShape(12.dp),
-        border = if (selected) null else BorderStroke(1.dp, Color(0xFFDDE2EA))
-    ) {
-        Text(
-            text = label,
-            color = if (selected) Color.White else Color(0xFF667085),
-            fontSize = 14.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            textAlign = TextAlign.Center
-        )
-    }
-}
+) = com.glut.schedule.ui.components.SegmentedPill(
+    label = label,
+    selected = selected,
+    onClick = onClick,
+    modifier = modifier
+)
 
 @Composable
 private fun ClassPeriodRow(

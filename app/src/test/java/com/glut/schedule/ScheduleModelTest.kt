@@ -12,6 +12,10 @@ import com.glut.schedule.data.model.defaultClassPeriods
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
+import com.glut.schedule.data.model.offsetSectionForNoon
+import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.SemesterCacheStatus
+import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.CampusType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -182,6 +186,19 @@ class ScheduleModelTest {
     fun occurrenceActiveWeekAcceptsChineseRangeSeparators() {
         assertTrue(occurrenceWithWeek("6－14双周").isActiveInWeek(10))
         assertTrue(occurrenceWithWeek("16—18周").isActiveInWeek(17))
+    }
+
+    @Test
+    fun noonOffsetOnlyAppliesFromPeriodFiveOnwardsAndOnlyWhenNoonExists() {
+        // 桂林「中午1/2」夹在第4节与第5节之间，第 5 节起内部号 +2。
+        // 这条规则由桂林与南宁两条解析路径共用，边界必须锁死，否则任一侧改动都会静默移位。
+        assertEquals(1, offsetSectionForNoon(1, hasNoon = true))
+        assertEquals(4, offsetSectionForNoon(4, hasNoon = true))
+        assertEquals(7, offsetSectionForNoon(5, hasNoon = true))
+        assertEquals(8, offsetSectionForNoon(6, hasNoon = true))
+        // 南宁没有中午时段，节次直排，任何节次都不偏移。
+        assertEquals(5, offsetSectionForNoon(5, hasNoon = false))
+        assertEquals(12, offsetSectionForNoon(12, hasNoon = false))
     }
 
     private fun occurrenceWithWeek(weekText: String): CourseOccurrence {

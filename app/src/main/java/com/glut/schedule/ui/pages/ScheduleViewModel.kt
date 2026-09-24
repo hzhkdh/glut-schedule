@@ -10,13 +10,23 @@ import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.NOON_SECTIONS
 import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.CourseColorMapper
-import com.glut.schedule.data.model.CourseRemark
+import com.glut.schedule.data.model.HiddenCardScope
+import com.glut.schedule.data.model.HiddenCourseRule
+import com.glut.schedule.data.model.ManualDayCopyRule
+import com.glut.schedule.data.model.ScheduleRefreshDiff
+import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.buildScheduleRefreshDiff
+import com.glut.schedule.data.model.applyHiddenCourseRules
+import com.glut.schedule.data.model.hiddenCardCount
+import com.glut.schedule.data.model.hiddenCourseKey
+import com.glut.schedule.data.model.ScheduleBackgroundPreferences
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.DEFAULT_SEMESTER_END_DATE
 import com.glut.schedule.data.model.ScheduleWeek
 import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
 import com.glut.schedule.data.model.NormalizedCropRect
+import com.glut.schedule.data.model.manualCopyBlocksForWeek
 import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.academicMaxWeekForSemester
@@ -39,14 +49,21 @@ import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.AcademicSemesterCalendarResolver
 import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
 import com.glut.schedule.service.academic.ApiProbeService
+import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
+import com.glut.schedule.service.holiday.TimorHolidayClient
+import com.glut.schedule.service.holiday.refreshMissingHolidayYears
 import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.academic.shouldUseExistingAcademicCookie
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -65,8 +82,15 @@ data class ScheduleUiState(
     val classPeriods: List<ClassPeriod> = emptyList(),
     val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>> = emptyMap(),
     val courses: List<ScheduleCourse> = emptyList(),
+    /** 完整课表，**未**剔除用户手动隐藏的卡片。判空态与周次推导用它，渲染用 [courses]。 */
+    val allCourses: List<ScheduleCourse> = emptyList(),
+    /** 当前学期的手动隐藏记录；查看历史学期时恒为空，历史快照不被污染。 */
+    val hiddenCardRules: List<HiddenCourseRule> = emptyList(),
+    /** 真正命中现有课次的隐藏规则数，用于刷新弹窗与设置页上的「N 张」。 */
+    val hiddenCardCount: Int = 0,
+    /** 当前学期 id。隐藏记录按它写入。 */
+    val currentSemesterId: String = "",
     val courseBlocks: List<CourseBlock> = emptyList(),
-    val courseRemarks: List<CourseRemark> = emptyList(),
     val showWeekend: Boolean = false,
     val showNoon: Boolean = false,
     val customBackgroundUri: String = "",
@@ -83,7 +107,40 @@ data class ScheduleUiState(
     val viewedSemester: AcademicSemester? = null,
     val isHistoricalSemester: Boolean = false,
     val hasAuthoritativeCalendar: Boolean = true,
+    /** 法定放假日，供日期栏显示「休」。历史学期不取用，角标依附于当前学期。 */
+    val holidayDates: Set<LocalDate> = emptySet(),
+    /** 当前学期的手动调休调课规则；查看历史学期时恒为空，历史快照不被污染。 */
+    val manualDayCopies: List<ManualDayCopyRule> = emptyList(),
     val isInitialized: Boolean = false
+)
+
+/**
+ * 删除卡片后的一次性撤销提示。
+ *
+ * [previousRules] 是删除前该学期的完整规则列表——撤销就是把它整份写回去，
+ * 比「删掉刚加的那一条」更稳：期间若有别的写入，整份还原也不会留下半截状态。
+ * [id] 用于让界面区分「这是一条新的提示」，避免同一条被重复弹。
+ */
+data class HiddenUndo(
+    val id: Int,
+    val semesterId: String,
+    val previousRules: List<HiddenCourseRule>
+)
+
+/** 刷新前确认弹窗：[count] 是当前真正还藏着的卡片数，勾选框默认保留。 */
+data class RefreshConfirmState(val count: Int)
+
+/**
+ * 设置页「已隐藏的卡片」列表的一行。
+ *
+ * [existsInSchedule] 为 false 表示这条记录对应的课次已经不在当前课表里了（教务改了排课）。
+ * 这类记录我们**有意保留**——课再排回来依然是隐藏的——但界面上要标注出来，
+ * 免得用户看着一条「对不上任何课程」的记录犯迷糊。
+ */
+data class HiddenCardItem(
+    val id: String,
+    val label: String,
+    val existsInSchedule: Boolean
 )
 
 internal fun selectedWeekAfterCalendarRefresh(
@@ -93,6 +150,13 @@ internal fun selectedWeekAfterCalendarRefresh(
 ): Int = clampAcademicWeek(
     selectedWeek,
     academicMaxWeekForCalendar(semesterStartMonday, semesterEndDate)
+)
+
+private data class ScheduleAppearanceSettings(
+    val backgroundPreferences: ScheduleBackgroundPreferences,
+    val campusType: CampusType,
+    val guilinSubCampus: String,
+    val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>>
 )
 
 private data class ScheduleSettingsUiState(
@@ -109,7 +173,9 @@ private data class ScheduleSettingsUiState(
     val backgroundDimAmount: Float,
     val campusType: CampusType,
     val guilinSubCampus: String = GUILIN_SUB_CAMPUS_DEFAULT,
-    val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>> = emptyMap()
+    val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>> = emptyMap(),
+    val holidayDates: Set<LocalDate> = emptySet(),
+    val manualDayCopiesBySemester: Map<String, List<ManualDayCopyRule>> = emptyMap()
 )
 
 private data class ScheduleCalendarSettings(
@@ -120,10 +186,29 @@ private data class ScheduleCalendarSettings(
     val semesterEndDate: LocalDate
 )
 
+/**
+ * 配色与过滤的结果。
+ *
+ * [allCourses] 是完整课表，[visibleCourses] 是剔除用户手动隐藏之后的展示口径，两者必须分开：
+ * 判空态、推导最大周次、算「隐藏了几张」都要用完整列表，否则用户把某周的课全隐藏之后，
+ * 首页会从「有课表」变成「还没有课表」。
+ */
 private data class ColoredCoursesState(
-    val courses: List<ScheduleCourse>,
+    val allCourses: List<ScheduleCourse>,
+    val visibleCourses: List<ScheduleCourse>,
     val overrides: Map<String, String>,
-    val remarks: List<CourseRemark>
+    val hiddenRules: List<HiddenCourseRule>
+)
+
+/**
+ * 日期栏角标所需的附加数据。
+ *
+ * 与课程数据分开聚合：节假日缓存的更新频率远低于课表，混进主 combine 会让
+ * 每次节假日落盘都重建一遍课程块。
+ */
+private data class ScheduleCalendarExtras(
+    val holidayDates: Set<LocalDate>,
+    val manualDayCopiesBySemester: Map<String, List<ManualDayCopyRule>>
 )
 
 class ScheduleViewModel(
@@ -132,14 +217,52 @@ class ScheduleViewModel(
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
     private val semesterImportService: AcademicSemesterImportService,
-    private val apiProbeService: ApiProbeService
+    private val apiProbeService: ApiProbeService,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
 ) : ViewModel() {
     val uiState: StateFlow<ScheduleUiState>
     private var initialWeekSet = false
     private val isRefreshing = MutableStateFlow(false)
     private val refreshGuard = SingleFlightGuard()
+    private val holidayFetchGuard = SingleFlightGuard()
     private val message = MutableStateFlow("")
     private val needsInteractiveLogin = MutableStateFlow(false)
+
+    /**
+     * 删除卡片后的一次性撤销提示。
+     *
+     * 单独一个 Flow 而不是塞进 `ScheduleUiState`：那个 state 已经是一个 5 路 combine，
+     * 再加一路会牵动整个 copy 链路；而且撤销提示本来就该是「一次性事件」，不适合常驻状态。
+     */
+    private val _hiddenUndo = MutableStateFlow<HiddenUndo?>(null)
+    val hiddenUndo: StateFlow<HiddenUndo?> = _hiddenUndo.asStateFlow()
+    private var hiddenUndoSequence = 0
+
+    /** 刷新前确认弹窗的状态；为空表示不需要弹（没藏着卡片，或用户已处理）。 */
+    private val _refreshConfirm = MutableStateFlow<RefreshConfirmState?>(null)
+    val refreshConfirm: StateFlow<RefreshConfirmState?> = _refreshConfirm.asStateFlow()
+
+    /**
+     * 本次刷新的变化明细；为空表示没有变化（或提示已被消除）。
+     *
+     * 与 `_refreshConfirm` 一样单独开一个 Flow：`ScheduleUiState` 的 combine 已经排满，
+     * 而这批数据的消费方只有首页一个。
+     */
+    private val _refreshDiff = MutableStateFlow<ScheduleRefreshDiff?>(null)
+    val refreshDiff: StateFlow<ScheduleRefreshDiff?> = _refreshDiff.asStateFlow()
+
+    /** 刷新开始时记下的旧课表，供保存成功后比对。 */
+    private var refreshBaseCourses: List<ScheduleCourse> = emptyList()
+
+    /**
+     * 正在查看的学期的教务调课记录，用于给卡片打「调」/「补」角标。
+     *
+     * 单独一个 Flow 而不是并进 `ScheduleUiState`：那个 state 的 combine 已经排满五路，
+     * 再加一路要牵动整条 copy 链路，而这批数据的消费方只有课表网格一个。
+     * 历史学期同样有记录（快照里存着），所以这里不做学期过滤——网格自己会按周次匹配。
+     */
+    val semesterAdjustments: StateFlow<List<SemesterAdjustment>> = repository.semesterAdjustments
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     init {
         val initialWeek = scheduleWeekForNumber(
@@ -149,6 +272,16 @@ class ScheduleViewModel(
 
         viewModelScope.launch {
             repository.seedIfEmpty()
+        }
+
+        val calendarExtrasState = combine(
+            holidayDatesFlow(),
+            settingsStore.manualDayCopies
+        ) { holidayDates, manualDayCopies ->
+            ScheduleCalendarExtras(
+                holidayDates = holidayDates,
+                manualDayCopiesBySemester = manualDayCopies
+            )
         }
 
         val settingsState = combine(
@@ -167,40 +300,67 @@ class ScheduleViewModel(
                     semesterEndDate = semesterEndDate
                 )
             },
-            settingsStore.backgroundPreferences,
-            settingsStore.campusType,
-            settingsStore.guilinSubCampus,
-            settingsStore.classPeriodProfileOverrides
-        ) { base, backgroundPreferences, campusType, guilinSubCampus, profileOverrides ->
+            combine(
+                settingsStore.backgroundPreferences,
+                settingsStore.campusType,
+                settingsStore.guilinSubCampus,
+                settingsStore.classPeriodProfileOverrides
+            ) { backgroundPreferences, campusType, guilinSubCampus, profileOverrides ->
+                ScheduleAppearanceSettings(
+                    backgroundPreferences = backgroundPreferences,
+                    campusType = campusType,
+                    guilinSubCampus = guilinSubCampus,
+                    classPeriodProfileOverrides = profileOverrides
+                )
+            },
+            calendarExtrasState
+        ) { base, appearance, extras ->
             ScheduleSettingsUiState(
                 weekNumber = base.weekNumber,
                 showWeekend = base.showWeekend,
                 showNoon = base.showNoon,
                 semesterStartMonday = base.semesterStartMonday,
                 semesterEndDate = base.semesterEndDate,
-                customBackgroundUri = backgroundPreferences.uri,
-                customBackgroundCrop = backgroundPreferences.crop,
-                remoteBackgroundId = backgroundPreferences.remoteId,
-                remoteBackgroundSha256 = backgroundPreferences.remoteSha256,
-                remoteBackgroundDisplayName = backgroundPreferences.remoteDisplayName,
-                backgroundDimAmount = backgroundPreferences.dimAmount,
-                campusType = campusType,
-                guilinSubCampus = guilinSubCampus,
-                classPeriodProfileOverrides = profileOverrides
+                customBackgroundUri = appearance.backgroundPreferences.uri,
+                customBackgroundCrop = appearance.backgroundPreferences.crop,
+                remoteBackgroundId = appearance.backgroundPreferences.remoteId,
+                remoteBackgroundSha256 = appearance.backgroundPreferences.remoteSha256,
+                remoteBackgroundDisplayName = appearance.backgroundPreferences.remoteDisplayName,
+                backgroundDimAmount = appearance.backgroundPreferences.dimAmount,
+                campusType = appearance.campusType,
+                guilinSubCampus = appearance.guilinSubCampus,
+                classPeriodProfileOverrides = appearance.classPeriodProfileOverrides,
+                holidayDates = extras.holidayDates,
+                manualDayCopiesBySemester = extras.manualDayCopiesBySemester
             )
         }
 
         val coloredCoursesState = combine(
             repository.courses,
             settingsStore.courseColorOverrides,
-            repository.courseRemarks
-        ) { courses, overrides, remarks ->
+            settingsStore.hiddenCourseRules,
+            repository.viewedSemester,
+            repository.semesters
+        ) { courses, overrides, hiddenRulesBySemester, viewedSemester, semesters ->
+            // 调休规则与隐藏记录都只作用于当前学期：历史学期是只读快照，
+            // 拿当前学期的记录去过滤历史课表会把不相关的卡片整片抹掉。
+            val isHistorical = viewedSemester != null && !viewedSemester.isCurrent
+            val currentSemesterId = semesters.firstOrNull { it.isCurrent }?.id.orEmpty()
+            val hiddenRules = if (isHistorical) {
+                emptyList()
+            } else {
+                hiddenRulesBySemester[currentSemesterId].orEmpty()
+            }
+            // 顺序是「先配色、后过滤」，不能颠倒：assignColors 按输入顺序占位并做相邻颜色避让，
+            // 先过滤会释放调色板索引、让其余可见课程跟着换色 —— 用户删一张卡却看到别的卡变色。
+            val colored = kotlinx.coroutines.withContext(Dispatchers.Default) {
+                CourseColorMapper.assignColors(courses, overrides)
+            }
             ColoredCoursesState(
-                courses = kotlinx.coroutines.withContext(Dispatchers.Default) {
-                    CourseColorMapper.assignColors(courses, overrides)
-                },
+                allCourses = colored,
+                visibleCourses = applyHiddenCourseRules(colored, hiddenRules),
                 overrides = overrides,
-                remarks = remarks
+                hiddenRules = hiddenRules
             )
         }
 
@@ -223,7 +383,8 @@ class ScheduleViewModel(
             val maxAcademicWeek = academicMaxWeekForSemester(
                 isCurrentSemester = !isHistorical,
                 portalMaxWeek = viewedSemester?.portalMaxWeek,
-                courses = coloredState.courses,
+                // 推导最大周次必须用完整课表：过滤后的列表会让历史学期被截短。
+                courses = coloredState.allCourses,
                 semesterStartMonday = normalizedStart,
                 semesterEndDate = resolvedEnd
             )
@@ -238,7 +399,14 @@ class ScheduleViewModel(
                 correctedWeek
             }
             val today = LocalDate.now()
-            val coloredCourses = coloredState.courses
+            val visibleCourses = coloredState.visibleCourses
+            // 调休调课只作用于当前学期：历史学期是只读快照，当前学期的规则不得渗进去。
+            val currentSemesterId = semesters.firstOrNull { it.isCurrent }?.id.orEmpty()
+            val manualDayCopies = if (isHistorical) {
+                emptyList()
+            } else {
+                settings.manualDayCopiesBySemester[currentSemesterId].orEmpty()
+            }
             ScheduleUiState(
                 week = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek),
                 today = today,
@@ -250,22 +418,26 @@ class ScheduleViewModel(
                 guilinSubCampus = settings.guilinSubCampus,
                 classPeriods = periods,
                 classPeriodProfileOverrides = settings.classPeriodProfileOverrides,
-                courses = coloredCourses,
-                courseBlocks = coloredCourses.flatMap { course ->
+                courses = visibleCourses,
+                allCourses = coloredState.allCourses,
+                hiddenCardRules = coloredState.hiddenRules,
+                // 只统计「确实命中现有课次」的规则，避免弹窗写「保留了 8 张」却一张都看不见。
+                hiddenCardCount = hiddenCardCount(coloredState.allCourses, coloredState.hiddenRules),
+                currentSemesterId = currentSemesterId,
+                courseBlocks = visibleCourses.flatMap { course ->
                     course.occurrences
                         .filter { occurrence -> occurrence.isActiveInWeek(clampedWeekNumber) }
                         .map { occurrence ->
-                            CourseBlock(
-                                course = course,
-                                occurrence = occurrence,
-                                remark = coloredState.remarks.firstOrNull {
-                                    it.courseId == course.id && it.occurrenceId == occurrence.id &&
-                                        it.weekNumber == clampedWeekNumber
-                                }?.text
-                            )
+                            CourseBlock(course = course, occurrence = occurrence)
                         }
-                },
-                courseRemarks = coloredState.remarks,
+                } + manualCopyBlocksForWeek(
+                    courses = visibleCourses,
+                    rules = manualDayCopies,
+                    weekNumber = clampedWeekNumber,
+                    weekMonday = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek).monday
+                ),
+                holidayDates = if (isHistorical) emptySet() else settings.holidayDates,
+                manualDayCopies = manualDayCopies,
                 showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
                 customBackgroundUri = settings.customBackgroundUri,
@@ -392,29 +564,84 @@ class ScheduleViewModel(
         viewModelScope.launch { settingsStore.clearCourseColorOverrides() }
     }
 
-    fun saveCourseRemark(block: CourseBlock, weekNumber: Int, text: String) {
-        val semesterId = uiState.value.viewedSemester?.id ?: return
+    // ---- 手动隐藏卡片 ----
+
+    /**
+     * 隐藏一张卡片。
+     *
+     * 三档都落成同一种记录，只是键的精度不同：整门课只看课程名，这个课次带 (星期, 起止节)，
+     * 本周这次再带上周次。写入前重新读一次最新列表，避免连续快速删除时基于旧列表互相覆盖
+     * （与 [HolidayAdjustmentsViewModel.addRule] 同一套做法）。
+     */
+    fun hideCard(block: CourseBlock, scope: HiddenCardScope) {
+        val state = uiState.value
+        if (state.isHistoricalSemester) return
+        val semesterId = state.semesters.firstOrNull { it.isCurrent }?.id ?: return
+        val rule = HiddenCourseRule(
+            scope = scope,
+            courseKey = hiddenCourseKey(block.course.id, block.course.title),
+            dayOfWeek = block.occurrence.dayOfWeek,
+            startSection = block.occurrence.startSection,
+            endSection = block.occurrence.endSection,
+            week = if (scope == HiddenCardScope.WEEK) state.week.number else 0
+        )
         viewModelScope.launch {
-            repository.saveCourseRemark(
+            val latest = settingsStore.hiddenCourseRules.first()[semesterId].orEmpty()
+            if (latest.any { it.id == rule.id }) return@launch
+            settingsStore.setHiddenCourseRules(semesterId, latest + rule)
+            _hiddenUndo.value = HiddenUndo(
+                id = ++hiddenUndoSequence,
                 semesterId = semesterId,
-                courseId = block.course.id,
-                occurrenceId = block.occurrence.id,
-                weekNumber = weekNumber,
-                text = text
+                previousRules = latest
             )
         }
     }
 
-    fun deleteCourseRemark(block: CourseBlock, weekNumber: Int) {
-        val semesterId = uiState.value.viewedSemester?.id ?: return
+    /** 撤销上一次隐藏：把该学期的规则整份还原成删除前的样子。 */
+    fun undoHideCards() {
+        val undo = _hiddenUndo.value ?: return
+        _hiddenUndo.value = null
         viewModelScope.launch {
-            repository.deleteCourseRemark(
-                semesterId = semesterId,
-                courseId = block.course.id,
-                occurrenceId = block.occurrence.id,
-                weekNumber = weekNumber
-            )
+            settingsStore.setHiddenCourseRules(undo.semesterId, undo.previousRules)
         }
+    }
+
+    fun clearHiddenUndo() {
+        _hiddenUndo.value = null
+    }
+
+    // ---- 刷新确认 ----
+
+    /**
+     * 刷新入口。
+     *
+     * 只有「当前学期确实还藏着卡片」时才先问一句；否则原样走 [refreshSchedule]，
+     * 刷新流程与之前完全一致，不用为没用过删除功能的人平白加一步。
+     */
+    fun requestRefresh() {
+        val state = uiState.value
+        if (state.isHistoricalSemester || state.hiddenCardCount <= 0) {
+            refreshSchedule()
+            return
+        }
+        _refreshConfirm.value = RefreshConfirmState(count = state.hiddenCardCount)
+    }
+
+    /**
+     * 确认刷新。`keepHidden = false` 表示这次刷新要把隐藏记录一并清掉（等于全部恢复）：
+     * 先落库再刷新，隐藏的卡片会立刻回到课表上。
+     */
+    fun confirmRefresh(keepHidden: Boolean) {
+        _refreshConfirm.value = null
+        val semesterId = uiState.value.semesters.firstOrNull { it.isCurrent }?.id.orEmpty()
+        if (!keepHidden && semesterId.isNotBlank()) {
+            viewModelScope.launch { settingsStore.clearHiddenCourseRules(semesterId) }
+        }
+        refreshSchedule()
+    }
+
+    fun dismissRefreshConfirm() {
+        _refreshConfirm.value = null
     }
 
     fun setClassPeriods(profile: ClassPeriodProfile, periods: List<ClassPeriod>) {
@@ -450,8 +677,14 @@ class ScheduleViewModel(
         viewModelScope.launch {
             message.value = "正在刷新课表..."
             needsInteractiveLogin.value = false
+            // 用户主动刷新时顺带补齐节假日数据。与教务导入互不依赖：
+            // 即使下面登录 / 抓取失败，节假日也已经更新过了。
+            refreshHolidayYears()
             try {
-                val oldCourseCount = repository.courses.first().countDistinctCourseTitles()
+                // 除了门数，还要把完整旧课表留下来算差异明细（对齐小程序的刷新反馈）。
+                val oldCourses = repository.courses.first()
+                refreshBaseCourses = oldCourses
+                val oldCourseCount = oldCourses.countDistinctCourseTitles()
                 val existingCookie = sessionStore.academicCookie.first()
                 var refreshCookie = existingCookie
                 var importResult: Result<AcademicSemesterImportPayload>? = null
@@ -527,11 +760,7 @@ class ScheduleViewModel(
             cookie = cookie,
             baseUrl = campusBaseUrl,
             semester = targetSemester,
-            studentIdFallback = studentId,
-            useWeeklyTimetable = true,
-            onProgress = { completed, total ->
-                message.value = "正在刷新${targetSemester.displayName}（第${completed}/${total}周）..."
-            }
+            studentIdFallback = studentId
         )
     }
 
@@ -583,11 +812,33 @@ class ScheduleViewModel(
             )
         )
         val newCourseCount = payload.courses.countDistinctCourseTitles()
-        message.value = if (newCourseCount != oldCourseCount) {
+        val completionMessage = if (newCourseCount != oldCourseCount) {
             "${targetSemester.displayName}课表已更新：$oldCourseCount → $newCourseCount 门课程"
         } else {
             "${targetSemester.displayName}课表未发生变化（$newCourseCount 门课程）"
         }
+        // 有变化时改用明细卡片说明（与小程序同构），Snackbar 只留下异常行提示，
+        // 免得同一件事在两处各说一遍。没变化时保持原来那条简短提示。
+        val diff = buildScheduleRefreshDiff(refreshBaseCourses, payload.courses)
+        refreshBaseCourses = emptyList()
+        if (diff.hasChanges) {
+            _refreshDiff.value = diff
+            message.value = if (payload.skippedRowCount > 0) {
+                "已跳过 ${payload.skippedRowCount} 条异常课程记录"
+            } else {
+                ""
+            }
+        } else {
+            message.value = if (payload.skippedRowCount > 0) {
+                "$completionMessage；已跳过 ${payload.skippedRowCount} 条异常课程记录"
+            } else {
+                completionMessage
+            }
+        }
+    }
+
+    fun clearRefreshDiff() {
+        _refreshDiff.value = null
     }
 
     private fun isAuthenticationFailure(error: Throwable?): Boolean =
@@ -597,6 +848,40 @@ class ScheduleViewModel(
         val detail = error?.message.orEmpty().ifBlank { "未获取到课表数据" }
         return "${semester.displayName}刷新失败：$detail"
     }
+
+    /**
+     * 补齐当前学期跨越年份的节假日数据。
+     *
+     * **只在用户点「刷新」时调用**：没有定时、也没有启动时请求——用户没主动更新数据时，
+     * App 一次都不该打 timor 接口。用户刷新后即使 2027 仍未公布，也只是这次白跑一趟，
+     * 下次刷新会再问；缓存里的坏数据由读闸门剔除，不会让「已缓存」的假象挡住重试。
+     */
+    private suspend fun refreshHolidayYears() {
+        if (!holidayFetchGuard.tryStart()) return
+        try {
+            val years = settingsStore.semesterStartMonday.first().year..
+                settingsStore.semesterEndDate.first().year
+            if (years.isEmpty()) return
+            refreshMissingHolidayYears(
+                client = timorHolidayClient,
+                years = years,
+                // holidayCacheByYear 已过读闸门：被污染的年份在这里就是「缺失」。
+                cachedYears = settingsStore.holidayCacheByYear.first(),
+                saveYear = settingsStore::setHolidayYearCache
+            )
+        } finally {
+            holidayFetchGuard.finish()
+        }
+    }
+
+    private fun holidayDatesFlow(): Flow<Set<LocalDate>> =
+        settingsStore.holidayCacheByYear
+            .map { cache ->
+                cache.entries.flatMapTo(mutableSetOf()) { (year, json) ->
+                    TimorHolidayCalendarParser.parse(json, year)?.holidayDates.orEmpty()
+                }
+            }
+            .distinctUntilChanged()
 
     fun clearMessage() {
         message.value = ""
@@ -620,7 +905,8 @@ class ScheduleViewModelFactory(
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
     private val semesterImportService: AcademicSemesterImportService,
-    private val apiProbeService: ApiProbeService
+    private val apiProbeService: ApiProbeService,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -630,7 +916,8 @@ class ScheduleViewModelFactory(
             sessionStore,
             loginService,
             semesterImportService,
-            apiProbeService
+            apiProbeService,
+            timorHolidayClient
         ) as T
     }
 }

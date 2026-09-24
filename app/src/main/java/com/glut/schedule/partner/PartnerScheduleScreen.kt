@@ -93,6 +93,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.glut.schedule.data.model.periodLabel
 import com.glut.schedule.data.model.scheduleWeekForNumber
@@ -108,9 +110,15 @@ import com.glut.schedule.ui.components.courseCardTeacherTextSize
 import com.glut.schedule.ui.components.courseCardTitleLineHeight
 import com.glut.schedule.ui.components.courseCardTitleMaxLines
 import com.glut.schedule.ui.components.courseCardTitleTextSize
+import java.time.Duration
+import java.time.Instant
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+
+/** 到点等待的分段长度：见下方 `LaunchedEffect` 里对 Doze 的说明。 */
+private const val INVITE_EXPIRY_POLL_MILLIS = 60_000L
 
 @Composable
 fun PartnerScheduleScreen(
@@ -118,7 +126,8 @@ fun PartnerScheduleScreen(
     customBackgroundUri: String,
     customBackgroundBitmap: ImageBitmap?,
     backgroundDimAmount: Float,
-    onDrawerOpen: () -> Unit
+    onDrawerOpen: () -> Unit,
+    onInviteExpired: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showManage by remember { mutableStateOf(false) }
@@ -132,6 +141,28 @@ fun PartnerScheduleScreen(
             viewModel.clearMessage()
         }
     }
+
+    // 邀请码到点自动撤销。定时器只活在页面组合期间：协程随组合销毁自动取消，
+    // 离开页面不留任何悬挂任务（把定时器放进 Application 级的 Store 反而永远无法回收）。
+    val inviteExpiresAt = state.activeInvite?.expiresAt
+    LaunchedEffect(inviteExpiresAt) {
+        if (inviteExpiresAt == null) return@LaunchedEffect
+        while (true) {
+            // 分段等待而不是一次 delay 到点：设备进 Doze / 被系统冻结时 delay 会被拉长，
+            // 醒来后按剩余时间重新算一次，才不会因为一次长睡错过到点。
+            val remaining = runCatching {
+                Duration.between(Instant.now(), Instant.parse(inviteExpiresAt)).toMillis()
+            }.getOrNull() ?: return@LaunchedEffect
+            if (remaining <= 0L) {
+                onInviteExpired()
+                return@LaunchedEffect
+            }
+            delay(minOf(remaining, INVITE_EXPIRY_POLL_MILLIS) + 1L)
+        }
+    }
+
+    // 覆盖「退到后台期间跨过过期时刻」：回到前台立刻补判一次，不必等下一段 delay。
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { onInviteExpired() }
 
     Box(modifier = Modifier.fillMaxSize()) {
         ScheduleBackgroundImage(

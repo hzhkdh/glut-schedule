@@ -33,7 +33,7 @@ class AcademicSessionStore(
     }
 
     val campusBaseUrl: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
-        preferences[campusUrlKey].orEmpty()
+        AcademicUrlPolicy.normalizeCampusBaseUrl(preferences[campusUrlKey].orEmpty())
     }
 
     val authenticatedStudentNumber: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
@@ -64,7 +64,7 @@ class AcademicSessionStore(
 
     suspend fun saveCampusBaseUrl(url: String) {
         context.academicSessionDataStore.edit { preferences ->
-            preferences[campusUrlKey] = url
+            preferences[campusUrlKey] = AcademicUrlPolicy.normalizeCampusBaseUrl(url)
         }
     }
 

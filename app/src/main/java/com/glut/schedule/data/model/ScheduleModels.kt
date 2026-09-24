@@ -118,6 +118,37 @@ data class CourseOccurrence(
         get() = endSection - startSection + 1
 }
 
+/**
+ * 教务原始节次号 → 内部节次号。
+ *
+ * 桂林在「第4节」与「第5节」之间夹了「中午1/中午2」两个时段，因此第 5 节起的内部号要 +2；
+ * 南宁没有中午时段，节次直排。
+ *
+ * 桂林与南宁的解析路径必须共用这一条规则。两条路径各写一份时，其中一条漏掉偏移，
+ * 会把「第5、6节」算成内部 5/6——正好是中午的两个槽位，关闭「显示中午」后整门课不显示。
+ */
+fun offsetSectionForNoon(section: Int, hasNoon: Boolean): Int =
+    if (hasNoon && section >= 5) section + 2 else section
+
+/**
+ * 教室文本的匹配键：去掉全部空白并转大写。
+ *
+ * **不做包含/前缀等模糊匹配**——那会把 06105D 与 06106D 这类相邻教室混为一谈。
+ * 全仓只保留这一份实现（与小程序 `utils/parser.js` 的 `normalizeRoomText` 同口径）：
+ * 「同一规则各写一份」已经在南宁/桂林解析器与中午节次偏移上踩过两次坑。
+ */
+internal fun normalizeRoomKey(value: String): String =
+    value.filterNot { it.isWhitespace() }.uppercase()
+
+/**
+ * 课程名的匹配键：去掉全部空白。
+ *
+ * 教务课名里会带空格（如「大学英语 4」），不同页面的空格数不一定一致，
+ * 只 trim 会让「同一门课」在两页之间匹配不上。
+ */
+internal fun normalizeTitleKey(value: String): String =
+    value.filterNot { it.isWhitespace() }
+
 fun CourseOccurrence.isActiveInWeek(weekNumber: Int): Boolean {
     return isWeekTextActive(weekText, clampAcademicWeek(weekNumber))
 }
@@ -126,15 +157,30 @@ fun isWeekTextActive(weekText: String, weekNumber: Int): Boolean {
     return weekNumber in academicWeeksForText(weekText)
 }
 
+/**
+ * 周次文本归一化：去掉「第」与空白，并把全角列表分隔符统一成半角。
+ * 由 [academicWeeksForText] 与 [isAllWeeksText] 共用，避免两处判断口径漂移。
+ */
+private fun normalizeWeekText(weekText: String): String = weekText
+    .replace("第", "")
+    .replace(" ", "")
+    .replace("，", ",")
+    .replace("、", ",")
+    .replace("；", ",")
+    .replace(";", ",")
+    .trim()
+
+/**
+ * 是否「显式表示整学期」。
+ *
+ * 只有空文本与「全周」才算真正的全周——其余任何无法识别的文本都必须与它区分开，
+ * 否则「解析失败」会被当成「每周都有课」。
+ */
+fun isAllWeeksText(weekText: String): Boolean =
+    normalizeWeekText(weekText).let { it.isBlank() || it == "全周" }
+
 fun academicWeeksForText(weekText: String, maxWeek: Int = 22): List<Int> {
-    val normalized = weekText
-        .replace("第", "")
-        .replace(" ", "")
-        .replace("，", ",")
-        .replace("、", ",")
-        .replace("；", ",")
-        .replace(";", ",")
-        .trim()
+    val normalized = normalizeWeekText(weekText)
 
     if (maxWeek < 1) return emptyList()
     if (normalized.isBlank() || normalized == "全周") return (1..maxWeek).toList()
@@ -163,8 +209,25 @@ fun academicWeeksForText(weekText: String, maxWeek: Int = 22): List<Int> {
             .filter { !requiresOdd || it % 2 == 1 }
             .filter { !requiresEven || it % 2 == 0 }
     }
-    return (parsed.ifEmpty { (1..maxWeek).toList() }).distinct().sorted()
+    // 不再把解析失败兜底成「全周」。教务字段格式一旦变化——例如实验课块里的课序字段
+    // 「2-1」被当成周次——静默回退会让整门课在每一周都显示，用户看到的是「错误的
+    // 数据」而不是一个「错误」。这里返回空列表，由 countUnparsedWeekTexts 如实上报。
+    return parsed.distinct().sorted()
 }
+
+/**
+ * 统计无法识别周次的课次数量。
+ *
+ * 这些课次不会出现在任何一周里。导入完成后必须把条数反馈给用户，否则表现就是
+ * 「课程莫名其妙少了几门」，无从排查。
+ */
+fun countUnparsedWeekTexts(courses: List<ScheduleCourse>): Int =
+    courses.sumOf { course ->
+        course.occurrences.count { occurrence ->
+            !isAllWeeksText(occurrence.weekText) &&
+                academicWeeksForText(occurrence.weekText).isEmpty()
+        }
+    }
 
 data class ScheduleCourse(
     val id: String,
@@ -190,19 +253,31 @@ fun Iterable<ScheduleCourse>.countDistinctCourseTitles(): Int =
         .distinct()
         .count()
 
-fun historicalAcademicMaxWeek(
-    portalMaxWeek: Int?,
-    courses: List<ScheduleCourse>
-): Int {
-    val derivedMaxWeek = courses.asSequence()
+/**
+ * 从课次周次文本反推学期最大周次；课次里一个周次数字都没有时返回 null。
+ *
+ * 门户周次列表（`portalMaxWeek`）之外的唯一来源：模式2（纯个人课表）不请求周次课表落地页，
+ * 拿不到门户值，只能靠它。全仓只保留这一份反推实现——历史上「同一规则各写一份」已经
+ * 让本仓库两次踩坑（南宁/桂林解析器、中午节次偏移）。
+ *
+ * 反推值按构造不小于任何单个课次的周次，因此把它当作上界去 clamp 不会丢失课次。
+ */
+fun derivedAcademicMaxWeek(courses: List<ScheduleCourse>): Int? =
+    courses.asSequence()
         .flatMap { it.occurrences.asSequence() }
         .flatMap { occurrence ->
             Regex("""\d{1,2}""").findAll(occurrence.weekText)
                 .mapNotNull { it.value.toIntOrNull() }
         }
         .maxOrNull()
-        ?: 20
-    return (portalMaxWeek ?: derivedMaxWeek).coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
+
+fun historicalAcademicMaxWeek(
+    portalMaxWeek: Int?,
+    courses: List<ScheduleCourse>
+): Int {
+    // 门户周次列表优先；拿不到（模式2 或旧缓存）退回反推；再拿不到才兜底 20。
+    return (portalMaxWeek ?: derivedAcademicMaxWeek(courses) ?: 20)
+        .coerceIn(MIN_ACADEMIC_WEEK, MAX_ACADEMIC_WEEK)
 }
 
 fun academicMaxWeekForSemester(
@@ -221,38 +296,8 @@ fun academicMaxWeekForSemester(
 
 data class CourseBlock(
     val course: ScheduleCourse,
-    val occurrence: CourseOccurrence,
-    val remark: String? = null
+    val occurrence: CourseOccurrence
 )
-
-data class CourseRemark(
-    val semesterId: String,
-    val courseId: String,
-    val occurrenceId: String,
-    val weekNumber: Int,
-    val text: String,
-    val updatedAtEpochMillis: Long
-)
-
-fun String.takeUnicodeCodePoints(maximum: Int): String {
-    if (maximum <= 0) return ""
-    val count = codePointCount(0, length)
-    if (count <= maximum) return this
-    return substring(0, offsetByCodePoints(0, maximum))
-}
-
-fun String.limitCourseRemarkInput(
-    maximumCodePoints: Int = 80,
-    maximumLines: Int = 3
-): String {
-    val normalizedLines = replace("\r\n", "\n").replace('\r', '\n')
-        .split('\n')
-        .take(maximumLines.coerceAtLeast(1))
-        .joinToString("\n")
-    return normalizedLines.takeUnicodeCodePoints(maximumCodePoints)
-}
-
-fun String.normalizedCourseRemark(): String = limitCourseRemarkInput().trim()
 
 fun defaultClassPeriods(): List<ClassPeriod> = guilinClassPeriods()
 

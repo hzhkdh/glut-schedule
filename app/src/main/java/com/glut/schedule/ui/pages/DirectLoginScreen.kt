@@ -1,5 +1,6 @@
 package com.glut.schedule.ui.pages
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +30,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -146,9 +148,10 @@ fun DirectLoginScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            // Campus selector
+            // 校区在前、线路在后：先确定「登哪个校区的教务」，再决定「用哪条线路导」。
+            // 校区开关刻意不加说明文字——「南宁分校」四个字已经讲清开启态，关闭态取默认。
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -167,6 +170,11 @@ fun DirectLoginScreen(
                 )
             }
 
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // 导入线路选择已移除：统一只抓大节课表，没有可选项，也就没有那两个
+            // 「标签在左、控件在右」的一行。这里保留间距，让登录按钮与上方开关的距离
+            // 与改动前一致。
             Spacer(modifier = Modifier.height(20.dp))
 
             // Login button
@@ -270,11 +278,11 @@ private fun SemesterManagementSection(
         selectedSemester.cacheStatus == SemesterCacheStatus.FAILED -> "重新下载"
         else -> "下载并缓存"
     }
-    val bulkCandidates = semesters.count { semester ->
-        !semester.isCurrent &&
-            (semester.cacheStatus == SemesterCacheStatus.NOT_CACHED ||
-                semester.cacheStatus == SemesterCacheStatus.FAILED)
-    }
+    // 「全部下载」按下的语义是**全部重新下载**（协调器 startAll 同样不看 cacheStatus），
+    // 所以这里数的是「有几个历史学期」，不是「有几个待下载」。
+    // 数待下载会造成：历史学期一旦全部缓存，按钮就变成一条灰底状态说明，用户读成「按钮没了」。
+    // 只有「一个历史学期都没有」时按钮才该置灰——那时它确实无事可做。
+    val historicalSemesterCount = semesters.count { semester -> !semester.isCurrent }
     val completedItems = downloadState.items.count { item ->
         item.status == SemesterDownloadItemStatus.SUCCEEDED ||
             item.status == SemesterDownloadItemStatus.FAILED
@@ -290,7 +298,7 @@ private fun SemesterManagementSection(
         )
         Button(
             onClick = onDownloadAll,
-            enabled = !anyDownloadRunning && bulkCandidates > 0,
+            enabled = !anyDownloadRunning && historicalSemesterCount > 0,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = LoginAccent,
@@ -300,10 +308,11 @@ private fun SemesterManagementSection(
             ),
             shape = RoundedCornerShape(12.dp)
         ) {
+            // 文案恒为「全部下载」：不再因为「历史学期均已缓存」而改名，
+            // 否则按钮看起来像被一条状态说明取代了（与小程序 import.wxml 的写法一致）。
             val text = when {
                 downloadState.isRunning && downloadState.mode != SemesterDownloadMode.SINGLE ->
                     "已完成 $completedItems/${downloadState.items.size}"
-                bulkCandidates == 0 -> "历史学期均已缓存"
                 else -> "全部下载"
             }
             Text(text, fontWeight = FontWeight.SemiBold)
@@ -323,7 +332,9 @@ private fun SemesterManagementSection(
                         ) {
                             Text(item.displayName, color = LoginPrimary, fontSize = 12.sp, modifier = Modifier.weight(1f))
                             Text(
-                                if (item.status == SemesterDownloadItemStatus.SUCCEEDED) "已完成" else "失败",
+                                if (item.status == SemesterDownloadItemStatus.SUCCEEDED) {
+                                    if (item.skippedRowCount > 0) "已完成，跳过${item.skippedRowCount}条" else "已完成"
+                                } else "失败",
                                 color = if (item.status == SemesterDownloadItemStatus.SUCCEEDED) Color(0xFF15803D) else Color(0xFFDC2626),
                                 fontSize = 12.sp
                             )
@@ -360,7 +371,8 @@ private fun SemesterManagementSection(
             )
             ExposedDropdownMenu(
                 expanded = expanded,
-                onDismissRequest = { expanded = false }
+                onDismissRequest = { expanded = false },
+                containerColor = LoginCardBg
             ) {
                 semesters.forEach { semester ->
                     val status = when {
@@ -381,6 +393,7 @@ private fun SemesterManagementSection(
                             selectedSemesterId = semester.id
                             expanded = false
                         },
+                        colors = MenuDefaults.itemColors(textColor = LoginPrimary),
                         modifier = Modifier.heightIn(min = 48.dp)
                     )
                 }
@@ -416,6 +429,8 @@ private fun SemesterManagementSection(
             ) {
                 Text("重新下载", color = LoginAccent, fontWeight = FontWeight.SemiBold)
             }
+            // 原先这里有一行「该学期原用模式X缓存，重下将改用模式Y」的提示。导入线路已统一，
+            // 重下不再改变取值口径，提示随之删除。
         }
     }
 }

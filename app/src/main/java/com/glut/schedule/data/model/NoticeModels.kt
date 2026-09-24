@@ -16,7 +16,8 @@ data class NoticeInfo(
     val publishedAt: LocalDate,
     val expiresAt: LocalDate?,
     val url: String,
-    val attachments: List<NoticeAttachment> = emptyList()
+    val attachments: List<NoticeAttachment> = emptyList(),
+    val popup: Boolean = true
 )
 
 fun hasUnreadNotices(

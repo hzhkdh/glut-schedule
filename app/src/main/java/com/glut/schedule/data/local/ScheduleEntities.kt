@@ -1,5 +1,6 @@
 package com.glut.schedule.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -33,7 +34,14 @@ data class AcademicSemesterEntity(
     val importedAtEpochMillis: Long?,
     val semesterStartDate: String?,
     val semesterEndDate: String?,
-    val portalMaxWeek: Int? = null
+    val portalMaxWeek: Int? = null,
+    /**
+     * 必须显式声明 defaultValue：迁移用 ALTER TABLE ADD COLUMN ... DEFAULT 'WEEKLY' 加列，
+     * 若实体这边不声明，Room 生成的期望 schema 与迁移后的真实表结构不一致，
+     * 升级用户首次打开数据库就会抛 "Migration didn't properly handle" 崩溃。
+     */
+    @ColumnInfo(defaultValue = "WEEKLY")
+    val importMode: String = "WEEKLY"
 )
 
 fun AcademicSemester.toEntity(): AcademicSemesterEntity = AcademicSemesterEntity(
@@ -49,7 +57,9 @@ fun AcademicSemester.toEntity(): AcademicSemesterEntity = AcademicSemesterEntity
     importedAtEpochMillis = importedAtEpochMillis,
     semesterStartDate = semesterStartDate?.toString(),
     semesterEndDate = semesterEndDate?.toString(),
-    portalMaxWeek = portalMaxWeek
+    portalMaxWeek = portalMaxWeek,
+    // Room 旧列为升级兼容保留，统一导入后领域模型不再读取该值。
+    importMode = "WEEKLY"
 )
 
 fun AcademicSemesterEntity.toModel(): AcademicSemester {
@@ -116,26 +126,6 @@ data class CourseOccurrenceEntity(
     val weekText: String,
     val note: String,
     val semesterId: String = AcademicSemester.LEGACY_CURRENT_ID
-)
-
-@Entity(
-    tableName = "course_remarks",
-    primaryKeys = ["semesterId", "courseId", "occurrenceId", "weekNumber"],
-    foreignKeys = [ForeignKey(
-        entity = AcademicSemesterEntity::class,
-        parentColumns = ["id"],
-        childColumns = ["semesterId"],
-        onDelete = ForeignKey.CASCADE
-    )],
-    indices = [Index(value = ["semesterId"])]
-)
-data class CourseRemarkEntity(
-    val semesterId: String,
-    val courseId: String,
-    val occurrenceId: String,
-    val weekNumber: Int,
-    val text: String,
-    val updatedAtEpochMillis: Long
 )
 
 @Entity(

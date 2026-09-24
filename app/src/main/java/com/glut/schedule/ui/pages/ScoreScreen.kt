@@ -204,7 +204,13 @@ fun ScoreScreen(
                         val linkUrl = "https://jwc.glut.edu.cn/xsfw/cjhks1/pjxfjd.htm"
                         AlertDialog(
                             onDismissRequest = { showGpaInfo = false },
-                            title = { Text("绩点计算说明", fontSize = 16.sp) },
+                            // 显式指定容器色与文字色：不传会落到 Material3 的
+                            // surfaceContainerHigh，而本应用主题是 darkColorScheme，
+                            // 其默认值是深灰 #2B2930（黑底白字）。
+                            containerColor = ScoreCardBg,
+                            titleContentColor = ScorePrimary,
+                            textContentColor = ScoreSecondary,
+                            title = { Text("绩点计算说明", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
                             text = {
                                 Column {
                                     Text(

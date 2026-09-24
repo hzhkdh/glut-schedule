@@ -23,6 +23,8 @@ import com.glut.schedule.service.parser.AcademicScheduleParser
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readStringLimited
 import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
+import com.glut.schedule.service.holiday.TimorHolidayClient
+import com.glut.schedule.service.holiday.refreshMissingHolidayYears
 import com.glut.schedule.ui.SingleFlightGuard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -109,7 +111,8 @@ class SemesterOverviewViewModel(
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val scheduleParser: AcademicScheduleParser,
-    private val loginService: AcademicLoginService
+    private val loginService: AcademicLoginService,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
 ) : ViewModel() {
 
     private val _isRefreshing = MutableStateFlow(false)
@@ -118,7 +121,8 @@ class SemesterOverviewViewModel(
     private val _holidays = MutableStateFlow<List<HolidayDisplay>>(emptyList())
 
     init {
-        viewModelScope.launch { loadHolidays() }
+        // 进入页面只读缓存，不联网——联网只在用户点「刷新」时发生。
+        viewModelScope.launch { loadHolidays(fetchMissing = false) }
     }
 
     val uiState: StateFlow<SemesterOverviewUiState> = combine(
@@ -214,7 +218,7 @@ class SemesterOverviewViewModel(
         viewModelScope.launch {
             _message.value = "正在刷新..."
             try {
-                loadHolidays()
+                loadHolidays(fetchMissing = true)
                 _message.value = ""
             } catch (e: Exception) {
                 _message.value = "刷新失败: ${e.message}"
@@ -349,25 +353,37 @@ class SemesterOverviewViewModel(
         }
     }
 
-    private suspend fun loadHolidays() {
+    /**
+     * 载入节假日列表。
+     *
+     * [fetchMissing] 为 true 时才联网——只在用户点「刷新」时传 true；进入页面时只读缓存，
+     * 不做任何自动请求。
+     */
+    private suspend fun loadHolidays(fetchMissing: Boolean) {
         val today = LocalDate.now()
         val semesterStart = settingsStore.semesterStartMonday.first()
         val semesterEnd = settingsStore.semesterEndDate.first()
 
-        // Use cache if fetched today, otherwise call API once and cache result
-        val year = today.year
-        val (cachedJson, cacheDate) = settingsStore.holidaysCache.first()
-        val cacheYear = cacheDate.take(4).toIntOrNull() ?: 0
-        val allHolidays = if (cacheYear == year && cachedJson.isNotBlank()) {
+        // 学期会跨越自然年（秋季学期到次年 1 月），必须逐年取；只取「今年」会漏掉元旦。
+        // 缓存按数据所属年份存；holidayCacheByYear 已过读闸门，被污染 / 未公布的年份
+        // 在这里就是「缺失」，用户刷新时会重新拉取。
+        val years = semesterStart.year..semesterEnd.year
+        if (fetchMissing) {
+            refreshMissingHolidayYears(
+                client = timorHolidayClient,
+                years = years,
+                cachedYears = settingsStore.holidayCacheByYear.first(),
+                saveYear = settingsStore::setHolidayYearCache
+            )
+        }
+        val cached = settingsStore.holidayCacheByYear.first()
+        val allHolidays = mutableListOf<HolidayInfo>()
+        for (year in years) {
             Log.d(TAG, "Using cached holidays (year $year)")
-            TimorHolidayCalendarParser.parse(cachedJson, year)?.holidays.orEmpty()
-        } else {
-            Log.d(TAG, "Fetching holidays from API (cache year: $cacheYear, current: $year)")
-            val (raw, parsed) = fetchHolidays(year)
-            if (raw.isNotBlank() && parsed.isNotEmpty()) {
-                settingsStore.setHolidaysCache(raw)
-            }
-            parsed
+            allHolidays += TimorHolidayCalendarParser.parse(
+                cached[year].orEmpty(),
+                year
+            )?.holidays.orEmpty()
         }
 
         val displays = allHolidays
@@ -398,30 +414,6 @@ class SemesterOverviewViewModel(
         _holidays.value = displays
     }
 
-    private suspend fun fetchHolidays(year: Int): Pair<String, List<HolidayInfo>> = withContext(Dispatchers.IO) {
-        try {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(10, TimeUnit.SECONDS)
-                .build()
-            val request = Request.Builder()
-                .url("https://timor.tech/api/holiday/year/$year")
-                .header("User-Agent", "GlutSchedule/1.0")
-                .get()
-                .build()
-            val body = client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
-                } else ""
-            }
-            if (body.isBlank()) return@withContext "" to emptyList()
-            body to TimorHolidayCalendarParser.parse(body, year)?.holidays.orEmpty()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch holidays", e)
-            "" to emptyList()
-        }
-    }
-
     companion object {
         private const val TAG = "SemesterOverviewVM"
         private const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
@@ -433,10 +425,18 @@ class SemesterOverviewViewModelFactory(
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val scheduleParser: AcademicScheduleParser,
-    private val loginService: AcademicLoginService
+    private val loginService: AcademicLoginService,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return SemesterOverviewViewModel(repository, settingsStore, sessionStore, scheduleParser, loginService) as T
+        return SemesterOverviewViewModel(
+            repository,
+            settingsStore,
+            sessionStore,
+            scheduleParser,
+            loginService,
+            timorHolidayClient
+        ) as T
     }
 }

@@ -21,7 +21,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -38,6 +37,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,6 +49,9 @@ import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.NOON_SECTIONS
 import com.glut.schedule.data.model.periodLabel
 import com.glut.schedule.data.model.CourseBlock
+import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.adjustmentMarkerFor
+import com.glut.schedule.data.model.readableMarkerColor
 import com.glut.schedule.data.model.ScheduleWeek
 import com.glut.schedule.data.model.visibleDayCount
 import java.time.LocalDate
@@ -78,6 +81,41 @@ data class ScheduleCalendarDay(
     val isToday: Boolean
 )
 
+/**
+ * 日期栏右下角的单字状态角标。
+ *
+ * 与小程序 `components/schedule-grid` 的 `dateMarker` 一致：一个日期只显示一个字，
+ * 「调」优先于「休」——手动调课意味着该日确实追加了课程，比假期状态更需要被看到。
+ */
+internal enum class ScheduleDayMarker(val label: String) {
+    HOLIDAY("休"),
+    ADJUSTMENT("调")
+}
+
+/** 法定放假日的角标配色（与小程序 `.date-marker--holiday` 同值）。 */
+private val HolidayMarkerColor = Color(0xFF2D9A72)
+
+/** 手动调课目标日的角标配色（与小程序 `.date-marker--adjustment` 同值）。 */
+private val AdjustmentMarkerColor = Color(0xFFE57411)
+
+/**
+ * 判定某一天该显示哪个角标。
+ *
+ * `date` 为 null（未显示日期、或历史学期缺少权威日历时）一律不显示角标——
+ * 角标依附于具体自然日，没有日期就没有落点。
+ * 只标法定放假日：补班日（节假日接口里 `holiday: false`）不会进 [holidayDates]，因此天然无角标。
+ */
+internal fun scheduleDayMarker(
+    date: LocalDate?,
+    holidayDates: Set<LocalDate>,
+    manualAdjustmentDates: Set<LocalDate>
+): ScheduleDayMarker? = when {
+    date == null -> null
+    date in manualAdjustmentDates -> ScheduleDayMarker.ADJUSTMENT
+    date in holidayDates -> ScheduleDayMarker.HOLIDAY
+    else -> null
+}
+
 /** 首页与情侣/基友课表共用同一份日期映射，避免星期、日期和今日高亮发生漂移。 */
 fun scheduleCalendarDays(
     week: ScheduleWeek,
@@ -98,8 +136,12 @@ fun ScheduleGrid(
     showWeekend: Boolean,
     showNoon: Boolean = false,
     showCalendarDates: Boolean = true,
-    onCourseRemarkClick: (CourseBlock) -> Unit = {},
-    onCourseLongClick: (CourseBlock) -> Unit = {},
+    holidayDates: Set<LocalDate> = emptySet(),
+    manualAdjustmentDates: Set<LocalDate> = emptySet(),
+    /** 长按卡片时回调当前**显示中**的那一张（冲突组里只有它是可见的），打开卡片管理弹层。 */
+    onCourseLongClick: ((CourseBlock) -> Unit)? = null,
+    /** 该学期的教务调课记录，用来给调课/补课产生的卡片打「调」/「补」角标。 */
+    adjustments: List<SemesterAdjustment> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -123,7 +165,9 @@ fun ScheduleGrid(
                 leftWidth = leftWidth,
                 dayWidth = dayWidth,
                 dayCount = dayCount,
-                showCalendarDates = showCalendarDates
+                showCalendarDates = showCalendarDates,
+                holidayDates = holidayDates,
+                manualAdjustmentDates = manualAdjustmentDates
             )
 
             Row(
@@ -139,8 +183,9 @@ fun ScheduleGrid(
                     dayWidth = dayWidth,
                     dayCount = dayCount,
                     showNoon = effectiveShowNoon,
-                    onCourseRemarkClick = onCourseRemarkClick,
-                    onCourseLongClick = onCourseLongClick
+                    onCourseLongClick = onCourseLongClick,
+                    weekNumber = week.number,
+                    adjustments = adjustments,
                 )
             }
         }
@@ -154,7 +199,9 @@ fun ScheduleCalendarHeader(
     leftWidth: Dp,
     dayWidth: Dp,
     dayCount: Int,
-    showCalendarDates: Boolean = true
+    showCalendarDates: Boolean = true,
+    holidayDates: Set<LocalDate> = emptySet(),
+    manualAdjustmentDates: Set<LocalDate> = emptySet()
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
         MonthHeader(week = week, width = leftWidth, showCalendarDates = showCalendarDates)
@@ -163,7 +210,9 @@ fun ScheduleCalendarHeader(
             today = today,
             dayWidth = dayWidth,
             dayCount = dayCount,
-            showCalendarDates = showCalendarDates
+            showCalendarDates = showCalendarDates,
+            holidayDates = holidayDates,
+            manualAdjustmentDates = manualAdjustmentDates
         )
     }
 }
@@ -207,35 +256,60 @@ private fun WeekDayHeader(
     today: LocalDate,
     dayWidth: Dp,
     dayCount: Int,
-    showCalendarDates: Boolean
+    showCalendarDates: Boolean,
+    holidayDates: Set<LocalDate>,
+    manualAdjustmentDates: Set<LocalDate>
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
         scheduleCalendarDays(week, today, dayCount, showCalendarDates).forEach { item ->
-            Column(
+            val marker = scheduleDayMarker(item.date, holidayDates, manualAdjustmentDates)
+            // 用 Box 叠加而不是往列里塞第三行：角标绝对定位在右下角，
+            // 不改变日期栏高度、列宽，也不会挤动下面的课程卡片。
+            Box(
                 modifier = Modifier
                     .width(dayWidth)
-                    .padding(bottom = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(bottom = 4.dp)
             ) {
-                Text(
-                    text = item.name,
-                    color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.42f),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-                item.date?.let { date ->
+                Column(
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     Text(
-                        text = date.dayOfMonth.toString(),
-                        color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.34f),
-                        fontSize = 12.sp,
-                        modifier = if (item.isToday) {
-                            Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color.White.copy(alpha = 0.22f))
-                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                        text = item.name,
+                        color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.42f),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    item.date?.let { date ->
+                        Text(
+                            text = date.dayOfMonth.toString(),
+                            color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.34f),
+                            fontSize = 12.sp,
+                            modifier = if (item.isToday) {
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.White.copy(alpha = 0.22f))
+                                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                            } else {
+                                Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            }
+                        )
+                    }
+                }
+                if (marker != null) {
+                    Text(
+                        text = marker.label,
+                        color = if (marker == ScheduleDayMarker.ADJUSTMENT) {
+                            AdjustmentMarkerColor
                         } else {
-                            Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                        }
+                            HolidayMarkerColor
+                        },
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontStyle = FontStyle.Italic,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 3.dp)
                     )
                 }
             }
@@ -296,8 +370,9 @@ private fun TimetableBody(
     dayWidth: Dp,
     dayCount: Int,
     showNoon: Boolean = false,
-    onCourseRemarkClick: (CourseBlock) -> Unit,
-    onCourseLongClick: (CourseBlock) -> Unit
+    onCourseLongClick: ((CourseBlock) -> Unit)? = null,
+    weekNumber: Int = 0,
+    adjustments: List<SemesterAdjustment> = emptyList(),
 ) {
     val visiblePeriodCount = if (showNoon) periods.size else periods.size - NOON_SECTIONS.size
     val totalHeight = rowHeight * visiblePeriodCount
@@ -320,9 +395,15 @@ private fun TimetableBody(
                 CourseCard(
                     block = activeBlock,
                     conflictCount = group.size,
-                    onRemarkClick = { onCourseRemarkClick(activeBlock) },
                     onConflictClick = nextBlock,
-                    onLongClick = { onCourseLongClick(activeBlock) },
+                    // 交给上层的始终是 activeBlock：冲突组里只有当前显示的那一张是看得见的。
+                    onLongClick = onCourseLongClick?.let { callback -> { callback(activeBlock) } },
+                    marker = adjustmentMarkerFor(
+                        occurrence = activeBlock.occurrence,
+                        courseTitle = activeBlock.course.title,
+                        weekNumber = weekNumber,
+                        adjustments = adjustments
+                    ),
                     modifier = Modifier
                         .offset(
                             x = dayWidth * (activeBlock.occurrence.dayOfWeek - 1) + 2.dp,
@@ -402,25 +483,19 @@ private fun courseBlockDisplayComparator(): Comparator<CourseBlock> {
 private fun CourseCard(
     block: CourseBlock,
     conflictCount: Int,
-    onRemarkClick: () -> Unit,
     onConflictClick: (() -> Unit)?,
-    onLongClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    /** 「调」/「补」角标文本；为空表示这张卡不是调课/补课产生的。 */
+    marker: String? = null,
     modifier: Modifier = Modifier
 ) {
     val color = remember(block.course.colorHex) { Color(android.graphics.Color.parseColor(block.course.colorHex)) }
     val titleSize = courseCardTitleTextSize(block.course.title)
     val titleLineHeight = courseCardTitleLineHeight()
-    val hasRemark = !block.remark.isNullOrBlank()
-    val tapAction = courseCardTapAction(hasRemark = hasRemark, hasConflict = conflictCount > 1)
-    // 有备注时普通点击优先查看；冲突课程仍可通过右上角数字角标独立切换。
+    // 长按与「单击切换冲突课」共存：combinedClickable 保证长按时不会再触发 onClick，
+    // 长按也不推进冲突索引，两者互不干扰。
     val clickableModifier = Modifier.combinedClickable(
-        onClick = {
-            when (tapAction) {
-                CourseCardTapAction.ViewRemark -> onRemarkClick()
-                CourseCardTapAction.CycleConflict -> onConflictClick?.invoke()
-                CourseCardTapAction.None -> Unit
-            }
-        },
+        onClick = { if (conflictCount > 1) onConflictClick?.invoke() },
         onLongClick = onLongClick
     )
 
@@ -433,12 +508,12 @@ private fun CourseCard(
             .semantics {
                 contentDescription =
                     "${block.course.title}，${block.course.teacher}，${block.course.room}" +
-                    (if (conflictCount > 1) "，共${conflictCount}门冲突课程" else "") +
-                    (if (hasRemark) "，有备注，单击查看、长按编辑" else "，长按添加备注")
+                    (if (conflictCount > 1) "，共${conflictCount}门冲突课程，单击切换" else "") +
+                    "，长按管理卡片"
             }
     ) {
         Column(
-            modifier = Modifier.padding(courseCardContentPadding(hasRemark)),
+            modifier = Modifier,
             verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
             Text(
@@ -465,14 +540,26 @@ private fun CourseCard(
             )
         }
 
+        if (marker != null) {
+            // 左下角与右下角的冲突角标互不干涉。字色按卡片底色自适应：底色是任意可选的，
+            // 固定字色必然会在某些卡上糊掉（详见 readableMarkerColor 的注释）。
+            Text(
+                text = marker,
+                modifier = Modifier.align(Alignment.BottomStart),
+                color = Color(android.graphics.Color.parseColor(readableMarkerColor(block.course.colorHex))),
+                fontSize = 10.sp,
+                lineHeight = 10.sp,
+                fontStyle = FontStyle.Italic,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+
         if (conflictCount > 1) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 4.dp, y = (-4).dp)
-                    .size(48.dp)
-                    .clickable { onConflictClick?.invoke() }
-                    .semantics { contentDescription = "切换下一门冲突课程" },
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 2.dp, y = 2.dp)
+                    .size(18.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -493,42 +580,7 @@ private fun CourseCard(
             }
         }
 
-        if (hasRemark) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(20.dp)
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(Color(0xFFFFFBF3)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.ChatBubble,
-                    // 父卡片已经完整播报“有备注”与操作方式，图标本身只承担视觉提示。
-                    contentDescription = null,
-                    tint = Color(0xFF4A4338),
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-        }
     }
-}
-
-/** 备注图标只占用卡片底部空间，不压缩课程文字的横向可用宽度。 */
-fun courseCardContentPadding(hasRemark: Boolean): PaddingValues =
-    if (hasRemark) PaddingValues(bottom = 14.dp) else PaddingValues()
-
-enum class CourseCardTapAction {
-    ViewRemark,
-    CycleConflict,
-    None
-}
-
-/** 备注查看优先于冲突轮换；冲突课程另由数字角标提供独立入口。 */
-fun courseCardTapAction(hasRemark: Boolean, hasConflict: Boolean): CourseCardTapAction = when {
-    hasRemark -> CourseCardTapAction.ViewRemark
-    hasConflict -> CourseCardTapAction.CycleConflict
-    else -> CourseCardTapAction.None
 }
 
 fun courseCardTitleTextSize(title: String): TextUnit = 11.sp

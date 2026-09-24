@@ -52,6 +52,10 @@ class DirectLoginSafetyTest {
     fun completionMessageNamesFailedModules() {
         assertEquals("导入完成", importCompletionMessage(emptyList()))
         assertEquals(
+            "导入完成；已跳过 2 条异常课程记录",
+            importCompletionMessage(emptyList(), skippedRowCount = 2)
+        )
+        assertEquals(
             "部分导入失败：成绩、教学计划；已保留原缓存",
             importCompletionMessage(listOf("成绩", "教学计划", "成绩"))
         )

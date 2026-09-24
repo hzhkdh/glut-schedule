@@ -11,6 +11,26 @@ import org.junit.Test
 
 class AcademicSecurityPolicyTest {
     @Test
+    fun guilinBaseUrlIsNormalizedToHttpsWithoutChangingNanning() {
+        assertEquals(
+            "https://jw.glut.edu.cn",
+            AcademicUrlPolicy.normalizeCampusBaseUrl("http://jw.glut.edu.cn/")
+        )
+        assertEquals(
+            "https://jw.glut.edu.cn",
+            AcademicUrlPolicy.normalizeCampusBaseUrl("https://jw.glut.edu.cn")
+        )
+        assertEquals(
+            "http://jw.glutnn.cn",
+            AcademicUrlPolicy.normalizeCampusBaseUrl("http://jw.glutnn.cn/")
+        )
+        assertEquals(
+            "http://jw.glut.edu.cn.evil.example",
+            AcademicUrlPolicy.normalizeCampusBaseUrl("http://jw.glut.edu.cn.evil.example")
+        )
+    }
+
+    @Test
     fun importProbeUsesOnlyRequiredEndpoints() {
         val requests = ApiProbeService.buildImportProbeRequests("http://jw.glut.edu.cn")
 
@@ -28,7 +48,8 @@ class AcademicSecurityPolicyTest {
 
     @Test
     fun officialAcademicAndOaUrlsAreAllowed() {
-        assertTrue(AcademicUrlPolicy.isAllowedSessionUrl("http://jw.glut.edu.cn/academic/personal/framePage.do"))
+        assertTrue(AcademicUrlPolicy.isAllowedSessionUrl("https://jw.glut.edu.cn/academic/personal/framePage.do"))
+        assertFalse(AcademicUrlPolicy.isAllowedSessionUrl("http://jw.glut.edu.cn/academic/personal/framePage.do"))
         assertTrue(AcademicUrlPolicy.isAllowedSessionUrl("http://jw.glutnn.cn/academic/index_frame.jsp"))
         assertTrue(AcademicUrlPolicy.isAllowedSessionUrl("http://ca.glut.edu.cn:8888/zfca/tojw"))
     }
@@ -38,28 +59,28 @@ class AcademicSecurityPolicyTest {
         assertFalse(AcademicUrlPolicy.isAllowedSessionUrl("http://evil.example/academic/personal/framePage.do"))
         assertFalse(AcademicUrlPolicy.isAllowedSessionUrl("http://jw.glut.edu.cn.evil.example/academic/personal/framePage.do"))
         assertFalse(AcademicUrlPolicy.isAllowedSessionUrl("http://jw.glut.edu.cn:8888/academic/personal/framePage.do"))
-        assertFalse(AcademicUrlPolicy.isAllowedSessionUrl("https://jw.glut.edu.cn/academic/personal/framePage.do"))
+        assertFalse(AcademicUrlPolicy.isAllowedSessionUrl("https://jw.glut.edu.cn:8443/academic/personal/framePage.do"))
     }
 
     @Test
     fun redirectsAreResolvedThenValidated() {
         assertEquals(
-            "http://jw.glut.edu.cn/academic/preGotoAffairFrame.do",
+            "https://jw.glut.edu.cn/academic/preGotoAffairFrame.do",
             AcademicUrlPolicy.resolveAllowedRedirect(
                 "http://ca.glut.edu.cn:8888/zfca/tojw",
                 "http://jw.glut.edu.cn/academic/preGotoAffairFrame.do"
             )
         )
         assertEquals(
-            "http://jw.glut.edu.cn/academic/personal/framePage.do",
+            "https://jw.glut.edu.cn/academic/personal/framePage.do",
             AcademicUrlPolicy.resolveAllowedRedirect(
-                "http://jw.glut.edu.cn/academic/preGotoAffairFrame.do",
+                "https://jw.glut.edu.cn/academic/preGotoAffairFrame.do",
                 "/academic/personal/framePage.do"
             )
         )
         assertNull(
             AcademicUrlPolicy.resolveAllowedRedirect(
-                "http://jw.glut.edu.cn/academic/preGotoAffairFrame.do",
+                "https://jw.glut.edu.cn/academic/preGotoAffairFrame.do",
                 "http://attacker.example/collect"
             )
         )
@@ -77,7 +98,7 @@ class AcademicSecurityPolicyTest {
         """.trimIndent()
 
         assertEquals(
-            listOf("http://jw.glut.edu.cn/academic/student/examination/queryExam.do"),
+            listOf("https://jw.glut.edu.cn/academic/student/examination/queryExam.do"),
             ApiProbeService.extractExamUrlsFromMenuResponse(body)
         )
     }

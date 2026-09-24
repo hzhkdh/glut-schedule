@@ -13,7 +13,7 @@ class AcademicExamService(
     suspend fun fetchExamData(
         cookie: String,
         storedExamApiUrl: String = "",
-        baseUrl: String = "http://jw.glut.edu.cn"
+        baseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL
     ): Result<List<ExamInfo>> {
         if (cookie.isBlank()) return Result.failure(IllegalStateException("请先登录教务系统"))
 

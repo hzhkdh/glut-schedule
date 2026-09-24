@@ -8,7 +8,6 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.CourseTimeSemesterSource
-import com.glut.schedule.data.model.CourseRemark
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.GradeExamInfo
 import com.glut.schedule.data.model.ScoreInfo
@@ -23,7 +22,6 @@ import com.glut.schedule.data.model.nanningClassPeriods
 import com.glut.schedule.data.model.pingfengClassPeriods
 import com.glut.schedule.data.model.yanshanClassPeriods
 import com.glut.schedule.data.model.validateClassPeriods
-import com.glut.schedule.data.model.normalizedCourseRemark
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.ClassPeriodProfile
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
@@ -90,56 +88,6 @@ class ScheduleRepository(
         ClassPeriodConfig(legacyOverrides, profileOverrides, subCampus)
     }
 
-    val courseRemarks: Flow<List<CourseRemark>> = combine(
-        dao.observeCourseRemarks(),
-        viewedSemesterId
-    ) { remarks, semesterId ->
-        remarks.filter { it.semesterId == semesterId }.map { entity ->
-            CourseRemark(
-                semesterId = entity.semesterId,
-                courseId = entity.courseId,
-                occurrenceId = entity.occurrenceId,
-                weekNumber = entity.weekNumber,
-                text = entity.text,
-                updatedAtEpochMillis = entity.updatedAtEpochMillis
-            )
-        }
-    }
-
-    suspend fun saveCourseRemark(
-        semesterId: String,
-        courseId: String,
-        occurrenceId: String,
-        weekNumber: Int,
-        text: String
-    ) {
-        val normalized = text.normalizedCourseRemark()
-        if (normalized.isEmpty()) {
-            // 删除必须经过查看页的二次确认；清空编辑框后保存只视为无操作。
-            return
-        }
-        dao.upsertCourseRemark(
-            com.glut.schedule.data.local.CourseRemarkEntity(
-                semesterId = semesterId,
-                courseId = courseId,
-                occurrenceId = occurrenceId,
-                weekNumber = weekNumber,
-                text = normalized,
-                updatedAtEpochMillis = System.currentTimeMillis()
-            )
-        )
-    }
-
-    /** 显式删除指定周次的单条备注，避免界面层通过保存空字符串表达删除意图。 */
-    suspend fun deleteCourseRemark(
-        semesterId: String,
-        courseId: String,
-        occurrenceId: String,
-        weekNumber: Int
-    ) {
-        dao.deleteCourseRemark(semesterId, courseId, occurrenceId, weekNumber)
-    }
-
     val classPeriods: Flow<List<ClassPeriod>> = combine(
         viewedSemester, campusType, classPeriodConfig
     ) { semester, selectedCampus, config ->
@@ -164,11 +112,19 @@ class ScheduleRepository(
      */
     val courseTimeSemesterSources: Flow<List<CourseTimeSemesterSource>> = combine(
         semesters,
-        dao.observeCourses(),
-        dao.observeOccurrences(),
-        dao.observeClassPeriods(),
-        currentClassPeriods
-    ) { semesterList, courseEntities, occurrenceEntities, periodEntities, liveCurrentPeriods ->
+        // 课程/课次/作息先合成一路：typed combine 最多吃 5 个流，直接加第 6 个会掉到
+        // Array<Any?> 那版重载，类型全丢。
+        combine(
+            dao.observeCourses(),
+            dao.observeOccurrences(),
+            dao.observeClassPeriods()
+        ) { courseEntities, occurrenceEntities, periodEntities ->
+            Triple(courseEntities, occurrenceEntities, periodEntities)
+        },
+        currentClassPeriods,
+        dao.observeSemesterAdjustments()
+    ) { semesterList, scheduleTables, liveCurrentPeriods, adjustmentEntities ->
+        val (courseEntities, occurrenceEntities, periodEntities) = scheduleTables
         semesterList
             .sortedWith(
                 compareByDescending<AcademicSemester> { it.isCurrent }
@@ -189,7 +145,11 @@ class ScheduleRepository(
                         periodEntities
                             .filter { it.semesterId == semester.id }
                             .map { it.toModel() }
-                    }
+                    },
+                    // 停课周次要按学期从课时里扣掉，所以调课记录必须一起进统计源。
+                    adjustments = adjustmentEntities
+                        .filter { it.semesterId == semester.id }
+                        .map { it.toModel() }
                 )
             }
     }
@@ -209,6 +169,13 @@ class ScheduleRepository(
         if (dao.courseCount() > 0) {
             clearLegacyBundledSampleCoursesIfPresent()
         }
+    }
+
+    /** 定向清理旧模式1/2写入的学期课表，保留学期目录和其他业务数据。 */
+    suspend fun invalidateLegacyImportCaches() {
+        val dynamicSemesters = semesters.first()
+            .map { it.toEntity() }
+        dao.invalidateSemesterScheduleCaches(dynamicSemesters)
     }
 
     private suspend fun repairInterruptedDownloads() {

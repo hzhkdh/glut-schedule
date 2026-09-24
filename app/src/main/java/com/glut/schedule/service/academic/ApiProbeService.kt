@@ -8,16 +8,19 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 
 class ApiProbeService(
     private val sessionUrlValidator: (String) -> Boolean = AcademicUrlPolicy::isAllowedSessionUrl
 ) {
-
-    private val client = OkHttpClient.Builder()
+    private val baseClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .followRedirects(true)
@@ -30,7 +33,14 @@ class ApiProbeService(
         val httpCode: Int,
         val contentType: String,
         val body: String,
-        val bodyLength: Int
+        val bodyLength: Int,
+        /** 教务可能在切换学期时轮换会话，调用方必须把该值传给下一次请求。 */
+        val updatedCookie: String = "",
+        /** 最终 HTTP 方法仅用于识别 301 把 POST 改成 GET，不包含请求参数。 */
+        val finalMethod: String = method,
+        val redirected: Boolean = false,
+        /** 服务器响应时间转换为上海本地日期，仅用于当前学期周次锚点推导。 */
+        val serverDate: LocalDate? = null
     )
 
     data class AcademicCalendar(
@@ -41,12 +51,14 @@ class ApiProbeService(
 
     /** Fetch a single URL with the given cookie, returning a ProbeResult or null. */
     suspend fun probeUrl(cookie: String, url: String, method: String = "GET"): ProbeResult? {
-        if (!sessionUrlValidator(url)) return null
+        val normalizedUrl = AcademicUrlPolicy.normalizeCampusBaseUrl(url)
+        if (!sessionUrlValidator(normalizedUrl)) return null
         return withContext(Dispatchers.IO) {
             runCatching {
+            val requestUrl = normalizedUrl.toHttpUrlOrNull() ?: return@runCatching null
+            val (client, cookieJar) = createSessionClient(cookie, requestUrl)
             val request = Request.Builder()
-                .url(url)
-                .header("Cookie", cookie)
+                .url(normalizedUrl)
                 .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
                 .header("Accept", "text/html,application/json;q=0.9,*/*;q=0.8")
                 .apply {
@@ -58,9 +70,14 @@ class ApiProbeService(
             client.newCall(request).execute().use { response ->
                 val body = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
                 ProbeResult(
-                    url = url, method = method, httpCode = response.code,
+                    url = normalizedUrl, method = method, httpCode = response.code,
                     contentType = response.header("Content-Type").orEmpty(),
-                    body = body, bodyLength = body.length
+                    body = body,
+                    bodyLength = body.length,
+                    updatedCookie = cookieJar.cookieHeader().ifBlank { cookie },
+                    finalMethod = response.request.method,
+                    redirected = response.priorResponse != null,
+                    serverDate = parseServerDate(response.header("Date"))
                 )
             }
             }.getOrNull()
@@ -73,26 +90,33 @@ class ApiProbeService(
         body: String,
         referer: String
     ): ProbeResult? {
-        if (!sessionUrlValidator(url) || !sessionUrlValidator(referer)) return null
+        val normalizedUrl = AcademicUrlPolicy.normalizeCampusBaseUrl(url)
+        val normalizedReferer = AcademicUrlPolicy.normalizeCampusBaseUrl(referer)
+        if (!sessionUrlValidator(normalizedUrl) || !sessionUrlValidator(normalizedReferer)) return null
         return withContext(Dispatchers.IO) {
             runCatching {
+            val requestUrl = normalizedUrl.toHttpUrlOrNull() ?: return@runCatching null
+            val (client, cookieJar) = createSessionClient(cookie, requestUrl)
             val request = Request.Builder()
-                .url(url)
-                .header("Cookie", cookie)
+                .url(normalizedUrl)
                 .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
                 .header("Accept", "text/html,application/json;q=0.9,*/*;q=0.8")
-                .header("Referer", referer)
+                .header("Referer", normalizedReferer)
                 .post(body.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
                 .build()
             client.newCall(request).execute().use { response ->
                 val responseBody = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
                 ProbeResult(
-                    url = url,
+                    url = normalizedUrl,
                     method = "POST",
                     httpCode = response.code,
                     contentType = response.header("Content-Type").orEmpty(),
                     body = responseBody,
-                    bodyLength = responseBody.length
+                    bodyLength = responseBody.length,
+                    updatedCookie = cookieJar.cookieHeader().ifBlank { cookie },
+                    finalMethod = response.request.method,
+                    redirected = response.priorResponse != null,
+                    serverDate = parseServerDate(response.header("Date"))
                 )
             }
             }.getOrNull()
@@ -103,7 +127,7 @@ class ApiProbeService(
         cookie: String,
         capturedTimetableUrls: List<String> = emptyList(),
         storedTimetableUrl: String = "",
-        baseUrl: String = "http://jw.glut.edu.cn"
+        baseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL
     ): List<ProbeResult> {
         val results = mutableListOf<ProbeResult>()
 
@@ -129,7 +153,7 @@ class ApiProbeService(
     suspend fun probeExamEndpoints(
         cookie: String,
         storedExamApiUrl: String = "",
-        baseUrl: String = "http://jw.glut.edu.cn"
+        baseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL
     ): List<ProbeResult> {
         val results = mutableListOf<ProbeResult>()
 
@@ -148,63 +172,37 @@ class ApiProbeService(
     suspend fun probeAllEndpoints(
         cookie: String,
         capturedTimetableUrls: List<String> = emptyList(),
-        baseUrl: String = "http://jw.glut.edu.cn"
+        baseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL
     ): List<ProbeResult> = withContext(Dispatchers.IO) {
         val results = mutableListOf<ProbeResult>()
-        val baseHeaders = mapOf(
-            "Cookie" to cookie,
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36",
-            "Accept" to "text/html,application/json,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language" to "zh-CN,zh;q=0.9",
-            "Referer" to "${baseUrl}/academic/preGotoAffairFrame.do"
-        )
+        val normalizedBaseUrl = AcademicUrlPolicy.normalizeCampusBaseUrl(baseUrl)
+        val referer = "$normalizedBaseUrl/academic/preGotoAffairFrame.do"
+        var sessionCookie = cookie
 
-        fun probeGet(url: String) {
-            if (!sessionUrlValidator(url)) return
-            try {
-                val req = Request.Builder().url(url)
-                baseHeaders.forEach { (k, v) -> req.header(k, v) }
-                client.newCall(req.build()).execute().use { resp ->
-                    val body = resp.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES) ?: ""
-                    results.add(ProbeResult(url, "GET", resp.code,
-                        resp.header("content-type") ?: "", body.take(100000), body.length))
-                }
-            } catch (e: Exception) {
-                results.add(ProbeResult(url, "GET", -1, "", e.message ?: "error", 0))
-            }
+        fun addResult(result: ProbeResult?) {
+            if (result == null) return
+            sessionCookie = result.updatedCookie.ifBlank { sessionCookie }
+            results += result.copy(body = result.body.take(100000))
         }
 
-        fun probePost(url: String, body: String = "") {
-            if (!sessionUrlValidator(url)) return
-            try {
-                val req = Request.Builder().url(url)
-                baseHeaders.forEach { (k, v) -> req.header(k, v) }
-                req.header("Content-Type", "application/x-www-form-urlencoded")
-                if (body.isNotBlank()) {
-                    req.post(body.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
-                } else {
-                    req.post("".toRequestBody(null))
-                }
-                client.newCall(req.build()).execute().use { resp ->
-                    val respBody = resp.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES) ?: ""
-                    results.add(ProbeResult(url, "POST", resp.code,
-                        resp.header("content-type") ?: "", respBody.take(100000), respBody.length))
-                }
-            } catch (e: Exception) {
-                results.add(ProbeResult(url, "POST", -1, "", e.message ?: "error", 0))
-            }
+        suspend fun probeGet(url: String) {
+            addResult(probeUrl(sessionCookie, url))
+        }
+
+        suspend fun probePost(url: String, body: String = "") {
+            addResult(probeForm(sessionCookie, url, body, referer))
         }
 
         val completed = withTimeoutOrNull(IMPORT_PROBE_TIMEOUT_MILLIS) {
-            buildProbeUrls(capturedTimetableUrls).forEach(::probeGet)
-            buildImportProbeRequests(baseUrl).forEach { (url, method) ->
+            for (url in buildProbeUrls(capturedTimetableUrls)) probeGet(url)
+            for ((url, method) in buildImportProbeRequests(normalizedBaseUrl)) {
                 if (method == "POST") probePost(url) else probeGet(url)
             }
 
             // 菜单中的真实考试地址仅作一次动态补充，避免轮询大量历史猜测接口。
             val menuResult = results.find { it.url.contains("moduleMenu.do") && it.httpCode == 200 }
             if (menuResult != null) {
-                extractExamUrlsFromMenuResponse(menuResult.body, baseUrl).forEach { url ->
+                for (url in extractExamUrlsFromMenuResponse(menuResult.body, normalizedBaseUrl)) {
                     if (results.none { it.url == url }) probeGet(url)
                 }
             }
@@ -215,6 +213,13 @@ class ApiProbeService(
     }
 
     companion object {
+        private val SHANGHAI_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
+
+        private fun parseServerDate(value: String?): LocalDate? = runCatching {
+            ZonedDateTime.parse(value.orEmpty(), DateTimeFormatter.RFC_1123_DATE_TIME)
+                .withZoneSameInstant(SHANGHAI_ZONE)
+                .toLocalDate()
+        }.getOrNull()
         private const val TAG = "ApiProbeService"
         private const val IMPORT_PROBE_TIMEOUT_MILLIS = 60_000L
 
@@ -334,7 +339,7 @@ class ApiProbeService(
 
         fun buildExamProbeRequests(
             storedExamApiUrl: String = "",
-            baseUrl: String = "http://jw.glut.edu.cn"
+            baseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL
         ): List<Pair<String, String>> {
             return buildList {
                 if (storedExamApiUrl.isNotBlank()) add(storedExamApiUrl to "GET")
@@ -348,7 +353,10 @@ class ApiProbeService(
             }.distinct()
         }
 
-        fun extractExamUrlsFromMenuResponse(body: String, baseUrl: String = "http://jw.glut.edu.cn"): List<String> {
+        fun extractExamUrlsFromMenuResponse(
+            body: String,
+            baseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL
+        ): List<String> {
             val urls = mutableListOf<String>()
             val examKeywords = listOf("考试安排", "我的考试", "学生考试", "考试查询", "考试信息", "考试", "exam")
 
@@ -691,5 +699,13 @@ class ApiProbeService(
             body.contains("arrangeDate", ignoreCase = true)
 
         return hasTitle && hasTeacher && hasRoom && hasTime
+    }
+
+    /** 每次探测使用独立 CookieJar，避免应用级单例在不同账号之间残留会话。 */
+    private fun createSessionClient(cookie: String, requestUrl: okhttp3.HttpUrl): Pair<OkHttpClient, CapturingCookieJar> {
+        val cookieJar = CapturingCookieJar().apply {
+            seedFromCookieHeader(cookie, requestUrl)
+        }
+        return baseClient.newBuilder().cookieJar(cookieJar).build() to cookieJar
     }
 }
