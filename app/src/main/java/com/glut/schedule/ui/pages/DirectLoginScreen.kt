@@ -41,8 +41,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -65,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
+import com.glut.schedule.data.settings.ImportSource
 import com.glut.schedule.service.academic.SemesterDownloadItemStatus
 import com.glut.schedule.service.academic.SemesterDownloadMode
 import com.glut.schedule.service.academic.SemesterDownloadState
@@ -150,31 +149,48 @@ fun DirectLoginScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 校区在前、线路在后：先确定「登哪个校区的教务」，再决定「用哪条线路导」。
-            // 校区开关刻意不加说明文字——「南宁分校」四个字已经讲清开启态，关闭态取默认。
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+            // 导入来源：南宁分校 / 桂林本部 / 研究生。顺序即 ImportSource 的声明顺序。
+            // 用下拉而不是开关，是因为三个来源无法用「是/否」表达；
+            // 首次默认桂林本部，之后恢复「上一次成功导入」的来源。
+            var sourceExpanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = sourceExpanded,
+                onExpandedChange = { sourceExpanded = !sourceExpanded },
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text("南宁分校", color = LoginPrimary, fontSize = 14.sp)
-                Switch(
-                    checked = uiState.isNanning,
-                    onCheckedChange = { viewModel.toggleNanning() },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = LoginAccent,
-                        checkedTrackColor = LoginAccent.copy(alpha = 0.3f),
-                        uncheckedThumbColor = LoginSecondary,
-                        uncheckedTrackColor = Color(0xFFD1D5DB)
-                    )
+                OutlinedTextField(
+                    value = uiState.importSource.label,
+                    onValueChange = {},
+                    readOnly = true,
+                    singleLine = true,
+                    label = { Text("导入来源", color = LoginSecondary) },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sourceExpanded) },
+                    colors = loginTextFieldColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
                 )
+                ExposedDropdownMenu(
+                    expanded = sourceExpanded,
+                    onDismissRequest = { sourceExpanded = false },
+                    containerColor = LoginCardBg
+                ) {
+                    ImportSource.entries.forEach { source ->
+                        DropdownMenuItem(
+                            text = { Text(source.label, color = LoginPrimary) },
+                            onClick = {
+                                viewModel.updateImportSource(source)
+                                sourceExpanded = false
+                            },
+                            colors = MenuDefaults.itemColors(textColor = LoginPrimary),
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        )
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // 导入线路选择已移除：统一只抓大节课表，没有可选项，也就没有那两个
-            // 「标签在左、控件在右」的一行。这里保留间距，让登录按钮与上方开关的距离
-            // 与改动前一致。
             Spacer(modifier = Modifier.height(20.dp))
 
             // Login button
@@ -205,14 +221,26 @@ fun DirectLoginScreen(
                 Text(uiState.message, color = messageColor, fontSize = 14.sp)
             }
 
-            // Import result cards
+            // Import result cards。研究生门户没有考试模块，改显示成绩与培养计划，
+            // 否则两颗「考试 0」的卡片会让人以为导入漏了东西。
             val result = uiState.importResult
             if (result != null) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     ImportResultCard("课程", result.courseCount, LoginAccent, Modifier.weight(1f))
-                    ImportResultCard("考试", result.examCount, Color(0xFF7C5FE7), Modifier.weight(1f))
+                    if (uiState.isGraduate) {
+                        ImportResultCard("成绩", result.scoreCount, Color(0xFF7C5FE7), Modifier.weight(1f))
+                        ImportResultCard("培养计划", result.studyPlanCount, Color(0xFF2D9A72), Modifier.weight(1f))
+                    } else {
+                        ImportResultCard("考试", result.examCount, Color(0xFF7C5FE7), Modifier.weight(1f))
+                    }
                 }
+            }
+
+            // 调课提示：研究生门户的调课记录暂不并入课表，只如实告知，不改数据。
+            if (uiState.adjustmentWarning.isNotBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(uiState.adjustmentWarning, color = LoginSecondary, fontSize = 13.sp)
             }
 
             if (uiState.semesters.isNotEmpty()) {
@@ -232,16 +260,16 @@ fun DirectLoginScreen(
             Spacer(modifier = Modifier.height(32.dp))
     }
 
-    // Native captcha dialog for Nanning login
+    // 验证码弹窗：南宁与研究生共用（两者都要求图形验证码）。
     if (uiState.showCaptchaDialog && uiState.captchaBitmap != null) {
-        NanningCaptchaDialog(
+        LoginCaptchaDialog(
             captchaBitmap = uiState.captchaBitmap!!,
             captchaInput = uiState.captchaInput,
             isLoggingIn = uiState.isLoggingIn,
             onCaptchaInputChange = viewModel::updateCaptchaInput,
-            onRefresh = viewModel::refreshNanningCaptcha,
-            onConfirm = viewModel::submitNanningCaptcha,
-            onDismiss = viewModel::cancelNanningCaptcha
+            onRefresh = viewModel::refreshCaptcha,
+            onConfirm = viewModel::submitCaptcha,
+            onDismiss = viewModel::cancelCaptcha
         )
     }
 
@@ -435,8 +463,14 @@ private fun SemesterManagementSection(
     }
 }
 
+/**
+ * 图形验证码弹窗。
+ *
+ * 原名 `NanningCaptchaDialog`；研究生登录同样需要验证码，弹窗内容与交互完全一致，
+ * 因此合并成一个并改名，避免留下一个「南宁专用」却给两个来源用的误导性名字。
+ */
 @Composable
-private fun NanningCaptchaDialog(
+private fun LoginCaptchaDialog(
     captchaBitmap: android.graphics.Bitmap,
     captchaInput: String,
     isLoggingIn: Boolean,

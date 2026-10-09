@@ -19,7 +19,10 @@ import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.glut.schedule.data.settings.CampusCapabilities
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.MenuCapability
+import com.glut.schedule.data.settings.capabilitiesFor
 
 enum class DrawerItem(
     val title: String,
@@ -56,7 +59,48 @@ internal fun campusDrawerItems(campus: CampusType): List<DrawerItem> = when (cam
         DrawerItem.PartnerSchedule,
         DrawerItem.Finance
     )
+    // 研究生：门户没有这些模块，但按需求「保留但禁用」——入口照常出现在同一位置，
+    // 置灰并提示「研究生暂不支持」，而不是像南宁那样整项消失。
+    CampusType.GRADUATE -> listOf(
+        DrawerItem.CourseTimeStats,
+        DrawerItem.CampusInfo,
+        DrawerItem.PartnerSchedule,
+        DrawerItem.Finance
+    )
 }
+
+/**
+ * 菜单项对应的能力；返回 null 表示与教务数据无关，任何来源都可用。
+ *
+ * 把「哪一项依赖哪种能力」集中在这里，新增来源时只需在 `capabilitiesFor` 里补一条，
+ * 不必再到每个渲染点写校区判断。
+ */
+internal fun DrawerItem.requiredCapability(): MenuCapability? = when (this) {
+    DrawerItem.Score -> MenuCapability.SCORE
+    DrawerItem.ProfessionalScore -> MenuCapability.PROFESSIONAL_SCORE
+    DrawerItem.Exam -> MenuCapability.EXAM
+    DrawerItem.GradeExam -> MenuCapability.GRADE_EXAM
+    DrawerItem.FitnessScore -> MenuCapability.FITNESS_SCORE
+    DrawerItem.CampusInfo -> MenuCapability.CAMPUS_INFO
+    DrawerItem.CourseTimeStats -> MenuCapability.COURSE_TIME_STATS
+    DrawerItem.PartnerSchedule -> MenuCapability.PARTNER_SCHEDULE
+    DrawerItem.Finance -> MenuCapability.FINANCE
+    DrawerItem.StudyPlan -> MenuCapability.STUDY_PLAN
+    DrawerItem.Schedule,
+    DrawerItem.Import,
+    DrawerItem.Settings,
+    DrawerItem.Notice,
+    DrawerItem.SemesterOverview,
+    DrawerItem.FAQ,
+    DrawerItem.About -> null
+}
+
+internal fun DrawerItem.isEnabledFor(campus: CampusType): Boolean =
+    requiredCapability()?.let { capabilitiesFor(campus).menuEnabled(it) } ?: true
+
+/** 不可用时的提示文案；可用时为 null。 */
+internal fun DrawerItem.unsupportedHintFor(campus: CampusType): String? =
+    if (isEnabledFor(campus)) null else CampusCapabilities.UNSUPPORTED_HINT
 
 internal val otherDrawerItems = listOf(
     DrawerItem.Settings,

@@ -43,9 +43,15 @@ data class AcademicSemester(
             val seasonLabel = if (season == SemesterSeason.SPRING) "春" else "秋"
             val resolvedYearId = portalYearId.ifBlank { (portalYear - 1980).toString() }
             val resolvedTermId = portalTermId.ifBlank {
+                // 门户学期号的兜底值：桂林 1/2，南宁 1/3，研究生 1/2（秋季即第一学期）。
+                // 调用方通常会显式传入门户原始值，这里只是万不得已的缺省。
                 when (season) {
                     SemesterSeason.SPRING -> "1"
-                    SemesterSeason.AUTUMN -> if (campus == CampusType.GUILIN) "2" else "3"
+                    SemesterSeason.AUTUMN -> when (campus) {
+                        CampusType.GUILIN -> "2"
+                        CampusType.NANNING -> "3"
+                        CampusType.GRADUATE -> "1"
+                    }
                 }
             }
             return AcademicSemester(

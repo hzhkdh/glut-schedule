@@ -323,6 +323,25 @@ class CourseTimeStatsCalculatorTest {
         assertEquals(0, result.totalMinutes)
     }
 
+    @Test
+    fun graduateEmptyClockProfileIsUnconfiguredInsteadOfCorrupt() {
+        val result = CourseTimeStatsCalculator.calculate(
+            sources = listOf(
+                source(
+                    courses = listOf(course(weekText = "1-4周")),
+                    periods = (1..12).map { section -> ClassPeriod(section, "", "") }
+                )
+            ),
+            dimension = CourseTimeDimension.COURSE
+        )
+
+        assertEquals(
+            listOf(CourseTimeStatsUnavailableReason.UNCONFIGURED_CLASS_PERIODS),
+            result.coverage.excludedSemesters.map { it.reason }
+        )
+        assertEquals(0, result.totalMinutes)
+    }
+
     private fun source(
         id: String = "current",
         label: String = "2026·春",

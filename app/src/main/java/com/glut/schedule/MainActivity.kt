@@ -141,8 +141,10 @@ import com.glut.schedule.service.greeting.DrawerGreetingPlanner
 import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.navigation.campusDrawerItems
+import com.glut.schedule.ui.navigation.isEnabledFor
 import com.glut.schedule.ui.navigation.otherDrawerItems
 import com.glut.schedule.ui.navigation.prepareDrawerSelection
+import com.glut.schedule.ui.navigation.unsupportedHintFor
 import com.glut.schedule.ui.pages.AboutScreen
 import com.glut.schedule.ui.pages.FaqScreen
 import com.glut.schedule.ui.pages.CourseTimeStatsScreen
@@ -187,6 +189,7 @@ import com.glut.schedule.ui.components.shouldUseCustomBackground
 import com.glut.schedule.ui.components.scheduleFirstFrameReady
 import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.data.model.snapBackgroundDimAmount
+import com.glut.schedule.ui.pages.ScoreDisplayPolicy
 import com.glut.schedule.ui.pages.ScoreScreen
 import com.glut.schedule.ui.pages.ScoreViewModel
 import com.glut.schedule.ui.pages.ScoreViewModelFactory
@@ -316,7 +319,9 @@ class MainActivity : ComponentActivity() {
                         repository = container.scheduleRepository,
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
-                        scoreParser = container.scoreParser
+                        scoreParser = container.scoreParser,
+                        // 刷新时才读来源：ViewModel 是 Activity 级缓存实例，构造时还不知道会导入哪个来源。
+                        campusTypeFlow = container.settingsStore.campusType
                     )
                 )
                 val professionalScoreViewModel: ProfessionalScoreViewModel = viewModel(
@@ -342,6 +347,7 @@ class MainActivity : ComponentActivity() {
                         repository = container.scheduleRepository,
                         sessionStore = container.academicSessionStore,
                         loginService = container.academicLoginService,
+                        settingsStore = container.settingsStore,
                         studyPlanParser = container.studyPlanParser
                     )
                 )
@@ -482,10 +488,11 @@ class MainActivity : ComponentActivity() {
                     } else null
 
                 LaunchedEffect(campusType) {
-                    if (
-                        campusType != CampusType.GUILIN &&
-                        selectedItem == DrawerItem.CampusInfo
-                    ) {
+                    // 切换到新来源后，当前停留的页面可能在新来源下已经不可用
+                    // （研究生的考试/专业成绩/考级/体测/校园信息/财务/情侣课表/课时统计都是禁用项）。
+                    // 菜单虽然置灰了，但 selectedItem 仍是旧值，页面会继续渲染并对新来源发请求；
+                    // 这里统一把用户送回课表，避免「禁用菜单仍在后台跑」的漏洞。
+                    if (selectedItem != DrawerItem.Schedule && !selectedItem.isEnabledFor(campusType)) {
                         selectedItem = DrawerItem.Schedule
                     }
                 }
@@ -690,6 +697,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             item = item,
                                             isSelected = selectedItem == item,
                                             showDot = item == DrawerItem.About && showUpdateDot,
+                                            enabled = item.isEnabledFor(campusType),
+                                            unsupportedHint = item.unsupportedHintFor(campusType),
                                             onClick = {
                                                 selectedItem = item
                                                 settingsSubPage = SettingsSubPage.ROOT
@@ -711,6 +720,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
+                                            enabled = item.isEnabledFor(campusType),
+                                            unsupportedHint = item.unsupportedHintFor(campusType),
                                             onClick = {
                                                 selectedItem = prepareDrawerSelection(
                                                     current = selectedItem,
@@ -736,6 +747,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
+                                            enabled = item.isEnabledFor(campusType),
+                                            unsupportedHint = item.unsupportedHintFor(campusType),
                                             onClick = {
                                                 selectedItem = item
                                                 settingsSubPage = SettingsSubPage.ROOT
@@ -968,7 +981,11 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     backgroundStore = container.backgroundStore,
                                     onDrawerOpen = { scope.launch { drawerState.open() } }
                                 )
-                                DrawerItem.Score -> ScoreScreen(viewModel = scoreViewModel)
+                                DrawerItem.Score -> ScoreScreen(
+                                    viewModel = scoreViewModel,
+                                    // 研究生：第 1 学期是秋季，且门户不给绩点——两者都必须按来源切换。
+                                    policy = ScoreDisplayPolicy.of(campusType)
+                                )
                                 DrawerItem.ProfessionalScore -> ProfessionalScoreScreen(viewModel = professionalScoreViewModel)
                                 DrawerItem.GradeExam -> GradeExamScreen(viewModel = gradeExamViewModel)
                                 DrawerItem.FitnessScore -> FitnessScoreScreen(
@@ -983,7 +1000,11 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 }
                                 DrawerItem.CourseTimeStats -> CourseTimeStatsScreen(
                                     viewModel = courseTimeStatsViewModel,
-                                    onImportClick = { selectedItem = DrawerItem.Import }
+                                    onImportClick = { selectedItem = DrawerItem.Import },
+                                    onClassTimesClick = {
+                                        selectedItem = DrawerItem.Settings
+                                        settingsSubPage = SettingsSubPage.CLASS_PERIODS
+                                    }
                                 )
                                 DrawerItem.Finance -> financeViewModel?.let {
                                     FinanceScreen(
@@ -1562,23 +1583,40 @@ private fun DrawerMenuItem(
     item: DrawerItem,
     isSelected: Boolean,
     showDot: Boolean = false,
+    /**
+     * 当前来源是否支持这一项。不支持时入口**保留但置灰**，点击提示 [unsupportedHint]，
+     * 而不是像南宁那样整项隐藏——用户能一眼看出「这个菜单存在，只是研究生没有」。
+     */
+    enabled: Boolean = true,
+    unsupportedHint: String? = null,
     onClick: () -> Unit
 ) {
-    val bgColor = if (isSelected) Color(0xFF3F7DF6).copy(alpha = 0.10f) else Color.Transparent
-    val contentColor = if (isSelected) Color(0xFF3F7DF6) else Color(0xFF667085)
+    val context = LocalContext.current
+    val bgColor = if (isSelected && enabled) Color(0xFF3F7DF6).copy(alpha = 0.10f) else Color.Transparent
+    val contentColor = when {
+        !enabled -> Color(0xFF667085).copy(alpha = 0.38f)
+        isSelected -> Color(0xFF3F7DF6)
+        else -> Color(0xFF667085)
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 2.dp)
             .background(bgColor, RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
+            .clickable {
+                if (enabled) {
+                    onClick()
+                } else if (!unsupportedHint.isNullOrBlank()) {
+                    android.widget.Toast.makeText(context, unsupportedHint, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(item.icon, contentDescription = item.title, tint = contentColor, modifier = Modifier.size(24.dp))
         Spacer(modifier = Modifier.width(16.dp))
-        Text(item.title, color = contentColor, fontSize = 16.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.weight(1f))
+        Text(item.title, color = contentColor, fontSize = 16.sp, fontWeight = if (isSelected && enabled) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.weight(1f))
         if (showDot) {
             Box(
                 modifier = Modifier

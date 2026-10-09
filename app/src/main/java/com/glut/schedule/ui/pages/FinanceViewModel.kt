@@ -66,7 +66,16 @@ class FinanceViewModel(
     private val cached = FinanceModule.entries.mapNotNull { module -> store.module(module)?.let { module to it } }.toMap()
     private val _uiState = MutableStateFlow(
         FinanceUiState(
-            campusUnsupported = campus == CampusType.NANNING,
+            // 注意这与能力表的 supportsFinance **不是同一个问题**：
+            // 能力表回答「菜单该不该出现」（南宁为 true，入口是显示的），
+            // 这里回答「后端是否已接入」（南宁的历史实现尚未接入，因此为 true=不可用）。
+            // 用显式的 when 而不是「是不是南宁」，加入研究生后编译器会强制补齐分支。
+            campusUnsupported = when (campus) {
+                CampusType.GUILIN -> false
+                CampusType.NANNING -> true
+                // 研究生没有财务模块；即使入口已置灰，也在这里兜住遗留选中态，不发请求。
+                CampusType.GRADUATE -> true
+            },
             payloads = cached,
             login = FinanceLoginState(username = credentials.username, password = credentials.password)
         )

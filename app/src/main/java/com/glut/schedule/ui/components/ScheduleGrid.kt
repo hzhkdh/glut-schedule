@@ -135,6 +135,14 @@ fun ScheduleGrid(
     blocks: List<CourseBlock>,
     showWeekend: Boolean,
     showNoon: Boolean = false,
+    /**
+     * 该来源是否含「中午1/中午2」两个特殊节次。
+     *
+     * 过去这里靠 `periods.size <= 11` 推断「是不是南宁」，加入研究生（也是 12 节、
+     * 也没有中午节次）后这条推断同时失效：它会把研究生的第 7-12 节当成桂林节次整体前移 2。
+     * 默认值保持旧口径，调用方应按来源显式传入。
+     */
+    hasNoonSections: Boolean = periods.size > 11,
     showCalendarDates: Boolean = true,
     holidayDates: Set<LocalDate> = emptySet(),
     manualAdjustmentDates: Set<LocalDate> = emptySet(),
@@ -149,8 +157,9 @@ fun ScheduleGrid(
         val leftWidth = 52.dp
         val dayCount = visibleDayCount(showWeekend)
         val dayWidth = (maxWidth - leftWidth) / dayCount
-        // 南宁课表（periods.size==11）无中午时段，不应过滤/偏移；桂林（14节）按用户设置
-        val effectiveShowNoon = showNoon || periods.size <= 11
+        // 没有中午节次的来源（南宁、研究生）必须原样显示全部节次，不折叠也不偏移；
+        // 桂林（14节）才按用户的「显示中午」开关决定是否折叠中间两行。
+        val effectiveShowNoon = showNoon || !hasNoonSections
         val visibleBlocks = remember(blocks, dayCount, effectiveShowNoon) {
             blocks.filter { block ->
                 block.occurrence.dayOfWeek <= dayCount &&
@@ -175,7 +184,13 @@ fun ScheduleGrid(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                PeriodColumn(periods = periods, rowHeight = rowHeight, width = leftWidth, showNoon = effectiveShowNoon)
+                PeriodColumn(
+                    periods = periods,
+                    rowHeight = rowHeight,
+                    width = leftWidth,
+                    showNoon = effectiveShowNoon,
+                    hasNoonSections = hasNoonSections
+                )
                 TimetableBody(
                     periods = periods,
                     blocks = visibleBlocks,
@@ -322,13 +337,14 @@ private fun PeriodColumn(
     periods: List<ClassPeriod>,
     rowHeight: Dp,
     width: Dp,
-    showNoon: Boolean = false
+    showNoon: Boolean = false,
+    hasNoonSections: Boolean = true
 ) {
-    // 南宁（11节）无中午时段，节次标签直排；桂林（14节）用 periodLabel() 含午1/午2+偏移
-    val isNanning = periods.size <= 11
+    // 有中午节次的来源（桂林）用 periodLabel() 把内部号映射成「午1/午2 + 5-12」；
+    // 南宁与研究生没有中午节次，内部号即显示号，直排。
     Column(modifier = Modifier.width(width)) {
         periods.forEach { period ->
-            val isNoon = !isNanning && period.section in NOON_SECTIONS
+            val isNoon = hasNoonSections && period.section in NOON_SECTIONS
             val h = if (!showNoon && isNoon) 0.dp else rowHeight
             if (h > 0.dp) {
                 Column(
@@ -338,7 +354,7 @@ private fun PeriodColumn(
                     horizontalAlignment = Alignment.Start
                 ) {
                     Text(
-                        text = if (isNanning) "${period.section}" else period.periodLabel(),
+                        text = if (hasNoonSections) period.periodLabel() else "${period.section}",
                         color = Color.White,
                         style = periodColumnTextStyle(fontSize = 14.sp, lineHeight = 16.sp),
                         maxLines = 1,

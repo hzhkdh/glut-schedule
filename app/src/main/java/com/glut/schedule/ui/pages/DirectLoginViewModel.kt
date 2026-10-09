@@ -11,8 +11,20 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
+import com.glut.schedule.data.model.academicMaxWeekForCalendar
+import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.model.countDistinctCourseTitles
+import com.glut.schedule.data.model.defaultSemesterEndDate
+import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.ClassPeriodProfile
+import com.glut.schedule.data.settings.ImportSource
 import com.glut.schedule.data.settings.ScheduleSettingsStore
+import com.glut.schedule.data.settings.classPeriodProfile
+import com.glut.schedule.service.graduate.GraduateImportCoordinator
+import com.glut.schedule.service.graduate.GraduateImportEffects
+import com.glut.schedule.service.graduate.GraduateImportService
+import com.glut.schedule.service.graduate.GraduateLoginSession
+import com.glut.schedule.service.graduate.GraduateClient
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginHttpClient
 import com.glut.schedule.service.academic.AcademicLoginResult
@@ -64,9 +76,15 @@ data class DirectLoginUiState(
     val password: String = "",
     val rememberPassword: Boolean = true,
     val secureCredentialStorageAvailable: Boolean = true,
-    val isNanning: Boolean = false,
+    /**
+     * 导入来源下拉框当前选中的项。
+     *
+     * 与已生效的 [CampusType] 分开：这里只是「用户打算导入哪一个」，
+     * 真正的数据源切换发生在导入成功之后，失败不回写。
+     */
+    val importSource: ImportSource = ImportSource.GUILIN,
     val isLoggingIn: Boolean = false,
-    // Nanning captcha flow
+    // 验证码流程（南宁与研究生共用同一个弹窗）
     val showCaptchaDialog: Boolean = false,
     val captchaBitmap: Bitmap? = null,
     val captchaInput: String = "",
@@ -77,8 +95,15 @@ data class DirectLoginUiState(
     val viewedSemesterId: String = AcademicSemester.LEGACY_CURRENT_ID,
     val importingSemesterId: String? = null,
     /** 无法识别周次的课次数量，用于向用户如实反馈而不是让课程静默消失。 */
-    val unparsedWeekTextCount: Int = 0
-)
+    val unparsedWeekTextCount: Int = 0,
+    /** 研究生调课提示：只展示，绝不据此改动主课表。 */
+    val adjustmentWarning: String = ""
+) {
+    /** 兼容旧判断：南宁来源。 */
+    val isNanning: Boolean get() = importSource == ImportSource.NANNING
+
+    val isGraduate: Boolean get() = importSource == ImportSource.GRADUATE
+}
 
 data class ImportResult(
     val courseCount: Int,
@@ -140,11 +165,18 @@ class DirectLoginViewModel(
     private var loginHttpClient = AcademicLoginHttpClient()
     private val oaLoginClient = AcademicOALoginClient()
     private var credentialsCleared = false
+    /** 用户是否手动动过来源下拉框；动过就不再被「上次成功的来源」覆盖。 */
+    private var sourceTouchedByUser = false
 
-    // Nanning login session state (lives outside uiState to avoid data class issues)
+    // 南宁登录会话状态（放在 uiState 之外，避免 data class 里塞大对象）
     private var nanningCaptchaBytes: ByteArray? = null
-    // Each Nanning login attempt gets a fresh CookieJar → fresh session
+    // 每次南宁登录尝试都换一个全新的 CookieJar → 全新会话
     private var nanningCookieJar: CapturingCookieJar? = null
+
+    // 研究生会话：CookieJar 承载连接状态，上下文（学年/学期/学号）只在内存里，
+    // 不做任何持久化——它含个人身份信息，且每次登录都会重新取回。
+    private var graduateClient: GraduateClient? = null
+    private var graduateSession: GraduateLoginSession? = null
 
     // CookieJar-based client: cookies auto-persist across requests like a browser
     private fun nanningHttpClient(cookieJar: CapturingCookieJar): OkHttpClient = OkHttpClient.Builder()
@@ -171,6 +203,13 @@ class DirectLoginViewModel(
             }
         }
         viewModelScope.launch {
+            // 首次进入默认桂林本部；之后恢复「上一次成功导入」的来源。
+            val lastSource = settingsStore.lastImportSource.first()
+            if (!sourceTouchedByUser) {
+                _uiState.value = _uiState.value.copy(importSource = lastSource)
+            }
+        }
+        viewModelScope.launch {
             combine(scheduleRepository.semesters, scheduleRepository.viewedSemesterId) { semesters, viewedId ->
                 semesters to viewedId
             }.collect { (semesters, viewedId) ->
@@ -180,10 +219,11 @@ class DirectLoginViewModel(
     }
 
     fun updateUsername(username: String) {
-        val digits = username.filter { it.isDigit() }
-        val autoNanning = digits.length == 10
-        _uiState.value = _uiState.value.copy(username = username, isNanning = autoNanning)
+        // 不再按学号长度自动猜校区：来源已由下拉框显式选择，
+        // 自动切换会在用户改学号时把刚选好的来源悄悄改回去。
+        _uiState.value = _uiState.value.copy(username = username)
     }
+
     fun updatePassword(password: String) { _uiState.value = _uiState.value.copy(password = password) }
     fun updateRememberPassword(remember: Boolean) {
         _uiState.value = _uiState.value.copy(
@@ -193,7 +233,12 @@ class DirectLoginViewModel(
             )
         )
     }
-    fun toggleNanning() { _uiState.value = _uiState.value.copy(isNanning = !_uiState.value.isNanning) }
+
+    /** 切换导入来源；用户一旦手动选择，就不再用「上次成功的来源」覆盖它。 */
+    fun updateImportSource(source: ImportSource) {
+        sourceTouchedByUser = true
+        _uiState.value = _uiState.value.copy(importSource = source, message = "", captchaInput = "")
+    }
 
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
 
@@ -250,6 +295,9 @@ class DirectLoginViewModel(
         loginHttpClient = AcademicLoginHttpClient()
         nanningCaptchaBytes = null
         nanningCookieJar = null
+        graduateClient = null
+        graduateSession = null
+        sourceTouchedByUser = false
         _uiState.value = DirectLoginUiState(
             rememberPassword = false,
             secureCredentialStorageAvailable = credentialStore.canPersistCredentials()
@@ -265,14 +313,21 @@ class DirectLoginViewModel(
         if (!loginGuard.tryStart()) return
         _uiState.value = state.copy(isLoggingIn = true, message = "正在登录...")
 
-        // Create fresh login client to clear any cookies from previous sessions.
-        // Without this, the CapturingCookieJar from a prior login can cause the
-        // new login to fail with "CaptchaOrInteractiveLoginRequired".
+        // 每次登录都换掉旧的教务客户端，避免上一次会话的 Cookie 影响这次登录。
+        // 不这样做时，上一次的 CapturingCookieJar 会让新登录直接落到
+        // "CaptchaOrInteractiveLoginRequired"。
         loginHttpClient = AcademicLoginHttpClient()
 
-        if (state.isNanning) {
-            startNanningLoginFlow(guardAlreadyStarted = true)
-            return
+        when (state.importSource) {
+            ImportSource.NANNING -> {
+                startNanningLoginFlow(guardAlreadyStarted = true)
+                return
+            }
+            ImportSource.GRADUATE -> {
+                startGraduateLoginFlow(guardAlreadyStarted = true)
+                return
+            }
+            ImportSource.GUILIN -> Unit
         }
 
         // Guilin: direct HTTP login
@@ -280,7 +335,7 @@ class DirectLoginViewModel(
             try {
                 val result = loginHttpClient.login(state.username, state.password)
                 when (result) {
-                    is AcademicLoginResult.Success -> onLoginSuccess(result.cookie, result.campusBaseUrl, state.rememberPassword, state.username)
+                    is AcademicLoginResult.Success -> onLoginSuccess(result.cookie, result.campusBaseUrl, ImportSource.GUILIN, state.rememberPassword, state.username)
                     AcademicLoginResult.MissingCredentials ->
                         _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "请输入学号和密码")
                     AcademicLoginResult.InvalidCredentials ->
@@ -289,7 +344,7 @@ class DirectLoginViewModel(
                         _uiState.value = _uiState.value.copy(message = "正在尝试统一身份认证登录...")
                         val oaResult = oaLoginClient.login(state.username, state.password)
                         when (oaResult) {
-                            is AcademicLoginResult.Success -> onLoginSuccess(oaResult.cookie, oaResult.campusBaseUrl, state.rememberPassword, state.username)
+                            is AcademicLoginResult.Success -> onLoginSuccess(oaResult.cookie, oaResult.campusBaseUrl, ImportSource.GUILIN, state.rememberPassword, state.username)
                             AcademicLoginResult.InvalidCredentials ->
                                 _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "学号或密码错误，请重试")
                             else ->
@@ -366,14 +421,19 @@ class DirectLoginViewModel(
         }
     }
 
-    /** User confirmed captcha input — attempt login. */
-    fun submitNanningCaptcha() {
+    /** 用户确认验证码输入 —— 按当前来源分派到南宁或研究生登录。 */
+    fun submitCaptcha() {
         val state = _uiState.value
-        val captchaCode = state.captchaInput.trim()
-        if (captchaCode.isBlank()) {
+        if (state.captchaInput.isBlank()) {
             _uiState.value = state.copy(message = "请输入验证码")
             return
         }
+        if (state.importSource == ImportSource.GRADUATE) submitGraduateCaptcha() else submitNanningCaptcha()
+    }
+
+    private fun submitNanningCaptcha() {
+        val state = _uiState.value
+        val captchaCode = state.captchaInput.trim()
         val cj = nanningCookieJar ?: run {
             _uiState.value = state.copy(message = "会话已过期，请重新开始")
             return
@@ -385,9 +445,9 @@ class DirectLoginViewModel(
             try {
                 val loginCookie = performNanningLogin(cj, state.username, state.password, captchaCode)
                 if (loginCookie != null) {
-                    onLoginSuccess(loginCookie, AcademicLoginResult.NANNING_URL, state.rememberPassword, state.username)
+                    onLoginSuccess(loginCookie, AcademicLoginResult.NANNING_URL, ImportSource.NANNING, state.rememberPassword, state.username)
                 } else {
-                    refreshNanningCaptcha()
+                    refreshCaptcha()
                     _uiState.value = _uiState.value.copy(
                         isLoggingIn = false,
                         showCaptchaDialog = true,
@@ -403,13 +463,18 @@ class DirectLoginViewModel(
         }
     }
 
-    fun cancelNanningCaptcha() {
+    fun cancelCaptcha() {
         _uiState.value = _uiState.value.copy(showCaptchaDialog = false, captchaInput = "", isLoggingIn = false)
         nanningCaptchaBytes = null
         nanningCookieJar = null
+        graduateClient = null
     }
 
-    /** Refresh captcha image (user clicked refresh button). */
+    /** 刷新验证码图片（用户点了刷新按钮）。 */
+    fun refreshCaptcha() {
+        if (_uiState.value.importSource == ImportSource.GRADUATE) refreshGraduateCaptcha() else refreshNanningCaptcha()
+    }
+
     fun refreshNanningCaptcha() {
         val cj = nanningCookieJar ?: return
         viewModelScope.launch {
@@ -529,9 +594,94 @@ class DirectLoginViewModel(
         }
     }
 
+    // ---- 研究生验证码登录流程 ----
+
+    /**
+     * 研究生登录第一步：取验证码并弹出输入框。
+     *
+     * 门户的验证码与会话绑定在 Cookie 里，因此客户端要一直留到用户提交验证码为止，
+     * 不能每步新建一个。
+     */
+    private fun startGraduateLoginFlow(guardAlreadyStarted: Boolean = false) {
+        if (!guardAlreadyStarted && !loginGuard.tryStart()) return
+        _uiState.value = _uiState.value.copy(isLoggingIn = true, message = "正在获取验证码...")
+        viewModelScope.launch {
+            try {
+                val client = GraduateClient()
+                val attempt = withContext(Dispatchers.IO) { runCatching { client.captcha() } }
+                val bytes = attempt.getOrNull()
+                if (bytes == null) {
+                    // 把原因带出来。此前用 getOrNull() 直接吞掉异常，界面只有一句
+                    // 「无法获取研究生教务验证码」，看不出是网络、HTTP 状态码还是代码缺陷。
+                    val detail = attempt.exceptionOrNull()?.message?.takeIf { it.isNotBlank() }
+                    _uiState.value = _uiState.value.copy(
+                        isLoggingIn = false,
+                        message = detail?.let { "无法获取研究生教务验证码：$it" } ?: "无法获取研究生教务验证码"
+                    )
+                    return@launch
+                }
+                graduateClient = client
+                _uiState.value = _uiState.value.copy(
+                    isLoggingIn = false,
+                    showCaptchaDialog = true,
+                    captchaBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size),
+                    captchaInput = "",
+                    message = ""
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "获取验证码失败: ${e.message}")
+            } finally {
+                loginGuard.finish()
+            }
+        }
+    }
+
+    /** 刷新研究生验证码：换一张图，不新建会话。 */
+    private fun refreshGraduateCaptcha() {
+        val client = graduateClient ?: return
+        viewModelScope.launch {
+            val bytes = withContext(Dispatchers.IO) { runCatching { client.captcha() }.getOrNull() } ?: return@launch
+            _uiState.value = _uiState.value.copy(
+                captchaBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size),
+                captchaInput = ""
+            )
+        }
+    }
+
+    private fun submitGraduateCaptcha() {
+        val state = _uiState.value
+        val client = graduateClient ?: run {
+            _uiState.value = state.copy(message = "会话已过期，请重新开始")
+            return
+        }
+        if (!loginGuard.tryStart()) return
+        _uiState.value = state.copy(isLoggingIn = true, showCaptchaDialog = false, message = "正在登录...")
+        viewModelScope.launch {
+            try {
+                val session = GraduateImportService.login(
+                    username = state.username,
+                    password = state.password,
+                    captcha = state.captchaInput.trim(),
+                    client = client
+                )
+                onGraduateLoginSuccess(session, state.rememberPassword, state.username)
+            } catch (e: Exception) {
+                refreshGraduateCaptcha()
+                _uiState.value = _uiState.value.copy(
+                    isLoggingIn = false,
+                    showCaptchaDialog = true,
+                    captchaInput = "",
+                    message = e.message?.takeIf { it.isNotBlank() } ?: "研究生登录失败，请重试"
+                )
+            } finally {
+                loginGuard.finish()
+            }
+        }
+    }
+
     // ---- Shared helpers ----
 
-    private suspend fun onLoginSuccess(cookie: String, campusBaseUrl: String, remember: Boolean, studentNumber: String) {
+    private suspend fun onLoginSuccess(cookie: String, campusBaseUrl: String, source: ImportSource, remember: Boolean, studentNumber: String) {
         val username = _uiState.value.username
         val password = _uiState.value.password
         val shouldRemember = effectiveRememberPassword(remember, credentialStore.canPersistCredentials())
@@ -550,17 +700,54 @@ class DirectLoginViewModel(
         sessionStore.saveCookie(cookie)
         sessionStore.saveCampusBaseUrl(campusBaseUrl)
         sessionStore.saveAuthenticatedStudentNumber(studentNumber)
-        val campusType = if (campusBaseUrl == AcademicLoginResult.NANNING_URL) {
-            com.glut.schedule.data.settings.CampusType.NANNING
-        } else {
-            com.glut.schedule.data.settings.CampusType.GUILIN
-        }
-        settingsStore.setCampusType(campusType)
+        // 来源切换**不在这里**：它必须发生在课表成功写入之后，否则中途失败会让界面停在
+        // 「新来源的菜单 + 旧来源的数据」这种半切换状态。切换由 performImport 负责。
         _uiState.value = _uiState.value.copy(message = "登录成功，正在导入数据...")
-        performImport(cookie, campusBaseUrl, studentNumber)
+        performImport(cookie, campusBaseUrl, source, studentNumber)
     }
 
-    private suspend fun performImport(cookie: String, campusBaseUrl: String, studentNumber: String) {
+    /**
+     * 研究生登录成功后的落库与导入。
+     *
+     * 与本科路径的区别：会话不能复用 `sessionStore` 的教务 Cookie（协议不同），
+     * 上下文（学年/学期/学号）只活在内存里；导入完成后才切换 `CampusType`。
+     */
+    private suspend fun onGraduateLoginSuccess(
+        session: GraduateLoginSession,
+        remember: Boolean,
+        studentNumber: String
+    ) {
+        val username = _uiState.value.username
+        val password = _uiState.value.password
+        val shouldRemember = effectiveRememberPassword(remember, credentialStore.canPersistCredentials())
+        val previousStudent = sessionStore.authenticatedStudentNumber.first()
+        val replacePreviousAccount = shouldClearAcademicData(previousStudent, studentNumber)
+        if (shouldRemember) {
+            credentialStore.saveCredentials(username, password)
+        } else {
+            credentialStore.clearCredentials()
+        }
+        graduateSession = session
+        _uiState.value = _uiState.value.copy(message = "登录成功，正在导入数据...")
+        performGraduateImport(session, replacePreviousAccount)
+    }
+
+    /**
+     * 按来源解析要写进学期行的作息。
+     *
+     * 桂林要区分雁山/屏风，所以走 [classPeriodProfile]；研究生与南宁各自独立。
+     */
+    private suspend fun sourceClassPeriods(source: ImportSource) =
+        scheduleRepository.classPeriodsFor(
+            classPeriodProfile(source.campus, settingsStore.guilinSubCampus.first())
+        )
+
+    private suspend fun performImport(
+        cookie: String,
+        campusBaseUrl: String,
+        source: ImportSource,
+        studentNumber: String
+    ) {
         var activeCookie = cookie
         var courseCount = 0
         var examCount = 0
@@ -684,11 +871,17 @@ class DirectLoginViewModel(
                 semester = currentSemester,
                 courses = currentPayload.courses,
                 adjustments = currentPayload.adjustments,
-                classPeriods = scheduleRepository.currentClassPeriods.first(),
+                // 按来源档案显式取作息：切换来源发生在下面写入成功之后，
+                // 此刻读 currentClassPeriods 拿到的还是**上一个**来源的时间表。
+                classPeriods = sourceClassPeriods(source),
                 semesterStartDate = resolvedCalendar.startMonday,
                 semesterEndDate = resolvedCalendar.endDate,
                 portalMaxWeek = currentPayload.portalMaxWeek
             )
+            // 课表已经落库，现在才切换来源。放在这之前会让导入失败时界面停在
+            // 「新来源的菜单/作息 + 旧来源的数据」这种半切换状态。
+            settingsStore.setCampusType(source.campus)
+            settingsStore.setLastImportSource(source)
             courseCount = currentPayload.courses.countDistinctCourseTitles()
 
             // 与考试页共用多接口兜底链路，桂林首选接口返回空结构时仍会继续探测。
@@ -874,6 +1067,109 @@ class DirectLoginViewModel(
         }
     }
 
+    // ---- 研究生导入 ----
+
+    /**
+     * 研究生导入主流程：学期目录 → 当前学期课表 → 成绩 → 培养计划。
+     *
+     * 与本科路径一样「各模块独立反馈失败」：课表失败即整体失败（没有课表就没有意义），
+     * 成绩与培养计划失败只记在 `failedModules` 里，不影响已经写入的课表。
+     *
+     * 课表在本专科路径里是「考试 / 成绩 / 等级考试 / 教学计划」四件套；
+     * 研究生门户只提供成绩与只读培养计划，其余模块在菜单层就是禁用状态。
+     */
+    private suspend fun performGraduateImport(
+        session: GraduateLoginSession,
+        replacePreviousAccount: Boolean
+    ) {
+        _uiState.value = _uiState.value.copy(message = "正在获取研究生学期目录...")
+        val coordinator = GraduateImportCoordinator(
+            effects = GraduateImportEffects(
+                fetchCatalog = { GraduateImportService.catalog(it) },
+                fetchSemester = { s, semester -> GraduateImportService.importSemester(s, semester) },
+                fetchScores = { GraduateImportService.scores(it) },
+                fetchStudyPlan = { GraduateImportService.studyPlan(it) },
+                saveCatalog = { scheduleRepository.saveSemesterCatalog(it) },
+                selectCurrentSemester = {
+                    settingsStore.setCurrentSemesterId(it.id)
+                    scheduleRepository.selectSemester(it.id)
+                },
+                saveCalendar = { start, end ->
+                    settingsStore.setSemesterStartMonday(start)
+                    settingsStore.setSemesterEndDate(end)
+                    settingsStore.setCurrentWeekNumber(
+                        academicWeekForDate(LocalDate.now(), start, academicMaxWeekForCalendar(start, end))
+                    )
+                },
+                // 按档案取作息：切换来源之前读「当前校区」会拿到上一个来源的时间表。
+                readClassPeriods = {
+                    scheduleRepository.classPeriodsFor(ClassPeriodProfile.GRADUATE)
+                },
+                writeSchedule = { write ->
+                    // 新账号的课表已经完成下载和解析，到这个提交点才清理旧账号缓存。
+                    // 登录、目录或课表取数失败时，原账号数据保持可用。
+                    if (replacePreviousAccount) {
+                        semesterBulkDownloadCoordinator.cancelForAccountChange()
+                        scheduleRepository.clearAllData()
+                        sessionStore.clearAll()
+                    }
+                    scheduleRepository.replaceSemesterSchedule(
+                        semester = write.semester,
+                        courses = write.courses,
+                        // 研究生的调课记录当前不并入课表：未经真实样本确认前，只作提示。
+                        adjustments = emptyList(),
+                        classPeriods = write.classPeriods,
+                        semesterStartDate = write.semesterStartDate,
+                        semesterEndDate = write.semesterEndDate,
+                        portalMaxWeek = write.portalMaxWeek
+                    )
+                },
+                writeScores = { scheduleRepository.replaceScores(it) },
+                writeStudyPlan = { groups, courses ->
+                    scheduleRepository.replaceStudyPlanData(groups, courses)
+                },
+                // 关键：只有课表写入成功之后才会走到这里。
+                switchSource = {
+                    // Cookie、主机、身份与来源在同一个成功提交点落库。登录后若目录或课表失败，
+                    // 旧来源不会拿到研究生会话，也不会把后续刷新发往错误主机。
+                    sessionStore.saveCookie(session.client.cookieHeader())
+                    sessionStore.saveCampusBaseUrl(GraduateClient.BASE_URL)
+                    sessionStore.saveAuthenticatedStudentNumber(session.context.studentId)
+                    sessionStore.saveAuthenticatedStudent(session.context.studentId, session.context.name)
+                    settingsStore.setCampusType(CampusType.GRADUATE)
+                    settingsStore.setLastImportSource(ImportSource.GRADUATE)
+                }
+            )
+        )
+        coordinator.run(session)
+            .onSuccess { outcome ->
+                _uiState.value = _uiState.value.copy(
+                    isLoggingIn = false,
+                    message = graduateImportCompletionMessage(
+                        failedModules = outcome.failedModules,
+                        skippedRowCount = outcome.skippedRowCount,
+                        unparsedWeekTextCount = outcome.unparsedWeekTextCount
+                    ),
+                    importResult = ImportResult(
+                        courseCount = outcome.courseCount,
+                        examCount = 0,
+                        scoreCount = outcome.scoreCount,
+                        gradeExamCount = 0,
+                        studyPlanCount = outcome.studyPlanCount
+                    ),
+                    unparsedWeekTextCount = outcome.unparsedWeekTextCount,
+                    adjustmentWarning = outcome.adjustmentWarning
+                )
+            }
+            .onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    isLoggingIn = false,
+                    message = "部分导入失败: ${error.message}",
+                    importResult = ImportResult(0, 0, 0, 0, 0)
+                )
+            }
+    }
+
     private companion object {
         private const val TAG = "DirectLoginVM"
         const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
@@ -967,6 +1263,39 @@ internal fun importCompletionMessage(
     val withSkipped = if (skippedRowCount > 0) "$message；已跳过 $skippedRowCount 条异常课程记录" else message
     // 周次无法识别的课次不会出现在任何一周。必须如实告知，否则用户看到的是
     // 「课程莫名其妙少了几门」，无从排查。
+    return if (unparsedWeekTextCount > 0) {
+        "$withSkipped；$unparsedWeekTextCount 条上课时间的周次无法识别"
+    } else {
+        withSkipped
+    }
+}
+
+/**
+ * 研究生导入的完成文案。
+ *
+ * 与本科版共用同一套口径（失败模块 + 跳过条数 + 无法识别的周次），但**不提「已保留原缓存」**：
+ * 研究生课表失败时整体不写入，成绩/培养计划的失败各自保留自己的旧数据，
+ * 笼统写「原缓存」会让用户以为课表也没更新。
+ *
+ * 「已跳过 N 条异常课程记录」与本科路径 `importCompletionMessage` 同一措辞：
+ * 被跳过的记录不会出现在课表里，不告知就等于课程凭空消失。
+ */
+internal fun graduateImportCompletionMessage(
+    failedModules: Collection<String>,
+    skippedRowCount: Int = 0,
+    unparsedWeekTextCount: Int = 0
+): String {
+    val uniqueModules = failedModules.distinct()
+    val message = if (uniqueModules.isEmpty()) {
+        "导入完成"
+    } else {
+        "部分导入失败：${uniqueModules.joinToString("、")}"
+    }
+    val withSkipped = if (skippedRowCount > 0) {
+        "$message；已跳过 $skippedRowCount 条异常课程记录"
+    } else {
+        message
+    }
     return if (unparsedWeekTextCount > 0) {
         "$withSkipped；$unparsedWeekTextCount 条上课时间的周次无法识别"
     } else {

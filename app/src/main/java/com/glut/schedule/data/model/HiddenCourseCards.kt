@@ -137,11 +137,17 @@ fun hiddenCardRuleHits(courses: List<ScheduleCourse>, rule: HiddenCourseRule): B
     }
 
 /** 设置页「已隐藏的卡片」列表里的一行，例如「数据库系统 · 周二 3-4 节 · 第 5 周」。 */
-fun hiddenRuleLabel(rule: HiddenCourseRule, courses: List<ScheduleCourse>): String =
+fun hiddenRuleLabel(
+    rule: HiddenCourseRule,
+    courses: List<ScheduleCourse>,
+    hasNoonSections: Boolean = true
+): String =
     if (rule.scope == HiddenCardScope.COURSE) {
         "${hiddenRuleCourseTitle(rule, courses)}（整门课，同名课程一并隐藏）"
     } else {
-        "${hiddenRuleCourseTitle(rule, courses)} · ${hiddenRuleScopeText(rule, courses)}"
+        // 必须把 hasNoonSections 透传下去：该函数拿不到来源，只能由调用方给。
+        // 漏传时默认 true，会让南宁/研究生在这条文案里把内部 5/6 节显示成「午1-午2」。
+        "${hiddenRuleCourseTitle(rule, courses)} · ${hiddenRuleScopeText(rule, courses, hasNoonSections)}"
     }
 
 /**
@@ -150,7 +156,11 @@ fun hiddenRuleLabel(rule: HiddenCourseRule, courses: List<ScheduleCourse>): Stri
  * 「这个课次」展示的是**该课次当前实际生效的周次**，而不是 `weekText` 原文——
  * 教务原文可能带「第」「单周」等噪声，直接抄给用户反而看不懂。
  */
-fun hiddenRuleScopeText(rule: HiddenCourseRule, courses: List<ScheduleCourse>): String =
+fun hiddenRuleScopeText(
+    rule: HiddenCourseRule,
+    courses: List<ScheduleCourse>,
+    hasNoonSections: Boolean = true
+): String =
     when (rule.scope) {
         HiddenCardScope.COURSE ->
             // 键只看课程名（剥 @班级 后缀、去空格、小写），同名不同教师/教室的课会一起隐藏，
@@ -158,12 +168,12 @@ fun hiddenRuleScopeText(rule: HiddenCourseRule, courses: List<ScheduleCourse>): 
             "${hiddenRuleCourseTitle(rule, courses)}，同名课程一并隐藏"
 
         HiddenCardScope.WEEK -> listOfNotNull(
-            hiddenRuleSectionText(rule),
+            hiddenRuleSectionText(rule, hasNoonSections),
             "第 ${rule.week} 周"
         ).joinToString(" · ")
 
         HiddenCardScope.OCCURRENCE -> listOfNotNull(
-            hiddenRuleSectionText(rule),
+            hiddenRuleSectionText(rule, hasNoonSections),
             hiddenRuleMatchedWeekText(rule, courses)
         ).joinToString(" · ")
     }
@@ -171,8 +181,15 @@ fun hiddenRuleScopeText(rule: HiddenCourseRule, courses: List<ScheduleCourse>): 
 private fun hiddenRuleCourseTitle(rule: HiddenCourseRule, courses: List<ScheduleCourse>): String =
     courses.firstOrNull { hiddenCourseKey(it.id, it.title) == rule.courseKey }?.title ?: rule.courseKey
 
-private fun hiddenRuleSectionText(rule: HiddenCourseRule): String =
-    "${weekdayLabel(rule.dayOfWeek)} ${rule.startSection}-${rule.endSection} 节"
+/**
+ * 「周二 5-6 节」。
+ *
+ * 节次必须走 [sectionSpanLabel]：规则里存的是**内部**节次号（它是匹配键，不能改），
+ * 但显示要按来源映射——桂林的内部 7、8 就是「第 5、6 节」，直接拼内部号会多出 2 节。
+ * 这段文案与长按弹层顶部的课程副标题在同一屏里，两处口径必须一致。
+ */
+private fun hiddenRuleSectionText(rule: HiddenCourseRule, hasNoonSections: Boolean): String =
+    "${weekdayLabel(rule.dayOfWeek)} ${sectionSpanLabel(rule.startSection, rule.endSection, hasNoonSections)} 节"
 
 /** 命中的那个课次在课表里实际生效的周次，压成 `1-16周` 这样的文本。 */
 private fun hiddenRuleMatchedWeekText(rule: HiddenCourseRule, courses: List<ScheduleCourse>): String =

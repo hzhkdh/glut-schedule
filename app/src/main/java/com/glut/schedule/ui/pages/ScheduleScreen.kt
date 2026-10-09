@@ -63,6 +63,7 @@ import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.manualCopyBlocksForWeek
 import com.glut.schedule.data.model.scheduleWeekForNumber
+import com.glut.schedule.data.settings.capabilitiesFor
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
@@ -259,6 +260,9 @@ fun ScheduleScreen(
                     blocks = pageBlocks,
                     showWeekend = uiState.showWeekend,
                     showNoon = uiState.showNoon,
+                    // 已废弃「periods.size <= 11 就是南宁」的推断：研究生同样是 12 节且无中午节次，
+                    // 必须按来源显式告知网格要不要做中午映射。
+                    hasNoonSections = capabilitiesFor(uiState.campusType).hasNoonSections,
                     showCalendarDates = uiState.hasAuthoritativeCalendar,
                     holidayDates = uiState.holidayDates,
                     manualAdjustmentDates = adjustmentDates,
@@ -352,6 +356,7 @@ fun ScheduleScreen(
             block = block,
             courses = uiState.allCourses,
             currentWeekNumber = uiState.week.number,
+            hasNoonSections = capabilitiesFor(uiState.campusType).hasNoonSections,
             onDismiss = { managedBlock = null },
             onSelectColor = { color ->
                 viewModel.setCourseColorOverride(

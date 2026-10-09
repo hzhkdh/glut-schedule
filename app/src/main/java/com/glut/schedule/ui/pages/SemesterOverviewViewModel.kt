@@ -16,6 +16,7 @@ import com.glut.schedule.data.model.academicWeekForDate
 import com.glut.schedule.data.model.countDistinctCourseTitles
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.ScheduleSettingsStore
+import com.glut.schedule.data.settings.capabilitiesFor
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
@@ -138,8 +139,10 @@ class SemesterOverviewViewModel(
         _holidays,
         _isRefreshing,
         _message,
-        sessionStore.campusBaseUrl
-    ) { base, holidays, isRefreshing, message, campusBaseUrl ->
+        // 这里原本消费的是会话 baseUrl（用来推断「是不是南宁」）。加入研究生后，
+        // 来源判断改为直接读设置里的 CampusType，baseUrl 在这个 combine 里已无用。
+        settingsStore.campusType
+    ) { base, holidays, isRefreshing, message, currentCampusType ->
         val today = LocalDate.now()
         val isArchiveMode = base.viewedSemester?.isCurrent == false
         val startDate = base.viewedSemester?.semesterStartDate ?: base.startMonday
@@ -196,8 +199,10 @@ class SemesterOverviewViewModel(
             },
             isRefreshing = isRefreshing,
             message = message,
-            hasNoon = base.viewedSemester?.campus?.let { it != CampusType.NANNING }
-                ?: (campusBaseUrl != AcademicLoginResult.NANNING_URL),
+            // 中午节次是「来源」属性，不是「是不是南宁」：研究生同样没有中午节次，
+            // 沿用旧的二选一判断会让概览页把研究生的第 5、6 节当成午1/午2 并整体错位 2 节。
+            hasNoon = base.viewedSemester?.campus?.let { capabilitiesFor(it).hasNoonSections }
+                ?: capabilitiesFor(currentCampusType).hasNoonSections,
             isArchiveMode = isArchiveMode,
             courseCount = base.courses.countDistinctCourseTitles(),
             calendarAvailable = calendarAvailable
@@ -240,6 +245,17 @@ class SemesterOverviewViewModel(
         val targetSemesterId = repository.viewedSemesterId.value
         _isRefreshing.value = true
         viewModelScope.launch {
+            // 研究生没有可复用的调课接口（GetCheckedAdjustCourseList 样本为空、且不并入课表）。
+            // 必须**早退**：下面那条链路会拿研究生 Cookie 打 jw.glut.edu.cn，
+            // 还会在 silentLogin 成功后把 campusBaseUrl 覆盖成本科地址，反过来破坏研究生会话。
+            if (settingsStore.campusType.first() == CampusType.GRADUATE) {
+                _message.value = "研究生调课暂不支持刷新，请在研究生门户核对"
+                _isRefreshing.value = false
+                refreshGuard.finish()
+                delay(4000)
+                _message.value = ""
+                return@launch
+            }
             _message.value = "正在获取调课信息..."
             try {
                 val campusBaseUrl = sessionStore.campusBaseUrl.first()

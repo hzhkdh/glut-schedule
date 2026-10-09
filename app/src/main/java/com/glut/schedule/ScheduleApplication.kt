@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.room.Room
 import com.glut.schedule.data.local.ScheduleDatabase
 import com.glut.schedule.data.repository.ScheduleRepository
+import com.glut.schedule.data.model.historicalAcademicMaxWeek
 import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.ApiProbeService
@@ -194,19 +195,50 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
                 .ifBlank { credentialStore.getUsername() }
         },
         download = { semester, session ->
-            val baseUrl = session.baseUrl.ifBlank {
-                if (semester.campus == com.glut.schedule.data.settings.CampusType.NANNING) {
-                    com.glut.schedule.service.academic.AcademicLoginResult.NANNING_URL
-                } else {
-                    com.glut.schedule.service.academic.AcademicLoginResult.DEFAULT_GUILIN_URL
+            if (semester.campus == com.glut.schedule.data.settings.CampusType.GRADUATE) {
+                // 研究生历史学期同样只有门户那一个网关调用；走本专科的导入服务会打到
+                // jw.glut.edu.cn，拿回一堆与本次请求无关的页面。这里单独适配，
+                // 结果包装成本专科导入服务的返回类型，让批量下载的调度与提交逻辑保持不变。
+                com.glut.schedule.service.graduate.GraduateImportService.downloadSemester(
+                    cookie = session.cookie,
+                    semester = semester,
+                    studentId = session.ownerStudentNumber
+                ).map { payload ->
+                    com.glut.schedule.service.academic.AcademicSemesterImportPayload(
+                        courses = payload.courses,
+                        // 研究生的调课不并入课表，历史学期同样不例外。
+                        adjustments = emptyList(),
+                        currcourseHtml = "",
+                        timetableHtml = "",
+                        responseKind = com.glut.schedule.service.academic.AcademicSemesterResponseKind
+                            .VALID_NON_EMPTY_SCHEDULE,
+                        // 没有权威校历时不得臆造开学日；周数按「反推」口径补齐但**绝不为 null**：
+                        // CourseTimeStats 会把 portalMaxWeek 为 null 的学期整学期判为不可统计。
+                        portalMaxWeek = historicalAcademicMaxWeek(
+                            semester.portalMaxWeek,
+                            payload.courses
+                        ),
+                        semesterStartMonday = payload.semesterStartMonday,
+                        updatedCookie = "",
+                        unparsedWeekTextCount = payload.unparsedWeekTextCount,
+                        skippedRowCount = payload.skippedRowCount
+                    )
                 }
+            } else {
+                val baseUrl = session.baseUrl.ifBlank {
+                    if (semester.campus == com.glut.schedule.data.settings.CampusType.NANNING) {
+                        com.glut.schedule.service.academic.AcademicLoginResult.NANNING_URL
+                    } else {
+                        com.glut.schedule.service.academic.AcademicLoginResult.DEFAULT_GUILIN_URL
+                    }
+                }
+                academicSemesterImportService.importSemester(
+                    cookie = session.cookie,
+                    baseUrl = baseUrl,
+                    semester = semester,
+                    studentIdFallback = session.ownerStudentNumber
+                )
             }
-            academicSemesterImportService.importSemester(
-                cookie = session.cookie,
-                baseUrl = baseUrl,
-                semester = semester,
-                studentIdFallback = session.ownerStudentNumber
-            )
         },
         commit = { semester, payload ->
             if (payload.updatedCookie.isNotBlank()) {

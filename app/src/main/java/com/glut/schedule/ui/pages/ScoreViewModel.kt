@@ -6,20 +6,25 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.repository.ScheduleRepository
+import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.scorePageUnavailableReason
 import com.glut.schedule.service.academic.AcademicSessionStore
+import com.glut.schedule.service.graduate.GraduateClient
+import com.glut.schedule.service.graduate.GraduateParser
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.StudyPlanParser
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readBytesLimited
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
@@ -43,7 +48,9 @@ class ScoreViewModel(
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
     private val scoreParser: ScoreParser = ScoreParser(),
-    private val studyPlanParser: StudyPlanParser = StudyPlanParser()
+    private val studyPlanParser: StudyPlanParser = StudyPlanParser(),
+    /** 当前来源；刷新链路对研究生必须换网关（见 [refreshScores]）。刷新时读取，不做构造快照。 */
+    private val campusTypeFlow: Flow<CampusType> = flowOf(CampusType.GUILIN)
 ) : ViewModel() {
 
     private val _isRefreshing = MutableStateFlow(false)
@@ -82,73 +89,123 @@ class ScoreViewModel(
 
     fun refreshScores() {
         viewModelScope.launch {
-            _isRefreshing.value = true
-            _message.value = "正在获取成绩..."
-            try {
-                // Try existing cookie first
-                var cookie = sessionStore.academicCookie.first()
-                var allScores = if (cookie.isNotBlank()) fetchAllScores(cookie) else emptyList()
+            // 来源在**刷新时**读取，而不是构造时快照：本 ViewModel 是 Activity 级缓存实例，
+            // 构造时还不知道用户会导入哪个来源，用构造参数会让导入研究生后仍走本科链路。
+            if (campusTypeFlow.first() == CampusType.GRADUATE) {
+                refreshGraduateScores()
+            } else {
+                refreshAcademicScores()
+            }
+        }
+    }
 
-                // If cookie expired or missing, try silent login
-                if (allScores.isEmpty()) {
-                    _message.value = "会话已过期，正在使用已保存的账号自动登录..."
-                    when (val loginResult = loginService.silentLogin()) {
-                        is AcademicLoginResult.Success -> {
-                            cookie = sessionStore.academicCookie.first()
-                            allScores = fetchAllScores(cookie)
-                        }
-                        AcademicLoginResult.MissingCredentials -> {
-                            _message.value = "请先在导入课表页面登录教务系统以保存账号密码"
-                            delay(4000)
-                            _message.value = ""
-                            return@launch
-                        }
-                        AcademicLoginResult.InvalidCredentials -> {
-                            _message.value = "教务账号或密码错误，请重新登录"
-                            delay(4000)
-                            _message.value = ""
-                            return@launch
-                        }
-                        is AcademicLoginResult.NetworkError -> {
-                            _message.value = "自动登录失败: ${loginResult.message}"
-                            delay(4000)
-                            _message.value = ""
-                            return@launch
-                        }
-                        AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
-                            val campusBaseUrl = sessionStore.campusBaseUrl.first()
-                            val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
-                            _message.value = if (isNanning)
-                                "南宁登录需验证码，请到导入课表页面重新登录"
-                            else
-                                "教务需要手动验证，请到导入课表页面重新登录"
-                            delay(4000)
-                            _message.value = ""
-                            return@launch
-                        }
+    /**
+     * 本科/南宁成绩刷新。
+     *
+     * 对研究生**绝不可达**：这里会拿会话 Cookie 打 `jw.glut.edu.cn`，并在 `silentLogin()`
+     * 成功后把 `campusBaseUrl` 覆盖成本科地址，反过来破坏研究生会话（见 [refreshScores]）。
+     */
+    private suspend fun refreshAcademicScores() {
+        _isRefreshing.value = true
+        _message.value = "正在获取成绩..."
+        try {
+            // Try existing cookie first
+            var cookie = sessionStore.academicCookie.first()
+            var allScores = if (cookie.isNotBlank()) fetchAllScores(cookie) else emptyList()
+
+            // If cookie expired or missing, try silent login
+            if (allScores.isEmpty()) {
+                _message.value = "会话已过期，正在使用已保存的账号自动登录..."
+                when (val loginResult = loginService.silentLogin()) {
+                    is AcademicLoginResult.Success -> {
+                        cookie = sessionStore.academicCookie.first()
+                        allScores = fetchAllScores(cookie)
+                    }
+                    AcademicLoginResult.MissingCredentials -> {
+                        _message.value = "请先在导入课表页面登录教务系统以保存账号密码"
+                        delay(4000)
+                        _message.value = ""
+                        return
+                    }
+                    AcademicLoginResult.InvalidCredentials -> {
+                        _message.value = "教务账号或密码错误，请重新登录"
+                        delay(4000)
+                        _message.value = ""
+                        return
+                    }
+                    is AcademicLoginResult.NetworkError -> {
+                        _message.value = "自动登录失败: ${loginResult.message}"
+                        delay(4000)
+                        _message.value = ""
+                        return
+                    }
+                    AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
+                        val campusBaseUrl = sessionStore.campusBaseUrl.first()
+                        val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
+                        _message.value = if (isNanning)
+                            "南宁登录需验证码，请到导入课表页面重新登录"
+                        else
+                            "教务需要手动验证，请到导入课表页面重新登录"
+                        delay(4000)
+                        _message.value = ""
+                        return
                     }
                 }
-
-                if (scoreBlockedByEvaluation) {
-                    _message.value = "你有课程未完成评教，必须完成全部评教才能查看成绩，可以在微信小程序中搜索【教学质量管理平台】并完成全部的评教，等待1-2天即可查看成绩"
-                    scoreBlockedByEvaluation = false
-                } else if (scorePageErrorMessage != null) {
-                    _message.value = scorePageErrorMessage.orEmpty()
-                    scorePageErrorMessage = null
-                } else if (allScores.isNotEmpty()) {
-                    repository.replaceScores(allScores)
-                    _message.value = "已获取 ${allScores.size} 条成绩记录"
-                } else {
-                    _message.value = "未获取到成绩数据"
-                }
-            } catch (e: Exception) {
-                _message.value = "获取失败: ${e.message}"
-                Log.e(TAG, "Score fetch failed", e)
-            } finally {
-                _isRefreshing.value = false
-                delay(4000)
-                _message.value = ""
             }
+
+            if (scoreBlockedByEvaluation) {
+                _message.value = "你有课程未完成评教，必须完成全部评教才能查看成绩，可以在微信小程序中搜索【教学质量管理平台】并完成全部的评教，等待1-2天即可查看成绩"
+                scoreBlockedByEvaluation = false
+            } else if (scorePageErrorMessage != null) {
+                _message.value = scorePageErrorMessage.orEmpty()
+                scorePageErrorMessage = null
+            } else if (allScores.isNotEmpty()) {
+                repository.replaceScores(allScores)
+                _message.value = "已获取 ${allScores.size} 条成绩记录"
+            } else {
+                _message.value = "未获取到成绩数据"
+            }
+        } catch (e: Exception) {
+            _message.value = "获取失败: ${e.message}"
+            Log.e(TAG, "Score fetch failed", e)
+        } finally {
+            _isRefreshing.value = false
+            delay(4000)
+            _message.value = ""
+        }
+    }
+
+    /**
+     * 研究生成绩刷新：一个网关调用，**不做静默登录**。
+     *
+     * 门户需要图形验证码，无法在后台补登录；会话失效时如实提示用户回导入页重新登录，
+     * 而不是拿记住的密码去撞本科教务。失败时保留已有缓存。
+     */
+    private suspend fun refreshGraduateScores() {
+        _isRefreshing.value = true
+        _message.value = "正在获取成绩..."
+        try {
+            val cookie = sessionStore.academicCookie.first()
+            val studentId = sessionStore.authenticatedStudentNumber.first()
+            if (cookie.isBlank() || studentId.isBlank()) {
+                _message.value = "请先在导入课表页面登录研究生教务"
+                return
+            }
+            val scores = withContext(Dispatchers.IO) {
+                GraduateParser.scores(GraduateClient(cookie).scores(studentId))
+            }
+            repository.replaceScores(scores)
+            _message.value = if (scores.isEmpty()) {
+                "未获取到成绩数据"
+            } else {
+                "已获取 ${scores.size} 条成绩记录"
+            }
+        } catch (e: Exception) {
+            _message.value = "获取失败: ${e.message}"
+        } finally {
+            _isRefreshing.value = false
+            delay(4000)
+            _message.value = ""
         }
     }
 
@@ -297,10 +354,13 @@ class ScoreViewModelFactory(
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
     private val scoreParser: ScoreParser = ScoreParser(),
-    private val studyPlanParser: StudyPlanParser = StudyPlanParser()
+    private val studyPlanParser: StudyPlanParser = StudyPlanParser(),
+    private val campusTypeFlow: Flow<CampusType> = flowOf(CampusType.GUILIN)
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return ScoreViewModel(repository, sessionStore, loginService, scoreParser, studyPlanParser) as T
+        return ScoreViewModel(
+            repository, sessionStore, loginService, scoreParser, studyPlanParser, campusTypeFlow
+        ) as T
     }
 }

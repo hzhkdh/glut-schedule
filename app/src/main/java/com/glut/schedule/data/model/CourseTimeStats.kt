@@ -24,6 +24,8 @@ enum class CourseTimeDimension(val title: String) {
 
 enum class CourseTimeStatsUnavailableReason {
     MISSING_MAX_WEEK,
+    /** 研究生默认 12 节档案尚未填写钟点，不属于缓存损坏。 */
+    UNCONFIGURED_CLASS_PERIODS,
     MISSING_CLASS_PERIODS,
     INVALID_WEEK_TEXT
 }
@@ -155,6 +157,14 @@ object CourseTimeStatsCalculator {
             return SemesterAggregation.Unavailable(CourseTimeStatsUnavailableReason.MISSING_MAX_WEEK)
         }
 
+        if (source.classPeriods.isNotEmpty() && source.classPeriods.all {
+                it.startsAt.isBlank() && it.endsAt.isBlank()
+            }
+        ) {
+            return SemesterAggregation.Unavailable(
+                CourseTimeStatsUnavailableReason.UNCONFIGURED_CLASS_PERIODS
+            )
+        }
         val periods = source.classPeriods.associateBy { it.section }
         if (periods.size != source.classPeriods.size) {
             return SemesterAggregation.Unavailable(CourseTimeStatsUnavailableReason.MISSING_CLASS_PERIODS)

@@ -7,6 +7,25 @@ import org.junit.Test
 
 class CourseTimeStatsScreenContractTest {
     @Test
+    fun unconfiguredGraduateTimesNavigateToClassPeriodSettings() {
+        val screenModule = File("src/main/java/com/glut/schedule/ui/pages/CourseTimeStatsScreen.kt")
+        val screen = (
+            if (screenModule.exists()) screenModule
+            else File("app/src/main/java/com/glut/schedule/ui/pages/CourseTimeStatsScreen.kt")
+        ).readText()
+        val activityModule = File("src/main/java/com/glut/schedule/MainActivity.kt")
+        val activity = (
+            if (activityModule.exists()) activityModule
+            else File("app/src/main/java/com/glut/schedule/MainActivity.kt")
+        ).readText()
+
+        assertTrue(screen.contains("UNCONFIGURED_CLASS_PERIODS"))
+        assertTrue(screen.contains("前往上课时间"))
+        assertTrue(screen.contains("onClassTimesClick"))
+        assertTrue(activity.contains("settingsSubPage = SettingsSubPage.CLASS_PERIODS"))
+    }
+
+    @Test
     fun semesterDropdownUsesExplicitLightContainerForReadableText() {
         val module = File("src/main/java/com/glut/schedule/ui/pages/CourseTimeStatsScreen.kt")
         val source = (

@@ -24,6 +24,13 @@ data class StudyPlanGroup(
     }
 }
 
+/** 研究生门户只提供课程清单，不提供课组要求或达标结论。 */
+const val STUDY_PLAN_READ_ONLY_ATTRIBUTE = "研究生只读"
+
+/** 页面据此隐藏学分要求、通过门数和合格图标，避免把未知状态显示成未通过。 */
+val StudyPlanGroup.isReadOnly: Boolean
+    get() = attribute == STUDY_PLAN_READ_ONLY_ATTRIBUTE
+
 enum class CourseStatus {
     PASSED,          // course_pass.png
     FAILED,          // course_failed.png

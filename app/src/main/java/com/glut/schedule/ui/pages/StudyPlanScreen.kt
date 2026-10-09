@@ -106,27 +106,33 @@ fun StudyPlanScreen(
                 )
             }
         } else {
-            // Header row
+            // 研究生门户只给课程清单，不给课组要求与达标结论；只读模式隐藏这些列。
             Row(
                 modifier = Modifier.fillMaxWidth().background(SPHeaderBg)
                     .padding(vertical = 8.dp, horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                HeaderCell("课组名称", 3f, fontSize = hdr, align = TextAlign.Start, startPad = 4.dp)
-                HeaderCell("属性", 1.1f, fontSize = hdr, startPad = 2.dp)
-                HeaderCell("学分要求", 1.25f, fontSize = hdr)
-                HeaderCell("已获学分", 1.25f, fontSize = hdr)
-                HeaderCell("门数要求", 1.25f, fontSize = hdr)
-                HeaderCell("通过门数", 1.25f, fontSize = hdr)
-                HeaderCell("是否合格", 1.25f, fontSize = hdr)
+                if (uiState.isReadOnly) {
+                    HeaderCell("课程类别（只读）", 1f, fontSize = hdr, align = TextAlign.Start, startPad = 4.dp)
+                } else {
+                    HeaderCell("课组名称", 3f, fontSize = hdr, align = TextAlign.Start, startPad = 4.dp)
+                    HeaderCell("属性", 1.1f, fontSize = hdr, startPad = 2.dp)
+                    HeaderCell("学分要求", 1.25f, fontSize = hdr)
+                    HeaderCell("已获学分", 1.25f, fontSize = hdr)
+                    HeaderCell("门数要求", 1.25f, fontSize = hdr)
+                    HeaderCell("通过门数", 1.25f, fontSize = hdr)
+                    HeaderCell("是否合格", 1.25f, fontSize = hdr)
+                }
             }
 
             // Legend bar (below header)
-            LegendBar(
-                expanded = uiState.showLegend,
-                onToggle = { viewModel.toggleLegend() },
-                fontSize = detailFs
-            )
+            if (!uiState.isReadOnly) {
+                LegendBar(
+                    expanded = uiState.showLegend,
+                    onToggle = { viewModel.toggleLegend() },
+                    fontSize = detailFs
+                )
+            }
 
             LazyColumn(modifier = Modifier.weight(1f)) {
                 itemsIndexed(uiState.groupsWithCourses, key = { _, gwc -> gwc.group.id }) { index, gwc ->
@@ -138,7 +144,8 @@ fun StudyPlanScreen(
                             group = gwc.group,
                             isExpanded = isExpanded,
                             onClick = { viewModel.toggleExpanded(gwc.group.id) },
-                            fontSize = fs
+                            fontSize = fs,
+                            readOnly = uiState.isReadOnly
                         )
 
                         AnimatedVisibility(
@@ -149,7 +156,7 @@ fun StudyPlanScreen(
                             Column {
                                 HorizontalDivider(color = Color(0xFFD5D0C4), thickness = 1.dp)
                                 gwc.courses.forEachIndexed { ci, course ->
-                                    CourseRow(course = course, fontSize = detailFs)
+                                    CourseRow(course = course, fontSize = detailFs, readOnly = uiState.isReadOnly)
                                     if (ci < gwc.courses.lastIndex) {
                                         HorizontalDivider(
                                             color = Color(0xFFE8E2D6),
@@ -265,7 +272,8 @@ private fun GroupRow(
     group: StudyPlanGroup,
     isExpanded: Boolean,
     onClick: () -> Unit,
-    fontSize: androidx.compose.ui.unit.TextUnit
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    readOnly: Boolean
 ) {
     val aColor = attrColor(group.attribute)
     val displayName = wrapName(group.groupName)
@@ -282,46 +290,36 @@ private fun GroupRow(
             Text(displayName, color = SPPrimary, fontSize = fontSize,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Start, softWrap = true,
-                modifier = Modifier.weight(3f).padding(start = 4.dp))
+                modifier = Modifier.weight(if (readOnly) 1f else 3f).padding(start = 4.dp))
 
-            Text(group.attribute, color = aColor, fontSize = fontSize * 0.9f,
-                fontWeight = FontWeight.Medium, maxLines = 1,
-                modifier = Modifier.weight(1.1f)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(aColor.copy(alpha = 0.12f))
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
-                textAlign = TextAlign.Center)
+            if (!readOnly) {
+                Text(group.attribute, color = aColor, fontSize = fontSize * 0.9f,
+                    fontWeight = FontWeight.Medium, maxLines = 1,
+                    modifier = Modifier.weight(1.1f)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(aColor.copy(alpha = 0.12f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                    textAlign = TextAlign.Center)
 
-            Text(formatNum(group.creditRequired),
-                color = SPPrimary, fontSize = fontSize,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1.25f))
-
-            Text(formatNum(group.creditEarned),
-                color = SPPrimary, fontSize = fontSize,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1.25f))
-
-            Text("${group.countRequired}",
-                color = SPPrimary, fontSize = fontSize,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1.25f))
-
-            Text("${group.countPassed}",
-                color = SPPrimary, fontSize = fontSize,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1.25f))
-
-            Box(modifier = Modifier.weight(1.25f), contentAlignment = Alignment.Center) {
-                Icon(
-                    painter = painterResource(
-                        if (group.isPassed) R.drawable.study_course_pass
-                        else R.drawable.study_course_failed
-                    ),
-                    contentDescription = if (group.isPassed) "通过" else "未通过",
-                    tint = Color.Unspecified,
-                    modifier = Modifier.size(16.dp)
-                )
+                Text(formatNum(group.creditRequired), color = SPPrimary, fontSize = fontSize,
+                    textAlign = TextAlign.Center, modifier = Modifier.weight(1.25f))
+                Text(formatNum(group.creditEarned), color = SPPrimary, fontSize = fontSize,
+                    textAlign = TextAlign.Center, modifier = Modifier.weight(1.25f))
+                Text("${group.countRequired}", color = SPPrimary, fontSize = fontSize,
+                    textAlign = TextAlign.Center, modifier = Modifier.weight(1.25f))
+                Text("${group.countPassed}", color = SPPrimary, fontSize = fontSize,
+                    textAlign = TextAlign.Center, modifier = Modifier.weight(1.25f))
+                Box(modifier = Modifier.weight(1.25f), contentAlignment = Alignment.Center) {
+                    Icon(
+                        painter = painterResource(
+                            if (group.isPassed) R.drawable.study_course_pass
+                            else R.drawable.study_course_failed
+                        ),
+                        contentDescription = if (group.isPassed) "通过" else "未通过",
+                        tint = Color.Unspecified,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
 
@@ -341,7 +339,8 @@ private fun GroupRow(
 @Composable
 private fun CourseRow(
     course: StudyPlanCourse,
-    fontSize: androidx.compose.ui.unit.TextUnit
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    readOnly: Boolean
 ) {
     Row(
         modifier = Modifier.fillMaxWidth()
@@ -349,13 +348,15 @@ private fun CourseRow(
             .padding(vertical = 6.dp, horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            painter = painterResource(statusIconRes(course.status)),
-            contentDescription = null,
-            tint = Color.Unspecified,
-            modifier = Modifier.size(16.dp)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
+        if (!readOnly) {
+            Icon(
+                painter = painterResource(statusIconRes(course.status)),
+                contentDescription = null,
+                tint = Color.Unspecified,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
 
         Column(modifier = Modifier.weight(1f)) {
             Text(

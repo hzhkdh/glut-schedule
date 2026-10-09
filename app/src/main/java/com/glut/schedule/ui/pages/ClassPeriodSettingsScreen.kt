@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.ClassPeriod
+import com.glut.schedule.data.model.GRADUATE_SECTION_COUNT
 import com.glut.schedule.data.model.defaultClassPeriods
 import com.glut.schedule.data.model.validateClassPeriods
 import com.glut.schedule.data.settings.CampusType
@@ -92,6 +93,8 @@ internal fun classPeriodSettingsLabels(campusType: CampusType): List<String> = w
         addAll((5..12).map { "第${it}节" })
     }
     CampusType.NANNING -> (1..11).map { "第${it}节" }
+    // 研究生一天 12 节且没有中午节次，节次号即显示号。
+    CampusType.GRADUATE -> (1..GRADUATE_SECTION_COUNT).map { "第${it}节" }
 }
 
 @Composable
@@ -144,11 +147,25 @@ fun ClassPeriodSettingsScreen(
     ) {
         item {
             Text(
-                text = if (isGuilin) "桂林校区 · 14节" else "南宁分校 · 11节",
+                text = when (campusType) {
+                    CampusType.GUILIN -> "桂林校区 · 14节"
+                    CampusType.NANNING -> "南宁分校 · 11节"
+                    CampusType.GRADUATE -> "研究生 · 12节"
+                },
                 color = Color(0xFF667085),
                 fontSize = 14.sp,
                 modifier = Modifier.padding(top = 18.dp, bottom = 4.dp)
             )
+            if (campusType == CampusType.GRADUATE) {
+                // 研究生门户只给节次不给时间，所以这里默认整列为空。
+                // 明确写出「可以留空」和「留空的后果」，否则用户会以为界面坏了。
+                Text(
+                    text = "研究生教务只提供节次、没有上课时间。可以留空不填；一旦填写，需要 12 节全部填完且不重叠。留空时课表不显示时间，课时统计与上课提醒不可用。",
+                    color = Color(0xFF667085),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+            }
         }
 
         // 桂林校区显示雁山/屏风切换 pill 按钮
@@ -221,7 +238,13 @@ fun ClassPeriodSettingsScreen(
                 Button(
                     onClick = {
                         if (!validateClassPeriods(editor.profile, editor.draft)) {
-                            validationMessage = "请检查时间格式、先后顺序和相邻课时是否重叠"
+                            validationMessage = when {
+                                // 研究生允许整份留空，只拦「填了一半」这种状态。
+                                campusType == CampusType.GRADUATE &&
+                                    editor.draft.any { it.startsAt.isBlank() || it.endsAt.isBlank() } ->
+                                    "研究生作息要么整份留空，要么 12 节全部填完；请补齐剩余节次的时间"
+                                else -> "请检查时间格式、先后顺序和相邻课时是否重叠"
+                            }
                             return@Button
                         }
                         if (editor.draft == editor.defaults) {
@@ -295,12 +318,14 @@ fun ClassPeriodSettingsScreen(
             title = { Text("恢复默认时间") },
             text = {
                 Text(
-                    if (isGuilin) {
-                        when (editor.profile) {
+                    when {
+                        campusType == CampusType.GRADUATE -> "将清空全部时间（研究生默认没有上课时间），确定继续？"
+                        isGuilin -> when (editor.profile) {
                             ClassPeriodProfile.GUILIN_PINGFENG -> "将替换为屏风校区默认上课时间，确定继续？"
                             else -> "将替换为雁山校区默认上课时间，确定继续？"
                         }
-                    } else "将替换为南宁分校默认上课时间，确定继续？"
+                        else -> "将替换为南宁分校默认上课时间，确定继续？"
+                    }
                 )
             },
             confirmButton = {
@@ -400,4 +425,5 @@ private fun ClassPeriodProfile.guilinSubCampusValue(): String = when (this) {
     ClassPeriodProfile.GUILIN_PINGFENG -> GUILIN_SUB_CAMPUS_PINGFENG
     ClassPeriodProfile.GUILIN_YANSHAN -> GUILIN_SUB_CAMPUS_DEFAULT
     ClassPeriodProfile.NANNING -> error("南宁课时档案不支持桂林子校区切换")
+    ClassPeriodProfile.GRADUATE -> error("研究生课时档案不支持桂林子校区切换")
 }

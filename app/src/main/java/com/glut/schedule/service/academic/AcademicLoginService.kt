@@ -209,7 +209,7 @@ class CapturingCookieJar : CookieJar {
      * 首次请求时将它作为 /academic 的普通种子 Cookie；服务端返回 Secure 新会话后，
      * saveFromResponse 会以真实属性替换它，后续跨 HTTP→HTTPS 重定向由 OkHttp 处理。
      */
-    fun seedFromCookieHeader(cookieHeader: String, url: HttpUrl) {
+    fun seedFromCookieHeader(cookieHeader: String, url: HttpUrl, path: String = "/academic") {
         cookieHeader.split(';').forEach { segment ->
             val pair = segment.trim()
             val separator = pair.indexOf('=')
@@ -228,7 +228,7 @@ class CapturingCookieJar : CookieJar {
                     .name(name)
                     .value(value)
                     .hostOnlyDomain(url.host)
-                    .path("/academic")
+                    .path(path)
                     .build()
             }.getOrNull()?.let(cookies::add)
         }
@@ -243,6 +243,16 @@ class CapturingCookieJar : CookieJar {
             }
             .joinToString("; ") { cookie -> "${cookie.name}=${cookie.value}" }
     }
+
+    /**
+     * 完整 Cookie 头，不做名字筛选。
+     *
+     * 本科教务只需要 JSESSIONID 之类的会话票；研究生门户的网关还要求带
+     * `z-oauth-csrftoken`（既不是 JSESSIONID 也不是 CASTGC），用 [cookieHeader] 会把它丢掉，
+     * 于是每个网关请求都会以「会话失效」告终。两条链路各取所需，互不影响。
+     */
+    fun fullCookieHeader(): String =
+        cookies.joinToString("; ") { cookie -> "${cookie.name}=${cookie.value}" }
 }
 
 /**

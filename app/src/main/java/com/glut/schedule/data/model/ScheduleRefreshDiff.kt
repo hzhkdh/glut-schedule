@@ -41,7 +41,9 @@ data class ScheduleRefreshDiff(
  */
 fun buildScheduleRefreshDiff(
     oldCourses: List<ScheduleCourse>,
-    newCourses: List<ScheduleCourse>
+    newCourses: List<ScheduleCourse>,
+    /** 当前来源是否含中午节次；只影响文案里的节次显示，不影响变化判定。 */
+    hasNoonSections: Boolean = true
 ): ScheduleRefreshDiff {
     val oldGroups = oldCourses.groupByIdentity()
     val newGroups = newCourses.groupByIdentity()
@@ -57,18 +59,18 @@ fun buildScheduleRefreshDiff(
         val title = (after.firstOrNull() ?: before.firstOrNull())?.title.orEmpty().ifBlank { "未命名课程" }
         when {
             before.isEmpty() -> added += diffItem(
-                ScheduleRefreshDiffItem.Kind.ADDED, title, "", courseScheduleText(after), identity
+                ScheduleRefreshDiffItem.Kind.ADDED, title, "", courseScheduleText(after, hasNoonSections), identity
             )
 
             after.isEmpty() -> removed += diffItem(
-                ScheduleRefreshDiffItem.Kind.REMOVED, title, courseScheduleText(before), "", identity
+                ScheduleRefreshDiffItem.Kind.REMOVED, title, courseScheduleText(before, hasNoonSections), "", identity
             )
 
             courseScheduleSignature(before) != courseScheduleSignature(after) -> changed += diffItem(
                 ScheduleRefreshDiffItem.Kind.CHANGED,
                 title,
-                courseScheduleText(before),
-                courseScheduleText(after),
+                courseScheduleText(before, hasNoonSections),
+                courseScheduleText(after, hasNoonSections),
                 identity
             )
         }
@@ -119,13 +121,20 @@ private fun courseScheduleSignature(courses: List<ScheduleCourse>): String =
         }
     }.sorted().joinToString("||")
 
-/** 「周三 第5-6节 · 04105」；多时段只列第一个再缀以总数；没有排课时间则如实说明。 */
-private fun courseScheduleText(courses: List<ScheduleCourse>): String {
+/**
+ * 「周三 第5-6节 · 04105」；多时段只列第一个再缀以总数；没有排课时间则如实说明。
+ *
+ * 节次走 [sectionSpanLabel] 做显示映射：课次里存的是**内部**节次号（桂林第 5 节起要 +2），
+ * 直接拼内部号会让桂林的下午课在变化明细里整体多出 2 节。
+ * 变化判定仍用 [courseScheduleSignature] 的内部编号，与展示无关。
+ */
+private fun courseScheduleText(courses: List<ScheduleCourse>, hasNoonSections: Boolean): String {
     val slots = courses.flatMap { course ->
         course.occurrences.map { occurrence ->
             val day = WEEKDAY_CHARS.getOrNull(occurrence.dayOfWeek - 1) ?: '?'
             val room = occurrence.note.ifBlank { course.room }.trim()
-            "周$day 第${occurrence.startSection}-${occurrence.endSection}节" +
+            val span = sectionSpanLabel(occurrence.startSection, occurrence.endSection, hasNoonSections)
+            "周$day 第${span}节" +
                 if (room.isNotEmpty()) " · $room" else ""
         }
     }

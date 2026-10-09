@@ -61,7 +61,9 @@ class MultiSemesterUiContractTest {
             successCallsWithSnapshot == 3
         )
         assertTrue(viewModel.contains("remember: Boolean, studentNumber: String"))
-        assertTrue(viewModel.contains("performImport(cookie, campusBaseUrl, studentNumber)"))
+        // 导入必须收到**登录时刻捕获的**学号快照，而不是回头去读 uiState.username。
+        // 来源参数(souce)只是多带了一个来源，快照语义不变。
+        assertTrue(viewModel.contains("performImport(cookie, campusBaseUrl, source, studentNumber)"))
         assertTrue(viewModel.contains("studentNumber = studentNumber"))
         assertFalse(viewModel.contains("studentNumber = _uiState.value.username"))
     }
@@ -94,10 +96,11 @@ class MultiSemesterUiContractTest {
         assertFalse(viewModel.contains("enrollmentSeason"))
         assertFalse(viewModel.contains("pendingCatalogHtml"))
         assertFalse(viewModel.contains("confirmedEnrollmentStart"))
-        assertTrue(screen.contains("NanningCaptchaDialog"))
+        // 验证码弹窗改名：南宁与研究生共用同一个弹窗，旧名 NanningCaptchaDialog 会误导后来的读者。
+        assertTrue(screen.contains("LoginCaptchaDialog"))
         assertTrue(screen.contains("showCaptchaDialog"))
         assertTrue(screen.contains("onRefresh, modifier = Modifier.size(48.dp)"))
-        assertTrue(viewModel.contains("submitNanningCaptcha"))
+        assertTrue(viewModel.contains("submitCaptcha"))
     }
 
     @Test
@@ -244,11 +247,18 @@ class MultiSemesterUiContractTest {
     }
 
     @Test
-    fun importPageKeepsCampusSelectorAndHasNoImportModeSelector() {
+    fun importPageKeepsSourceSelectorAndHasNoImportModeSelector() {
         val screen = page("DirectLoginScreen.kt")
+        val importSource = appSource("data/settings/CampusCapabilities.kt")
 
-        // 校区仍要选（登哪个教务），线路不再要选（只有一个数据源）。
-        assertTrue("未找到「南宁分校」标题", screen.contains("Text(\"南宁分校\""))
+        // 来源仍要选（登哪个教务），线路不再要选（只有一个数据源）。
+        // 三个来源改用下拉框表达，文案集中在 ImportSource，渲染处只写 source.label。
+        assertTrue("导入页应渲染来源下拉框", screen.contains("ExposedDropdownMenuBox"))
+        assertTrue("导入页应遍历 ImportSource.entries", screen.contains("ImportSource.entries.forEach"))
+        assertTrue("导入页不得再写死「南宁分校」开关标题", !screen.contains("Text(\"南宁分校\""))
+        listOf("\"南宁分校\"", "\"桂林本部\"", "\"研究生\"").forEach { label ->
+            assertTrue("ImportSource 缺少来源文案 $label", importSource.contains(label))
+        }
         assertFalse("「导入模式」标签应随线路统一而删除", screen.contains("Text(\"导入模式\""))
         assertFalse("不应再有「导入方式」等同义标签", screen.contains("Text(\"导入方式\""))
         assertFalse("不应再渲染线路选择胶囊", screen.contains("listOf(\"模式1\", \"模式2\")"))

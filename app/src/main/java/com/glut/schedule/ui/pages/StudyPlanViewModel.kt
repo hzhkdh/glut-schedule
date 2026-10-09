@@ -7,13 +7,18 @@ import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.StudyPlanGroup
 import com.glut.schedule.data.model.StudyPlanCourse
 import com.glut.schedule.data.model.StudyPlanGroupWithCourses
+import com.glut.schedule.data.model.isReadOnly
 import com.glut.schedule.data.repository.ScheduleRepository
+import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.StudyPlanParser
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readBytesLimited
+import com.glut.schedule.service.graduate.GraduateClient
+import com.glut.schedule.service.graduate.GraduateParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +40,7 @@ data class StudyPlanUiState(
     val isRefreshing: Boolean = false,
     val message: String = "",
     val hasCookie: Boolean = false,
+    val isReadOnly: Boolean = false,
     val expandedGroupId: String? = null,
     val showLegend: Boolean = false
 )
@@ -43,6 +49,7 @@ class StudyPlanViewModel(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
+    private val settingsStore: ScheduleSettingsStore,
     private val studyPlanParser: StudyPlanParser = StudyPlanParser()
 ) : ViewModel() {
 
@@ -68,6 +75,7 @@ class StudyPlanViewModel(
             isRefreshing = refreshing,
             message = msg,
             hasCookie = c.isNotBlank(),
+            isReadOnly = g.isNotEmpty() && g.all { it.isReadOnly },
             expandedGroupId = expId,
             showLegend = legend
         )
@@ -90,6 +98,10 @@ class StudyPlanViewModel(
             _isRefreshing.value = true
             _message.value = "正在获取培养计划..."
             try {
+                if (settingsStore.campusType.first() == CampusType.GRADUATE) {
+                    refreshGraduateStudyPlan()
+                    return@launch
+                }
                 val campusBaseUrl = sessionStore.campusBaseUrl.first()
                     .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
 
@@ -153,6 +165,27 @@ class StudyPlanViewModel(
                 delay(4000)
                 _message.value = ""
             }
+        }
+    }
+
+    /** 研究生培养计划走独立 JSON 网关，不得回退本科 HTML 或本科静默登录。 */
+    private suspend fun refreshGraduateStudyPlan() {
+        val cookie = sessionStore.academicCookie.first()
+        val studentId = sessionStore.authenticatedStudentNumber.first()
+        if (cookie.isBlank() || studentId.isBlank()) {
+            _message.value = "研究生登录已失效，请到导入课表页面重新登录"
+            return
+        }
+        val client = GraduateClient(cookie)
+        val raw = withContext(Dispatchers.IO) { client.studyPlan(studentId) }
+        val (groups, courses) = GraduateParser.studyPlan(raw)
+        // 合法空结果同样覆盖旧来源缓存，避免本科培养计划残留。
+        repository.replaceStudyPlanData(groups, courses)
+        sessionStore.saveCookie(client.cookieHeader())
+        _message.value = if (groups.isEmpty()) {
+            "暂无培养计划数据"
+        } else {
+            "已获取 ${groups.size} 个课程类别，共 ${courses.size} 门课程"
         }
     }
 
@@ -297,10 +330,11 @@ class StudyPlanViewModelFactory(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
+    private val settingsStore: ScheduleSettingsStore,
     private val studyPlanParser: StudyPlanParser = StudyPlanParser()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return StudyPlanViewModel(repository, sessionStore, loginService, studyPlanParser) as T
+        return StudyPlanViewModel(repository, sessionStore, loginService, settingsStore, studyPlanParser) as T
     }
 }

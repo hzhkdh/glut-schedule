@@ -17,6 +17,7 @@ import com.glut.schedule.data.model.StudyPlanGroupWithCourses
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.defaultClassPeriods
+import com.glut.schedule.data.model.graduateClassPeriods
 import com.glut.schedule.data.model.guilinClassPeriods
 import com.glut.schedule.data.model.nanningClassPeriods
 import com.glut.schedule.data.model.pingfengClassPeriods
@@ -105,6 +106,16 @@ class ScheduleRepository(
             config.legacyOverrides, config.profileOverrides, config.guilinSubCampus
         )
     }
+
+    /**
+     * 直接按作息档案取时间表，**不依赖当前选中的校区**。
+     *
+     * 导入路径需要它：正确的顺序是「先写课表、成功后再切换来源」，
+     * 而 [currentClassPeriods] 在切换之前读到的还是**上一个**来源的档案，
+     * 会把桂林时间写进刚导入的研究生学期。按档案显式取值就让写入与切换解耦了。
+     */
+    suspend fun classPeriodsFor(profile: ClassPeriodProfile): List<ClassPeriod> =
+        classPeriodProfileOverrides.first()[profile] ?: defaultClassPeriods(profile)
 
     /**
      * 课时统计需要同时读取多个学期，不能复用只面向“正在查看学期”的 courses 流。
@@ -300,6 +311,8 @@ class ScheduleRepository(
         val periods = when (campus) {
             CampusType.GUILIN -> guilinClassPeriods()
             CampusType.NANNING -> nanningClassPeriods()
+            // 研究生作息默认整份为空，绝不套用本科时间。
+            CampusType.GRADUATE -> graduateClassPeriods()
         }
         val semester = currentSemester.first() ?: legacySemesterEntity().toModel()
         val coloredCourses = CourseColorMapper.assignColors(courses, courseColorOverrides.first())

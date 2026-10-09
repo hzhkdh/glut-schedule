@@ -37,6 +37,7 @@ import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.capabilitiesFor
 import com.glut.schedule.data.settings.ClassPeriodProfile
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
@@ -54,6 +55,7 @@ import com.glut.schedule.service.holiday.TimorHolidayClient
 import com.glut.schedule.service.holiday.refreshMissingHolidayYears
 import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.academic.shouldUseExistingAcademicCookie
+import com.glut.schedule.service.graduate.GraduateImportService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -674,6 +676,12 @@ class ScheduleViewModel(
         }
         if (!refreshGuard.tryStart()) return
         isRefreshing.value = true
+        // 研究生走完全独立的取数链路：上面那套「个人课表页 + 周次落地页 + 校历探测」
+        // 对它一个都不适用，硬套只会请求到无关页面并报出误导性的错误。
+        if (targetSemester.campus == CampusType.GRADUATE) {
+            viewModelScope.launch { refreshGraduateSchedule(targetSemester) }
+            return
+        }
         viewModelScope.launch {
             message.value = "正在刷新课表..."
             needsInteractiveLogin.value = false
@@ -819,7 +827,12 @@ class ScheduleViewModel(
         }
         // 有变化时改用明细卡片说明（与小程序同构），Snackbar 只留下异常行提示，
         // 免得同一件事在两处各说一遍。没变化时保持原来那条简短提示。
-        val diff = buildScheduleRefreshDiff(refreshBaseCourses, payload.courses)
+        val diff = buildScheduleRefreshDiff(
+            refreshBaseCourses,
+            payload.courses,
+            // 节次文案要按来源映射；南宁与研究生没有中午节次，直排内部号。
+            hasNoonSections = capabilitiesFor(targetSemester.campus).hasNoonSections
+        )
         refreshBaseCourses = emptyList()
         if (diff.hasChanges) {
             _refreshDiff.value = diff
@@ -843,6 +856,61 @@ class ScheduleViewModel(
 
     private fun isAuthenticationFailure(error: Throwable?): Boolean =
         error?.message.orEmpty().contains("登录状态已失效")
+
+    /**
+     * 研究生课表刷新。
+     *
+     * 与本科/南宁的取数完全不同：没有个人课表页、没有周次落地页、没有校历探测接口，
+     * 只有一个 `GetTimeTableByStudent/{Year}/{Term}/{XH}` 网关调用。因此这里不共用
+     * [importExactSemester]，而是走研究生的独立客户端；学年/学期参数直接取学期自身保存的
+     * 门户值，学号取会话里记住的那个。
+     *
+     * **不做静默登录**：研究生门户还需要图形验证码，无法在后台补登录；会话失效时
+     * 直接提示用户回导入页重新登录，而不是在这里拿密码硬试。
+     */
+    private suspend fun refreshGraduateSchedule(targetSemester: AcademicSemester) {
+        try {
+            val cookie = sessionStore.academicCookie.first()
+            val studentId = sessionStore.authenticatedStudentNumber.first()
+            if (cookie.isBlank() || studentId.isBlank()) {
+                message.value = "研究生会话已过期，请重新登录后再刷新"
+                needsInteractiveLogin.value = true
+                return
+            }
+            val payload = GraduateImportService.downloadSemester(
+                cookie = cookie,
+                semester = targetSemester,
+                studentId = studentId
+            ).getOrElse { error ->
+                message.value = refreshFailureMessage(error, targetSemester)
+                needsInteractiveLogin.value = true
+                return
+            }
+            require(payload.courses.isNotEmpty()) {
+                "${targetSemester.displayName}未获取到课程，已保留现有缓存"
+            }
+            repository.replaceSemesterSchedule(
+                semester = targetSemester,
+                courses = payload.courses,
+                // 研究生的调课不并入课表；刷新也不改变这条口径。
+                adjustments = emptyList(),
+                classPeriods = repository.currentClassPeriods.first(),
+                semesterStartDate = targetSemester.semesterStartDate,
+                semesterEndDate = targetSemester.semesterEndDate,
+                portalMaxWeek = targetSemester.portalMaxWeek
+            )
+            message.value = if (payload.unparsedWeekTextCount > 0) {
+                "课表已刷新；${payload.unparsedWeekTextCount} 条上课时间的周次无法识别"
+            } else {
+                "课表已刷新"
+            }
+        } catch (e: Exception) {
+            message.value = refreshFailureMessage(e, targetSemester)
+        } finally {
+            isRefreshing.value = false
+            refreshGuard.finish()
+        }
+    }
 
     private fun refreshFailureMessage(error: Throwable?, semester: AcademicSemester): String {
         val detail = error?.message.orEmpty().ifBlank { "未获取到课表数据" }

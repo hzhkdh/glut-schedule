@@ -88,7 +88,8 @@ class ScheduleRefreshDiffTest {
         assertEquals(ScheduleRefreshDiffItem.Kind.CHANGED, item.kind)
         assertEquals("大学英语", item.title)
         assertEquals("周一 第1-2节 · 04105", item.beforeText)
-        assertEquals("周三 第5-6节 · 04105", item.afterText)
+        // 桂林内部 5-6 就是「午1/午2」；显示口径与课表网格、长按弹层统一。
+        assertEquals("周三 第午1-午2节 · 04105", item.afterText)
     }
 
     @Test
@@ -160,6 +161,21 @@ class ScheduleRefreshDiffTest {
 
         val diff = buildScheduleRefreshDiff(old, new)
         assertEquals("周二 第3-4节", diff.items.single().beforeText)
-        assertEquals("周二 第5-6节", diff.items.single().afterText)
+        assertEquals("周二 第午1-午2节", diff.items.single().afterText)
+    }
+
+    /** 南宁与研究生没有中午节次，节次文案必须原样直排，不做任何偏移。 */
+    @Test
+    fun noonFreeSourcesKeepRawSectionNumbers() {
+        val old = listOf(
+            course(
+                room = "",
+                occurrences = listOf(occurrence(dayOfWeek = 2, startSection = 5, endSection = 6, note = ""))
+            )
+        )
+
+        val graduate = buildScheduleRefreshDiff(emptyList(), old, hasNoonSections = false)
+
+        assertEquals("周二 第5-6节", graduate.items.single().afterText)
     }
 }

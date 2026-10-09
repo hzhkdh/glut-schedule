@@ -70,6 +70,7 @@ private val StatsWarningText = Color(0xFF9A6700)
 fun CourseTimeStatsScreen(
     viewModel: CourseTimeStatsViewModel,
     onImportClick: () -> Unit,
+    onClassTimesClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -122,8 +123,16 @@ fun CourseTimeStatsScreen(
                 StatsEmptyState(
                     title = "该学期暂时无法统计",
                     detail = unavailableReasonText(reason),
-                    actionLabel = "前往学期管理",
-                    onAction = onImportClick
+                    actionLabel = if (reason == CourseTimeStatsUnavailableReason.UNCONFIGURED_CLASS_PERIODS) {
+                        "前往上课时间"
+                    } else {
+                        "前往学期管理"
+                    },
+                    onAction = if (reason == CourseTimeStatsUnavailableReason.UNCONFIGURED_CLASS_PERIODS) {
+                        onClassTimesClick
+                    } else {
+                        onImportClick
+                    }
                 )
             }
         } else if (state.stats.items.isEmpty()) {
@@ -584,6 +593,8 @@ private fun StatsEmptyState(
 
 private fun unavailableReasonText(reason: CourseTimeStatsUnavailableReason?): String = when (reason) {
     CourseTimeStatsUnavailableReason.MISSING_MAX_WEEK -> "学期最大周次缺失，请重新下载该学期课表。"
+    CourseTimeStatsUnavailableReason.UNCONFIGURED_CLASS_PERIODS ->
+        "研究生门户不提供上课时间，请先在「上课时间」里配置 12 节作息后再统计。"
     CourseTimeStatsUnavailableReason.MISSING_CLASS_PERIODS -> "历史作息或节次时间不完整，请重新下载该学期课表。"
     CourseTimeStatsUnavailableReason.INVALID_WEEK_TEXT -> "课程周次信息无法可靠解析，请重新下载该学期课表。"
     null -> "本地课表数据不完整，请重新下载后再试。"

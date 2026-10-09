@@ -11,7 +11,9 @@ import com.glut.schedule.data.model.hiddenCardRuleHits
 import com.glut.schedule.data.model.hiddenRuleLabel
 import com.glut.schedule.data.model.validateManualDayCopy
 import com.glut.schedule.data.repository.ScheduleRepository
+import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.ScheduleSettingsStore
+import com.glut.schedule.data.settings.capabilitiesFor
 import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -77,7 +79,14 @@ class HolidayAdjustmentsViewModel(
                 hiddenItems = hiddenRulesBySemester[semester?.id.orEmpty()].orEmpty().map { rule ->
                     HiddenCardItem(
                         id = rule.id,
-                        label = hiddenRuleLabel(rule, courses),
+                        // 节次文案必须按**该学期来源**的口径渲染：南宁与研究生都没有中午偏移，
+                        // 漏传会退化成默认 true，把内部 5/6 节显示成「午1-午2」。
+                        // 取学期自身的 campus 而不是再加一条流——这里的 combine 已是 5 个流的上限。
+                        label = hiddenRuleLabel(
+                            rule,
+                            courses,
+                            capabilitiesFor(semester?.campus ?: CampusType.GUILIN).hasNoonSections
+                        ),
                         existsInSchedule = hiddenCardRuleHits(courses, rule)
                     )
                 },

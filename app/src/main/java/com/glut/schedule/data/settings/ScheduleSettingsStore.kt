@@ -41,7 +41,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 
-enum class CampusType { GUILIN, NANNING }
+/**
+ * 数据来源（校区）。
+ *
+ * `GRADUATE` 表示研究生门户（gsems.glut.edu.cn）。它与桂林/南宁不是「同一个教务的另一个校区」，
+ * 而是一套完全独立的协议、学期编号与作息；因此凡是按校区分支的地方都必须显式处理它，
+ * 不能再沿用「非南宁即桂林」的隐式判断。
+ */
+enum class CampusType { GUILIN, NANNING, GRADUATE }
 
 /** 情侣/基友课表的展示范围；未知旧值必须安全回退到“一起”。 */
 enum class PartnerScheduleViewMode(val storageValue: String) {
@@ -68,11 +75,14 @@ enum class GuilinSubCampus(val storageValue: String) {
 enum class ClassPeriodProfile {
     GUILIN_YANSHAN,
     GUILIN_PINGFENG,
-    NANNING
+    NANNING,
+    /** 研究生：12 节，默认没有任何时间，与本科/南宁作息互不影响。 */
+    GRADUATE
 }
 
 fun classPeriodProfile(campus: CampusType, subCampus: String): ClassPeriodProfile = when (campus) {
     CampusType.NANNING -> ClassPeriodProfile.NANNING
+    CampusType.GRADUATE -> ClassPeriodProfile.GRADUATE
     CampusType.GUILIN -> if (subCampus == GUILIN_SUB_CAMPUS_PINGFENG) {
         ClassPeriodProfile.GUILIN_PINGFENG
     } else {
@@ -111,7 +121,11 @@ class ScheduleSettingsStore(
     private val guilinYanshanClassPeriodsKey = stringSetPreferencesKey("guilin_yanshan_class_periods")
     private val guilinPingfengClassPeriodsKey = stringSetPreferencesKey("guilin_pingfeng_class_periods")
     private val nanningClassPeriodsKey = stringSetPreferencesKey("nanning_class_periods")
+    /** 研究生 12 节作息：默认整份为空时间，只有用户主动填写过才会出现这个键。 */
+    private val graduateClassPeriodsKey = stringSetPreferencesKey("graduate_class_periods")
     private val campusTypeKey = stringPreferencesKey("campus_type")
+    /** 上一次成功导入使用的来源；导入页据此恢复下拉选择，首启回退到桂林本部。 */
+    private val lastImportSourceKey = stringPreferencesKey("last_import_source")
     private val updateAvailableVersionKey = stringPreferencesKey("update_available_version")
     private val dismissedUpdatePopupVersionKey = stringPreferencesKey("dismissed_update_popup_version")
     private val cachedNoticesJsonKey = stringPreferencesKey("cached_notices_json")
@@ -213,9 +227,31 @@ class ScheduleSettingsStore(
                 legacyGuilinEntries = preferences[guilinClassPeriodsKey].orEmpty(),
                 yanshanEntries = preferences[guilinYanshanClassPeriodsKey].orEmpty(),
                 pingfengEntries = preferences[guilinPingfengClassPeriodsKey].orEmpty(),
-                nanningEntries = preferences[nanningClassPeriodsKey].orEmpty()
+                nanningEntries = preferences[nanningClassPeriodsKey].orEmpty(),
+                graduateEntries = preferences[graduateClassPeriodsKey].orEmpty()
             )
         }.distinctUntilChanged()
+
+    /**
+     * 上一次成功导入的来源。
+     *
+     * 只在**导入成功之后**写入（见 `ImportSource` 的注释）：把「用户在下拉框里点过什么」当成
+     * 已生效的来源，会让一次失败的尝试把首页数据源也改掉。
+     */
+    val lastImportSource: Flow<ImportSource> = context.scheduleSettings.data.map { preferences ->
+        // 缺失时用既有的 campus_type 兜底。
+        //
+        // 老用户升级前只有 campus_type、没有 last_import_source；若这里直接回退 GUILIN，
+        // 南宁用户的导入页下拉框会默认成「桂林本部」，点登录就会拿南宁账号去打桂林教务，
+        // 失败信息还会误导成「账号密码错误」。历史上「按 10 位学号自动切南宁」的兜底
+        // 已随来源下拉框一并移除，因此这条迁移必须在读取侧补上。
+        preferences[lastImportSourceKey]
+            ?.let(ImportSource::fromStorageValue)
+            ?: ImportSource.of(
+                runCatching { CampusType.valueOf(preferences[campusTypeKey] ?: CampusType.GUILIN.name) }
+                    .getOrDefault(CampusType.GUILIN)
+            )
+    }.distinctUntilChanged()
 
     val campusType: Flow<CampusType> = context.scheduleSettings.data.map { preferences ->
         val name = preferences[campusTypeKey] ?: CampusType.GUILIN.name
@@ -257,6 +293,18 @@ class ScheduleSettingsStore(
     suspend fun setCampusType(type: CampusType) {
         context.scheduleSettings.edit { preferences ->
             preferences[campusTypeKey] = type.name
+        }
+    }
+
+    /**
+     * 记录「这一次导入确实成功了」的来源。
+     *
+     * 必须由成功路径调用：下拉框的选择本身只存在于内存里，失败不回写，
+     * 否则一次点错就会把上次真正可用的来源覆盖掉。
+     */
+    suspend fun setLastImportSource(source: ImportSource) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[lastImportSourceKey] = source.storageValue
         }
     }
 
@@ -629,6 +677,7 @@ class ScheduleSettingsStore(
     private fun classPeriodsKey(campus: CampusType) = when (campus) {
         CampusType.GUILIN -> guilinClassPeriodsKey
         CampusType.NANNING -> nanningClassPeriodsKey
+        CampusType.GRADUATE -> graduateClassPeriodsKey
     }
 
     override suspend fun read(): GreetingTemplateCacheSnapshot {
@@ -658,6 +707,7 @@ class ScheduleSettingsStore(
         ClassPeriodProfile.GUILIN_YANSHAN -> guilinYanshanClassPeriodsKey
         ClassPeriodProfile.GUILIN_PINGFENG -> guilinPingfengClassPeriodsKey
         ClassPeriodProfile.NANNING -> nanningClassPeriodsKey
+        ClassPeriodProfile.GRADUATE -> graduateClassPeriodsKey
     }
 
     /**
@@ -710,7 +760,8 @@ internal fun decodeClassPeriodOverrides(
     legacyGuilinEntries: Set<String>,
     yanshanEntries: Set<String>,
     pingfengEntries: Set<String>,
-    nanningEntries: Set<String>
+    nanningEntries: Set<String>,
+    graduateEntries: Set<String> = emptySet()
 ): Map<ClassPeriodProfile, List<ClassPeriod>> = buildMap {
     decodeClassPeriods(CampusType.GUILIN, yanshanEntries)
         ?.let { put(ClassPeriodProfile.GUILIN_YANSHAN, it) }
@@ -718,6 +769,9 @@ internal fun decodeClassPeriodOverrides(
         ?.let { put(ClassPeriodProfile.GUILIN_PINGFENG, it) }
     decodeClassPeriods(CampusType.NANNING, nanningEntries)
         ?.let { put(ClassPeriodProfile.NANNING, it) }
+    // 研究生整份时间可以为空，只要结构是 1..12 且「要么全空、要么全填且不重叠」即视为有效覆盖。
+    decodeClassPeriods(CampusType.GRADUATE, graduateEntries)
+        ?.let { put(ClassPeriodProfile.GRADUATE, it) }
 
     // 旧版只有一份桂林配置；仅在目标档案没有新值时归入升级前选中的子校区。
     val legacyProfile = when (selectedSubCampus) {

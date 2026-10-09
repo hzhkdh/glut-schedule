@@ -304,23 +304,44 @@ fun defaultClassPeriods(): List<ClassPeriod> = guilinClassPeriods()
 fun defaultClassPeriods(campus: CampusType): List<ClassPeriod> = when (campus) {
     CampusType.GUILIN -> guilinClassPeriods()
     CampusType.NANNING -> nanningClassPeriods()
+    CampusType.GRADUATE -> graduateClassPeriods()
 }
 
 fun defaultClassPeriods(profile: ClassPeriodProfile): List<ClassPeriod> = when (profile) {
     ClassPeriodProfile.GUILIN_YANSHAN -> yanshanClassPeriods()
     ClassPeriodProfile.GUILIN_PINGFENG -> pingfengClassPeriods()
     ClassPeriodProfile.NANNING -> nanningClassPeriods()
+    ClassPeriodProfile.GRADUATE -> graduateClassPeriods()
 }
 
 fun validateClassPeriods(profile: ClassPeriodProfile, periods: List<ClassPeriod>): Boolean =
     validateClassPeriods(
-        campus = if (profile == ClassPeriodProfile.NANNING) CampusType.NANNING else CampusType.GUILIN,
+        campus = when (profile) {
+            ClassPeriodProfile.NANNING -> CampusType.NANNING
+            ClassPeriodProfile.GRADUATE -> CampusType.GRADUATE
+            else -> CampusType.GUILIN
+        },
         periods = periods
     )
 
+/**
+ * 作息校验。
+ *
+ * 桂林/南宁内置的是一套真实钟点，因此时间必须齐全、格式正确且不重叠。
+ * 研究生门户只给节次不给时间，[graduateClassPeriods] 默认整份为空——此时**全空是合法的**
+ * （语义是「不显示时间」）；但一旦用户开始填，就必须一次填完且不重叠，
+ * 半套时间会让课表一半显示时刻、一半空白，比完全不填更难理解。
+ */
 fun validateClassPeriods(campus: CampusType, periods: List<ClassPeriod>): Boolean {
     val expectedSections = defaultClassPeriods(campus).map { it.section }
     if (periods.map { it.section } != expectedSections) return false
+
+    val times = periods.map { it.startsAt.trim() to it.endsAt.trim() }
+    if (campus == CampusType.GRADUATE) {
+        val blank = times.count { (start, end) -> start.isEmpty() && end.isEmpty() }
+        if (blank == times.size) return true // 尚未配置时间
+        if (blank > 0) return false // 半套时间
+    }
 
     val parsedTimes = periods.map { period ->
         val start = parseClassPeriodTime(period.startsAt) ?: return false
@@ -332,6 +353,10 @@ fun validateClassPeriods(campus: CampusType, periods: List<ClassPeriod>): Boolea
         !next.first.isBefore(current.second)
     }
 }
+
+/** 作息是否含有可用的具体钟点；为空时一切依赖时间的展示与统计都必须停用。 */
+fun hasConfiguredClassTimes(periods: List<ClassPeriod>): Boolean =
+    periods.isNotEmpty() && periods.all { it.startsAt.isNotBlank() && it.endsAt.isNotBlank() }
 
 private fun parseClassPeriodTime(value: String): LocalTime? {
     if (!Regex("""(?:[01]\d|2[0-3]):[0-5]\d""").matches(value)) return null
@@ -379,6 +404,33 @@ fun pingfengClassPeriods(): List<ClassPeriod> = listOf(
 
 /** 中午时段节次号（教务用5/6表示中午1/2，设置>显示中午 开关控制） */
 val NOON_SECTIONS = setOf(5, 6)
+
+/**
+ * 研究生作息：一天 12 节，**默认不含任何具体时间**。
+ *
+ * 门户只用节次排课，没有任何钟点；这里刻意全部留空而不是「照抄本科作息」——
+ * 套用本科时间会让用户在课表上看到根本不存在的上课时刻。
+ * 用户可以在设置里自行填写，填写后课表与统计才显示时间。
+ */
+fun graduateClassPeriods(): List<ClassPeriod> = (1..GRADUATE_SECTION_COUNT).map { section ->
+    ClassPeriod(section, "", "")
+}
+
+/** 研究生一天的节次总数。 */
+const val GRADUATE_SECTION_COUNT = 12
+
+/**
+ * 节次区间的统一显示文案，例如「5-6」「午1-午2」「11-12」。
+ *
+ * 全仓只保留这一份实现：显示口径曾经在课表网格、学期概览和长按弹层各写一份，
+ * 长按弹层漏掉中午映射，于是下午第 5、6 节被显示成 7、8 节。
+ * 传入的是**内部节次号**，转换只发生在显示层，存储与删除匹配用的编号不变。
+ */
+fun sectionSpanLabel(startSection: Int, endSection: Int, hasNoon: Boolean = true): String {
+    val start = displaySectionLabel(startSection, hasNoon)
+    val end = displaySectionLabel(endSection, hasNoon)
+    return if (start == end) start else "$start-$end"
+}
 
 fun nanningClassPeriods(): List<ClassPeriod> = listOf(
     ClassPeriod(1, "08:40", "09:20"),

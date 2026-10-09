@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glut.schedule.data.model.ScoreInfo
+import com.glut.schedule.data.settings.CampusType
 
 private val ScorePrimary = Color(0xFF141821)
 private val ScoreSecondary = Color(0xFF667085)
@@ -50,9 +51,52 @@ private val ScoreCardBg = Color(0xFFFFFEFB)
 private val ScoreChipBg = Color(0xFFE8E4D6)
 private val ScoreSemesterHeaderBg = Color(0xFF141821)
 
+/**
+ * 成绩页的展示口径。
+ *
+ * 两个来源在「学期号含义」和「有没有绩点」上正好相反，混用会把秋季成绩显示成春季，
+ * 或用一个不存在的绩点公式算出数字：
+ * - 桂林/南宁：第 2 学期是秋季、是学年起点；成绩含绩点。
+ * - 研究生：第 1 学期是秋季、第 2 学期是春季；门户**不给绩点**，因此整页不得出现绩点。
+ */
+data class ScoreDisplayPolicy(
+    val autumnTermNumbers: Set<Int>,
+    val springTermNumbers: Set<Int>,
+    val supportsGpa: Boolean,
+    /**
+     * `ScoreInfo.year` 是否已经是「学年起始年」。
+     *
+     * 两个来源的含义不同，搞混会把春季成绩整体挪到早一年：
+     * - 桂林/南宁：`year` 取自成绩表首列，春季记录需要 `year - 1` 才是学年起点（既有口径，未改动）。
+     * - 研究生：门户给的是 `2026-2027` 这种学年串，已归一为起始年 `2026`，两个学期同属这一年。
+     */
+    val yearIsAcademicStartYear: Boolean
+) {
+    companion object {
+        val GUILIN_NANNING = ScoreDisplayPolicy(
+            autumnTermNumbers = setOf(2),
+            springTermNumbers = setOf(1),
+            supportsGpa = true,
+            yearIsAcademicStartYear = false
+        )
+        val GRADUATE = ScoreDisplayPolicy(
+            autumnTermNumbers = setOf(1),
+            springTermNumbers = setOf(2),
+            supportsGpa = false,
+            yearIsAcademicStartYear = true
+        )
+
+        fun of(campus: CampusType): ScoreDisplayPolicy = when (campus) {
+            CampusType.GRADUATE -> GRADUATE
+            CampusType.GUILIN, CampusType.NANNING -> GUILIN_NANNING
+        }
+    }
+}
+
 @Composable
 fun ScoreScreen(
     viewModel: ScoreViewModel,
+    policy: ScoreDisplayPolicy = ScoreDisplayPolicy.GUILIN_NANNING,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -60,17 +104,30 @@ fun ScoreScreen(
     val allScores = uiState.scores
 
     // Build academic-year groups from ALL scores
-    val allGroups = remember(allScores) {
+    val allGroups = remember(allScores, policy) {
         allScores
             .groupBy { score ->
                 val y = score.year.toIntOrNull() ?: 0
-                if (score.term == 2) y else y - 1  // 秋=2 marks学年起点, 春=1 → year-1
+                when {
+                    // 研究生：year 已经是学年起始年，两个学期都归这一年。
+                    policy.yearIsAcademicStartYear -> y
+                    // 桂林/南宁：秋季学期是学年起点，其余减一年。
+                    score.term in policy.autumnTermNumbers -> y
+                    else -> y - 1
+                }
             }
             .map { (startYear, scores) ->
                 AcademicYearGroup(
                     startYear = startYear,
-                    autumnScores = scores.filter { it.term == 2 }.sortedBy { it.courseName },
-                    springScores = scores.filter { it.term == 1 }.sortedBy { it.courseName }
+                    autumnScores = scores.filter { it.term in policy.autumnTermNumbers }
+                        .sortedBy { it.courseName },
+                    springScores = scores.filter { it.term in policy.springTermNumbers }
+                        .sortedBy { it.courseName },
+                    // 学期号既不是秋也不是春（例如门户改格式后解析成 0）时不能静默丢弃，
+                    // 否则成绩会「凭空少了几条」而界面一切正常。
+                    otherScores = scores.filter {
+                        it.term !in policy.autumnTermNumbers && it.term !in policy.springTermNumbers
+                    }.sortedBy { it.courseName }
                 )
             }
             .sortedBy { it.startYear }
@@ -160,12 +217,15 @@ fun ScoreScreen(
                         startYear = selectedGroup.startYear,
                         gpa = selectedGroup.allGpa,
                         autumnScores = selectedGroup.autumnScores,
-                        springScores = selectedGroup.springScores
+                        springScores = selectedGroup.springScores,
+                        otherScores = selectedGroup.otherScores,
+                        supportsGpa = policy.supportsGpa
                     )
                 }
 
-                // Bottom summary
-                item {
+                // Bottom summary。研究生没有绩点，整块连「绩点计算说明」一起不渲染——
+                // 留着会显示算出来的 0.00，用户会以为自己的绩点就是 0。
+                if (policy.supportsGpa) item {
                     var showGpaInfo by remember { mutableStateOf(false) }
                     val overallGpa = allScores
                         .filter { it.category == "必修" }
@@ -275,7 +335,9 @@ private fun FilterChip(
 private data class AcademicYearGroup(
     val startYear: Int,
     val autumnScores: List<ScoreInfo>,
-    val springScores: List<ScoreInfo>
+    val springScores: List<ScoreInfo>,
+    /** 学期号无法归入秋/春两栏的成绩；非空时才渲染，避免成绩静默消失。 */
+    val otherScores: List<ScoreInfo> = emptyList()
 ) {
     val allGpa: Double get() {
         val required = (autumnScores + springScores).filter { it.category == "必修" }
@@ -285,14 +347,16 @@ private data class AcademicYearGroup(
 }
 
 @Composable
-private fun ScoreColumnHeaders() {
+private fun ScoreColumnHeaders(supportsGpa: Boolean) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
     ) {
         Text("课程名称", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(2.8f))
         Text("学分", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
         Text("成绩", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1.2f), textAlign = TextAlign.Center)
-        Text("绩点", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+        if (supportsGpa) {
+            Text("绩点", color = ScoreSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+        }
     }
 }
 
@@ -301,7 +365,9 @@ private fun AcademicYearBlock(
     startYear: Int,
     gpa: Double,
     autumnScores: List<ScoreInfo>,
-    springScores: List<ScoreInfo>
+    springScores: List<ScoreInfo>,
+    otherScores: List<ScoreInfo> = emptyList(),
+    supportsGpa: Boolean = true
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -324,15 +390,17 @@ private fun AcademicYearBlock(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
-                Text(
-                    "GPA ${String.format("%.2f", gpa)}",
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = 12.sp
-                )
+                if (supportsGpa) {
+                    Text(
+                        "GPA ${String.format("%.2f", gpa)}",
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.sp
+                    )
+                }
             }
 
             // Term 1 (秋)
-            TermSection("第1学期", "秋", Color(0xFFD97706), autumnScores)
+            TermSection("第1学期", "秋", Color(0xFFD97706), autumnScores, supportsGpa)
 
             // Term 2 (春)
             if (springScores.isNotEmpty()) {
@@ -343,7 +411,19 @@ private fun AcademicYearBlock(
                     thickness = 1.dp
                 )
                 Spacer(Modifier.height(4.dp))
-                TermSection("第2学期", "春", Color(0xFF16A34A), springScores)
+                TermSection("第2学期", "春", Color(0xFF16A34A), springScores, supportsGpa)
+            }
+
+            // 学期号无法识别（既非秋也非春）时单独一栏，宁可显示得朴素也不要让成绩消失。
+            if (otherScores.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 10.dp),
+                    color = Color(0xFFEDE8DE),
+                    thickness = 1.dp
+                )
+                Spacer(Modifier.height(4.dp))
+                TermSection("其他学期", "?", Color(0xFF667085), otherScores, supportsGpa)
             }
         }
     }
@@ -354,7 +434,8 @@ private fun TermSection(
     termLabel: String,
     seasonChar: String,
     badgeColor: Color,
-    scores: List<ScoreInfo>
+    scores: List<ScoreInfo>,
+    supportsGpa: Boolean = true
 ) {
     Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
         // 彩色左边框
@@ -395,11 +476,12 @@ private fun TermSection(
                     modifier = Modifier.padding(vertical = 12.dp)
                 )
             } else {
-                ScoreColumnHeaders()
+                ScoreColumnHeaders(supportsGpa)
                 scores.forEachIndexed { index, score ->
                     ScoreRow(
                         score = score,
-                        showDivider = index < scores.lastIndex
+                        showDivider = index < scores.lastIndex,
+                        supportsGpa = supportsGpa
                     )
                 }
             }
@@ -410,13 +492,18 @@ private fun TermSection(
 
 
 @Composable
-private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
-    val gpaColor = when {
-        score.gpa >= 3.7 -> Color(0xFF2D9A72)
-        score.gpa >= 3.0 -> Color(0xFF3F7DF6)
-        score.gpa >= 2.0 -> Color(0xFFD97706)
-        score.gpa > 0 -> Color(0xFFDC2626)
-        else -> ScoreSecondary
+private fun ScoreRow(score: ScoreInfo, showDivider: Boolean, supportsGpa: Boolean = true) {
+    val gpaColor = if (!supportsGpa) {
+        // 没有绩点时分数不再按绩点分档着色，否则一整列都会是同一个「0 分档」的灰。
+        ScorePrimary
+    } else {
+        when {
+            score.gpa >= 3.7 -> Color(0xFF2D9A72)
+            score.gpa >= 3.0 -> Color(0xFF3F7DF6)
+            score.gpa >= 2.0 -> Color(0xFFD97706)
+            score.gpa > 0 -> Color(0xFFDC2626)
+            else -> ScoreSecondary
+        }
     }
 
     val attrColor = when (score.category) {
@@ -465,14 +552,16 @@ private fun ScoreRow(score: ScoreInfo, showDivider: Boolean) {
             modifier = Modifier.weight(1.2f),
             textAlign = TextAlign.Center
         )
-        Text(
-            if (score.gpa > 0) String.format("%.1f", score.gpa) else "-",
-            color = gpaColor,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f),
-            textAlign = TextAlign.Center
-        )
+        if (supportsGpa) {
+            Text(
+                if (score.gpa > 0) String.format("%.1f", score.gpa) else "-",
+                color = gpaColor,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.Center
+            )
+        }
     }
 
     if (showDivider) {

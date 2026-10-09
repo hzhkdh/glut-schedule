@@ -39,6 +39,7 @@ import com.glut.schedule.data.model.HiddenCourseRule
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.hiddenCourseKey
 import com.glut.schedule.data.model.hiddenRuleScopeText
+import com.glut.schedule.data.model.sectionSpanLabel
 
 private val PanelBackground = Color(0xFFFFFEFB)
 private val TextPrimary = Color(0xFF141821)
@@ -63,6 +64,8 @@ internal fun CourseCardManageSheet(
     /** 完整课表，只用于把范围文案里的课程名与周次写准确。 */
     courses: List<ScheduleCourse>,
     currentWeekNumber: Int,
+    /** 当前来源是否含中午节次；决定节次文案要不要做显示偏移（桂林 true，南宁/研究生 false）。 */
+    hasNoonSections: Boolean = true,
     onDismiss: () -> Unit,
     onSelectColor: (String) -> Unit,
     onRestoreColor: () -> Unit,
@@ -116,7 +119,7 @@ internal fun CourseCardManageSheet(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = cardSubtitle(block),
+                    text = cardSubtitle(block, hasNoonSections),
                     color = TextSecondary,
                     fontSize = 14.sp,
                     modifier = Modifier.padding(top = 4.dp)
@@ -134,12 +137,12 @@ internal fun CourseCardManageSheet(
 
             DeleteRow(
                 label = "删除本周这次",
-                scopeText = hiddenRuleScopeText(weekRule, courses),
+                scopeText = hiddenRuleScopeText(weekRule, courses, hasNoonSections),
                 onClick = { onDelete(HiddenCardScope.WEEK) }
             )
             DeleteRow(
                 label = "删除这个课次",
-                scopeText = hiddenRuleScopeText(occurrenceRule, courses),
+                scopeText = hiddenRuleScopeText(occurrenceRule, courses, hasNoonSections),
                 onClick = { onDelete(HiddenCardScope.OCCURRENCE) }
             )
             DeleteRow(
@@ -170,11 +173,22 @@ internal fun CourseCardManageSheet(
     }
 }
 
-/** 「周二 3-4 节 · 04105 · 张老师」，空字段不渲染。 */
-private fun cardSubtitle(block: CourseBlock): String {
+/**
+ * 「周二 5-6 节 · 04105 · 张老师」，空字段不渲染。
+ *
+ * 节次必须走 [sectionSpanLabel] 做显示映射：这里原先直接拼内部节次号，
+ * 于是桂林下午的第 5、6 节（内部 7、8）被显示成「7-8 节」，比真实节次多 2。
+ * 传入的 [CourseBlock] 仍保留内部编号，删除规则匹配用的一直是它，不受显示影响。
+ */
+private fun cardSubtitle(block: CourseBlock, hasNoonSections: Boolean): String {
     val weekday = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
         .getOrNull(block.occurrence.dayOfWeek - 1) ?: "周?"
-    val parts = mutableListOf("$weekday ${block.occurrence.startSection}-${block.occurrence.endSection} 节")
+    val span = sectionSpanLabel(
+        block.occurrence.startSection,
+        block.occurrence.endSection,
+        hasNoonSections
+    )
+    val parts = mutableListOf("$weekday $span 节")
     if (block.course.room.isNotBlank()) parts += block.course.room
     if (block.course.teacher.isNotBlank()) parts += block.course.teacher
     return parts.joinToString(" · ")

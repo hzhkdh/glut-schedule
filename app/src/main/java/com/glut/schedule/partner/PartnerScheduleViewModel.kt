@@ -144,6 +144,9 @@ class PartnerScheduleViewModel(
                 } else {
                     "guilin-yanshan"
                 }
+                // 研究生没有「情侣/基友课表」菜单；这里只给一个稳定的快照键，
+                // 让旧快照仍可读回，不会因为新增来源而崩掉。
+                CampusType.GRADUATE -> "graduate"
             }
             val ownSnapshot = createPartnerScheduleSnapshot(
                 identityColor = stored.myColor,
