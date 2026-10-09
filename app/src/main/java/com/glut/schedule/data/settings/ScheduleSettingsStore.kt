@@ -102,6 +102,8 @@ class ScheduleSettingsStore(
     private val currentWeekKey = intPreferencesKey("current_week")
     private val showWeekendKey = booleanPreferencesKey("show_weekend")
     private val showNoonKey = booleanPreferencesKey("show_noon")
+    /** 课表网格线；默认关闭，新增键对老用户即为关闭，不需要额外迁移。 */
+    private val showGridLinesKey = booleanPreferencesKey("show_grid_lines")
     private val partnerShowWeekendKey = booleanPreferencesKey("partner_show_weekend")
     private val partnerShowNoonKey = booleanPreferencesKey("partner_show_noon")
     private val partnerViewModeKey = stringPreferencesKey("partner_schedule_view_mode")
@@ -356,6 +358,16 @@ class ScheduleSettingsStore(
     suspend fun setShowNoon(showNoon: Boolean) {
         context.scheduleSettings.edit { preferences ->
             preferences[showNoonKey] = showNoon
+        }
+    }
+
+    val showGridLines: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
+        preferences[showGridLinesKey] ?: false
+    }.distinctUntilChanged()
+
+    suspend fun setShowGridLines(showGridLines: Boolean) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[showGridLinesKey] = showGridLines
         }
     }
 

@@ -106,15 +106,15 @@ fun StudyPlanScreen(
                 )
             }
         } else {
-            // 研究生门户只给课程清单，不给课组要求与达标结论；只读模式隐藏这些列。
-            Row(
-                modifier = Modifier.fillMaxWidth().background(SPHeaderBg)
-                    .padding(vertical = 8.dp, horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (uiState.isReadOnly) {
-                    HeaderCell("课程类别（只读）", 1f, fontSize = hdr, align = TextAlign.Start, startPad = 4.dp)
-                } else {
+            // 研究生门户只给课程清单，不给课组要求与达标结论：这些列在只读模式下全部不存在，
+            // 表头也就没有可对应的内容。留一行「课程类别（只读）」只会凭空占掉一行位置，
+            // 所以只读时整行不渲染，而不是渲染一行残表头。
+            if (!uiState.isReadOnly) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().background(SPHeaderBg)
+                        .padding(vertical = 8.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     HeaderCell("课组名称", 3f, fontSize = hdr, align = TextAlign.Start, startPad = 4.dp)
                     HeaderCell("属性", 1.1f, fontSize = hdr, startPad = 2.dp)
                     HeaderCell("学分要求", 1.25f, fontSize = hdr)

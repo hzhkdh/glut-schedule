@@ -22,15 +22,28 @@ class CampusDrawerItemsTest {
         )
     }
 
+    /**
+     * 南宁现在与另两个来源同构：校园信息不再是「整项消失」，而是正常出现在菜单里。
+     * 菜单项的位置也保持一致，三类来源之间切换时入口不会跳位。
+     */
     @Test
-    fun nanningKeepsFinanceButHidesGuilinInformation() {
+    fun nanningOffersTheSameCampusMenuEntriesAsTheOtherSources() {
         assertEquals(
             listOf(
                 DrawerItem.CourseTimeStats,
+                DrawerItem.CampusInfo,
                 DrawerItem.PartnerSchedule,
                 DrawerItem.Finance
             ),
             campusDrawerItems(CampusType.NANNING)
+        )
+        assertEquals(
+            campusDrawerItems(CampusType.GUILIN),
+            campusDrawerItems(CampusType.NANNING)
+        )
+        assertEquals(
+            campusDrawerItems(CampusType.GUILIN),
+            campusDrawerItems(CampusType.GRADUATE)
         )
     }
 

@@ -39,6 +39,16 @@ data class CampusCapabilities(
     val supportsSemesterHistory: Boolean,
     /** 一天是否含「中午1/中午2」节次（仅桂林）。 */
     val hasNoonSections: Boolean,
+    /**
+     * 各时段的**最后一个内部节次**（上午/中午/下午/晚上依次排列）。
+     *
+     * 课表网格用它判断「相邻两行之间是不是时段分界」，从而把分界缝画得更重。
+     * 这里存内部节次号而不是显示号：显示号会随来源与「显示中午」开关变化，内部号才稳定。
+     *
+     * 判断分界时必须比较**相邻两行各自的时段**，不能拿节次号直接比对这张表里的数字——
+     * 桂林隐藏中午后内部 4 与 7 之间会并成同一条缝，只有按相邻行时段比较才能自动并成一条线。
+     */
+    val blockEndSections: List<Int>,
     /** 门户提供考试安排。 */
     val supportsExam: Boolean,
     /** 门户提供成绩查询。 */
@@ -97,6 +107,8 @@ fun capabilitiesFor(campus: CampusType): CampusCapabilities = when (campus) {
         requiresCaptcha = false,
         supportsSemesterHistory = true,
         hasNoonSections = true,
+        // 上午 1-4、中午 5-6（午1/午2）、下午 7-10、晚上 11-14。
+        blockEndSections = listOf(4, 6, 10),
         supportsExam = true,
         supportsScore = true,
         supportsGpa = true,
@@ -113,6 +125,8 @@ fun capabilitiesFor(campus: CampusType): CampusCapabilities = when (campus) {
         requiresCaptcha = true,
         supportsSemesterHistory = true,
         hasNoonSections = false,
+        // 上午 1-4、下午 5-8、晚上 9-11。南宁没有中午节次，所以分界里没有 6。
+        blockEndSections = listOf(4, 8),
         supportsExam = true,
         supportsScore = true,
         supportsGpa = true,
@@ -120,7 +134,8 @@ fun capabilitiesFor(campus: CampusType): CampusCapabilities = when (campus) {
         supportsProfessionalScore = true,
         supportsFitnessScore = true,
         supportsStudyPlan = true,
-        supportsCampusInfo = false,
+        // 南宁同样有校园信息页；此前整项隐藏是历史遗留，三类来源现在口径一致。
+        supportsCampusInfo = true,
         supportsFinance = true,
         supportsPartnerSchedule = true,
         supportsCourseTimeStats = true
@@ -131,6 +146,8 @@ fun capabilitiesFor(campus: CampusType): CampusCapabilities = when (campus) {
         requiresCaptcha = true,
         supportsSemesterHistory = true,
         hasNoonSections = false,
+        // 上午 1-4、下午 5-8、晚上 9-12；与南宁同形，但晚上多一节。
+        blockEndSections = listOf(4, 8),
         supportsExam = false,
         supportsScore = true,
         supportsGpa = false,
@@ -138,10 +155,11 @@ fun capabilitiesFor(campus: CampusType): CampusCapabilities = when (campus) {
         supportsProfessionalScore = false,
         supportsFitnessScore = false,
         supportsStudyPlan = true,
-        supportsCampusInfo = false,
+        supportsCampusInfo = true,
         supportsFinance = false,
-        supportsPartnerSchedule = false,
-        // 允许进入统计页；页面会在默认空作息时提示先配置，配置完成后即可直接统计。
-        supportsCourseTimeStats = true
+        supportsPartnerSchedule = true,
+        // 统计页的每一个数字都由作息钟点算出，而研究生门户不提供任何上课时间：
+        // 默认作息整份为空，用户也没有权威钟点可填，页面永远算不出结果，因此这里直接禁用。
+        supportsCourseTimeStats = false
     )
 }

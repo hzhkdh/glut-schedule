@@ -56,6 +56,7 @@ internal fun campusDrawerItems(campus: CampusType): List<DrawerItem> = when (cam
     )
     CampusType.NANNING -> listOf(
         DrawerItem.CourseTimeStats,
+        DrawerItem.CampusInfo,
         DrawerItem.PartnerSchedule,
         DrawerItem.Finance
     )

@@ -28,14 +28,18 @@ import com.glut.schedule.partner.partnerMixedCardCourses
 import com.glut.schedule.partner.partnerCardVisibleCourses
 import com.glut.schedule.partner.partnerCanonicalSection
 import com.glut.schedule.partner.partnerOverlapDetailTitle
+import com.glut.schedule.partner.partnerHasNoonSections
 import com.glut.schedule.partner.partnerRawSectionForCanonical
 import com.glut.schedule.partner.partnerVisibleSections
 import com.glut.schedule.partner.resolveDistinctPartnerColor
 import com.glut.schedule.partner.resolveImportedProfileColor
 import com.glut.schedule.data.model.ClassPeriod
+import com.glut.schedule.data.model.displaySectionLabel
 import com.glut.schedule.data.settings.PartnerScheduleViewMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneId
@@ -334,6 +338,75 @@ class PartnerScheduleLayoutTest {
         assertEquals(7, partnerRawSectionForCanonical("guilin-pingfeng", 7))
         assertEquals(5, partnerRawSectionForCanonical("nanning", 7))
         assertEquals(null, partnerRawSectionForCanonical("nanning", 5))
+    }
+
+    /**
+     * 研究生课表的映射：1-4 上午、5-8 下午、9-12 晚上，落到桂林 14 行坐标是 1-4 / 7-10 / 11-14。
+     *
+     * 这是缺陷修复而不是新功能：此前 graduate 不在任何分支里，本地 campus key 回落成
+     * `guilin-yanshan`，研究生的第 5、6 节被当成午休行过滤掉，反查不到行时整张卡片被丢弃。
+     */
+    @Test
+    fun graduateSectionsShiftPastTheMissingNoonRows() {
+        assertEquals(1, partnerCanonicalSection("graduate", 1))
+        assertEquals(4, partnerCanonicalSection("graduate", 4))
+        assertEquals(7, partnerCanonicalSection("graduate", 5))
+        assertEquals(10, partnerCanonicalSection("graduate", 8))
+        assertEquals(11, partnerCanonicalSection("graduate", 9))
+        assertEquals(14, partnerCanonicalSection("graduate", 12))
+
+        // 12 节全部可见，且一条都不落在午休行上。
+        val periods = (1..12).map { section -> ClassPeriod(section, "08:00", "08:45") }
+        assertEquals(
+            listOf(1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 14),
+            partnerVisibleSections(periods, showNoon = false, campus = "graduate")
+        )
+        // 下午第一节（内部第 5 节）必须能反查到行，否则卡片会被整张丢掉。
+        assertEquals(4, partnerGridRowIndex(7, periods, showNoon = false, campus = "graduate"))
+    }
+
+    /** 正反两向必须互为逆运算，否则卡片能定位、点击/详情却拿不回正确的节次号。 */
+    @Test
+    fun graduateCanonicalAndRawSectionRoundTrip() {
+        (1..12).forEach { raw ->
+            val canonical = partnerCanonicalSection("graduate", raw)
+            assertEquals(
+                "研究生第 $raw 节往返后应还原",
+                raw,
+                partnerRawSectionForCanonical("graduate", canonical)
+            )
+        }
+        // 研究生只有 12 节，比南宁多一节：13、14 这两个 canonical 行回不到任何原始节次。
+        assertEquals(null, partnerRawSectionForCanonical("graduate", 5))
+        assertEquals(null, partnerRawSectionForCanonical("graduate", 6))
+        assertEquals(12, partnerRawSectionForCanonical("graduate", 14))
+        assertEquals(null, partnerRawSectionForCanonical("graduate", 15))
+        // 边界差异必须保留：南宁只到 13，研究生到 14。
+        assertEquals(null, partnerRawSectionForCanonical("nanning", 14))
+        assertEquals(11, partnerRawSectionForCanonical("nanning", 13))
+    }
+
+    /**
+     * 节次列标号必须按来源能力判断，而不是按 `classPeriods.size <= 11` 推断。
+     *
+     * 研究生也是 12 节，旧推断会走「有中午」的分支，把它的第 5、6 节标成「午1/午2」，
+     * 而研究生的第 5 节就是下午第一节。
+     */
+    @Test
+    fun partnerSectionLabelsFollowCampusCapabilitiesNotPeriodCount() {
+        assertTrue(partnerHasNoonSections("guilin-yanshan"))
+        assertTrue(partnerHasNoonSections("guilin-pingfeng"))
+        assertFalse(partnerHasNoonSections("nanning"))
+        assertFalse(partnerHasNoonSections("graduate"))
+
+        // 桂林内部第 7 节显示成「5」；研究生第 5 节本来就是「5」。
+        assertEquals("5", displaySectionLabel(7, hasNoon = partnerHasNoonSections("guilin-yanshan")))
+        assertEquals("5", displaySectionLabel(5, hasNoon = partnerHasNoonSections("graduate")))
+        // 研究生 12 节的标签里一个「午」字都不该出现，且必须直排 1-12。
+        assertEquals(
+            (1..12).map(Int::toString),
+            (1..12).map { displaySectionLabel(it, hasNoon = partnerHasNoonSections("graduate")) }
+        )
     }
 
     @Test

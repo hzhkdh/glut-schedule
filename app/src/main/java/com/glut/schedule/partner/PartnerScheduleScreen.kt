@@ -96,7 +96,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.glut.schedule.data.model.periodLabel
+import com.glut.schedule.data.model.displaySectionLabel
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.model.visibleDayCount
 import com.glut.schedule.data.settings.PartnerScheduleViewMode
@@ -516,11 +516,12 @@ private fun PartnerTimeGrid(
                             .padding(start = 6.dp, top = 7.dp)
                     ) {
                         Text(
-                            text = if (classPeriods.size <= 11) {
-                                period.section.toString()
-                            } else {
-                                period.periodLabel()
-                            },
+                            // 用来源能力而不是 `classPeriods.size <= 11` 判断有没有中午节次：
+                            // 研究生同样是 12 节，旧的推断会把它的第 5、6 节标成「午1/午2」。
+                            text = displaySectionLabel(
+                                period.section,
+                                hasNoon = partnerHasNoonSections(localCampus)
+                            ),
                             style = periodColumnTextStyle(fontSize = 14.sp, lineHeight = 16.sp),
                             maxLines = 1,
                             fontWeight = FontWeight.Bold,

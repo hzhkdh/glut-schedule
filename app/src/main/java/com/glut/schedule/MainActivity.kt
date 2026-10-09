@@ -208,6 +208,7 @@ import com.glut.schedule.ui.pages.StudyPlanViewModel
 import com.glut.schedule.ui.pages.StudyPlanViewModelFactory
 import com.glut.schedule.ui.theme.GlutScheduleTheme
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.capabilitiesFor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -1466,6 +1467,11 @@ private fun ScheduleSettingsDestination(
             onShowWeekendChange = viewModel::setShowWeekend,
             showNoon = uiState.showNoon,
             onShowNoonChange = viewModel::setShowNoon,
+            // 只有桂林含有午1/午2 两节；南宁与研究生没有这两行，开关置灰但保留在原位，
+            // 让用户看得出「这个选项存在，只是当前来源用不上」，而不是整项消失。
+            showNoonEnabled = capabilitiesFor(uiState.campusType).hasNoonSections,
+            showGridLines = uiState.showGridLines,
+            onShowGridLinesChange = viewModel::setShowGridLines,
             greetingEnabled = greetingEnabled,
             onGreetingEnabledChange = onGreetingEnabledChange,
             customBackgroundUri = uiState.customBackgroundUri,
@@ -1635,6 +1641,10 @@ private fun SettingsPage(
     onShowWeekendChange: (Boolean) -> Unit,
     showNoon: Boolean = false,
     onShowNoonChange: (Boolean) -> Unit = {},
+    /** 当前来源是否有午1/午2 两节；没有时「显示中午」置灰（南宁、研究生）。 */
+    showNoonEnabled: Boolean = true,
+    showGridLines: Boolean = false,
+    onShowGridLinesChange: (Boolean) -> Unit = {},
     greetingEnabled: Boolean = true,
     onGreetingEnabledChange: (Boolean) -> Unit = {},
     customBackgroundUri: String = "",
@@ -1724,8 +1734,33 @@ private fun SettingsPage(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("显示中午", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = showNoon, onCheckedChange = onShowNoonChange)
+                    // 禁用时标题同步调淡：只置灰开关本身容易让人以为是开关坏了，
+                    // 文字一起变淡才读得出「这一项对当前来源不适用」。
+                    Text(
+                        "显示中午",
+                        color = if (showNoonEnabled) settingsPrimary else settingsSecondary,
+                        fontSize = 15.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = showNoon,
+                        onCheckedChange = onShowNoonChange,
+                        enabled = showNoonEnabled
+                    )
+                }
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = settingsCardBg,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("显示网格线", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = showGridLines, onCheckedChange = onShowGridLinesChange)
                 }
             }
 

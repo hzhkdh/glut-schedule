@@ -264,16 +264,27 @@ fun partnerGridRowIndex(
 /**
  * 将不同校区的原始节次统一到桂林 14 行课表坐标：
  * 1–4 为上午，5–6 为午间，7–14 为下午和晚上。
- * 南宁没有午间行，所以其原始 5–11 节整体后移两行。
+ * 南宁与研究生都没有午间行，所以其原始 5 节及以后整体后移两行。
+ *
+ * 研究生 12 节按 1-4 上午 / 5-8 下午 / 9-12 晚上划分，套用同一条「≥5 加 2」规则后
+ * 正好落在 1-4 / 7-10 / 11-14，与用户选定的映射一致，因此不需要第三条规则。
  */
 fun partnerCanonicalSection(campus: String, rawSection: Int): Int =
-    if (campus == NANNING_CAMPUS && rawSection >= 5) rawSection + 2 else rawSection
+    if (campus in NOONLESS_CAMPUSES && rawSection >= 5) rawSection + 2 else rawSection
 
 fun partnerRawSectionForCanonical(campus: String, canonicalSection: Int): Int? =
     if (campus == NANNING_CAMPUS) {
         when (canonicalSection) {
             in 1..4 -> canonicalSection
+            // 南宁只有 11 节，最后一行是内部第 11 节。
             in 7..13 -> canonicalSection - 2
+            else -> null
+        }
+    } else if (campus == GRADUATE_CAMPUS) {
+        when (canonicalSection) {
+            in 1..4 -> canonicalSection
+            // 研究生有 12 节，比南宁多一节，上界必须写到 14。
+            in 7..14 -> canonicalSection - 2
             else -> null
         }
     } else {
@@ -399,6 +410,15 @@ private fun coursesOverlapInLogicalSections(
     return firstRange.first <= secondRange.last && secondRange.first <= firstRange.last
 }
 
+/**
+ * 该 campus key 的课表是否含「午1/午2」两行，用于决定节次列怎么标号。
+ *
+ * 口径必须与 `CampusCapabilities.hasNoonSections` 一致。**不能**再用
+ * `classPeriods.size <= 11` 推断：研究生也是 12 节，走 else 分支后
+ * `periodLabel()` 会把它的第 5、6 节标成「午1/午2」，而研究生根本没有中午节次。
+ */
+fun partnerHasNoonSections(campus: String): Boolean = campus !in NOONLESS_CAMPUSES
+
 private fun String.normalizedCourseText(): String =
     trim().replace(Regex("""\s+"""), " ").lowercase()
 
@@ -406,4 +426,13 @@ private fun Map<PartnerIdentityColor, String>.campusFor(course: PartnerCourse): 
     get(course.ownerColor) ?: GUILIN_DEFAULT_CAMPUS
 
 private const val NANNING_CAMPUS = "nanning"
+private const val GRADUATE_CAMPUS = "graduate"
 private const val GUILIN_DEFAULT_CAMPUS = "guilin-yanshan"
+
+/**
+ * 课表里没有「午1/午2」两行的来源。
+ *
+ * 这些来源的原始节次号比桂林少两行，换到桂林 14 行坐标系时，第 5 节及以后都要后移两行；
+ * 缺了这里的分支会让研究生自己的第 5、6 节被当成午休行过滤掉，整张卡片连同课程一起消失。
+ */
+private val NOONLESS_CAMPUSES = setOf(NANNING_CAMPUS, GRADUATE_CAMPUS)

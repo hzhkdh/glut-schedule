@@ -144,8 +144,9 @@ class PartnerScheduleViewModel(
                 } else {
                     "guilin-yanshan"
                 }
-                // 研究生没有「情侣/基友课表」菜单；这里只给一个稳定的快照键，
-                // 让旧快照仍可读回，不会因为新增来源而崩掉。
+                // 研究生课表同样进入情侣/基友课表。必须给出独立键值：回落成 "guilin-yanshan"
+                // 会让研究生的第 5、6 节被当成午休行过滤掉，下午第一节的卡片整张消失，
+                // 生成的分享快照也会被错标成桂林。
                 CampusType.GRADUATE -> "graduate"
             }
             val ownSnapshot = createPartnerScheduleSnapshot(

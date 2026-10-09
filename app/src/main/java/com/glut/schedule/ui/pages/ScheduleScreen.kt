@@ -263,6 +263,9 @@ fun ScheduleScreen(
                     // 已废弃「periods.size <= 11 就是南宁」的推断：研究生同样是 12 节且无中午节次，
                     // 必须按来源显式告知网格要不要做中午映射。
                     hasNoonSections = capabilitiesFor(uiState.campusType).hasNoonSections,
+                    showGridLines = uiState.showGridLines,
+                    // 时段分界由来源决定：桂林多一段中午，南宁与研究生是上午/下午/晚上三段。
+                    blockEndSections = capabilitiesFor(uiState.campusType).blockEndSections,
                     showCalendarDates = uiState.hasAuthoritativeCalendar,
                     holidayDates = uiState.holidayDates,
                     manualAdjustmentDates = adjustmentDates,

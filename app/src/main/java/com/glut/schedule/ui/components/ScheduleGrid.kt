@@ -32,6 +32,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -99,6 +101,16 @@ private val HolidayMarkerColor = Color(0xFF2D9A72)
 private val AdjustmentMarkerColor = Color(0xFFE57411)
 
 /**
+ * 课表网格线配色。
+ *
+ * 用半透明白而不是实色：课表可以铺任意自定义背景图，实色线在深色图上会白得刺眼、
+ * 在浅色图上又完全看不见，半透明白在两种底上都只是「隐约可见」。
+ * 时段分界（上午/中午/下午/晚上）比普通行线更亮更粗，让一天的分段一眼可辨。
+ */
+private val GridLineColor = Color.White.copy(alpha = 0.10f)
+private val GridLineBoundaryColor = Color.White.copy(alpha = 0.26f)
+
+/**
  * 判定某一天该显示哪个角标。
  *
  * `date` 为 null（未显示日期、或历史学期缺少权威日历时）一律不显示角标——
@@ -135,6 +147,15 @@ fun ScheduleGrid(
     blocks: List<CourseBlock>,
     showWeekend: Boolean,
     showNoon: Boolean = false,
+    /** 是否绘制课表网格线；默认关闭，避免在自定义背景图上凭空多出一层线。 */
+    showGridLines: Boolean = false,
+    /**
+     * 各时段的最后一个内部节次（上午/中午/下午/晚上依次排列），来自 `CampusCapabilities`。
+     *
+     * 只用来判断相邻两行是否跨时段，从而把分界缝画得比普通行线更重。
+     * 默认空列表表示「不做时段区分」，此时所有行线粗细一致。
+     */
+    blockEndSections: List<Int> = emptyList(),
     /**
      * 该来源是否含「中午1/中午2」两个特殊节次。
      *
@@ -160,6 +181,11 @@ fun ScheduleGrid(
         // 没有中午节次的来源（南宁、研究生）必须原样显示全部节次，不折叠也不偏移；
         // 桂林（14节）才按用户的「显示中午」开关决定是否折叠中间两行。
         val effectiveShowNoon = showNoon || !hasNoonSections
+        // 可见节次行只有这一份，节次列、课程卡片定位和网格线全部按它算行号。
+        // 各自再过滤一次的话，隐藏中午时线会比卡片整整错开两行。
+        val visibleRows = remember(periods, effectiveShowNoon) {
+            visiblePeriodRows(periods, effectiveShowNoon)
+        }
         val visibleBlocks = remember(blocks, dayCount, effectiveShowNoon) {
             blocks.filter { block ->
                 block.occurrence.dayOfWeek <= dayCount &&
@@ -185,19 +211,19 @@ fun ScheduleGrid(
                     .verticalScroll(rememberScrollState())
             ) {
                 PeriodColumn(
-                    periods = periods,
+                    visibleRows = visibleRows,
                     rowHeight = rowHeight,
                     width = leftWidth,
-                    showNoon = effectiveShowNoon,
                     hasNoonSections = hasNoonSections
                 )
                 TimetableBody(
-                    periods = periods,
+                    visibleRows = visibleRows,
                     blocks = visibleBlocks,
                     rowHeight = rowHeight,
                     dayWidth = dayWidth,
                     dayCount = dayCount,
-                    showNoon = effectiveShowNoon,
+                    showGridLines = showGridLines,
+                    blockEndSections = blockEndSections,
                     onCourseLongClick = onCourseLongClick,
                     weekNumber = week.number,
                     adjustments = adjustments,
@@ -332,47 +358,67 @@ private fun WeekDayHeader(
     }
 }
 
+/**
+ * 当前实际显示的节次行。
+ *
+ * 有中午节次的来源（桂林）在关闭「显示中午」时要把午1/午2 两行整行拿掉；
+ * 南宁与研究生没有这两节，`effectiveShowNoon` 恒为 true，因此原样返回全部节次。
+ */
+fun visiblePeriodRows(
+    periods: List<ClassPeriod>,
+    effectiveShowNoon: Boolean
+): List<ClassPeriod> = if (effectiveShowNoon) periods else periods.filter { it.section !in NOON_SECTIONS }
+
+/** 内部节次号在可见行里的下标；不在可见行里（例如被隐藏的午1/午2）返回 null。 */
+fun scheduleRowIndex(section: Int, visibleRows: List<ClassPeriod>): Int? =
+    visibleRows.indexOfFirst { it.section == section }.takeIf { it >= 0 }
+
+/**
+ * 内部节次号属于哪个时段（0 起：上午 / 中午 / 下午 / 晚上）。
+ *
+ * [blockEndSections] 装的是各时段的最后一个内部节次，所以「比我小的上界有几个」就是我的时段号。
+ * 用时段号而不是节次号本身来比较，隐藏中午时 4 与 7 会自然判成不同时段，
+ * 它们之间那条缝就并成了一条分界线，不会留下两条并排的线或画在错误的位置。
+ */
+fun scheduleTimeBlockIndex(section: Int, blockEndSections: List<Int>): Int =
+    blockEndSections.count { it < section }
+
 @Composable
 private fun PeriodColumn(
-    periods: List<ClassPeriod>,
+    visibleRows: List<ClassPeriod>,
     rowHeight: Dp,
     width: Dp,
-    showNoon: Boolean = false,
     hasNoonSections: Boolean = true
 ) {
     // 有中午节次的来源（桂林）用 periodLabel() 把内部号映射成「午1/午2 + 5-12」；
     // 南宁与研究生没有中午节次，内部号即显示号，直排。
     Column(modifier = Modifier.width(width)) {
-        periods.forEach { period ->
-            val isNoon = hasNoonSections && period.section in NOON_SECTIONS
-            val h = if (!showNoon && isNoon) 0.dp else rowHeight
-            if (h > 0.dp) {
-                Column(
-                    modifier = Modifier
-                        .height(h)
-                        .padding(start = 6.dp, top = 7.dp),
-                    horizontalAlignment = Alignment.Start
-                ) {
-                    Text(
-                        text = if (hasNoonSections) period.periodLabel() else "${period.section}",
-                        color = Color.White,
-                        style = periodColumnTextStyle(fontSize = 14.sp, lineHeight = 16.sp),
-                        maxLines = 1,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = period.startsAt,
-                        color = Color.White.copy(alpha = 0.56f),
-                        style = periodColumnTextStyle(fontSize = 9.sp, lineHeight = 11.sp),
-                        maxLines = 1
-                    )
-                    Text(
-                        text = period.endsAt,
-                        color = Color.White.copy(alpha = 0.56f),
-                        style = periodColumnTextStyle(fontSize = 9.sp, lineHeight = 11.sp),
-                        maxLines = 1
-                    )
-                }
+        visibleRows.forEach { period ->
+            Column(
+                modifier = Modifier
+                    .height(rowHeight)
+                    .padding(start = 6.dp, top = 7.dp),
+                horizontalAlignment = Alignment.Start
+            ) {
+                Text(
+                    text = if (hasNoonSections) period.periodLabel() else "${period.section}",
+                    color = Color.White,
+                    style = periodColumnTextStyle(fontSize = 14.sp, lineHeight = 16.sp),
+                    maxLines = 1,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = period.startsAt,
+                    color = Color.White.copy(alpha = 0.56f),
+                    style = periodColumnTextStyle(fontSize = 9.sp, lineHeight = 11.sp),
+                    maxLines = 1
+                )
+                Text(
+                    text = period.endsAt,
+                    color = Color.White.copy(alpha = 0.56f),
+                    style = periodColumnTextStyle(fontSize = 9.sp, lineHeight = 11.sp),
+                    maxLines = 1
+                )
             }
         }
     }
@@ -380,21 +426,45 @@ private fun PeriodColumn(
 
 @Composable
 private fun TimetableBody(
-    periods: List<ClassPeriod>,
+    visibleRows: List<ClassPeriod>,
     blocks: List<CourseBlock>,
     rowHeight: Dp,
     dayWidth: Dp,
     dayCount: Int,
-    showNoon: Boolean = false,
+    showGridLines: Boolean = false,
+    blockEndSections: List<Int> = emptyList(),
     onCourseLongClick: ((CourseBlock) -> Unit)? = null,
     weekNumber: Int = 0,
     adjustments: List<SemesterAdjustment> = emptyList(),
 ) {
-    val visiblePeriodCount = if (showNoon) periods.size else periods.size - NOON_SECTIONS.size
-    val totalHeight = rowHeight * visiblePeriodCount
+    val totalHeight = rowHeight * visibleRows.size
     Box(
         modifier = Modifier
             .size(width = dayWidth * dayCount, height = totalHeight)
+            .drawBehind {
+                if (!showGridLines) return@drawBehind
+                // 逐行的**下缘**画线，行号与卡片共用同一份 visibleRows，隐藏中午时不会错位。
+                // 末行贴着容器底边，线宽的一半会被裁掉，所以把 y 收进来半个线宽。
+                val rowPx = rowHeight.toPx()
+                val normalStroke = 0.7.dp.toPx()
+                val boundaryStroke = 1.6.dp.toPx()
+                visibleRows.forEachIndexed { index, period ->
+                    val previous = visibleRows.getOrNull(index - 1)
+                    // 只有自己可见的上邻居才算数；比较时段号而不是节次号，
+                    // 于是「4 与 7 相邻」（隐藏中午）也会被判成一条分界线。
+                    val isBoundary = previous != null &&
+                        scheduleTimeBlockIndex(period.section, blockEndSections) !=
+                        scheduleTimeBlockIndex(previous.section, blockEndSections)
+                    val stroke = if (isBoundary) boundaryStroke else normalStroke
+                    val y = (rowPx * (index + 1)).coerceAtMost(size.height - stroke / 2f)
+                    drawLine(
+                        color = if (isBoundary) GridLineBoundaryColor else GridLineColor,
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = stroke
+                    )
+                }
+            }
     ) {
         val blockGroups = remember(blocks) { overlappingCourseBlockGroups(blocks) }
         blockGroups.forEach { group ->
@@ -423,10 +493,11 @@ private fun TimetableBody(
                     modifier = Modifier
                         .offset(
                             x = dayWidth * (activeBlock.occurrence.dayOfWeek - 1) + 2.dp,
-                            y = rowHeight * (if (!showNoon && activeBlock.occurrence.startSection > 6)
-                                activeBlock.occurrence.startSection - 3
-                            else
-                                activeBlock.occurrence.startSection - 1) + 3.dp
+                            // 行号直接从可见行列表查，不再自己按节次号推算偏移：
+                            // 「隐藏中午时减 3」与 visibleRows 是同一规则的两种写法，分开写迟早漂移。
+                            y = rowHeight * (
+                                scheduleRowIndex(activeBlock.occurrence.startSection, visibleRows) ?: 0
+                            ) + 3.dp
                         )
                         .size(
                             width = dayWidth - 4.dp,

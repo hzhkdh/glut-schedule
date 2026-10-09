@@ -95,6 +95,8 @@ data class ScheduleUiState(
     val courseBlocks: List<CourseBlock> = emptyList(),
     val showWeekend: Boolean = false,
     val showNoon: Boolean = false,
+    /** 课表是否绘制网格线；默认关闭，只在设置页开启后才有线。 */
+    val showGridLines: Boolean = false,
     val customBackgroundUri: String = "",
     val customBackgroundCrop: NormalizedCropRect? = null,
     val remoteBackgroundId: String = "",
@@ -165,6 +167,7 @@ private data class ScheduleSettingsUiState(
     val weekNumber: Int,
     val showWeekend: Boolean,
     val showNoon: Boolean,
+    val showGridLines: Boolean,
     val semesterStartMonday: LocalDate,
     val semesterEndDate: LocalDate,
     val customBackgroundUri: String,
@@ -315,12 +318,16 @@ class ScheduleViewModel(
                     classPeriodProfileOverrides = profileOverrides
                 )
             },
-            calendarExtrasState
-        ) { base, appearance, extras ->
+            calendarExtrasState,
+            // 网格线单独作为第四个流接进来：内层 combine 已经满了 5 个流，
+            // 而 kotlinx 只提供到 5 流的带类型重载，硬塞进去会退化成 Array 版本。
+            settingsStore.showGridLines
+        ) { base, appearance, extras, showGridLines ->
             ScheduleSettingsUiState(
                 weekNumber = base.weekNumber,
                 showWeekend = base.showWeekend,
                 showNoon = base.showNoon,
+                showGridLines = showGridLines,
                 semesterStartMonday = base.semesterStartMonday,
                 semesterEndDate = base.semesterEndDate,
                 customBackgroundUri = appearance.backgroundPreferences.uri,
@@ -442,6 +449,7 @@ class ScheduleViewModel(
                 manualDayCopies = manualDayCopies,
                 showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
+                showGridLines = settings.showGridLines,
                 customBackgroundUri = settings.customBackgroundUri,
                 customBackgroundCrop = settings.customBackgroundCrop,
                 remoteBackgroundId = settings.remoteBackgroundId,
@@ -500,6 +508,10 @@ class ScheduleViewModel(
 
     fun setShowNoon(showNoon: Boolean) {
         viewModelScope.launch { settingsStore.setShowNoon(showNoon) }
+    }
+
+    fun setShowGridLines(showGridLines: Boolean) {
+        viewModelScope.launch { settingsStore.setShowGridLines(showGridLines) }
     }
 
     fun returnToCurrentWeek() {

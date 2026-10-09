@@ -659,20 +659,25 @@ class GraduateSupportTest {
         assertTrue(graduate.supportsStudyPlan)
         assertFalse(graduate.supportsGpa)
         assertFalse(graduate.hasNoonSections)
-        assertTrue(graduate.supportsCourseTimeStats)
+        // 统计页的每个数字都由作息钟点算出，而研究生门户不提供任何上课时间，用户也没有权威钟点可填。
+        assertFalse(graduate.supportsCourseTimeStats)
         listOf(
             MenuCapability.EXAM,
             MenuCapability.GRADE_EXAM,
             MenuCapability.PROFESSIONAL_SCORE,
             MenuCapability.FITNESS_SCORE,
-            MenuCapability.CAMPUS_INFO,
-            MenuCapability.FINANCE,
-            MenuCapability.PARTNER_SCHEDULE
+            MenuCapability.FINANCE
         ).forEach { capability ->
             assertFalse("$capability 应对研究生禁用", graduate.menuEnabled(capability))
         }
         assertTrue(graduate.menuEnabled(MenuCapability.SCORE))
         assertTrue(graduate.menuEnabled(MenuCapability.STUDY_PLAN))
+        // 校园信息与情侣/基友课表都对研究生可用：前者与教务模块无关，
+        // 后者此前是缺陷（本地 campus key 缺 graduate 分支，下午第一节整张卡片消失）。
+        assertTrue(graduate.supportsCampusInfo)
+        assertTrue(graduate.menuEnabled(MenuCapability.CAMPUS_INFO))
+        assertTrue(graduate.supportsPartnerSchedule)
+        assertTrue(graduate.menuEnabled(MenuCapability.PARTNER_SCHEDULE))
     }
 
     @Test
@@ -688,8 +693,9 @@ class GraduateSupportTest {
         assertTrue(nanning.requiresCaptcha)
         assertFalse(nanning.hasNoonSections)
         assertTrue(nanning.supportsCourseTimeStats)
-        // 南宁一如既往地整项隐藏校园信息，而不是置灰。
-        assertFalse(nanning.menuEnabled(MenuCapability.CAMPUS_INFO))
+        // 三类来源的校园信息口径现在一致：南宁不再整项隐藏，菜单里正常出现且可用。
+        assertTrue(nanning.supportsCampusInfo)
+        assertTrue(nanning.menuEnabled(MenuCapability.CAMPUS_INFO))
     }
 
     // ---- 菜单禁用 ----
@@ -709,11 +715,19 @@ class GraduateSupportTest {
             assertTrue("$item 不应被禁用", item.isEnabledFor(CampusType.GRADUATE))
             assertNull(item.unsupportedHintFor(CampusType.GRADUATE))
         }
-        // 研究生门户支持成绩与培养计划。
-        assertTrue(DrawerItem.Score.isEnabledFor(CampusType.GRADUATE))
-        assertTrue(DrawerItem.StudyPlan.isEnabledFor(CampusType.GRADUATE))
-        // 未配置时间时由统计页展示指引；配置完成后无需重启即可直接使用。
-        assertTrue(DrawerItem.CourseTimeStats.isEnabledFor(CampusType.GRADUATE))
+        // 研究生门户支持成绩、培养计划、校园信息与情侣/基友课表。
+        listOf(
+            DrawerItem.Score,
+            DrawerItem.StudyPlan,
+            DrawerItem.CampusInfo,
+            DrawerItem.PartnerSchedule
+        ).forEach { item ->
+            assertTrue("$item 应对研究生可用", item.isEnabledFor(CampusType.GRADUATE))
+            assertNull(item.unsupportedHintFor(CampusType.GRADUATE))
+        }
+        // 统计页依赖上课钟点，研究生门户不提供，也没有权威钟点可填，因此入口保留但置灰。
+        assertFalse(DrawerItem.CourseTimeStats.isEnabledFor(CampusType.GRADUATE))
+        assertEquals("研究生暂不支持", DrawerItem.CourseTimeStats.unsupportedHintFor(CampusType.GRADUATE))
     }
 
     @Test
