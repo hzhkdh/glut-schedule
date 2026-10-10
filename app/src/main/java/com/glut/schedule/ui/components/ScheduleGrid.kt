@@ -383,6 +383,25 @@ fun scheduleRowIndex(section: Int, visibleRows: List<ClassPeriod>): Int? =
 fun scheduleTimeBlockIndex(section: Int, blockEndSections: List<Int>): Int =
     blockEndSections.count { it < section }
 
+/**
+ * 下缘需要画**加粗分界线**的行下标（0 起）。
+ *
+ * 横线画在行的下缘，所以判据必须是「本行与**下一行**的时段不同」—— 这条缝隙正好落在本行底部。
+ * **不能拿上一行来比**：那会把加粗线整体压低一行，第 4/5 节之间的线画到 5/6 之间，
+ * 研究生 12 节时就会看到加粗线跑在第 5 节、第 9 节的后面。
+ *
+ * 比的是时段号而不是节次号，于是桂林隐藏中午后「4 与 7 相邻」也会被判成一条分界线。
+ */
+fun gridBoldRowIndices(
+    visibleRows: List<ClassPeriod>,
+    blockEndSections: List<Int>
+): List<Int> = visibleRows.indices.filter { index ->
+    val next = visibleRows.getOrNull(index + 1)
+    next != null &&
+        scheduleTimeBlockIndex(visibleRows[index].section, blockEndSections) !=
+        scheduleTimeBlockIndex(next.section, blockEndSections)
+}
+
 @Composable
 private fun PeriodColumn(
     visibleRows: List<ClassPeriod>,
@@ -443,25 +462,37 @@ private fun TimetableBody(
             .size(width = dayWidth * dayCount, height = totalHeight)
             .drawBehind {
                 if (!showGridLines) return@drawBehind
-                // 逐行的**下缘**画线，行号与卡片共用同一份 visibleRows，隐藏中午时不会错位。
-                // 末行贴着容器底边，线宽的一半会被裁掉，所以把 y 收进来半个线宽。
                 val rowPx = rowHeight.toPx()
+                val colPx = dayWidth.toPx()
                 val normalStroke = 0.7.dp.toPx()
                 val boundaryStroke = 1.6.dp.toPx()
-                visibleRows.forEachIndexed { index, period ->
-                    val previous = visibleRows.getOrNull(index - 1)
-                    // 只有自己可见的上邻居才算数；比较时段号而不是节次号，
-                    // 于是「4 与 7 相邻」（隐藏中午）也会被判成一条分界线。
-                    val isBoundary = previous != null &&
-                        scheduleTimeBlockIndex(period.section, blockEndSections) !=
-                        scheduleTimeBlockIndex(previous.section, blockEndSections)
+                // 哪些行的下缘是时段分界。判据收在 gridBoldRowIndices 里：线画在**下缘**，
+                // 就必须跟**下一行**比时段 —— 跟上一行比会把加粗线整体压低一行。
+                val boldRows = gridBoldRowIndices(visibleRows, blockEndSections).toSet()
+
+                // 横线：逐行下缘。行号与课程卡片共用同一份 visibleRows，隐藏中午时不会错位。
+                visibleRows.forEachIndexed { index, _ ->
+                    val isBoundary = index in boldRows
                     val stroke = if (isBoundary) boundaryStroke else normalStroke
+                    // 末行贴着容器底边，线宽的一半会被裁掉，所以把 y 收进来半个线宽。
                     val y = (rowPx * (index + 1)).coerceAtMost(size.height - stroke / 2f)
                     drawLine(
                         color = if (isBoundary) GridLineBoundaryColor else GridLineColor,
                         start = Offset(0f, y),
                         end = Offset(size.width, y),
                         strokeWidth = stroke
+                    )
+                }
+
+                // 竖线：天与天之间的分隔，贯穿整个课表主体。用普通行线的配色 ——
+                // 它标的是「换了一天」而不是时段分界，不该跟加粗线抢注意力。
+                for (day in 1 until dayCount) {
+                    val x = (colPx * day).coerceAtMost(size.width - normalStroke / 2f)
+                    drawLine(
+                        color = GridLineColor,
+                        start = Offset(x, 0f),
+                        end = Offset(x, size.height),
+                        strokeWidth = normalStroke
                     )
                 }
             }
