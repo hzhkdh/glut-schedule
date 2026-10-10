@@ -218,6 +218,33 @@ class PartnerScheduleLayoutTest {
     }
 
     @Test
+    fun untimedGraduateCoursesUseLogicalSectionsAndExposeNoFakeClockTime() {
+        val untimed = PartnerCourse(
+            id = "graduate-course",
+            title = "合成课程",
+            room = null,
+            teacher = null,
+            dayOfWeek = 2,
+            startSection = 5,
+            endSection = 6,
+            weeks = listOf(8),
+            startTime = null,
+            endTime = null,
+            ownerColor = PartnerIdentityColor.BLUE
+        )
+        val group = partnerDisplayGroups(
+            week = 8,
+            courses = listOf(untimed),
+            campusByOwner = mapOf(PartnerIdentityColor.BLUE to "graduate")
+        ).single()
+
+        assertEquals(7, group.startSection)
+        assertEquals(8, group.endSection)
+        assertEquals(null to null, partnerCourseDetailTimeRange(untimed))
+        assertEquals(null to null, partnerGridCourseTimeRange(untimed, emptyList()))
+    }
+
+    @Test
     fun overlapDetailTitleDoesNotExposeCourseCount() {
         assertEquals("重叠课程", partnerOverlapDetailTitle(courseCount = 2))
         assertEquals("课程详情", partnerOverlapDetailTitle(courseCount = 1))

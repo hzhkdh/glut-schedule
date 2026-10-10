@@ -63,6 +63,8 @@ data class CampusCapabilities(
     val supportsCampusInfo: Boolean,
     val supportsFinance: Boolean,
     val supportsPartnerSchedule: Boolean,
+    /** 是否开放设置页的自定义上课时间编辑入口。 */
+    val supportsClassPeriodSettings: Boolean,
     /** 该来源允许进入课时统计；具体钟点是否已配置由统计页按作息档案判断。 */
     val supportsCourseTimeStats: Boolean
 ) {
@@ -119,6 +121,7 @@ fun capabilitiesFor(campus: CampusType): CampusCapabilities = when (campus) {
         supportsCampusInfo = true,
         supportsFinance = true,
         supportsPartnerSchedule = true,
+        supportsClassPeriodSettings = true,
         supportsCourseTimeStats = true
     )
     CampusType.NANNING -> CampusCapabilities(
@@ -138,6 +141,7 @@ fun capabilitiesFor(campus: CampusType): CampusCapabilities = when (campus) {
         supportsCampusInfo = true,
         supportsFinance = true,
         supportsPartnerSchedule = true,
+        supportsClassPeriodSettings = true,
         supportsCourseTimeStats = true
     )
     // 研究生：门户只暴露课表、成绩与培养计划；成绩不含绩点，不做任何均分推算。
@@ -158,6 +162,7 @@ fun capabilitiesFor(campus: CampusType): CampusCapabilities = when (campus) {
         supportsCampusInfo = true,
         supportsFinance = false,
         supportsPartnerSchedule = true,
+        supportsClassPeriodSettings = false,
         // 统计页的每一个数字都由作息钟点算出，而研究生门户不提供任何上课时间：
         // 默认作息整份为空，用户也没有权威钟点可填，页面永远算不出结果，因此这里直接禁用。
         supportsCourseTimeStats = false

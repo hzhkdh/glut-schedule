@@ -238,6 +238,7 @@ class PartnerScheduleViewModel(
         ) return
         launchOperation("邀请码已生成") {
             val snapshot = PartnerScheduleSnapshot(
+                schemaVersion = partnerSnapshotSchemaVersion(state.campusKey),
                 identityColor = state.myColor,
                 campus = state.campusKey,
                 semesterStartMonday = state.semesterStartMonday,

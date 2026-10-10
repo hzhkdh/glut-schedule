@@ -45,6 +45,14 @@ class ClassPeriodSettingsUiContractTest {
     }
 
     @Test
+    fun settingsDisablesClassPeriodNavigationWhenTheCapabilityIsUnavailable() {
+        val activity = source("MainActivity.kt")
+
+        assertTrue(activity.contains("classPeriodsEnabled"))
+        assertTrue(activity.contains("clickable(enabled = classPeriodsEnabled"))
+    }
+
+    @Test
     fun switchingProfileAtomicallyLoadsPingfengDefaultWithoutModifiedMarkers() {
         val state = ClassPeriodEditorState.create(
             profile = ClassPeriodProfile.GUILIN_YANSHAN,

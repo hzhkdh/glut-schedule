@@ -7,7 +7,7 @@ import org.junit.Test
 
 class CourseTimeStatsScreenContractTest {
     @Test
-    fun unconfiguredGraduateTimesNavigateToClassPeriodSettings() {
+    fun unconfiguredGraduateTimesDoNotNavigateToDisabledClassPeriodSettings() {
         val screenModule = File("src/main/java/com/glut/schedule/ui/pages/CourseTimeStatsScreen.kt")
         val screen = (
             if (screenModule.exists()) screenModule
@@ -20,9 +20,9 @@ class CourseTimeStatsScreenContractTest {
         ).readText()
 
         assertTrue(screen.contains("UNCONFIGURED_CLASS_PERIODS"))
-        assertTrue(screen.contains("前往上课时间"))
-        assertTrue(screen.contains("onClassTimesClick"))
-        assertTrue(activity.contains("settingsSubPage = SettingsSubPage.CLASS_PERIODS"))
+        assertFalse(screen.contains("前往上课时间"))
+        assertFalse(screen.contains("onClassTimesClick"))
+        assertFalse(activity.contains("settingsSubPage = SettingsSubPage.CLASS_PERIODS"))
     }
 
     @Test

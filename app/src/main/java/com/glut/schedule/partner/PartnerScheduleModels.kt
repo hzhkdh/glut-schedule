@@ -37,8 +37,8 @@ data class PartnerCourse(
     val startSection: Int,
     val endSection: Int,
     val weeks: List<Int>,
-    val startTime: String,
-    val endTime: String,
+    val startTime: String?,
+    val endTime: String?,
     val ownerColor: PartnerIdentityColor
 )
 
@@ -66,6 +66,9 @@ fun partnerProfileDefaultName(index: Int): String = "课表${index + 1}"
 fun ImportedPartnerProfile.displayCourses(): List<PartnerCourse> =
     snapshot.courses.map { it.copy(ownerColor = displayColor) }
 
+/** 只有无权威钟点的研究生来源需要 v2；已有有钟点来源继续生成 v1。 */
+fun partnerSnapshotSchemaVersion(campus: String): Int = if (campus == "graduate") 2 else 1
+
 /**
  * 将本地课表转换为可共享快照。转换发生在上传前，确保未授权字段和本地备注
  * 从一开始就不会进入网络请求体。
@@ -80,11 +83,13 @@ fun createPartnerScheduleSnapshot(
     shareRoom: Boolean,
     shareTeacher: Boolean
 ): PartnerScheduleSnapshot {
+    val isGraduate = campus == "graduate"
     val periodBySection = classPeriods.associateBy { it.section }
     val sharedCourses = courses.flatMap { course ->
         course.occurrences.mapNotNull { occurrence ->
-            val firstPeriod = periodBySection[occurrence.startSection] ?: return@mapNotNull null
-            val lastPeriod = periodBySection[occurrence.endSection] ?: return@mapNotNull null
+            val firstPeriod = periodBySection[occurrence.startSection]
+            val lastPeriod = periodBySection[occurrence.endSection]
+            if (!isGraduate && (firstPeriod == null || lastPeriod == null)) return@mapNotNull null
             PartnerCourse(
                 // 本地 occurrence.id 可能由教室/教师参与生成，不能跨越隐私开关上传。
                 id = "",
@@ -95,8 +100,9 @@ fun createPartnerScheduleSnapshot(
                 startSection = occurrence.startSection,
                 endSection = occurrence.endSection,
                 weeks = academicWeeksForText(occurrence.weekText),
-                startTime = firstPeriod.startsAt,
-                endTime = lastPeriod.endsAt,
+                // 研究生门户没有权威钟点，不能把测试期遗留的自定义作息写入邀请码。
+                startTime = if (isGraduate) null else firstPeriod!!.startsAt,
+                endTime = if (isGraduate) null else lastPeriod!!.endsAt,
                 ownerColor = identityColor
             )
         }
@@ -105,6 +111,7 @@ fun createPartnerScheduleSnapshot(
         course.copy(id = "shared-${index + 1}")
     }
     return PartnerScheduleSnapshot(
+        schemaVersion = partnerSnapshotSchemaVersion(campus),
         identityColor = identityColor,
         campus = campus,
         semesterStartMonday = semesterStartMonday,
@@ -128,9 +135,11 @@ object PartnerScheduleSnapshotCodec {
     fun decode(raw: String): PartnerScheduleSnapshot {
         val root = JSONObject(raw)
         val schemaVersion = root.getInt("schemaVersion")
-        require(schemaVersion == 1) { "不支持的课表快照版本" }
+        require(schemaVersion == 1 || schemaVersion == 2) { "不支持的课表快照版本" }
         val identityColor = PartnerIdentityColor.fromStorage(root.getString("identityColor"))
-        val courses = root.getJSONArray("courses").objects().map { courseFromJson(it, identityColor) }
+        val courses = root.getJSONArray("courses").objects().map {
+            courseFromJson(it, identityColor, schemaVersion)
+        }
         return PartnerScheduleSnapshot(
             schemaVersion = schemaVersion,
             identityColor = identityColor,
@@ -150,18 +159,26 @@ object PartnerScheduleSnapshotCodec {
         .put("startSection", course.startSection)
         .put("endSection", course.endSection)
         .put("weeks", JSONArray(course.weeks))
-        .put("startTime", course.startTime)
-        .put("endTime", course.endTime)
+        .put("startTime", course.startTime ?: JSONObject.NULL)
+        .put("endTime", course.endTime ?: JSONObject.NULL)
 
-    private fun courseFromJson(value: JSONObject, ownerColor: PartnerIdentityColor): PartnerCourse {
+    private fun courseFromJson(
+        value: JSONObject,
+        ownerColor: PartnerIdentityColor,
+        schemaVersion: Int
+    ): PartnerCourse {
         val dayOfWeek = value.getInt("dayOfWeek")
         val startSection = value.getInt("startSection")
         val endSection = value.getInt("endSection")
-        val startTime = value.getString("startTime")
-        val endTime = value.getString("endTime")
+        val startTime = value.nullableTimeString("startTime")
+        val endTime = value.nullableTimeString("endTime")
         require(dayOfWeek in 1..7) { "星期字段无效" }
         require(startSection > 0 && endSection >= startSection) { "节次字段无效" }
-        require(LocalTime.parse(startTime) < LocalTime.parse(endTime)) { "课程时间无效" }
+        val hasUnknownTimes = schemaVersion == 2 && startTime == null && endTime == null
+        val hasValidTimes = startTime != null && endTime != null && runCatching {
+            LocalTime.parse(startTime) < LocalTime.parse(endTime)
+        }.getOrDefault(false)
+        require(hasUnknownTimes || hasValidTimes) { "课程时间无效" }
         return PartnerCourse(
             id = value.getString("id"),
             title = value.getString("title").trim().also { require(it.isNotEmpty()) { "课程名不能为空" } },
@@ -179,6 +196,10 @@ object PartnerScheduleSnapshotCodec {
 
     private fun JSONObject.nullableString(key: String): String? =
         if (!has(key) || isNull(key)) null else getString(key).trim().takeIf(String::isNotEmpty)
+
+    /** 时间字段只有 JSON null 表示未知；空字符串必须留给校验器拒绝。 */
+    private fun JSONObject.nullableTimeString(key: String): String? =
+        if (!has(key) || isNull(key)) null else getString(key).trim()
 
     private fun JSONArray.objects(): List<JSONObject> =
         (0 until length()).map { index -> getJSONObject(index) }

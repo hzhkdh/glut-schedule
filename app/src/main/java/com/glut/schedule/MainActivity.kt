@@ -1001,11 +1001,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 }
                                 DrawerItem.CourseTimeStats -> CourseTimeStatsScreen(
                                     viewModel = courseTimeStatsViewModel,
-                                    onImportClick = { selectedItem = DrawerItem.Import },
-                                    onClassTimesClick = {
-                                        selectedItem = DrawerItem.Settings
-                                        settingsSubPage = SettingsSubPage.CLASS_PERIODS
-                                    }
+                                    onImportClick = { selectedItem = DrawerItem.Import }
                                 )
                                 DrawerItem.Finance -> financeViewModel?.let {
                                     FinanceScreen(
@@ -1434,7 +1430,12 @@ private fun ScheduleSettingsDestination(
     onReset: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    when (subPage) {
+    val campusCapabilities = capabilitiesFor(uiState.campusType)
+    // 来源在设置子页打开期间也可能被导入流程切换；研究生不能停留在作息编辑页。
+    val effectiveSubPage = if (
+        subPage == SettingsSubPage.CLASS_PERIODS && !campusCapabilities.supportsClassPeriodSettings
+    ) SettingsSubPage.ROOT else subPage
+    when (effectiveSubPage) {
         SettingsSubPage.COURSE_COLORS -> CourseColorsPage(
             // 用完整课表：隐藏掉的卡片也要能在这里改色。
             courses = uiState.allCourses,
@@ -1469,7 +1470,7 @@ private fun ScheduleSettingsDestination(
             onShowNoonChange = viewModel::setShowNoon,
             // 只有桂林含有午1/午2 两节；南宁与研究生没有这两行，开关置灰但保留在原位，
             // 让用户看得出「这个选项存在，只是当前来源用不上」，而不是整项消失。
-            showNoonEnabled = capabilitiesFor(uiState.campusType).hasNoonSections,
+            showNoonEnabled = campusCapabilities.hasNoonSections,
             showGridLines = uiState.showGridLines,
             onShowGridLinesChange = viewModel::setShowGridLines,
             greetingEnabled = greetingEnabled,
@@ -1493,6 +1494,7 @@ private fun ScheduleSettingsDestination(
             onClearBackground = onClearBackground,
             onBuiltInBackgrounds = { onSubPageChange(SettingsSubPage.BACKGROUND_GALLERY) },
             onCourseColors = { onSubPageChange(SettingsSubPage.COURSE_COLORS) },
+            classPeriodsEnabled = campusCapabilities.supportsClassPeriodSettings,
             onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
             onHolidayAdjustments = { onSubPageChange(SettingsSubPage.HOLIDAY_ADJUSTMENTS) },
             onReset = onReset
@@ -1658,6 +1660,7 @@ private fun SettingsPage(
     onClearBackground: () -> Unit = {},
     onBuiltInBackgrounds: () -> Unit = {},
     onCourseColors: () -> Unit = {},
+    classPeriodsEnabled: Boolean = true,
     onClassPeriods: () -> Unit = {},
     onHolidayAdjustments: () -> Unit = {},
     onReset: () -> Unit = {}
@@ -1802,12 +1805,22 @@ private fun SettingsPage(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = onClassPeriods)
+                        .clickable(enabled = classPeriodsEnabled, onClick = onClassPeriods)
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("上课时间", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
+                    Text(
+                        "上课时间",
+                        color = if (classPeriodsEnabled) settingsPrimary else settingsSecondary,
+                        fontSize = 15.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        Icons.Outlined.ChevronRight,
+                        contentDescription = null,
+                        tint = if (classPeriodsEnabled) settingsSecondary else settingsSecondary.copy(alpha = 0.45f),
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
             Surface(

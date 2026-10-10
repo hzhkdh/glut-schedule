@@ -3,6 +3,7 @@ package com.glut.schedule
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.graduateClassPeriods
 import com.glut.schedule.partner.PartnerIdentityColor
 import com.glut.schedule.partner.PartnerScheduleSnapshot
 import com.glut.schedule.partner.PartnerScheduleSnapshotCodec
@@ -11,7 +12,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.io.File
 import java.time.LocalDate
 
 class PartnerScheduleSnapshotTest {
@@ -161,5 +164,86 @@ class PartnerScheduleSnapshotTest {
         assertEquals("11:40", decoded.courses.single().endTime)
         assertNull(decoded.courses.single().room)
         assertNull(decoded.courses.single().teacher)
+    }
+
+    @Test
+    fun graduateSnapshotUsesV2AndKeepsCoursesWithoutAuthoritativeClockTimes() {
+        val snapshot = createPartnerScheduleSnapshot(
+            identityColor = PartnerIdentityColor.BLUE,
+            campus = "graduate",
+            semesterStartMonday = LocalDate.of(2026, 9, 7),
+            semesterEndDate = LocalDate.of(2027, 1, 15),
+            courses = listOf(course),
+            classPeriods = graduateClassPeriods().mapIndexed { index, period ->
+                // 即使测试期保存过自定义值，研究生快照也不能上传非权威钟点。
+                period.copy(
+                    startsAt = "%02d:00".format(8 + index),
+                    endsAt = "%02d:45".format(8 + index)
+                )
+            },
+            shareRoom = true,
+            shareTeacher = true
+        )
+
+        assertEquals(2, snapshot.schemaVersion)
+        assertEquals(1, snapshot.courses.size)
+        assertNull(snapshot.courses.single().startTime)
+        assertNull(snapshot.courses.single().endTime)
+        assertEquals(snapshot, PartnerScheduleSnapshotCodec.decode(PartnerScheduleSnapshotCodec.encode(snapshot)))
+    }
+
+    @Test
+    fun inviteGenerationKeepsTheProtocolVersionSelectedForTheCampus() {
+        val module = File("src/main/java/com/glut/schedule/partner/PartnerScheduleViewModel.kt")
+        val source = (
+            if (module.exists()) module
+            else File("app/src/main/java/com/glut/schedule/partner/PartnerScheduleViewModel.kt")
+        ).readText()
+
+        assertTrue(source.contains("schemaVersion = partnerSnapshotSchemaVersion(state.campusKey)"))
+    }
+
+    @Test
+    fun v2AcceptsOnlyACompleteValidOrCompletelyUnknownTimePair() {
+        val validV2 = """
+            {
+              "schemaVersion": 2,
+              "identityColor": "pink",
+              "campus": "graduate",
+              "semesterStartMonday": "2026-09-07",
+              "semesterEndDate": "2027-01-15",
+              "courses": [{
+                "id": "shared-1",
+                "title": "合成课程",
+                "room": null,
+                "teacher": null,
+                "dayOfWeek": 1,
+                "startSection": 1,
+                "endSection": 2,
+                "weeks": [1, 2],
+                "startTime": null,
+                "endTime": null
+              }]
+            }
+        """.trimIndent()
+
+        val decoded = PartnerScheduleSnapshotCodec.decode(validV2)
+        assertNull(decoded.courses.single().startTime)
+        assertNull(decoded.courses.single().endTime)
+
+        val mixedPair = validV2.replace("\"endTime\": null", "\"endTime\": \"09:40\"")
+        val v1WithNulls = validV2.replace("\"schemaVersion\": 2", "\"schemaVersion\": 1")
+        val blankStrings = validV2
+            .replace("\"startTime\": null", "\"startTime\": \"\"")
+            .replace("\"endTime\": null", "\"endTime\": \"\"")
+        assertThrows(IllegalArgumentException::class.java) {
+            PartnerScheduleSnapshotCodec.decode(mixedPair)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            PartnerScheduleSnapshotCodec.decode(v1WithNulls)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            PartnerScheduleSnapshotCodec.decode(blankStrings)
+        }
     }
 }

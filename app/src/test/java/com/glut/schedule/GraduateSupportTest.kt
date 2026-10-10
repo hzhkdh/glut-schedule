@@ -661,6 +661,7 @@ class GraduateSupportTest {
         assertFalse(graduate.hasNoonSections)
         // 统计页的每个数字都由作息钟点算出，而研究生门户不提供任何上课时间，用户也没有权威钟点可填。
         assertFalse(graduate.supportsCourseTimeStats)
+        assertFalse(graduate.supportsClassPeriodSettings)
         listOf(
             MenuCapability.EXAM,
             MenuCapability.GRADE_EXAM,
@@ -685,6 +686,7 @@ class GraduateSupportTest {
         val guilin = capabilitiesFor(CampusType.GUILIN)
         assertTrue(guilin.hasNoonSections)
         assertTrue(guilin.supportsCourseTimeStats)
+        assertTrue(guilin.supportsClassPeriodSettings)
         assertTrue(guilin.supportsGpa)
         assertFalse(guilin.requiresCaptcha)
         assertTrue(guilin.menuEnabled(MenuCapability.CAMPUS_INFO))
@@ -693,6 +695,7 @@ class GraduateSupportTest {
         assertTrue(nanning.requiresCaptcha)
         assertFalse(nanning.hasNoonSections)
         assertTrue(nanning.supportsCourseTimeStats)
+        assertTrue(nanning.supportsClassPeriodSettings)
         // 三类来源的校园信息口径现在一致：南宁不再整项隐藏，菜单里正常出现且可用。
         assertTrue(nanning.supportsCampusInfo)
         assertTrue(nanning.menuEnabled(MenuCapability.CAMPUS_INFO))

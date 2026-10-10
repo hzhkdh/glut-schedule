@@ -5,7 +5,6 @@ import com.glut.schedule.data.model.NOON_SECTIONS
 import com.glut.schedule.data.settings.PartnerScheduleViewMode
 import java.time.Instant
 import java.time.LocalDate
-import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -23,8 +22,8 @@ data class PartnerDisplayGroup(
     val dayOfWeek: Int,
     val startSection: Int,
     val endSection: Int,
-    val startTime: String,
-    val endTime: String
+    val startTime: String?,
+    val endTime: String?
 )
 
 fun classifyPartnerOverlap(
@@ -59,11 +58,11 @@ fun partnerDisplayGroups(
         .groupBy { it.dayOfWeek }
         .toSortedMap()
         .flatMap { (day, dayCourses) ->
-            val sorted = dayCourses.sortedWith(
-                compareBy<PartnerCourse> { LocalTime.parse(it.startTime) }
-                    .thenBy { LocalTime.parse(it.endTime) }
-                    .thenBy { it.title }
-            )
+            val sorted = dayCourses.sortedWith(compareBy<PartnerCourse> { course ->
+                partnerCanonicalSectionRange(course, campusByOwner.campusFor(course)).first
+            }.thenBy { course ->
+                partnerCanonicalSectionRange(course, campusByOwner.campusFor(course)).last
+            }.thenBy { it.startTime ?: "" }.thenBy { it.title })
             val remaining = sorted.toMutableList()
             val connectedGroups = buildList {
                 while (remaining.isNotEmpty()) {
@@ -115,14 +114,14 @@ fun partnerDisplayGroups(
                     dayOfWeek = day,
                     startSection = canonicalRanges.minOf { it.first },
                     endSection = canonicalRanges.maxOf { it.last },
-                    startTime = group.minOf { it.startTime },
-                    endTime = group.maxOf { it.endTime }
+                    startTime = group.mapNotNull { it.startTime }.minOrNull(),
+                    endTime = group.mapNotNull { it.endTime }.maxOrNull()
                 )
-            }.sortedBy { LocalTime.parse(it.startTime) }
+            }.sortedWith(compareBy<PartnerDisplayGroup> { it.startSection }.thenBy { it.endSection })
         }
 }
 
-fun partnerCardTimeRange(group: PartnerDisplayGroup): Pair<String, String> {
+fun partnerCardTimeRange(group: PartnerDisplayGroup): Pair<String?, String?> {
     val displayedCourse = group.courses.first()
     return if (group.kind == PartnerOverlapKind.PARTIAL) {
         displayedCourse.startTime to displayedCourse.endTime
@@ -137,14 +136,14 @@ fun partnerCardTimeRange(group: PartnerDisplayGroup): Pair<String, String> {
 fun partnerGridCourseTimeRange(
     course: PartnerCourse,
     localPeriods: List<ClassPeriod>
-): Pair<String, String> {
-    val start = localPeriods.firstOrNull { it.section == course.startSection }?.startsAt
-    val end = localPeriods.firstOrNull { it.section == course.endSection }?.endsAt
+): Pair<String?, String?> {
+    val start = localPeriods.firstOrNull { it.section == course.startSection }?.startsAt?.takeIf(String::isNotBlank)
+    val end = localPeriods.firstOrNull { it.section == course.endSection }?.endsAt?.takeIf(String::isNotBlank)
     return (start ?: course.startTime) to (end ?: course.endTime)
 }
 
 /** 详情始终显示邀请发送方上传的原始时间，不受接收方自定义节次时间影响。 */
-fun partnerCourseDetailTimeRange(course: PartnerCourse): Pair<String, String> =
+fun partnerCourseDetailTimeRange(course: PartnerCourse): Pair<String?, String?> =
     course.startTime to course.endTime
 
 fun partnerOverlapDetailTitle(courseCount: Int): String =

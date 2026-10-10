@@ -18,6 +18,7 @@ import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.guilinClassPeriods
+import com.glut.schedule.data.model.graduateClassPeriods
 import com.glut.schedule.data.model.nanningClassPeriods
 import com.glut.schedule.data.model.pingfengClassPeriods
 import com.glut.schedule.data.repository.ScheduleRepository
@@ -208,6 +209,26 @@ class ScheduleRepositoryTest {
         assertEquals("08:10", repository.classPeriods.first().first().startsAt)
         selectedSubCampus.value = GUILIN_SUB_CAMPUS_PINGFENG
         assertEquals("08:00", repository.classPeriods.first().first().startsAt)
+    }
+
+    @Test
+    fun graduateProfileIgnoresLegacyCustomClockTimeOverrides() = runTest {
+        val customGraduatePeriods = graduateClassPeriods().mapIndexed { index, period ->
+            period.copy(
+                startsAt = "%02d:00".format(8 + index),
+                endsAt = "%02d:45".format(8 + index)
+            )
+        }
+        val repository = ScheduleRepository(
+            dao = FakeScheduleDao(initialSemesters = listOf(legacyCurrentSemester())),
+            campusType = flowOf(CampusType.GRADUATE),
+            classPeriodProfileOverrides = flowOf(
+                mapOf(ClassPeriodProfile.GRADUATE to customGraduatePeriods)
+            )
+        )
+
+        assertEquals(graduateClassPeriods(), repository.classPeriodsFor(ClassPeriodProfile.GRADUATE))
+        assertEquals(graduateClassPeriods(), repository.currentClassPeriods.first())
     }
 
     @Test

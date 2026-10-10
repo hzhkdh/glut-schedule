@@ -115,7 +115,11 @@ class ScheduleRepository(
      * 会把桂林时间写进刚导入的研究生学期。按档案显式取值就让写入与切换解耦了。
      */
     suspend fun classPeriodsFor(profile: ClassPeriodProfile): List<ClassPeriod> =
-        classPeriodProfileOverrides.first()[profile] ?: defaultClassPeriods(profile)
+        if (profile == ClassPeriodProfile.GRADUATE) {
+            defaultClassPeriods(profile)
+        } else {
+            classPeriodProfileOverrides.first()[profile] ?: defaultClassPeriods(profile)
+        }
 
     /**
      * 课时统计需要同时读取多个学期，不能复用只面向“正在查看学期”的 courses 流。
@@ -428,6 +432,8 @@ class ScheduleRepository(
                 semester?.campus ?: selectedCampus
             }
             val profile = classPeriodProfile(campus, guilinSubCampus)
+            // 研究生门户不提供权威钟点，历史测试期保存的自定义值不得继续影响展示或分享。
+            if (profile == ClassPeriodProfile.GRADUATE) return defaultClassPeriods(profile)
             // 展示时间只由当前档案控制，避免学期表中的旧雁山时间压过屏风配置。
             return profileOverrides[profile]
                 ?: legacyOverrides[campus]

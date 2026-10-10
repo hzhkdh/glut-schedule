@@ -1240,7 +1240,13 @@ private fun PartnerCourseDetailDialog(group: PartnerDisplayGroup, onDismiss: () 
                                     course.room?.let { Text("教室：$it") }
                                     course.teacher?.let { Text("教师：$it") }
                                     val (startsAt, endsAt) = partnerCourseDetailTimeRange(course)
-                                    Text("时间：$startsAt–$endsAt")
+                                    Text(
+                                        if (startsAt != null && endsAt != null) {
+                                            "时间：$startsAt–$endsAt"
+                                        } else {
+                                            "未提供上课时间"
+                                        }
+                                    )
                                 }
                             }
                         }
