@@ -1,17 +1,18 @@
 # 桂系一站式
 
-面向桂林理工大学学生的本地 Android 校园信息工具。支持导入课表与教务数据、计算专业成绩、查询体测和财务信息，并提供校历、作息时间、校车路线与校园地图。账号密码使用系统加密存储，主要业务数据和缓存保存在本机。
+面向桂林理工大学学生的本地 Android 校园信息工具。支持**本专科（桂林本部 / 南宁分校）与研究生**三类来源的课表与教务数据导入，可计算专业成绩、查询体测和财务信息，并提供校历、作息时间、校车路线、校园地图与首页小组件。账号密码使用系统加密存储，主要业务数据和缓存保存在本机。
 
 ## 功能
 
 ### 课表
 - 启动即进入课表页面，无需登录注册
 - 顶部显示当前周数、星期和日期，左右滑动或点击箭头切换周次
-- 左侧节次列显示节次与上下课时间（桂林/南宁两套作息）
+- 左侧节次列显示节次与上下课时间（桂林 14 节含午 1/午 2、南宁 11 节、研究生 12 节且门户不提供钟点）
 - 彩色课程卡片展示课程名、教室、教师，选课属性徽章（必修蓝/限选橙/任选绿）
 - 同一时段多门冲突课程自动分组，点击轮换显示
 - 调课自动处理：原课消失，补课出现在对应的周次/节次
-- 支持“星空”“花”内置背景、自定义背景图片和课程卡片颜色
+- 可选「显示网格线」：同时绘制横线与竖线，并按上午 / 中午 / 下午 / 晚上的时段分界把分界缝画得更重
+- 支持通过“画廊”设置背景、自定义背景图片和课程卡片颜色
 - 自定义背景按当前设备竖屏比例裁剪，支持拖动、双指缩放（1×–5×）和重新裁剪
 - 背景蒙黑度支持 0%–80%、每档 5% 调节，并同步应用于本人课表与情侣/基友课表
 
@@ -23,38 +24,45 @@
 
 ### 情侣/基友课表
 - 通过 24 小时邀请码分享和导入 TA 的课表，可在 TA 单人视图与双方合并视图间切换
+- **专科、本科、研究生三类来源可互相导入**
 - 可分别控制是否分享教室、教师，并为双方设置身份色
 - TA 课表独立保存周末和中午显示偏好，不影响本人课表布局
 
 ### 数据导入
-- 直接输入学号密码登录教务系统，自动检测桂林/南宁校区
-- 南宁分校支持验证码登录
-- 登录后自动拉取：课表、考试安排、考试成绩、等级考试、教学计划、调课信息
+- 在导入页显式选择导入来源：南宁分校 / 桂林本部 / 研究生
+- 直接输入学号密码登录教务系统；南宁分校与研究生需要图形验证码
+- 本专科登录后自动拉取：课表、考试安排、考试成绩、等级考试、教学计划、调课信息
+- 导入完成后主按钮原地变成「查看课表」出口，可在同一位置进入课表页，不必在导入页反复点击
 - 支持按学期下载历史课表或一键下载全部历史学期；任务由应用级协调器继续执行，切换页面不影响进度
 - 当前学期自动更新，历史学期下载后离线只读；失败的学期可单独重试
 - 凭据加密存储（EncryptedSharedPreferences），支持静默登录刷新
 - 记住密码：勾选后加密保存，不勾选自动清除已存密码
-- 体测平台使用独立登录与验证码流程，凭据和会话同样加密保存在本机
+- 体测平台和财务平台使用独立登录与验证码流程，凭据和会话同样加密保存在本机
+
+### 首页小组件
+
+- 提供三款桌面小组件：**课表 · 紧凑今日**、**课表 · 今明两日**、**课表 · 彩色日视图**
+- 基于 Jetpack Glance 实现，数据由 WorkManager 后台刷新
 
 ### 菜单功能
 | 菜单 | 功能 | 数据来源 |
 |------|------|---------|
-| 课程表 | 当前学期课表，周次导航 | currcourse.jsdo / showTimetable.do |
-| 考试成绩 | 历年课程成绩，学年分组 + GPA 汇总 | studentOwnScore.do (POST) |
+| 课程表 | 当前学期课表，周次导航 | currcourse.jsdo / showTimetable.do（研究生：门户网关 TimeTableNewService） |
+| 考试成绩 | 历年课程成绩，学年分组 + GPA 汇总 | studentOwnScore.do (POST)（研究生：ScoreService/QueryStuScore，不含绩点） |
 | 专业成绩 | 按培养计划筛选课程并计算学年加权成绩 | 本地考试成绩 + 教学计划 |
 | 考试安排 | 考试时间、地点、座位号，时间线 UI，按科目显示图标 | 多端点探测 (JSON/HTML) |
 | 考级成绩 | 英语四六级、普通话等国家考试 | skilltest.jsdo (moduleId=2090) |
 | 体测成绩 | 最新与历年体测明细、总评、评分标准 | 体测管理平台 |
 | 校园信息 | 校历、作息时间、校车路线和校园地图 | 内置校园地图 + 校园信息图片服务 |
 | 课时统计 | 按课程/教室/教师统计单学期或全部学期课时 | 本地课表 + 学期作息缓存 |
-| 情侣/基友课表 | 通过限时邀请码分享、导入和合并查看 TA 的课表 | 本地课表 + 邀请服务 |
+| 情侣/基友课表 | 通过限时邀请码分享、导入和合并查看 TA 的课表（三类来源可互导） | 本地课表 + 分享 Worker（share-schedule.999314.xyz） |
 | 财务 | 财务概览、缴费项目、交易记录和电子票据 | 桂林理工大学财务平台 |
-| 教学计划 | 课组学分/门数要求与完成情况 | studentSelfSchedule.jsdo → studentScheduleLineShow.do |
+| 教学计划 | 课组学分/门数要求与完成情况 | studentSelfSchedule.jsdo → studentScheduleLineShow.do（研究生：只读课程列表） |
 | 学期概览 | 学期日期、进度、节假日、调课一览 | 教务日历 + timor.tech 节假日 API |
 | 导入课表 | 登录导入当前数据，按学期或一键下载全部历史课表 | 多端点并行探测 |
 | 通知 | App 内公告、维护提醒、更新提示，支持未读红点 | Cloudflare Pages notices.json |
 | 常见问题 | FAQ 分类展开/收起（常见问题/数据解读/隐私安全/关于项目） | — |
-| 设置 | 显示周末、内置/自定义背景、背景蒙黑度、课程卡片颜色 | — |
+| 设置 | 显示周末、显示中午（仅桂林）、显示网格线、内置/自定义背景、背景蒙黑度、课程卡片颜色 | — |
 | 关于 | 版本信息、维护者、检测更新、小程序名称复制、App 内下载安装 | Cloudflare Pages + GitHub Releases API |
 
 ### 学期概览
@@ -73,7 +81,7 @@
 - 按一个学年（秋季 + 次年春季）汇总培养计划中的应修课程
 - 采用 `Σ(课程百分制成绩 × 教学计划学分) ÷ Σ教学计划学分` 计算
 - 排除补修、重学/重修、体育、公共选修/任选、辅修、双学位等课程
-- 支持五级制成绩折算，并对补考、缓考、作弊/旷考等情况显示计算说明
+- 五级制成绩折算为：优95，良85，中75，及格65，不及格40折算
 - 展示参与计算课程、缺失课程、总学分和加权成绩
 
 ### 体测成绩
@@ -98,7 +106,6 @@
 ### App 内更新
 - 启动时优先检测 Cloudflare Pages `update.json`，失败后回退 GitHub Releases / GitHub Pages
 - 三步弹窗：更新日志 → [立即更新] → 下载进度 → [立即安装] → 系统安装器
-- 支持下载中取消
 
 ### App 内通知
 - 侧边菜单新增「通知」，未读通知显示红点
@@ -116,14 +123,18 @@
 
 ## 技术栈
 
-- Kotlin 2.2.21
+- Kotlin 2.2.21（KSP 2.2.21-2.0.4）
 - Jetpack Compose（BOM 2026.04.01）+ Material 3
 - Room 2.8.4（KSP 编译）
 - DataStore Preferences 1.2.1
 - OkHttp 5.3.2
+- jsoup 1.21.2（教务 HTML 解析）
+- Jetpack Glance AppWidget 1.1.1（首页小组件）
+- WorkManager 2.10.0（小组件后台刷新）
 - Security-Crypto 1.1.0-alpha06
 - ExifInterface 1.4.2
 - kotlinx-coroutines 1.10.2
+- Activity Compose 1.13.0 / Lifecycle 2.10.0
 - Gradle 8.13 + AGP 8.13.0
 
 ## 环境要求
@@ -150,6 +161,10 @@ $env:JAVA_HOME = "C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot"
 # 运行单个测试
 .\gradlew.bat testDebugUnitTest --tests "com.glut.schedule.*Test"
 
+# 发布：构建 Release + 创建 GitHub Release + 同步到 Cloudflare Pages 更新主机
+# 前置条件：本仓库与 app-update-host 工作区都必须干净，否则任务直接拒绝执行
+.\gradlew.bat publishUpdate
+
 # 清理
 .\gradlew.bat clean
 ```
@@ -169,10 +184,12 @@ app/src/main/java/com/glut/schedule/
     model/                          课表、成绩、专业成绩、考试、教学计划、体测、财务、通知等领域模型
     local/                          Room 实体、DAO、数据库与迁移
     repository/                     聚合 Room Flow 的统一数据仓库
-    settings/                       DataStore 设置、学期信息、通知与节假日缓存
+    settings/                       DataStore 设置、学期信息、通知与节假日缓存；
+                                    CampusCapabilities 集中声明三类来源的能力与时段分界
 
   service/
     academic/                       教务登录、会话、凭据、多端点探测、多学期下载与考试请求
+    graduate/                       研究生门户客户端（网关签名、RSA 密码加密）、解析器与导入编排
     parser/                         课表、成绩、考试、教学计划和体测解析器
     fitness/                        体测 API、请求协议、凭据与页面缓存
     finance/                        财务 API、HTML 解析、缓存编解码与加密存储
@@ -180,6 +197,8 @@ app/src/main/java/com/glut/schedule/
     AppUpdater.kt                   APK 流式下载与 FileProvider 安装
     UpdateChecker.kt                Cloudflare Pages / GitHub 版本检测
     NoticeChecker.kt                App 内通知拉取与 JSON 解析
+
+  widget/                           三款桌面小组件（Glance）与其后台刷新
 
   partner/                          情侣/基友课表快照、邀请码服务、存储、布局与页面
 
@@ -192,12 +211,14 @@ app/src/main/java/com/glut/schedule/
 app/src/main/res/
   drawable-nodpi/                  内置雁山校区地图
   drawable/                        品牌、默认背景和教学计划状态资源
-  xml/                             FileProvider、备份与数据提取规则
+  xml/                             FileProvider、备份与数据提取规则、小组件 provider 信息
 ```
 
 ## 数据流
 
 - 教务导入：`AcademicLoginService` / `ApiProbeService` → 各 Parser → `ScheduleRepository`（Room）→ ViewModel `StateFlow` → Compose UI
+- 研究生导入：`GraduateClient`（门户网关签名 + RSA 密码加密）→ `GraduateParser` → `GraduateImportCoordinator` 按「写课表 → 存学期目录 → 选中当前学期 → 写校历 → 切换来源」的顺序落库；成绩与培养计划各自失败互不牵连
+- 首页小组件：Room 中的课表 → Glance 小组件 + WorkManager 后台刷新
 - 历史学期：`SemesterBulkDownloadCoordinator` 在应用级作用域串行下载 → Room 按学期保存课表与作息 → 课表和统计页面离线读取
 - 课时统计：多学期课表与作息 → `CourseTimeStatsCalculator` 按课程/教室/教师汇总 → 可交互环形图和双列明细
 - 情侣/基友课表：本人课表快照 → 限时邀请码服务 → `PartnerScheduleStore` 本地保存 → TA/合并视图
@@ -222,12 +243,13 @@ app/src/main/res/
 | 财务 | `https://cwjf.glut.edu.cn` | HTTPS + HTML/JSON |
 | 校历、作息、校车 | `https://xxfw.glut.edu.cn/GlutInfoService/` | HTTPS + HTML 图片提取 |
 | 校园地图 | APK 内置 `drawable-nodpi` 资源 | PNG |
+| 研究生课表/成绩/培养计划 | `https://gsems.glut.edu.cn` 的 `/Ajax.ashx` 网关 | HTTPS + JSON（`Year`/`Term`/`XH` 经 `encode_` base64 编码） |
 | 节假日 | timor.tech API | HTTPS + JSON |
 | 通知与更新 | Cloudflare Pages，失败时回退 GitHub | HTTPS + JSON/APK |
 
 ## 测试
 
-- JUnit 4.13.2 + kotlinx-coroutines-test
+- JUnit 4.13.2 + kotlinx-coroutines-test（OkHttp MockWebServer、org.json 用于协议与解析测试）
 - 覆盖领域模型、Parser、Repository、API Service、缓存编解码、ViewModel 和 UI 契约
-- 包含桂林/南宁教务、多学期下载、课时统计、情侣/基友课表、专业成绩、体测、财务、校园信息、自定义背景裁剪与解码、通知、更新及发布版本回归测试
+- 包含桂林/南宁/研究生三来源教务、多学期下载、课时统计、情侣/基友课表、专业成绩、体测、财务、校园信息、自定义背景裁剪与解码、首页小组件、通知、更新及发布版本回归测试
 - 测试目录：`app/src/test/java/`
