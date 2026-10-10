@@ -85,7 +85,10 @@ class MultiSemesterUiContractTest {
         assertTrue(screen.contains("全部下载"))
         assertTrue(screen.contains("最近一次全部下载"))
         assertTrue(screen.contains("已完成 \$completedItems/\${downloadState.items.size}"))
-        assertTrue(screen.contains("viewModel::viewSemester"))
+        // 原先断言的是 `viewModel::viewSemester`（方法引用）。学期管理区的「查看课表」现在
+        // 必须同时跳出导入页：viewSemester 只切学期不跳转，单独调用时用户点了界面毫无变化。
+        // 断言因此从「传没传这个方法引用」升级为「切学期与跳转的先后关系」，是有意加强。
+        assertTrue(screen.contains("viewModel.viewSemester(semesterId)"))
         assertTrue(screen.contains("heightIn(min = 48.dp)"))
         assertFalse(screen.contains("Scaffold("))
         assertFalse(screen.contains("EnrollmentStartDialog"))

@@ -79,11 +79,24 @@ private val LoginBorder = Color(0xFFD1D5DB)
 @Composable
 fun DirectLoginScreen(
     viewModel: DirectLoginViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * 离开导入页、回到课表页。
+     *
+     * 导入成功后用户想看的必然是课表；不给这个出口时主按钮只是复位成「登录并导入」，
+     * 用户不知道该自己切页，只会留在导入页反复点导入（重复拉一次全量数据）。
+     */
+    onDone: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val semesterDownloadState by viewModel.semesterDownloadState.collectAsStateWithLifecycle()
     var passwordVisible by remember { mutableStateOf(false) }
+    // 学期管理区的「查看课表」：先切到该学期，再跳出导入页。
+    // viewSemester 只切学期不跳转，单独调用会让这个按钮看起来是坏的——点了界面毫无变化。
+    val viewSemesterAndOpenSchedule: (String) -> Unit = { semesterId ->
+        viewModel.viewSemester(semesterId)
+        onDone()
+    }
 
     Column(
         modifier = modifier
@@ -193,20 +206,39 @@ fun DirectLoginScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Login button
+            // 主按钮。三种状态：导入中 → 进度；导入完成 → 「查看课表」并跳转；其余 → 「登 录 并 导 入」。
+            // 完成后必须换成「查看课表」：此前按钮复位回「登 录 并 导 入」，用户看不出下一步，
+            // 就留在导入页反复点导入，而每次都会重新拉一遍全量数据。
             Button(
-                onClick = viewModel::loginAndImport,
+                onClick = { if (uiState.importCompleted) onDone() else viewModel.loginAndImport() },
                 enabled = !uiState.isLoggingIn,
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = LoginAccent, disabledContainerColor = Color(0xFFB0C4DE)),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                if (uiState.isLoggingIn) {
-                    CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text("正在导入...", fontSize = 16.sp, color = Color.White)
-                } else {
-                    Text("登 录 并 导 入", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                when {
+                    uiState.isLoggingIn -> {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("正在导入...", fontSize = 16.sp, color = Color.White)
+                    }
+                    uiState.importCompleted ->
+                        Text("查看课表 ›", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    else ->
+                        Text("登 录 并 导 入", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+
+            // 「重新导入」只在完成态出现：换账号或想再导一次的回头路。
+            // 用 TextButton 是刻意的——主按钮已经把用户送去课表，这里只是少数情况下的出口，
+            // 视觉上必须明显轻于主按钮，否则两颗实心按钮会让人再一次不知道该按哪个。
+            if (uiState.importCompleted) {
+                TextButton(
+                    onClick = viewModel::restartImport,
+                    enabled = !uiState.isLoggingIn,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                ) {
+                    Text("重新导入", color = LoginSecondary, fontSize = 14.sp)
                 }
             }
 
@@ -253,7 +285,7 @@ fun DirectLoginScreen(
                     onDownloadSemester = viewModel::downloadSemester,
                     onDownloadAll = viewModel::downloadAllSemesters,
                     onRetryFailed = viewModel::retryFailedSemester,
-                    onViewSemester = viewModel::viewSemester
+                    onViewSemester = viewSemesterAndOpenSchedule
                 )
             }
 

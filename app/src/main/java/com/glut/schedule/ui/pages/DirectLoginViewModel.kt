@@ -91,6 +91,16 @@ data class DirectLoginUiState(
     //
     val message: String = "",
     val importResult: ImportResult? = null,
+    /**
+     * 本次会话是否已经导入完成。
+     *
+     * 导入页的主按钮据此变身「查看课表」：此前成功后按钮只是复位成「登 录 并 导 入」，
+     * 用户看不出下一步该干什么，就留在导入页反复点导入。
+     *
+     * 必须与「当前填写的账号」同生命周期：改学号/密码/来源时立刻复位，
+     * 否则换个账号回来按钮仍写着「查看课表」，而屏幕上那份课表还是上一个账号的。
+     */
+    val importCompleted: Boolean = false,
     val semesters: List<AcademicSemester> = emptyList(),
     val viewedSemesterId: String = AcademicSemester.LEGACY_CURRENT_ID,
     val importingSemesterId: String? = null,
@@ -221,10 +231,12 @@ class DirectLoginViewModel(
     fun updateUsername(username: String) {
         // 不再按学号长度自动猜校区：来源已由下拉框显式选择，
         // 自动切换会在用户改学号时把刚选好的来源悄悄改回去。
-        _uiState.value = _uiState.value.copy(username = username)
+        _uiState.value = _uiState.value.copy(username = username).afterLoginInputEdit()
     }
 
-    fun updatePassword(password: String) { _uiState.value = _uiState.value.copy(password = password) }
+    fun updatePassword(password: String) {
+        _uiState.value = _uiState.value.copy(password = password).afterLoginInputEdit()
+    }
     fun updateRememberPassword(remember: Boolean) {
         _uiState.value = _uiState.value.copy(
             rememberPassword = effectiveRememberPassword(
@@ -238,6 +250,18 @@ class DirectLoginViewModel(
     fun updateImportSource(source: ImportSource) {
         sourceTouchedByUser = true
         _uiState.value = _uiState.value.copy(importSource = source, message = "", captchaInput = "")
+            .afterLoginInputEdit()
+    }
+
+    /**
+     * 用户点了导入页的「重新导入」：只把完成态收回去，让主按钮回到「登 录 并 导 入」。
+     *
+     * 不动账号密码——用户多半就是想用同一套凭据再导一次；
+     * 也不清 `message` 与 `importResult`，上一次的导入结果留在屏幕上作参照，
+     * 直到下一次导入把它覆盖掉。
+     */
+    fun restartImport() {
+        _uiState.value = _uiState.value.copy(importCompleted = false)
     }
 
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
@@ -311,7 +335,9 @@ class DirectLoginViewModel(
             return
         }
         if (!loginGuard.tryStart()) return
-        _uiState.value = state.copy(isLoggingIn = true, message = "正在登录...")
+        // 开始新一轮登录导入就不再是「已完成」：主按钮在登录过程中必须回到进度态，
+        // 而不是残留着上一次的「查看课表」。
+        _uiState.value = state.copy(isLoggingIn = true, message = "正在登录...", importCompleted = false)
 
         // 每次登录都换掉旧的教务客户端，避免上一次会话的 Cookie 影响这次登录。
         // 不这样做时，上一次的 CapturingCookieJar 会让新登录直接落到
@@ -994,6 +1020,9 @@ class DirectLoginViewModel(
                     unparsedWeekTextCount = currentPayload.unparsedWeekTextCount
                 ),
                 importResult = ImportResult(courseCount, examCount, scoreCount, gradeExamCount, studyPlanCount),
+                // 走到这里课表已落库（失败模块只影响考试成绩等旁支），因此算「导入完成」，
+                // 主按钮变身「查看课表」。
+                importCompleted = true,
                 unparsedWeekTextCount = currentPayload.unparsedWeekTextCount
             )
         } catch (e: Exception) {
@@ -1157,6 +1186,8 @@ class DirectLoginViewModel(
                         gradeExamCount = 0,
                         studyPlanCount = outcome.studyPlanCount
                     ),
+                    // 与本科路径同口径：课表成功写入即算导入完成。
+                    importCompleted = true,
                     unparsedWeekTextCount = outcome.unparsedWeekTextCount,
                     adjustmentWarning = outcome.adjustmentWarning
                 )
@@ -1202,6 +1233,21 @@ class DirectLoginViewModel(
         }
     }
 }
+
+/**
+ * 用户改动登录输入（学号 / 密码 / 导入来源）后的状态：收回「本次会话已导入完成」。
+ *
+ * 为什么必须复位：`DirectLoginViewModel` 挂在 Activity 作用域（MainActivity 里由
+ * `viewModel(...)` 创建），离开导入页不会销毁，完成标志一直留着。用户换个账号回来时
+ * 若标志还在，主按钮就仍写着「查看课表」，而屏幕上那份课表是上一个账号的——
+ * 点下去等于被送去看别人的课表。
+ *
+ * 抽成 [DirectLoginUiState] 的扩展而不是在三处内联 `copy(importCompleted = false)`：
+ * 三处语义完全相同，且 ViewModel 的构造依赖一整套带 Context 的服务，
+ * JVM 单测里起不来，只有纯函数才测得到复位语义。
+ */
+internal fun DirectLoginUiState.afterLoginInputEdit(): DirectLoginUiState =
+    copy(importCompleted = false)
 
 /**
  * 只有系统加密存储可用时才允许记住教务密码，避免任何明文降级路径。

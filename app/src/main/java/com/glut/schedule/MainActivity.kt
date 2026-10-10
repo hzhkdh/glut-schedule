@@ -1014,7 +1014,15 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     viewModel = examViewModel,
                                     onBack = { selectedItem = DrawerItem.Schedule }
                                 )
-                                DrawerItem.Import -> DirectLoginScreen(viewModel = directLoginViewModel)
+                                DrawerItem.Import -> DirectLoginScreen(
+                                    viewModel = directLoginViewModel,
+                                    // 导入完成后回到课表页。抽屉此时可能还开着（用户从抽屉进来，
+                                    // 没关抽屉就点了按钮），不关会出现「内容已经变了、抽屉还挡着」。
+                                    onDone = {
+                                        selectedItem = DrawerItem.Schedule
+                                        scope.launch { drawerState.close() }
+                                    }
+                                )
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
                                     viewModel = scheduleViewModel,
                                     holidayAdjustmentsViewModel = holidayAdjustmentsViewModel,
