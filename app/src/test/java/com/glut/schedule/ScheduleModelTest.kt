@@ -13,11 +13,13 @@ import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.offsetSectionForNoon
+import com.glut.schedule.data.model.normalizeRoomKey
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.settings.CampusType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -199,6 +201,22 @@ class ScheduleModelTest {
         // 南宁没有中午时段，节次直排，任何节次都不偏移。
         assertEquals(5, offsetSectionForNoon(5, hasNoon = false))
         assertEquals(12, offsetSectionForNoon(12, hasNoon = false))
+    }
+
+    /**
+     * 教务的教室主数据里混过**全角字母**：出问题那条记录是 `05614Ｄ`（全角 Ｄ），
+     * 而调课表里写的是半角 `05614D`。两者必须归一到同一个键，否则
+     * 「调/补」角标（`AdjustmentMarker`）与「移除被调走的原周次」
+     * （`AcademicScheduleParser`）都会静默落空 —— 不报错、不丢卡片，
+     * 只是那一周本该消失的课还在。
+     */
+    @Test
+    fun roomKeyNormalizesFullWidthLettersFromTheAcademicSystem() {
+        assertEquals(normalizeRoomKey("05614D"), normalizeRoomKey("05614Ｄ"))
+        // NFKC 之外仍要求「去空白 + 大写」。
+        assertEquals(normalizeRoomKey("05614D"), normalizeRoomKey("  05614Ｄ  "))
+        // 归一不得退化成前缀/包含匹配：相邻教室必须仍然是两个不同的键。
+        assertNotEquals(normalizeRoomKey("06105D"), normalizeRoomKey("06106D"))
     }
 
     private fun occurrenceWithWeek(weekText: String): CourseOccurrence {

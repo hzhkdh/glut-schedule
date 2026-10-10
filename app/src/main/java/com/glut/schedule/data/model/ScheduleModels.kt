@@ -2,6 +2,7 @@ package com.glut.schedule.data.model
 
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.ClassPeriodProfile
+import java.text.Normalizer
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
@@ -131,14 +132,24 @@ fun offsetSectionForNoon(section: Int, hasNoon: Boolean): Int =
     if (hasNoon && section >= 5) section + 2 else section
 
 /**
- * 教室文本的匹配键：去掉全部空白并转大写。
+ * 教室文本的匹配键：NFKC 归一 → 去掉全部空白 → 转大写。
+ *
+ * **NFKC 不能省。** 教务的教室主数据里混过**全角字母**：有一条记录是 `05614Ｄ`（全角 Ｄ），
+ * 而调课表里写的是半角 `05614D`。不归一就会被判成两个不同的教室，于是
+ * [AdjustmentMarker] 的「调/补」角标与 `AcademicScheduleParser` 里「移除被调走的原周次」
+ * 都会**静默落空** —— 不报错、不丢卡片，只是那一周本该消失的课还在。
+ *
+ * 识别侧（`looksLikeRoom`）早就归一了，小程序的 `utils/parser.js` 两个口径也都带 NFKC；
+ * `findings.md:161` 的原话是「应只在**识别**和**比较**时做 NFKC」——这里补的正是「比较」那一半。
  *
  * **不做包含/前缀等模糊匹配**——那会把 06105D 与 06106D 这类相邻教室混为一谈。
  * 全仓只保留这一份实现（与小程序 `utils/parser.js` 的 `normalizeRoomText` 同口径）：
  * 「同一规则各写一份」已经在南宁/桂林解析器与中午节次偏移上踩过两次坑。
  */
 internal fun normalizeRoomKey(value: String): String =
-    value.filterNot { it.isWhitespace() }.uppercase()
+    Normalizer.normalize(value, Normalizer.Form.NFKC)
+        .filterNot { it.isWhitespace() }
+        .uppercase()
 
 /**
  * 课程名的匹配键：去掉全部空白。
