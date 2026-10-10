@@ -11,6 +11,7 @@ import com.glut.schedule.service.fitness.FitnessGateway
 import com.glut.schedule.service.fitness.FitnessStorage
 import com.glut.schedule.service.parser.FitnessParser
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -60,7 +61,21 @@ data class FitnessScoreUiState(
 class FitnessScoreViewModel(
     private val service: FitnessGateway,
     private val store: FitnessStorage,
-    private val parser: FitnessParser = FitnessParser()
+    private val parser: FitnessParser = FitnessParser(),
+    /**
+     * 解析 HTML、读写缓存等 CPU 工作所用的调度器。
+     *
+     * 之所以做成可注入：这些工作原本硬编码在 [Dispatchers.Default] 上，单元测试里
+     * `Dispatchers.setMain(测试调度器)` 只接管了 viewModelScope 的 Main，接管不了 Default，
+     * 于是 withContext(Dispatchers.Default) 之后协程会“无桩”地继续跑在真实线程池线程上，
+     * `advanceUntilIdle()` 排不到它。测试结束 resetMain() 之后该协程若再走到
+     * `viewModelScope.launch{}`（如 showMessage），就会抛
+     * “Dispatchers.Main was accessed ... after Dispatchers.resetMain()”。
+     * 注入测试调度器后，VM 的所有协程都由测试调度器驱动，可被确定性地排空。
+     *
+     * 默认值保持 [Dispatchers.Default]，生产行为与注入前完全一致。
+     */
+    private val workerDispatcher: CoroutineDispatcher = Dispatchers.Default
 ) : ViewModel() {
     private enum class FullLoadStatus { COMPLETE, PARTIAL, SESSION_EXPIRED }
 
@@ -221,7 +236,7 @@ class FitnessScoreViewModel(
 
     private fun loadCache() {
         val epoch = operationEpoch
-        viewModelScope.launch(Dispatchers.Default) {
+        viewModelScope.launch(workerDispatcher) {
             val currentHtml = store.getCurrentHtml()
             val historyHtml = store.getHistoryHtml()
             val snapshot = if (currentHtml.isNotBlank() || historyHtml.isNotBlank()) {
@@ -300,7 +315,7 @@ class FitnessScoreViewModel(
         val cached = store.getHistoryDetail(selected.year, selected.term)
         if (cached.isNotBlank()) {
             val epoch = operationEpoch
-            viewModelScope.launch(Dispatchers.Default) {
+            viewModelScope.launch(workerDispatcher) {
                 val parsed = parser.parseHistoryDetail(cached)
                 if (epoch == operationEpoch) {
                     _uiState.update { it.copy(historyDetails = it.historyDetails + (selected.key to parsed)) }
@@ -332,7 +347,7 @@ class FitnessScoreViewModel(
                 if (response.success && response.detailHtml.isNotBlank()) {
                     updateSession(response)
                     store.saveHistoryDetail(record.year, record.term, response.detailHtml)
-                    val detail = withContext(Dispatchers.Default) { parser.parseHistoryDetail(response.detailHtml) }
+                    val detail = withContext(workerDispatcher) { parser.parseHistoryDetail(response.detailHtml) }
                     if (epoch != operationEpoch) return@launch
                     _uiState.update { it.copy(historyDetails = it.historyDetails + (record.key to detail)) }
                     showMessage("历年体测成绩已更新")
@@ -363,7 +378,7 @@ class FitnessScoreViewModel(
                 val response = service.getStandard(cookie)
                 if (epoch != operationEpoch) return@launch
                 if (response.success && response.standardHtml.isNotBlank()) {
-                    val tables = withContext(Dispatchers.Default) { parser.parseStandard(response.standardHtml) }
+                    val tables = withContext(workerDispatcher) { parser.parseStandard(response.standardHtml) }
                     if (epoch != operationEpoch) return@launch
                     if (tables.isEmpty()) {
                         showMessage("未解析到评分标准", 3500)
@@ -453,7 +468,7 @@ class FitnessScoreViewModel(
                 partial = true
                 continue
             }
-            val detail = withContext(Dispatchers.Default) {
+            val detail = withContext(workerDispatcher) {
                 parser.parseHistoryDetail(response.detailHtml)
             }
             if (epoch != operationEpoch) return FullLoadStatus.PARTIAL
@@ -479,7 +494,7 @@ class FitnessScoreViewModel(
         if (!standardResponse.success || standardResponse.standardHtml.isBlank()) {
             return FullLoadStatus.PARTIAL
         }
-        val tables = withContext(Dispatchers.Default) {
+        val tables = withContext(workerDispatcher) {
             parser.parseStandard(standardResponse.standardHtml)
         }
         if (epoch != operationEpoch) return FullLoadStatus.PARTIAL
@@ -509,7 +524,7 @@ class FitnessScoreViewModel(
             }
             return
         }
-        val snapshot = withContext(Dispatchers.Default) {
+        val snapshot = withContext(workerDispatcher) {
             parser.parseSnapshot(response.currentHtml, response.historyHtml)
         }
         if (epoch != operationEpoch) return

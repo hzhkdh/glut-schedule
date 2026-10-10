@@ -9,16 +9,11 @@ import com.glut.schedule.ui.pages.FitnessTab
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,15 +23,37 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class FitnessScoreViewModelTest {
+    /**
+     * Main 调度器。UnconfinedTestDispatcher 与 runTest 共享同一个 TestCoroutineScheduler，
+     * 所以 advanceUntilIdle() 能驱动挂在它上面的协程（包含 delay）。
+     */
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before fun setUp() = Dispatchers.setMain(dispatcher)
     @After fun tearDown() = Dispatchers.resetMain()
 
+    /**
+     * 统一构造被测 VM，并把 VM 内部的 workerDispatcher 也指向测试调度器。
+     *
+     * 这里必须显式注入，否则测试会偶发地红：VM 原本把解析、读写缓存硬编码在 Dispatchers.Default 上，
+     * 而 setMain 只能接管 viewModelScope 用的 Main。于是 withContext(Dispatchers.Default) 返回后，
+     * 协程会以 unconfined 语义继续跑在真实线程池线程上；advanceUntilIdle() 只清空测试调度器，
+     * 排不掉真实线程上的续体。结果是测试体已经结束、tearDown 的 resetMain() 已经执行，
+     * 该协程才走到 showMessage() → viewModelScope.launch{}，访问已失效的 Dispatchers.Main 抛
+     * IllegalStateException（全量跑时负载一高就会复现）。
+     *
+     * 注入之后 VM 的所有协程都由同一个测试调度器驱动，advanceUntilIdle() 必然能把它们排空，
+     * 测试结束时不会再有协程滞留在别的线程上，断言也就不再依赖真实时间与线程调度。
+     */
+    private fun createViewModel(
+        gateway: FitnessGateway,
+        store: FitnessStorage = FakeStorage()
+    ) = FitnessScoreViewModel(gateway, store, workerDispatcher = dispatcher)
+
     @Test
     fun openingLoginOnlyLoadsCaptchaInsteadOfShowingLoginInProgress() = runTest {
         val captchaGate = CompletableDeferred<FitnessApiResponse>()
-        val vm = FitnessScoreViewModel(FakeGateway(captchaGate = captchaGate), FakeStorage())
+        val vm = createViewModel(FakeGateway(captchaGate = captchaGate), FakeStorage())
 
         vm.showLogin()
 
@@ -53,7 +70,7 @@ class FitnessScoreViewModelTest {
     @Test
     fun blankCredentialsNeverEnterLoginState() = runTest {
         val gateway = FakeGateway()
-        val vm = FitnessScoreViewModel(gateway, FakeStorage())
+        val vm = createViewModel(gateway, FakeStorage())
         vm.showLogin()
         advanceUntilIdle()
 
@@ -68,7 +85,7 @@ class FitnessScoreViewModelTest {
     @Test
     fun dismissingDialogClearsPendingCaptchaLoadingState() = runTest {
         val captchaGate = CompletableDeferred<FitnessApiResponse>()
-        val vm = FitnessScoreViewModel(FakeGateway(captchaGate = captchaGate), FakeStorage())
+        val vm = createViewModel(FakeGateway(captchaGate = captchaGate), FakeStorage())
         vm.showLogin()
 
         vm.dismissLogin()
@@ -102,7 +119,7 @@ class FitnessScoreViewModelTest {
     fun captchaKeyAndCookieArePassedToTheMatchingLogin() = runTest {
         val gateway = FakeGateway()
         val store = FakeStorage()
-        val vm = FitnessScoreViewModel(gateway, store)
+        val vm = createViewModel(gateway, store)
 
         vm.showLogin()
         vm.updateUsername("2024001")
@@ -127,20 +144,18 @@ class FitnessScoreViewModelTest {
             fitnessCookie = "school-session",
             historyHtml = historyHtml()
         ))
-        val vm = FitnessScoreViewModel(gateway, FakeStorage())
+        val vm = createViewModel(gateway, FakeStorage())
 
         vm.showLogin()
         vm.updateUsername("2024001")
         vm.updatePassword("password")
         vm.updateCaptcha("1234")
         vm.login()
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) { vm.uiState.first { it.history.isNotEmpty() } }
-        }
+        // VM 与 loadCache 都在测试调度器上，advanceUntilIdle() 一次就能把它们全部跑完，
+        // 不再需要「真实时间内轮询状态」那种写法（它会放过仍停在别的线程上的续体）。
+        advanceUntilIdle()
         vm.selectTab(FitnessTab.HISTORY)
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) { vm.uiState.first { it.historyDetails.isNotEmpty() } }
-        }
+        advanceUntilIdle()
 
         assertEquals(1, gateway.detailRequests.size)
         assertEquals(request, gateway.detailRequests.single())
@@ -154,7 +169,7 @@ class FitnessScoreViewModelTest {
             code = "FITNESS_SESSION_EXPIRED",
             message = "体测登录已失效，请重新登录"
         ))
-        val vm = FitnessScoreViewModel(gateway, store)
+        val vm = createViewModel(gateway, store)
 
         vm.refresh()
         advanceUntilIdle()
@@ -171,19 +186,16 @@ class FitnessScoreViewModelTest {
             fitnessCookie = "school-session",
             historyHtml = historyHtml()
         ))
-        val vm = FitnessScoreViewModel(
+        val vm = createViewModel(
             gateway,
             FakeStorage(storedSession = "school-session", initialHistory = legacyHistoryHtml())
         )
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) { vm.uiState.first { it.history.isNotEmpty() } }
-        }
+        // 构造时的 loadCache 已经把 legacy 列表解析进状态；刷新后的详情请求同样由测试调度器驱动
+        advanceUntilIdle()
         vm.selectTab(FitnessTab.HISTORY)
 
         vm.refresh()
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) { vm.uiState.first { it.historyDetails.isNotEmpty() } }
-        }
+        advanceUntilIdle()
 
         assertEquals(1, gateway.refreshCalls)
         assertEquals(1, gateway.detailRequests.size)
@@ -194,7 +206,7 @@ class FitnessScoreViewModelTest {
         val refreshGate = CompletableDeferred<FitnessApiResponse>()
         val store = FakeStorage(storedSession = "old-session")
         val gateway = FakeGateway(refreshGate = refreshGate)
-        val vm = FitnessScoreViewModel(gateway, store)
+        val vm = createViewModel(gateway, store)
 
         vm.refresh()
         vm.clearData()
@@ -225,7 +237,7 @@ class FitnessScoreViewModelTest {
             ),
             refreshGate = refreshGate
         )
-        val vm = FitnessScoreViewModel(gateway, store)
+        val vm = createViewModel(gateway, store)
 
         vm.refresh()
         vm.showLogin()
@@ -238,15 +250,12 @@ class FitnessScoreViewModelTest {
             code = "FITNESS_SESSION_EXPIRED",
             message = "体测登录已失效，请重新登录"
         ))
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) {
-                vm.uiState.first { it.current != null && !it.showLoginDialog }
-            }
-        }
         advanceUntilIdle()
 
-        assertEquals("new-session", store.storedSession)
+        // 等价于原来等待的「新一轮登录已经落地」：成绩已写入、登录弹窗已关闭
+        assertTrue(vm.uiState.value.current != null)
         assertFalse(vm.uiState.value.showLoginDialog)
+        assertEquals("new-session", store.storedSession)
     }
 
     @Test
@@ -269,26 +278,20 @@ class FitnessScoreViewModelTest {
                 FitnessApiResponse(success = true, detailHtml = currentHtml("50米跑", "90"))
             ))
         )
-        val vm = FitnessScoreViewModel(gateway, store)
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) { vm.uiState.first { it.historyDetails.isNotEmpty() } }
-        }
+        val vm = createViewModel(gateway, store)
+        // 构造时的 loadCache 已把上一个账号的详情读进状态
+        advanceUntilIdle()
 
         vm.showLogin()
         vm.updateUsername("2024002")
         vm.updatePassword("new-password")
         vm.updateCaptcha("1234")
         vm.login()
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) {
-                vm.uiState.first {
-                    it.visibleHistoryResult?.items?.any { item -> item.name == "50米跑" } == true &&
-                        !it.showLoginDialog
-                }
-            }
-        }
         advanceUntilIdle()
 
+        // 原等待要求「新详情已展示且弹窗已关」，这里显式断言，避免状态没到位时下面两条断言被误判为通过
+        assertTrue(vm.uiState.value.visibleHistoryResult?.items.orEmpty().any { it.name == "50米跑" })
+        assertFalse(vm.uiState.value.showLoginDialog)
         assertFalse(vm.uiState.value.visibleHistoryResult?.items.orEmpty().any { it.name == "肺活量" })
         assertTrue(store.getHistoryDetail("2024-2025", "1").contains("50米跑"))
     }
@@ -321,19 +324,18 @@ class FitnessScoreViewModelTest {
             )
         )
         val store = FakeStorage()
-        val vm = FitnessScoreViewModel(gateway, store)
+        val vm = createViewModel(gateway, store)
 
         vm.showLogin()
         vm.updateUsername("2024001")
         vm.updatePassword("password")
         vm.updateCaptcha("1234")
         vm.login()
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) {
-                vm.uiState.first { it.historyDetails.size == 2 && it.standards.isNotEmpty() }
-            }
-        }
         advanceUntilIdle()
+
+        // 等价于原来等待的「两条详情 + 评分标准都已装填」，改成确定性断言
+        assertEquals(2, vm.uiState.value.historyDetails.size)
+        assertTrue(vm.uiState.value.standards.isNotEmpty())
 
         assertEquals(listOf("login-session", "detail-session-1"), gateway.detailCookies)
         assertEquals(listOf("detail-session-2"), gateway.standardCookies)
@@ -356,26 +358,24 @@ class FitnessScoreViewModelTest {
             )),
             standardResponse = FitnessApiResponse(success = true, standardHtml = standardHtml())
         )
-        val vm = FitnessScoreViewModel(gateway, FakeStorage())
+        val vm = createViewModel(gateway, FakeStorage())
 
         vm.showLogin()
         vm.updateUsername("2024001")
         vm.updatePassword("password")
         vm.updateCaptcha("1234")
         vm.login()
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) { gateway.detailStarted.await() }
-        }
+        // login() 会同步跑到第一个详情请求处才挂上 detailGate，所以这里可以直接断言请求已发出
+        assertTrue(gateway.detailStarted.isCompleted)
         vm.selectTab(FitnessTab.HISTORY)
         vm.selectTab(FitnessTab.STANDARD)
         vm.refresh()
         firstDetail.complete(FitnessApiResponse(success = true, detailHtml = currentHtml("肺活量", "81")))
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) {
-                vm.uiState.first { it.historyDetails.size == 2 && it.standards.isNotEmpty() }
-            }
-        }
         advanceUntilIdle()
+
+        // 等价于原来等待的「两条详情 + 评分标准都已装填」
+        assertEquals(2, vm.uiState.value.historyDetails.size)
+        assertTrue(vm.uiState.value.standards.isNotEmpty())
 
         assertEquals(2, gateway.detailRequests.size)
         assertEquals(1, gateway.standardCookies.size)
@@ -384,7 +384,7 @@ class FitnessScoreViewModelTest {
     @Test
     fun selectingStandardWhileLoggedOutDoesNotOpenLoginOutsideLatestTab() = runTest {
         val gateway = FakeGateway()
-        val vm = FitnessScoreViewModel(gateway, FakeStorage())
+        val vm = createViewModel(gateway, FakeStorage())
 
         vm.selectTab(FitnessTab.STANDARD)
         advanceUntilIdle()
@@ -417,17 +417,24 @@ class FitnessScoreViewModelTest {
             )),
             standardResponse = FitnessApiResponse(success = true, standardHtml = standardHtml())
         )
-        val vm = FitnessScoreViewModel(gateway, FakeStorage())
+        val vm = createViewModel(gateway, FakeStorage())
 
         vm.showLogin()
         vm.updateUsername("2024001")
         vm.updatePassword("password")
         vm.updateCaptcha("1234")
         vm.login()
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) { vm.uiState.first { it.standards.isNotEmpty() && !it.isRefreshing } }
-        }
+        // 登录、两条历年详情、评分标准这一整轮全部由测试调度器驱动（workerDispatcher 注入），
+        // advanceUntilIdle() 会把它们确定性地跑完。
+        // 之前的写法是在真实线程上 withTimeout + first{} 轮询状态：它既排不掉 VM 残留的续体，
+        // 又会在负载高时让测试体先结束 —— VM 协程随后才走到 showMessage() 里的
+        // viewModelScope.launch{}，撞上 tearDown 里已执行的 resetMain()，
+        // 抛 “Dispatchers.Main was accessed ... after Dispatchers.resetMain()”。
         advanceUntilIdle()
+
+        // 原来那条等待所要求的终态，改成确定性断言（断言强度只增不减）
+        assertTrue(vm.uiState.value.standards.isNotEmpty())
+        assertFalse(vm.uiState.value.isRefreshing)
 
         assertEquals(listOf("login-session", "rotated-after-failure"), gateway.detailCookies)
         assertEquals(listOf("detail-session-2"), gateway.standardCookies)
@@ -447,20 +454,19 @@ class FitnessScoreViewModelTest {
             detailGate = firstDetail
         )
         val store = FakeStorage()
-        val vm = FitnessScoreViewModel(gateway, store)
+        val vm = createViewModel(gateway, store)
 
         vm.showLogin()
         vm.updateUsername("2024001")
         vm.updatePassword("password")
         vm.updateCaptcha("1234")
         vm.login()
-        withContext(Dispatchers.Default) {
-            withTimeout(2_000) { gateway.detailStarted.await() }
-        }
+        // 断言旧批次确实已发出并卡在网关上（否则下面的断言会失去意义）
+        assertTrue(gateway.detailStarted.isCompleted)
         vm.clearData()
         firstDetail.complete(FitnessApiResponse(success = true, detailHtml = currentHtml()))
-        withContext(Dispatchers.Default) { delay(50) }
-        runCurrent()
+        // 原来用真实线程 delay(50) 等旧批次收尾；现在整条链路都在测试调度器上，排空即可
+        advanceUntilIdle()
 
         assertEquals("", store.storedSession)
         assertEquals("", vm.uiState.value.message)
