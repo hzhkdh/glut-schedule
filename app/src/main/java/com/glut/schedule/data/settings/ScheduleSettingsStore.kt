@@ -673,10 +673,7 @@ class ScheduleSettingsStore(
     // ---- 自动调课（「调休调课」页的开关打开时生效） ----
 
     /**
-     * 自动调课开关。默认关闭。
-     *
-     * 默认值走 [autoDayCopyEnabledFromStored]，抽成 internal 纯函数是为了能直接单测
-     * 「老用户升级后开关是关的」这条行为。
+     * 自动调课开关。**默认打开**（详见 [autoDayCopyEnabledFromStored]）；用户拨过关的保持关闭。
      */
     val autoDayCopyEnabled: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
         autoDayCopyEnabledFromStored(preferences[autoDayCopyEnabledKey])
@@ -867,12 +864,15 @@ class ScheduleSettingsStore(
 internal fun greetingEnabledFromStored(value: Boolean?): Boolean = value ?: true
 
 /**
- * 自动调课开关的默认值：**关闭**。
+ * 自动调课开关的默认值：**打开**。
  *
- * 新增键对老用户即为关闭，不需要任何一次性迁移——这是「关闭时行为与今天完全一致」
- * 这条需求能成立的前提。抽成纯函数是为了让测试能直接钉住它。
+ * 新增键对老用户即为打开，不需要任何一次性迁移：学校调休本来就是要补课的，不该要求用户先去
+ * 某个二级页面把开关拨开才能看到正确的课表。**显式关过的人（存了 `false`）保持关闭**——拨过
+ * 开关的选择不会被这次默认值改动覆盖。
+ *
+ * 抽成纯函数是为了让测试能直接钉住上面这两条。
  */
-internal fun autoDayCopyEnabledFromStored(value: Boolean?): Boolean = value ?: false
+internal fun autoDayCopyEnabledFromStored(value: Boolean?): Boolean = value ?: true
 
 internal fun encodeClassPeriods(periods: List<ClassPeriod>): Set<String> {
     return periods.map { period ->

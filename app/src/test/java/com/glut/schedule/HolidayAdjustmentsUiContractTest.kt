@@ -182,10 +182,10 @@ class HolidayAdjustmentsUiContractTest {
         assertTrue(viewModel.contains("settingsStore.autoDayCopies"))
         assertTrue(widget.contains("settingsStore.autoDayCopies"))
         assertTrue(editor.contains("settingsStore.autoDayCopies"))
-        // 开关默认关闭：老用户升级后行为与今天完全一致。
+        // 开关默认打开：没拨过开关的人直接就能看到调休补课卡；显式关过的保持关闭。
         assertTrue(
             store.contains(
-                "internal fun autoDayCopyEnabledFromStored(value: Boolean?): Boolean = value ?: false"
+                "internal fun autoDayCopyEnabledFromStored(value: Boolean?): Boolean = value ?: true"
             )
         )
     }

@@ -596,9 +596,9 @@ class AutoDayCopyTest {
     }
 
     @Test
-    fun autoDayCopySwitchDefaultsToOff() {
-        assertFalse(autoDayCopyEnabledFromStored(null))
-        assertFalse(autoDayCopyEnabledFromStored(false))
+    fun autoDayCopySwitchDefaultsToOnButKeepsAnExplicitOff() {
+        assertTrue("没存过就是默认打开——用户不该先拨开关才看到调休补课", autoDayCopyEnabledFromStored(null))
+        assertFalse("显式关过的保持关闭", autoDayCopyEnabledFromStored(false))
         assertTrue(autoDayCopyEnabledFromStored(true))
         assertNull(decodeAutoDayCopyRules(emptySet())["guilin:2026:autumn"])
     }
