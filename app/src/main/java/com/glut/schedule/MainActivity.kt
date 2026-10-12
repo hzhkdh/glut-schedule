@@ -304,7 +304,9 @@ class MainActivity : ComponentActivity() {
                         loginService = container.academicLoginService,
                         semesterImportService = container.academicSemesterImportService,
                         apiProbeService = container.apiProbeService,
-                        timorHolidayClient = container.timorHolidayClient
+                        autoDayCopyCoordinator = container.autoDayCopyCoordinator,
+                        timorHolidayClient = container.timorHolidayClient,
+                        makeupTableClient = container.makeupTableClient
                     )
                 )
                 val examViewModel: ExamViewModel = viewModel(
@@ -359,7 +361,9 @@ class MainActivity : ComponentActivity() {
                         sessionStore = container.academicSessionStore,
                         scheduleParser = container.academicScheduleParser,
                         loginService = container.academicLoginService,
-                        timorHolidayClient = container.timorHolidayClient
+                        autoDayCopyCoordinator = container.autoDayCopyCoordinator,
+                        timorHolidayClient = container.timorHolidayClient,
+                        makeupTableClient = container.makeupTableClient
                     )
                 )
                 LaunchedEffect(Unit) {
@@ -376,7 +380,9 @@ class MainActivity : ComponentActivity() {
                 val holidayAdjustmentsViewModel: HolidayAdjustmentsViewModel = viewModel(
                     factory = HolidayAdjustmentsViewModelFactory(
                         repository = container.scheduleRepository,
-                        settingsStore = container.settingsStore
+                        settingsStore = container.settingsStore,
+                        makeupTableClient = container.makeupTableClient,
+                        autoDayCopyCoordinator = container.autoDayCopyCoordinator
                     )
                 )
                 val directLoginViewModel: DirectLoginViewModel = viewModel(
@@ -389,7 +395,9 @@ class MainActivity : ComponentActivity() {
                         apiProbeService = container.apiProbeService,
                         academicExamService = container.academicExamService,
                         scoreParser = container.scoreParser,
+                        autoDayCopyCoordinator = container.autoDayCopyCoordinator,
                         timorHolidayClient = container.timorHolidayClient,
+                        makeupTableClient = container.makeupTableClient,
                         gradeExamParser = container.gradeExamParser,
                         studyPlanParser = container.studyPlanParser,
                         semesterImportService = container.academicSemesterImportService,

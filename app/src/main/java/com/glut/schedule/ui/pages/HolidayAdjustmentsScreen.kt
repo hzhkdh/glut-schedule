@@ -23,6 +23,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
@@ -34,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -76,10 +78,19 @@ internal enum class HolidayAdjustmentField { SOURCE, TARGET }
 fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    // 用户主动操作（下载对照表 / 恢复已忽略）的结果提示。列表里的行既要显示日期也要显示
+    // 来源，所以 pendingDelete 带整行而不是只带规则。
+    val message by viewModel.message.collectAsStateWithLifecycle()
+    LaunchedEffect(message) {
+        if (message.isNotBlank()) {
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            viewModel.clearMessage()
+        }
+    }
     var sourceDate by remember { mutableStateOf<LocalDate?>(null) }
     var targetDate by remember { mutableStateOf<LocalDate?>(null) }
     var pickingField by remember { mutableStateOf<HolidayAdjustmentField?>(null) }
-    var pendingDelete by remember { mutableStateOf<ManualDayCopyRule?>(null) }
+    var pendingDelete by remember { mutableStateOf<ManualDayCopyRow?>(null) }
     var holidayConfirmTarget by remember { mutableStateOf<LocalDate?>(null) }
 
     // 学期日期就绪后初始化两个日期；换学期或重新导入校历导致范围变化时，把越界值拉回范围。
@@ -131,6 +142,16 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
                             modifier = Modifier.padding(top = 6.dp)
                         )
                     }
+
+                    Divider()
+
+                    AutoDayCopySection(
+                        state = state,
+                        onToggle = viewModel::setAutoDayCopyEnabled,
+                        onRecompute = viewModel::recalculateAutoCopies,
+                        onDownloadTable = viewModel::downloadMakeupTable,
+                        onRestoreSuppressed = viewModel::restoreSuppressedAutoRules
+                    )
 
                     Divider()
 
@@ -216,7 +237,7 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
                         }
                         rows.forEachIndexed { index, row ->
                             if (index > 0) Divider()
-                            RuleRow(row = row, onDelete = { pendingDelete = row.rule })
+                            RuleRow(row = row, onDelete = { pendingDelete = row })
                         }
                     }
 
@@ -275,7 +296,7 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
         )
     }
 
-    pendingDelete?.let { rule ->
+    pendingDelete?.let { row ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             // 显式指定容器色与文字色：不传会落到 Material3 的 surfaceContainerHigh，
@@ -283,13 +304,28 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
             containerColor = PanelBg,
             titleContentColor = TextPrimary,
             textContentColor = TextSecondary,
-            title = { Text("删除调课？") },
-            text = { Text("${rule.sourceDate} 复制到 ${rule.targetDate} 的课程将不再显示。") },
+            // 自动规则不能只说「不再显示」：它还得说清「不会再被自动补回来」以及怎么找回，
+            // 因为删除抑制正是「默认生效」模式下用户唯一的纠错手段。
+            title = { Text(if (row.origin.isAuto) "忽略这条自动调课？" else "删除调课？") },
+            text = {
+                Text(
+                    if (row.origin.isAuto) {
+                        "${row.rule.sourceDate} 复制到 ${row.rule.targetDate} 的课程将不再显示，" +
+                            "并且不会再被自动补回来（可用下方「恢复已忽略的自动调课」找回）。"
+                    } else {
+                        "${row.rule.sourceDate} 复制到 ${row.rule.targetDate} 的课程将不再显示。"
+                    }
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deleteRule(rule)
+                    if (row.origin.isAuto) {
+                        viewModel.deleteAutoRule(row.rule.id)
+                    } else {
+                        viewModel.deleteRule(row.rule)
+                    }
                     pendingDelete = null
-                }) { Text("删除", color = DangerText) }
+                }) { Text(if (row.origin.isAuto) "忽略" else "删除", color = DangerText) }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDelete = null }) { Text("取消") }
@@ -384,6 +420,104 @@ private fun HiddenCardRow(
     }
 }
 
+/**
+ * 「自动调课」区块。
+ *
+ * 开关之外只有几个文字按钮，**没有任何确认弹窗**：需求是「打开就直接生效、不要求用户点确认」，
+ * 而且这一页的 AlertDialog 数量被源码契约测试钉死为 2
+ * （见 `HolidayAdjustmentsUiContractTest.dialogsPinLightContainerColorsInsteadOfInheritingTheDarkTheme`）。
+ */
+@Composable
+private fun AutoDayCopySection(
+    state: HolidayAdjustmentsUiState,
+    onToggle: (Boolean) -> Unit,
+    onRecompute: () -> Unit,
+    onDownloadTable: () -> Unit,
+    onRestoreSuppressed: () -> Unit
+) {
+    Column(modifier = Modifier.padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "自动调课",
+                color = TextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(checked = state.autoDayCopyEnabled, onCheckedChange = onToggle)
+        }
+        Text(
+            text = if (state.autoDayCopyEnabled) {
+                autoStatusText(state)
+            } else {
+                "未启用：只有你手动添加的调课生效"
+            },
+            color = if (state.autoDayCopyEnabled && !state.remoteTableReady) WarningText else TextSecondary,
+            fontSize = 13.sp,
+            lineHeight = 19.sp,
+            modifier = Modifier.padding(top = 6.dp)
+        )
+        if (!state.autoDayCopyEnabled) return@Column
+
+        if (isMakeupTableStale(state.remoteUpdatedAt)) {
+            Text(
+                "对照表可能已过期，可点下方按钮或到首页下拉刷新同步。",
+                color = WarningText,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+        state.autoNotices.forEach { notice ->
+            Text(
+                "· $notice",
+                color = TextSecondary,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // 只有「重新计算」永远是纯本地的；下载对照表是这一页唯一的联网动作，且只由点击触发。
+            TextButton(onClick = onRecompute) { Text("重新计算", color = Accent, fontSize = 14.sp) }
+            if (!state.remoteTableReady) {
+                TextButton(onClick = onDownloadTable) { Text("下载教务对照表", color = Accent, fontSize = 14.sp) }
+            }
+            if (state.suppressedAutoCount > 0) {
+                TextButton(onClick = onRestoreSuppressed) {
+                    Text("恢复已忽略（${state.suppressedAutoCount}）", color = Accent, fontSize = 14.sp)
+                }
+            }
+        }
+    }
+}
+
+/** 开关打开时那一行状态：补了几天、数据来自哪里。 */
+private fun autoStatusText(state: HolidayAdjustmentsUiState): String {
+    val countText = if (state.autoRules.isEmpty()) "暂无自动调课" else "已自动补 ${state.autoRules.size} 天"
+    val tableText = when {
+        !state.remoteTableReady -> "对照表尚未下载，按补班日规律推导"
+        state.remoteRevision != null -> "对照表 rev ${state.remoteRevision}" +
+            state.remoteUpdatedAt.takeIf { it.isNotBlank() }?.let { "（$it）" }.orEmpty()
+        else -> "对照表已就绪"
+    }
+    return "已启用 · $countText · $tableText"
+}
+
+/**
+ * 对照表是否可能过期：超过 120 天没更新就提示一次。
+ *
+ * 判不出来（维护者没填 updatedAt）时按「不提示」处理——宁可不提示，也不要天天误报。
+ */
+internal fun isMakeupTableStale(updatedAt: String, today: LocalDate = LocalDate.now()): Boolean {
+    val parsed = runCatching { LocalDate.parse(updatedAt.trim()) }.getOrNull() ?: return false
+    return parsed.plusDays(120).isBefore(today)
+}
+
 @Composable
 private fun RuleRow(row: ManualDayCopyRow, onDelete: () -> Unit) {
     Row(
@@ -391,12 +525,28 @@ private fun RuleRow(row: ManualDayCopyRow, onDelete: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "${row.rule.sourceDate} → ${row.rule.targetDate}",
-                color = Color(0xFF202633),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${row.rule.sourceDate} → ${row.rule.targetDate}",
+                    color = Color(0xFF202633),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                // 手动规则不带徽标：这是用户自己加的，标注「手动」只是噪音。
+                if (row.origin.isAuto) {
+                    Text(
+                        row.origin.label,
+                        color = DateChipText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .padding(start = 6.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(DateChipBg)
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    )
+                }
+            }
             Text(
                 "复制 ${row.courseCount} 节课",
                 color = TextSecondary,

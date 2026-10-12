@@ -146,6 +146,98 @@ class HolidayAdjustmentsUiContractTest {
         assertEquals(2, Regex("refreshHolidayYears").findAll(schedule).count())
     }
 
+    /**
+     * 自动调课的对账表只在用户主动刷新时取。计数式断言：**每个入口恰好一次**，
+     * 多出来一次就意味着某处又冒出了自动触发点（与 `refreshHolidayYears` 那条同一语言风格）。
+     */
+    @Test
+    fun autoMakeupFetchesOnlyOnUserInitiatedRefresh() {
+        val schedule = page("ScheduleViewModel.kt")
+        val overview = page("SemesterOverviewViewModel.kt")
+        val directLogin = page("DirectLoginViewModel.kt")
+        val editor = page("HolidayAdjustmentsViewModel.kt")
+
+        assertEquals(1, Regex("refreshMakeupTable\\(").findAll(schedule).count())
+        assertEquals(1, Regex("refreshMakeupTable\\(").findAll(overview).count())
+        assertEquals(1, Regex("refreshMakeupTable\\(").findAll(directLogin).count())
+        assertEquals(1, Regex("refreshMakeupTable\\(").findAll(editor).count())
+
+        // 编辑页那一次必须落在按钮处理函数里，不能出现在 init（进入页面只读缓存）。
+        assertTrue(editor.contains("fun downloadMakeupTable()"))
+        assertTrue(editor.substringAfter("fun downloadMakeupTable()").contains("refreshMakeupTable("))
+        assertTrue(overview.contains("loadHolidays(fetchMissing = false)"))
+    }
+
+    @Test
+    fun autoCopyRulesAreGatedByTheSwitchAtTheRenderLayer() {
+        val store = source("data/settings/ScheduleSettingsStore.kt")
+        val viewModel = page("ScheduleViewModel.kt")
+        val widget = source("widget/ScheduleWidgetDataSource.kt")
+        val editor = page("HolidayAdjustmentsViewModel.kt")
+
+        assertTrue(store.contains("auto_day_copy_enabled"))
+        // 存储层闸门：开关关闭时恒为空表，任何消费方都画不出已关闭的规则。
+        assertTrue(store.contains("if (!enabled) emptyMap()"))
+        // 三处渲染消费点都取用这个已开闸门的 Flow，而不是裸读存储键。
+        assertTrue(viewModel.contains("settingsStore.autoDayCopies"))
+        assertTrue(widget.contains("settingsStore.autoDayCopies"))
+        assertTrue(editor.contains("settingsStore.autoDayCopies"))
+        // 开关默认关闭：老用户升级后行为与今天完全一致。
+        assertTrue(
+            store.contains(
+                "internal fun autoDayCopyEnabledFromStored(value: Boolean?): Boolean = value ?: false"
+            )
+        )
+    }
+
+    @Test
+    fun autoSectionLivesOnTheEditorPageWithoutBreakingTheSinglePanel() {
+        val screen = page("HolidayAdjustmentsScreen.kt")
+        val viewModel = page("HolidayAdjustmentsViewModel.kt")
+
+        assertTrue(screen.contains("\"自动调课\""))
+        assertTrue(screen.contains("state.autoDayCopyEnabled"))
+        assertTrue(screen.contains("AutoDayCopySection("))
+        // 来源徽标：自动规则必须能一眼看出不是自己加的。
+        assertTrue(viewModel.contains("AUTO_REMOTE(\"自动·教务\")"))
+        assertTrue(viewModel.contains("AUTO_DERIVED(\"自动·推导\")"))
+        // 仍然只用 Divider 分段，不新增卡片；也不在设置主页加开关。
+        assertFalse(screen.contains("AutoCard"))
+        assertFalse(screen.contains("显示节假日"))
+    }
+
+    @Test
+    fun makeupDerivationYieldsToAcademicAdjustments() {
+        val model = source("data/model/AutoDayCopy.kt")
+
+        // 让位是纯函数，且必须按 makeupWeek/makeupDay 反查绝对日期。
+        assertTrue(model.contains("internal fun adjustmentTargetDates("))
+        assertTrue(model.contains("makeupWeek in MIN_ACADEMIC_WEEK..MAX_ACADEMIC_WEEK"))
+        assertTrue(model.contains("yieldedDates: Set<LocalDate>"))
+        // 推导带一键停机开关，出事时能不改逻辑就退回「只信对照表」。
+        assertTrue(model.contains("AUTO_DERIVATION_ENABLED"))
+    }
+
+    /**
+     * 让位判定读的是 Room 里的教务调课记录，所以**每一条会写这些记录的路径都必须重算**。
+     * 漏一处，教务新下发的补课卡就会和自动副本同时显示同一节课。
+     *
+     * 计数式断言：数字变了就说明新增/移除了写调课记录的路径，需要重新确认下面每条都接了重算。
+     */
+    @Test
+    fun everyPathThatWritesAdjustmentsRecomposesAutoCopies() {
+        // 刷新课表（本科 + 研究生两条分支）+ 冷启动同步对照表之后（表里收录了本学期时推导要退场，
+        // 不重算就得等用户下次刷新才生效）。
+        assertEquals(3, Regex("autoDayCopyCoordinator\\.recompose\\(").findAll(page("ScheduleViewModel.kt")).count())
+        assertEquals(1, Regex("autoDayCopyCoordinator\\.recompose\\(").findAll(page("DirectLoginViewModel.kt")).count())
+        // 学期概览：刷新节假日之后 + 「刷新调课」写入新记录之后。
+        assertEquals(2, Regex("autoDayCopyCoordinator\\.recompose\\(").findAll(page("SemesterOverviewViewModel.kt")).count())
+        // 批量下载历史学期那条路径写在 AppContainer 的 commit 里。
+        assertEquals(1, Regex("autoDayCopyCoordinator\\.recompose\\(").findAll(source("ScheduleApplication.kt")).count())
+        // 编辑页：开关 / 重新计算 / 下载对照表 / 恢复已忽略。
+        assertEquals(4, Regex("autoDayCopyCoordinator\\.recompose\\(").findAll(page("HolidayAdjustmentsViewModel.kt")).count())
+    }
+
     private fun source(name: String): String {
         val module = File("src/main/java/com/glut/schedule/$name")
         return (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/$name")).readText()
