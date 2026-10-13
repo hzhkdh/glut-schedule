@@ -60,11 +60,15 @@ class MultiSemesterUiContractTest {
             "Guilin direct, OA fallback, and Nanning captcha success must pass their student-number snapshot",
             successCallsWithSnapshot == 3
         )
-        assertTrue(viewModel.contains("remember: Boolean, studentNumber: String"))
+        assertTrue(viewModel.contains("studentNumber: String,"))
         // 导入必须收到**登录时刻捕获的**学号快照，而不是回头去读 uiState.username。
-        // 来源参数(souce)只是多带了一个来源，快照语义不变。
-        assertTrue(viewModel.contains("performImport(cookie, campusBaseUrl, source, studentNumber)"))
-        assertTrue(viewModel.contains("studentNumber = studentNumber"))
+        // 来源参数(source)只是多带了一个来源，快照语义不变；参数名改成 knownStudentNumber 是因为
+        // 微信登录这一刻还没有学号（传空串，由 performImport 从教务回答里反查），
+        // 名字必须诚实反映「可能是空的」。
+        assertTrue(viewModel.contains("performImport(cookie, campusBaseUrl, source, knownStudentNumber)"))
+        // 微信路径的学号来自 IAM 递给教务的跳转 URL（可能是 null，故 orEmpty），
+        // 无论如何都不是回头去读 uiState.username。
+        assertTrue(viewModel.contains("studentNumber = studentNumber.orEmpty()"))
         assertFalse(viewModel.contains("studentNumber = _uiState.value.username"))
     }
 
@@ -203,11 +207,14 @@ class MultiSemesterUiContractTest {
 
         assertTrue(sessionStore.contains("authenticatedStudentNumber"))
         assertTrue(sessionStore.contains("saveAuthenticatedStudentNumber"))
-        assertTrue(viewModel.contains("sessionStore.saveAuthenticatedStudentNumber(studentNumber)"))
+        assertTrue(viewModel.contains("sessionStore.saveAuthenticatedStudentNumber(knownStudentNumber)"))
         assertTrue(container.contains("academicSessionStore.authenticatedStudentNumber.first()"))
         assertTrue(container.contains("studentIdFallback = session.ownerStudentNumber"))
         assertFalse(importBody.contains("_uiState.value.username"))
-        assertTrue(importBody.contains("studentIdFallback = studentNumber"))
+        // 导入用的是**当次解析出的**学号：密码登录是登录时捕获的快照，
+        // 微信登录则由教务返回的 user 对象反查（那段解析同样只能从页面来，读不到 uiState）。
+        assertTrue(importBody.contains("studentIdFallback = resolvedStudentNumber"))
+        assertTrue(importBody.contains("parseStudentNumberFromFrameJson"))
     }
 
     @Test

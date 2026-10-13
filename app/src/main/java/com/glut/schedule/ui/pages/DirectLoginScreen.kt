@@ -86,7 +86,14 @@ fun DirectLoginScreen(
      * 导入成功后用户想看的必然是课表；不给这个出口时主按钮只是复位成「登录并导入」，
      * 用户不知道该自己切页，只会留在导入页反复点导入（重复拉一次全量数据）。
      */
-    onDone: () -> Unit = {}
+    onDone: () -> Unit = {},
+    /**
+     * 打开微信登录覆盖层。
+     *
+     * 覆盖层由 MainActivity 持有（它是 drawer 的兄弟节点，与 `pendingBackgroundCrop` 同一层级），
+     * 所以这里只上报意图，不自己渲染。
+     */
+    onOpenWechatLogin: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val semesterDownloadState by viewModel.semesterDownloadState.collectAsStateWithLifecycle()
@@ -227,6 +234,30 @@ fun DirectLoginScreen(
                     else ->
                         Text("登 录 并 导 入", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
+            }
+
+            // 微信登录：免输学号密码的替代入口。
+            // 只在桂林本部出现——南宁与研究生走的是另外两套门户，压根没有这个入口；
+            // 完成态之后也不必再挤在这里（主按钮已经把用户送去课表了）。
+            // 用 OutlinedButton 而不是实心按钮：它和主按钮是「二选一」的关系，不是递进关系，
+            // 两颗实心按钮会让用户不知道该按哪个。
+            if (uiState.importSource == ImportSource.GUILIN && !uiState.importCompleted) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onOpenWechatLogin,
+                    enabled = !uiState.isLoggingIn,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    border = BorderStroke(1.dp, LoginBorder),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("微信登录（免输密码）", color = LoginPrimary, fontSize = 15.sp)
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "扫码登录学校统一身份认证，无需输入学号密码",
+                    color = LoginSecondary,
+                    fontSize = 12.sp
+                )
             }
 
             // 「重新导入」只在完成态出现：换账号或想再导一次的回头路。

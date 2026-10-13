@@ -42,6 +42,9 @@ import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.CapturingCookieJar
 import com.glut.schedule.service.academic.CredentialStore
 import com.glut.schedule.service.academic.NanningPasswordHash
+import com.glut.schedule.service.academic.hasLocalAcademicSession
+import com.glut.schedule.service.academic.hasUsableAcademicCookie
+import com.glut.schedule.service.academic.shouldClearStoredCredentialsForWechatLogin
 import com.glut.schedule.service.parser.AcademicScheduleParser
 import com.glut.schedule.service.network.MAX_BOOLEAN_RESPONSE_BYTES
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
@@ -259,14 +262,49 @@ class DirectLoginViewModel(
     }
 
     /**
-     * 用户点了导入页的「重新导入」：只把完成态收回去，让主按钮回到「登 录 并 导 入」。
+     * 用户点了导入页的「重新导入」。
      *
-     * 不动账号密码——用户多半就是想用同一套凭据再导一次；
-     * 也不清 `message` 与 `importResult`，上一次的导入结果留在屏幕上作参照，
-     * 直到下一次导入把它覆盖掉。
+     * **会话还在就直接重导，不再让用户登录一次。** 这一条对微信登录尤其要紧：
+     * 它没有可填的账号密码，若这里退回登录表单，用户就只能再扫一次码——
+     * 而他想要的只是把数据重新拉一遍。
+     *
+     * 会话真的失效时才收回完成态、把用户送回登录流程，并如实说明原因。
      */
     fun restartImport() {
-        _uiState.value = _uiState.value.copy(importCompleted = false)
+        viewModelScope.launch {
+            val cookie = sessionStore.academicCookie.first()
+            if (!hasUsableAcademicCookie(cookie)) {
+                _uiState.value = _uiState.value.copy(
+                    importCompleted = false,
+                    message = "登录状态已过期，请重新登录"
+                )
+                return@launch
+            }
+            if (!loginGuard.tryStart()) return@launch
+            try {
+                val state = _uiState.value
+                _uiState.value = state.copy(
+                    isLoggingIn = true,
+                    importCompleted = false,
+                    message = "正在重新导入...",
+                    importResult = null
+                )
+                onLoginSuccess(
+                    cookie = cookie,
+                    campusBaseUrl = sessionStore.campusBaseUrl.first(),
+                    source = state.importSource,
+                    remember = false,
+                    // 学号已存在会话里；传空也不会出岔子，performImport 会解析兜底。
+                    studentNumber = sessionStore.authenticatedStudentNumber.first(),
+                    // 重新导入不该动凭据：用户没提供任何新密码。
+                    updateCredentials = false
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "重新导入失败: ${e.message}")
+            } finally {
+                loginGuard.finish()
+            }
+        }
     }
 
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
@@ -331,6 +369,74 @@ class DirectLoginViewModel(
             rememberPassword = false,
             secureCredentialStorageAvailable = credentialStore.canPersistCredentials()
         )
+    }
+
+    // ---- 微信登录（仅桂林本部） ----
+
+    /**
+     * 请求打开微信登录覆盖层，返回是否放行。
+     *
+     * 覆盖层的显隐由 MainActivity 掌握（它才是渲染方，且覆盖层画在 drawer 之外），
+     * 这里只做守卫并给出拒绝理由。守卫放在这一层而不是只靠界面上的显示条件：
+     * 界面条件随状态变化，这里才是权威——非桂林来源必须被挡住并说明原因，
+     * 否则用户会对着一个南宁/研究生根本登不进去的页面发呆。
+     */
+    fun startWechatLogin(): Boolean {
+        val state = _uiState.value
+        if (state.importSource != ImportSource.GUILIN) {
+            _uiState.value = state.copy(message = WECHAT_GUILIN_ONLY_MESSAGE)
+            return false
+        }
+        if (state.isLoggingIn) return false
+        _uiState.value = state.copy(message = "", importCompleted = false)
+        return true
+    }
+
+    fun cancelWechatLogin() {
+        _uiState.value = _uiState.value.copy(message = "")
+    }
+
+    fun onWechatLoginFailed(reason: String) {
+        _uiState.value = _uiState.value.copy(message = reason)
+    }
+
+    /**
+     * WebView 侧取到教务会话后的回传。
+     *
+     * 先校验再落库：CAS 登录成功**不等于**教务认了这个会话——中间还差 ticket 被教务消费那一步
+     * （用户提前切走、页面被中断都会卡在这里）。此时若照常导入，用户收到的是一串
+     * 「部分导入失败」，比直接说清楚「教务没建立会话」难懂得多。
+     */
+    fun onWechatLoginSucceeded(cookie: String, studentNumber: String? = null) {
+        if (!hasLocalAcademicSession(cookie)) {
+            _uiState.value = _uiState.value.copy(message = WECHAT_NO_ACADEMIC_SESSION_MESSAGE)
+            return
+        }
+        if (!loginGuard.tryStart()) return
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(
+                    isLoggingIn = true,
+                    message = "登录成功，正在导入数据...",
+                    importCompleted = false
+                )
+                // 微信登录没有密码，绝不能借道 onLoginSuccess 里那套「存/清凭据」的逻辑：
+                // uiState 里的账号密码是上一位用户留下的，写回去等于张冠李戴。
+                onLoginSuccess(
+                    cookie = cookie,
+                    campusBaseUrl = AcademicLoginResult.DEFAULT_GUILIN_URL,
+                    source = ImportSource.GUILIN,
+                    remember = false,
+                    // 学号来自 IAM 递给教务的跳转（权威）；拿不到才留空，由 performImport 去解析兜底。
+                    studentNumber = studentNumber.orEmpty(),
+                    updateCredentials = false
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "登录失败: ${e.message}")
+            } finally {
+                loginGuard.finish()
+            }
+        }
     }
 
     fun loginAndImport() {
@@ -712,29 +818,49 @@ class DirectLoginViewModel(
 
     // ---- Shared helpers ----
 
-    private suspend fun onLoginSuccess(cookie: String, campusBaseUrl: String, source: ImportSource, remember: Boolean, studentNumber: String) {
+    private suspend fun onLoginSuccess(
+        cookie: String,
+        campusBaseUrl: String,
+        source: ImportSource,
+        remember: Boolean,
+        studentNumber: String,
+        /**
+         * 本次登录是否要改写本机保存的学号密码。
+         *
+         * 微信登录传 false：它没有密码，而 `uiState` 里的账号密码是上一位用户留下的。
+         */
+        updateCredentials: Boolean = true
+    ) {
         val username = _uiState.value.username
         val password = _uiState.value.password
         val shouldRemember = effectiveRememberPassword(remember, credentialStore.canPersistCredentials())
         val previousStudent = sessionStore.authenticatedStudentNumber.first()
-        if (shouldClearAcademicData(previousStudent, studentNumber)) {
+        val knownStudentNumber = studentNumber.trim()
+        if (shouldClearAcademicData(previousStudent, knownStudentNumber)) {
             // 账号变化时先清空旧教务缓存，避免新账号短暂看到上一位学生的数据。
             semesterBulkDownloadCoordinator.cancelForAccountChange()
             scheduleRepository.clearAllData()
             sessionStore.clearAll()
         }
-        if (shouldRemember) {
-            credentialStore.saveCredentials(username, password)
-        } else {
-            credentialStore.clearCredentials()
+        if (updateCredentials) {
+            if (shouldRemember) {
+                credentialStore.saveCredentials(username, password)
+            } else {
+                credentialStore.clearCredentials()
+            }
         }
         sessionStore.saveCookie(cookie)
         sessionStore.saveCampusBaseUrl(campusBaseUrl)
-        sessionStore.saveAuthenticatedStudentNumber(studentNumber)
+        // 微信登录此刻还拿不到学号。写空会把**上一位学生**的学号抹掉，
+        // 下一轮 `shouldClearAcademicData` 读到空值就恒为 false，换账号清理彻底失效。
+        // 真正的学号在 performImport 里解析出来后补写并补判。
+        if (knownStudentNumber.isNotEmpty()) {
+            sessionStore.saveAuthenticatedStudentNumber(knownStudentNumber)
+        }
         // 来源切换**不在这里**：它必须发生在课表成功写入之后，否则中途失败会让界面停在
         // 「新来源的菜单 + 旧来源的数据」这种半切换状态。切换由 performImport 负责。
         _uiState.value = _uiState.value.copy(message = "登录成功，正在导入数据...")
-        performImport(cookie, campusBaseUrl, source, studentNumber)
+        performImport(cookie, campusBaseUrl, source, knownStudentNumber)
     }
 
     /**
@@ -779,6 +905,9 @@ class DirectLoginViewModel(
         source: ImportSource,
         studentNumber: String
     ) {
+        // 旧学号要在**任何写入之前**取：换账号判定有可能被推迟到解析出学号之后补做
+        // （微信登录进来时 `studentNumber` 还是空串），那时这里读到的值已经被覆盖了。
+        val previousStudent = sessionStore.authenticatedStudentNumber.first()
         var activeCookie = cookie
         var courseCount = 0
         var examCount = 0
@@ -812,10 +941,44 @@ class DirectLoginViewModel(
             consumeProbeCookie(enrollmentResult)
             val enrollmentHtml = enrollmentResult?.body.orEmpty()
             val studentName = AcademicSemesterParser.parseStudentName(enrollmentHtml)
-            sessionStore.saveAuthenticatedStudent(studentNumber, studentName)
+            // 学号优先取教务自己返回的 `user` 对象，其次是个人信息页；两级都拿不到才退到调用方
+            // 传入的值（密码登录是用户刚输入的，微信登录是空串），最后退到上一次已知学号——
+            // 宁可保守地不清理，也不能把上一轮的学号抹成空，那会让换账号隔离整个失效。
+            val frameBody = results.firstOrNull {
+                it.url.contains("/personal/framePage.do", ignoreCase = true)
+            }?.body.orEmpty()
+            // 调用方给的学号排在最前：密码登录是用户刚输入的，微信登录是 IAM 递给教务的跳转里
+            // 明写的 `userName`——两者都是权威来源。
+            //
+            // 页面反查只能垫后：教务页面里的 `user.id` 是**课表接口要的内部 id**（实测拿来查课表
+            // 查得到、拿真学号反而查不到），它能通过「6~14 位纯数字」的形态校验，
+            // 一旦排在前面就会把真学号顶掉，进而在推年级、选学期上错得毫无声响。
+            val resolvedStudentNumber = listOfNotNull(
+                studentNumber.trim().takeIf { it.isNotEmpty() },
+                AcademicSemesterParser.parseStudentNumberFromFrameJson(frameBody),
+                AcademicSemesterParser.parseStudentNumber(enrollmentHtml),
+                previousStudent.trim().takeIf { it.isNotEmpty() }
+            ).firstOrNull()
+                ?: throw IllegalStateException("未能识别学号，请改用学号密码登录")
+            if (shouldClearAcademicData(previousStudent, resolvedStudentNumber)) {
+                // 微信登录走到这里才第一次拿到学号，换账号清理只能延迟到此刻补做。
+                // clearAll() 会把上面刚存的 cookie 一并清掉，所以必须立刻补回。
+                semesterBulkDownloadCoordinator.cancelForAccountChange()
+                scheduleRepository.clearAllData()
+                sessionStore.clearAll()
+                sessionStore.saveCookie(activeCookie)
+                sessionStore.saveCampusBaseUrl(campusBaseUrl)
+            }
+            sessionStore.saveAuthenticatedStudent(resolvedStudentNumber, studentName)
+            // 凭据主人与当前学号对一次账。微信登录不写凭据，但机器上可能留着**另一个人**的密码，
+            // 留着它，各页刷新时的静默登录就会拿别人的身份重建会话——界面是 B，数据翻回 A。
+            // 密码登录路径下这里恒等（刚存的凭据就是本人），所以这一步对它是空操作。
+            if (shouldClearStoredCredentialsForWechatLogin(credentialStore.getUsername(), resolvedStudentNumber)) {
+                credentialStore.clearCredentials()
+            }
             val enrollmentDate = AcademicSemesterParser.parseEnrollment(
                 html = enrollmentHtml,
-                studentNumber = studentNumber
+                studentNumber = resolvedStudentNumber
             )?.catalogStartDate
 
             var catalogPlan = if (catalogHtml.isNotBlank() && enrollmentDate != null) {
@@ -849,7 +1012,7 @@ class DirectLoginViewModel(
                     cookie = activeCookie,
                     baseUrl = campusBaseUrl,
                     semester = nextSemester,
-                    studentIdFallback = studentNumber
+                    studentIdFallback = resolvedStudentNumber
                 ).also { result ->
                     result.getOrNull()?.updatedCookie?.takeIf(String::isNotBlank)?.let { activeCookie = it }
                 }
@@ -863,7 +1026,7 @@ class DirectLoginViewModel(
                 cookie = activeCookie,
                 baseUrl = campusBaseUrl,
                 semester = currentSemester,
-                studentIdFallback = studentNumber
+                studentIdFallback = resolvedStudentNumber
             ).getOrElse { error ->
                 throw IllegalStateException(
                     "${currentSemester.displayName}课表导入失败：${error.message.orEmpty()}",
@@ -1267,6 +1430,13 @@ internal fun effectiveRememberPassword(
     requested: Boolean,
     secureStorageAvailable: Boolean
 ): Boolean = requested && secureStorageAvailable
+
+/** 微信登录只覆盖桂林本部：南宁与研究生走的是完全不同的两套门户，没有可复用的入口。 */
+internal const val WECHAT_GUILIN_ONLY_MESSAGE = "微信登录仅支持桂林本部，请切换到「桂林本部」后重试"
+
+/** CAS 登录成功、教务却没建立会话（ticket 没被消费）——此时落库只会导入一堆失败。 */
+internal const val WECHAT_NO_ACADEMIC_SESSION_MESSAGE =
+    "已登录统一身份认证，但教务系统未建立会话，请重试或改用学号密码登录"
 
 /**
  * 首次登录没有旧数据可清；只有切换到不同的已知学号时才隔离并清理教务缓存。
