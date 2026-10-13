@@ -18,8 +18,8 @@ android {
         applicationId = "com.glut.schedule"
         minSdk = 26
         targetSdk = 36
-        versionCode = 127
-        versionName = "0.25.0"
+        versionCode = 128
+        versionName = "0.26.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 调休补课对照表：与 update.json / notices.json 同域同流水线（Cloudflare Pages）。

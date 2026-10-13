@@ -23,10 +23,12 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,6 +38,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -49,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -65,14 +69,15 @@ import com.glut.schedule.service.academic.extractStudentNumberFromHandoffUrl
 import com.glut.schedule.service.academic.hasLocalAcademicSession
 import com.glut.schedule.service.academic.mergeWebLoginCookies
 import com.glut.schedule.service.academic.upgradeAcademicHttpToHttps
+import kotlinx.coroutines.delay
 import org.json.JSONTokener
 
 private val WechatPageBg = Color(0xFFF6F4EF)
 private val WechatPrimary = Color(0xFF141821)
 private val WechatSecondary = Color(0xFF667085)
 private val WechatAccent = Color(0xFF3F7DF6)
-private val WechatBorder = Color(0xFFD1D5DB)
 private val WechatError = Color(0xFFDC2626)
+private val WechatSuccess = Color(0xFF2D9A72)
 
 /**
  * 微信登录覆盖层：把学校统一身份认证页跑在一个受约束的 WebView 里。
@@ -89,7 +94,7 @@ private val WechatError = Color(0xFFDC2626)
  *    本组件只用 `evaluateJavascript`（App → 页面，单向）读一次二维码。
  *  - 顶层导航按 [classifyWechatNavigation] 白名单放行，越界即拦并在界面内提示。
  *    **只拦顶层**——拦子资源只会让页面白屏。
- *  - 进入前清空 cookie（不继承上一位用户的会话），退出时再清一次并销毁 WebView。
+ *  - WebView 会话由“重置应用”统一清理；正常关闭时只落盘，才能提供再次登录免扫的体验。
  */
 @Composable
 fun WechatLoginScreen(
@@ -113,6 +118,10 @@ fun WechatLoginScreen(
     var errorText by remember { mutableStateOf("") }
     var blockedNotice by remember { mutableStateOf("") }
     var qrCodeSaved by remember { mutableStateOf(false) }
+    // WebView 只负责维持 IAM 的扫码轮询；二维码解析出来后由原生界面展示，
+    // 避免把学校网页的横幅、空白与页脚直接暴露给用户。
+    var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var showWebFallback by remember { mutableStateOf(false) }
     // 成功判定有两个触发点（导航拦截与页面加载完成），必须防重入。
     // 只有成功才锁死；失败不锁，用户可以「刷新二维码」再来一次。
     var handled by remember { mutableStateOf(false) }
@@ -147,8 +156,20 @@ fun WechatLoginScreen(
                         }
                     }
                 },
-                onLoadFailed = { errorText = it },
-                onQrCodeSaved = { qrCodeSaved = true },
+                onLoadFailed = {
+                    errorText = it
+                    showWebFallback = true
+                },
+                onQrCodeReady = { bitmap ->
+                    // 同一个登录页可能多次触发 onPageFinished；只对本轮第一张二维码自动保存，
+                    // 用户点“刷新二维码”后会清空状态，让新二维码重新保存一次。
+                    if (qrBitmap == null) {
+                        qrBitmap = bitmap
+                        qrCodeSaved = saveBitmapToAlbum(context, bitmap)
+                        // 超时兜底与二维码回调可能交错到达；拿到真实二维码后优先回到原生卡片。
+                        showWebFallback = false
+                    }
+                },
                 onHandoffStudentNumber = { if (it.isNotBlank()) handoffStudentNumber = it }
             )
         }
@@ -171,6 +192,15 @@ fun WechatLoginScreen(
         // 代价与浏览器的「记住登录」完全一样：共用设备上别人也能续用这份登录态。
         // 换账号的场景另有兜底——导入时会按学号判定并清空旧数据（见 performImport）。
         webView.post { webView.loadUrl(CasWebLoginConfig.casLoginUrl()) }
+    }
+
+    // 学校页面升级或网络异常时，canvas 可能取不到；超过短暂加载窗口后开放原网页兜底，
+    // 让用户仍能完成登录，而不是停在没有反馈的加载态。
+    LaunchedEffect(qrBitmap, errorText) {
+        if (qrBitmap == null && errorText.isBlank()) {
+            delay(QR_EXTRACTION_TIMEOUT_MILLIS)
+            if (qrBitmap == null && errorText.isBlank()) showWebFallback = true
+        }
     }
 
     // 用户去微信扫码这段时间，App 在后台——页面那套「轮询扫码结果」的定时器会被系统掐住，
@@ -221,19 +251,45 @@ fun WechatLoginScreen(
         }
 
         Text(
-            text = if (qrCodeSaved) {
-                "二维码已存入相册：请打开微信「扫一扫 → 相册」选第一张，确认后切回本应用。"
-            } else {
-                "请用微信「扫一扫 → 相册」识别二维码完成登录，无需输入学号密码。"
-            },
-            color = if (qrCodeSaved) WechatAccent else WechatSecondary,
-            fontSize = 13.sp,
+            text = "扫码登录学校统一身份认证，无需输入学号密码。",
+            color = WechatSecondary,
+            fontSize = 14.sp,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)
         )
 
+        when {
+            qrBitmap != null && !showWebFallback -> NativeWechatQrCard(
+                bitmap = qrBitmap!!,
+                qrCodeSaved = qrCodeSaved,
+                onResave = {
+                    qrCodeSaved = saveBitmapToAlbum(context, qrBitmap!!)
+                    if (!qrCodeSaved) errorText = "二维码保存失败，请直接截图后在微信中识别"
+                },
+                modifier = Modifier.weight(1f)
+            )
+            !showWebFallback -> Column(
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("正在准备二维码…", color = WechatSecondary, fontSize = 15.sp)
+            }
+            else -> Text(
+                "二维码原生显示暂不可用，已切换为学校网页。",
+                color = WechatSecondary,
+                fontSize = 13.sp,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
+            )
+        }
+
+        // 原生二维码显示时 WebView 仍须保留在组合树中，扫码确认后的页面轮询和回跳才不会中断。
         AndroidView(
             factory = { webView },
-            modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp)
+            modifier = if (showWebFallback) {
+                Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp)
+            } else {
+                Modifier.fillMaxWidth().height(1.dp)
+            }
         )
 
         if (blockedNotice.isNotBlank()) {
@@ -261,6 +317,9 @@ fun WechatLoginScreen(
                 onClick = {
                     errorText = ""
                     blockedNotice = ""
+                    qrBitmap = null
+                    qrCodeSaved = false
+                    showWebFallback = false
                     webView.reload()
                 },
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp)
@@ -277,6 +336,53 @@ fun WechatLoginScreen(
         }
 
         Spacer(modifier = Modifier.height(8.dp))
+    }
+}
+
+/** 原生二维码卡片：把“已保存”的结果和下一步操作放在二维码旁，避免用户重复截图。 */
+@Composable
+private fun NativeWechatQrCard(
+    bitmap: Bitmap,
+    qrCodeSaved: Boolean,
+    onResave: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Surface(
+            color = Color.White,
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("请用微信扫一扫", color = WechatPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(14.dp))
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "统一身份认证登录二维码",
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        if (qrCodeSaved) {
+            Surface(color = WechatSuccess.copy(alpha = 0.12f), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    Text("二维码已保存到相册，无需截图", color = WechatSuccess, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("微信「扫一扫 → 相册」选择最新一张后返回本应用。", color = WechatSecondary, fontSize = 12.sp)
+                }
+            }
+        } else {
+            Text("请截图或点击下方按钮保存二维码", color = WechatSecondary, fontSize = 13.sp)
+        }
+        TextButton(onClick = onResave, modifier = Modifier.heightIn(min = 44.dp)) {
+            Text("重新保存二维码", color = WechatSecondary, fontSize = 14.sp)
+        }
     }
 }
 
@@ -302,7 +408,7 @@ private fun WebView.configureForCasLogin(
     onBlocked: (String) -> Unit,
     onLanded: () -> Unit,
     onLoadFailed: (String) -> Unit,
-    onQrCodeSaved: () -> Unit,
+    onQrCodeReady: (Bitmap) -> Unit,
     onHandoffStudentNumber: (String) -> Unit
 ) {
     settings.apply {
@@ -379,7 +485,7 @@ private fun WebView.configureForCasLogin(
                     val bytes = Base64.decode(base64, Base64.DEFAULT)
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 }.getOrNull() ?: return@evaluateJavascript
-                if (saveBitmapToAlbum(view.context, bitmap)) onQrCodeSaved()
+                onQrCodeReady(bitmap)
             }
         }
 
@@ -425,7 +531,10 @@ private const val POLL_KICK_SCRIPT =
 
 /** 读 `#qrcode` 里的 canvas 并转成 data URL；没有二维码时返回空串。 */
 private const val QR_CODE_READ_SCRIPT =
-    "(function(){var c=document.querySelector('#qrcode canvas');return c?c.toDataURL('image/png'):'';})()"
+        "(function(){var c=document.querySelector('#qrcode canvas');return c?c.toDataURL('image/png'):'';})()"
+
+/** 等待网页 canvas 初次绘制的上限；超时后显示原网页兜底。 */
+private const val QR_EXTRACTION_TIMEOUT_MILLIS = 5_000L
 
 private fun webErrorMessage(errorCode: Int): String = when (errorCode) {
     WebViewClient.ERROR_HOST_LOOKUP,

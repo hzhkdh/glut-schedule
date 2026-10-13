@@ -6,8 +6,11 @@ package com.glut.schedule
  */
 internal suspend fun resetApplicationDataSafely(
     cancelActiveDownloads: suspend () -> Unit,
-    clearData: suspend () -> Unit
+    clearData: suspend () -> Unit,
+    /** 清除 App 内 WebView 的统一身份认证会话，避免“重置后仍免密登录”。 */
+    clearWebLoginSession: suspend () -> Unit = {}
 ) {
     cancelActiveDownloads()
     clearData()
+    clearWebLoginSession()
 }

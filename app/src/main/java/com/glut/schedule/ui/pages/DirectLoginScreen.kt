@@ -284,19 +284,21 @@ fun DirectLoginScreen(
                 Text(uiState.message, color = messageColor, fontSize = 14.sp)
             }
 
-            // Import result cards。研究生门户没有考试模块，改显示成绩与培养计划，
-            // 否则两颗「考试 0」的卡片会让人以为导入漏了东西。
+            // 导入结果四项始终同一行：来源差异只影响数值，不能让卡片数量忽多忽少。
+            // 研究生门户没有考试模块时显示横杠，明确这是“不支持”而不是导入了 0 条。
             val result = uiState.importResult
             if (result != null) {
                 Spacer(modifier = Modifier.height(16.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ImportResultCard("课程", result.courseCount, LoginAccent, Modifier.weight(1f))
-                    if (uiState.isGraduate) {
-                        ImportResultCard("成绩", result.scoreCount, Color(0xFF7C5FE7), Modifier.weight(1f))
-                        ImportResultCard("培养计划", result.studyPlanCount, Color(0xFF2D9A72), Modifier.weight(1f))
-                    } else {
-                        ImportResultCard("考试", result.examCount, Color(0xFF7C5FE7), Modifier.weight(1f))
-                    }
+                    ImportResultCard("成绩", result.scoreCount, Color(0xFF7C5FE7), Modifier.weight(1f))
+                    ImportResultCard("培养计划", result.studyPlanCount, Color(0xFF2D9A72), Modifier.weight(1f))
+                    ImportResultCard(
+                        label = "考试",
+                        count = if (uiState.isGraduate) null else result.examCount,
+                        color = Color(0xFFF59E0B),
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
 
@@ -612,11 +614,11 @@ private fun LoginCaptchaDialog(
 }
 
 @Composable
-private fun ImportResultCard(label: String, count: Int, color: Color, modifier: Modifier) {
+private fun ImportResultCard(label: String, count: Int?, color: Color, modifier: Modifier) {
     Surface(modifier = modifier, color = color.copy(alpha = 0.10f), shape = RoundedCornerShape(12.dp)) {
-        Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(count.toString(), color = color, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text(label, color = color.copy(alpha = 0.8f), fontSize = 13.sp)
+        Column(modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(count?.toString() ?: "—", color = color, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text(label, color = color.copy(alpha = 0.8f), fontSize = 12.sp, maxLines = 1)
         }
     }
 }

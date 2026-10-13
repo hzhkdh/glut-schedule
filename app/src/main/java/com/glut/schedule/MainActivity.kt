@@ -139,6 +139,7 @@ import com.glut.schedule.service.greeting.DrawerGreeting
 import com.glut.schedule.service.greeting.DrawerGreetingContext
 import com.glut.schedule.service.greeting.DrawerGreetingPlanner
 import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
+import com.glut.schedule.service.academic.clearWebLoginSession
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.navigation.campusDrawerItems
 import com.glut.schedule.ui.navigation.isEnabledFor
@@ -1257,7 +1258,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                     AlertDialog(
                         onDismissRequest = { showResetConfirm = false },
                         title = { Text("重置应用") },
-                        text = { Text("将清除所有数据（课表、成绩、考试、教学计划、设置、登录凭证），恢复到初次使用状态。此操作不可撤销，确定继续吗？") },
+                        text = { Text("将清除所有数据（课表、成绩、考试、教学计划、设置、登录凭证和免密登录会话），恢复到初次使用状态。此操作不可撤销，确定继续吗？") },
                         confirmButton = {
                             Text("确认重置", color = Color(0xFFDC2626),
                                 modifier = Modifier.clickable {
@@ -1287,6 +1288,9 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     clearOwnedBackgroundSources(this@MainActivity)
                                                     container.remoteBackgroundRepository.clearAllData()
                                                 }
+                                            },
+                                            clearWebLoginSession = {
+                                                clearWebLoginSession()
                                             }
                                         )
                                     }
