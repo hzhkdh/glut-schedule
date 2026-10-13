@@ -34,7 +34,8 @@ class HolidayAdjustmentsUiContractTest {
         assertTrue(screen.contains("\"目标日期\""))
         assertTrue(screen.contains("原日期课程不会移除"))
         assertTrue(screen.contains("\"添加调课\""))
-        assertTrue(screen.contains("已添加的调课"))
+        // 规则列表按来源分成两组，组标题由 GroupHeader 渲染（原来是一个混在一起的「已添加的调课」）。
+        assertTrue(screen.contains("GroupHeader("))
         assertTrue(screen.contains("暂未添加调休调课"))
         assertTrue(screen.contains("暂未找到当前学期课表"))
         // 目标日是法定假日时先确认，而不是拒绝保存。
@@ -195,15 +196,52 @@ class HolidayAdjustmentsUiContractTest {
         val screen = page("HolidayAdjustmentsScreen.kt")
         val viewModel = page("HolidayAdjustmentsViewModel.kt")
 
-        assertTrue(screen.contains("\"自动调课\""))
+        // 两个分区标题成对：只差「自动 / 手动」两字，一眼能看出是对立的两类。
+        assertTrue(screen.contains("\"自动调休\""))
+        assertTrue(screen.contains("\"手动调休\""))
         assertTrue(screen.contains("state.autoDayCopyEnabled"))
         assertTrue(screen.contains("AutoDayCopySection("))
+        // 组标题即来源声明，由 ViewModel 侧的分组函数提供。
+        assertTrue(viewModel.contains("AUTO_ROW_GROUP_TITLE = \"自动补的\""))
+        assertTrue(viewModel.contains("MANUAL_ROW_GROUP_TITLE = \"我加的\""))
         // 来源徽标：自动规则必须能一眼看出不是自己加的。
         assertTrue(viewModel.contains("AUTO_REMOTE(\"自动·教务\")"))
         assertTrue(viewModel.contains("AUTO_DERIVED(\"自动·推导\")"))
         // 仍然只用 Divider 分段，不新增卡片；也不在设置主页加开关。
         assertFalse(screen.contains("AutoCard"))
         assertFalse(screen.contains("显示节假日"))
+    }
+
+    /**
+     * 两大类各有自己的身份色：自动走页面本来就有的强调蓝，手动走课表「调」角标已经在用的橙。
+     *
+     * 之前两类在视觉上分不出来——手动表单的日期块和自动规则的行内徽标用的是**同一个蓝**，
+     * 于是「自动 / 手动」长得一模一样。手动的日期块也必须跟着自己那一类换成橙。
+     */
+    @Test
+    fun theTwoCategoriesCarryOppositeAccents() {
+        val screen = page("HolidayAdjustmentsScreen.kt")
+
+        assertTrue(screen.contains("Accent = Color(0xFF3F7DF6)"))
+        assertTrue(screen.contains("ManualAccent = Color(0xFFE57411)"))
+        assertTrue(screen.contains("ManualChipBg = Color(0xFFFDF3E9)"))
+        assertTrue(screen.contains("ManualChipText = Color(0xFFC2610A)"))
+        // 分区标题左侧的身份色条：颜色即身份，不必读文字就分得清。
+        assertTrue(screen.contains("private fun AccentRail("))
+    }
+
+    /**
+     * 逐行来源徽标已撤掉，来源改由组标题声明。
+     *
+     * 那个徽标在长日期文本旁边会被挤成「自 / 动 / · / 教 / 务」一个字一行，并把整行撑高到
+     * 日期行看着偏上。分组的纯逻辑见 [ManualDayCopyGroupTest]。
+     */
+    @Test
+    fun rowBadgeIsReplacedByGroupHeadings() {
+        val screen = page("HolidayAdjustmentsScreen.kt")
+
+        assertFalse("来源徽标不该再逐行渲染", screen.contains("row.origin.label"))
+        assertTrue("来源应由组标题声明", screen.contains("GroupHeader("))
     }
 
     @Test

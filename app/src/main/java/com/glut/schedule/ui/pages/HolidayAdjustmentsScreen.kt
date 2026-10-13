@@ -7,9 +7,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -40,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -52,12 +56,38 @@ private val PageBg = Color(0xFFF6F4EF)
 private val PanelBg = Color(0xFFFFFEFB)
 private val TextPrimary = Color(0xFF141821)
 private val TextSecondary = Color(0xFF667085)
+
+/** 计数这类弱化元素。比 [TextSecondary] 再淡一档，但不参与正文。 */
+private val TextFaint = Color(0xFF98A0AF)
 private val DividerColor = Color(0xFFEDE8DE)
+
+/**
+ * 自动调休的身份色：沿用页面本来就有的强调蓝。
+ *
+ * 这一页原本两类长得一模一样——手动表单的日期块和自动规则的行内徽标用的是**同一个蓝**，
+ * 于是「自动 / 手动」在视觉上反而分不出来。现在两类各有一条色条贯穿分区标题、组标题与控件。
+ */
 private val Accent = Color(0xFF3F7DF6)
-private val DateChipBg = Color(0xFFF1F5FD)
-private val DateChipText = Color(0xFF2F6FE9)
+
+/** 手动调休的身份色：沿用课表上「调」角标已经在用的橙，语义正好对上「调休」。 */
+private val ManualAccent = Color(0xFFE57411)
+private val ManualChipBg = Color(0xFFFDF3E9)
+private val ManualChipText = Color(0xFFC2610A)
+
 private val WarningText = Color(0xFFB45843)
 private val DangerText = Color(0xFFDC2626)
+private val OnAccent = Color.White
+
+/** 列表行里日期的颜色：比 [TextPrimary] 略亮，与标题区分开。 */
+private val RuleDateText = Color(0xFF202633)
+
+/**
+ * 两个日期块之间箭头的固定占位宽。
+ *
+ * 固定宽度有两个作用：两边的日期块保持等宽，箭头也才能落在**日期块**的中线上——它原先的
+ * 兄弟是「标签 + 日期块」整列，于是箭头落在整列的中线上，看起来比日期块高出一截。
+ */
+private val DateArrowWidth = 32.dp
 
 /** 日期选择器以 UTC 零点为坐标；与 [LocalDate] 互转时必须固定用 UTC，否则会整体偏一天。 */
 internal fun localDateToUtcMillis(date: LocalDate): Long =
@@ -118,6 +148,11 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
     val sourceCourseCount = viewModel.sourceCourseCount(state, sourceDate)
     val targetIsHiddenWeekend = !state.showWeekend && targetDate?.let(::isWeekend) == true
 
+    // 规则行按来源分成「自动补的 / 我加的」两组：来源由组标题声明，逐行不再挂徽标。
+    val groups = groupDayCopyRows(viewModel.rowsFor(state))
+    val autoRows = groups.firstOrNull { it.isAuto }?.rows.orEmpty()
+    val manualRows = groups.firstOrNull { !it.isAuto }?.rows.orEmpty()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -125,57 +160,65 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
             .verticalScroll(rememberScrollState())
     ) {
         Column(modifier = Modifier.padding(24.dp)) {
-            // 单页连续白面板：说明 / 编辑 / 规则列表三段之间只用分隔线，不再各自套一张卡片。
+            // 单页连续白面板：自动 / 手动两段之间只用分隔线，不各自套一张卡片。
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = PanelBg,
                 shape = RoundedCornerShape(14.dp)
             ) {
                 Column {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("复制整天课程", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            "原日期课程会保留，目标日期会追加相同课程。仅作用于当前学期。",
-                            color = TextSecondary,
-                            fontSize = 13.sp,
-                            lineHeight = 19.sp,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                    }
-
-                    Divider()
-
                     AutoDayCopySection(
                         state = state,
+                        rows = autoRows,
                         onToggle = viewModel::setAutoDayCopyEnabled,
                         onRecompute = viewModel::recalculateAutoCopies,
                         onDownloadTable = viewModel::downloadMakeupTable,
-                        onRestoreSuppressed = viewModel::restoreSuppressedAutoRules
+                        onRestoreSuppressed = viewModel::restoreSuppressedAutoRules,
+                        onDeleteRow = { pendingDelete = it }
                     )
 
                     Divider()
 
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("新增调课", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        SectionTitle(
+                            accent = ManualAccent,
+                            title = "手动调休",
+                            subtitle = "自己指定把哪天的课挪到哪天"
+                        )
+
+                        // 标签单独一行、日期块单独一行：箭头才会落在日期块的中线上。
+                        Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                            Text(
+                                "原日期",
+                                color = TextSecondary,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(DateArrowWidth))
+                            Text(
+                                "目标日期",
+                                color = TextSecondary,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            DateField(
-                                label = "原日期",
+                            DateChip(
                                 date = sourceDate,
                                 modifier = Modifier.weight(1f),
                                 onClick = { pickingField = HolidayAdjustmentField.SOURCE }
                             )
-                            Text("→", color = Color(0xFF98A0AF), fontSize = 18.sp)
-                            DateField(
-                                label = "目标日期",
+                            DateArrow()
+                            DateChip(
                                 date = targetDate,
                                 modifier = Modifier.weight(1f),
                                 onClick = { pickingField = HolidayAdjustmentField.TARGET }
                             )
                         }
+
                         Text(
                             "将复制 $sourceCourseCount 节课程；原日期课程不会移除",
                             color = TextSecondary,
@@ -203,30 +246,13 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
                             },
                             enabled = sourceDate != null && targetDate != null,
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                            colors = ButtonDefaults.buttonColors(containerColor = ManualAccent),
                             modifier = Modifier.fillMaxWidth().padding(top = 14.dp)
                         ) {
                             Text("添加调课", fontSize = 15.sp, modifier = Modifier.padding(vertical = 4.dp))
                         }
-                    }
 
-                    Divider()
-
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("已添加的调课", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                            if (state.rules.isNotEmpty()) {
-                                Text(
-                                    "${state.rules.size} 条",
-                                    color = Color(0xFF98A0AF),
-                                    fontSize = 13.sp,
-                                    textAlign = TextAlign.End,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                        val rows = viewModel.rowsFor(state)
-                        if (rows.isEmpty()) {
+                        if (manualRows.isEmpty() && autoRows.isEmpty()) {
                             Text(
                                 "暂未添加调休调课",
                                 color = TextSecondary,
@@ -235,9 +261,16 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
                                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
                             )
                         }
-                        rows.forEachIndexed { index, row ->
-                            if (index > 0) Divider()
-                            RuleRow(row = row, onDelete = { pendingDelete = row })
+                        if (manualRows.isNotEmpty()) {
+                            GroupHeader(
+                                title = MANUAL_ROW_GROUP_TITLE,
+                                count = manualRows.size,
+                                accent = ManualAccent
+                            )
+                            manualRows.forEachIndexed { index, row ->
+                                if (index > 0) Divider()
+                                RuleRow(row = row, onDelete = { pendingDelete = row })
+                            }
                         }
                     }
 
@@ -249,7 +282,7 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
                                 Text("已隐藏的卡片", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                                 Text(
                                     "${state.hiddenItems.size} 张",
-                                    color = Color(0xFF98A0AF),
+                                    color = TextFaint,
                                     fontSize = 13.sp,
                                     textAlign = TextAlign.End,
                                     modifier = Modifier.weight(1f)
@@ -268,7 +301,7 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
                                 onClick = viewModel::restoreAllHiddenCards,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("全部恢复", color = Color(0xFF3F7DF6), fontSize = 15.sp)
+                                Text("全部恢复", color = Accent, fontSize = 15.sp)
                             }
                         }
                     }
@@ -306,12 +339,12 @@ fun HolidayAdjustmentsScreen(viewModel: HolidayAdjustmentsViewModel) {
             textContentColor = TextSecondary,
             // 自动规则不能只说「不再显示」：它还得说清「不会再被自动补回来」以及怎么找回，
             // 因为删除抑制正是「默认生效」模式下用户唯一的纠错手段。
-            title = { Text(if (row.origin.isAuto) "忽略这条自动调课？" else "删除调课？") },
+            title = { Text(if (row.origin.isAuto) "忽略这条自动调休？" else "删除调休？") },
             text = {
                 Text(
                     if (row.origin.isAuto) {
                         "${row.rule.sourceDate} 复制到 ${row.rule.targetDate} 的课程将不再显示，" +
-                            "并且不会再被自动补回来（可用下方「恢复已忽略的自动调课」找回）。"
+                            "并且不会再被自动补回来（可用下方「恢复已忽略」找回）。"
                     } else {
                         "${row.rule.sourceDate} 复制到 ${row.rule.targetDate} 的课程将不再显示。"
                     }
@@ -365,29 +398,113 @@ private fun submitRule(
     Toast.makeText(context, error ?: "调课已添加", Toast.LENGTH_SHORT).show()
 }
 
+/**
+ * 分区标题左侧的身份色条：自动走蓝、手动走橙。
+ *
+ * 颜色即身份——不必读文字就知道这是哪一类，也不会像行内徽标那样被长文本挤变形。
+ */
 @Composable
-private fun DateField(
-    label: String,
+private fun AccentRail(color: Color, height: Dp = 20.dp) {
+    Box(
+        modifier = Modifier
+            .width(3.dp)
+            .height(height)
+            .clip(RoundedCornerShape(2.dp))
+            .background(color)
+    )
+}
+
+/** 分区标题：[accent] 色条 + 标题 + 副标题，右侧可挂一个控件（自动分区挂开关）。 */
+@Composable
+private fun SectionTitle(
+    accent: Color,
+    title: String,
+    subtitle: String,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        AccentRail(accent)
+        Text(
+            title,
+            color = TextPrimary,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 10.dp).weight(1f)
+        )
+        trailing?.invoke()
+    }
+    Text(
+        subtitle,
+        color = TextSecondary,
+        fontSize = 13.sp,
+        lineHeight = 19.sp,
+        modifier = Modifier.padding(top = 6.dp, start = 13.dp)
+    )
+}
+
+/**
+ * 组标题：来源由它声明，逐行不再挂徽标。
+ *
+ * 徽标从行内挪到这里，是因为它在长日期文本旁边会被挤成「自 / 动 / · / 教 / 务」一个字一行，
+ * 并把整行撑高到日期行看着偏上。分组的纯逻辑见 `ManualDayCopyGroupTest`。
+ */
+@Composable
+private fun GroupHeader(title: String, count: Int, accent: Color) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AccentRail(accent, height = 13.dp)
+        Text(
+            title,
+            color = TextSecondary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 8.dp)
+        )
+        Text(
+            "$count 条",
+            color = TextFaint,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(start = 6.dp)
+        )
+    }
+}
+
+/** 日期块。标签由调用方单独成行渲染——标签留在这一列里会把箭头挤到整列的中线上。 */
+@Composable
+private fun DateChip(
     date: LocalDate?,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    Column(modifier = modifier) {
-        Text(label, color = TextSecondary, fontSize = 12.sp)
-        Surface(
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp).clickable(onClick = onClick),
-            color = DateChipBg,
-            shape = RoundedCornerShape(10.dp)
-        ) {
-            Text(
-                text = date?.toString().orEmpty(),
-                color = DateChipText,
-                fontSize = 14.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
-            )
-        }
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        color = ManualChipBg,
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Text(
+            text = date?.toString().orEmpty(),
+            color = ManualChipText,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
+        )
     }
+}
+
+/** 日期之间的箭头：固定宽度 + 居中，与两侧日期块在同一个 Row 里垂直居中。 */
+@Composable
+private fun DateArrow() {
+    Text(
+        text = "→",
+        color = TextSecondary,
+        fontSize = 18.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.width(DateArrowWidth)
+    )
 }
 
 /**
@@ -413,7 +530,7 @@ private fun HiddenCardRow(
         }
         Text(
             text = "恢复",
-            color = Color(0xFF3F7DF6),
+            color = Accent,
             fontSize = 14.sp,
             modifier = Modifier.clickable(onClick = onRestore)
         )
@@ -421,7 +538,7 @@ private fun HiddenCardRow(
 }
 
 /**
- * 「自动调课」区块。
+ * 「自动调休」区块。
  *
  * 开关之外只有几个文字按钮，**没有任何确认弹窗**：需求是「打开就直接生效、不要求用户点确认」，
  * 而且这一页的 AlertDialog 数量被源码契约测试钉死为 2
@@ -430,42 +547,50 @@ private fun HiddenCardRow(
 @Composable
 private fun AutoDayCopySection(
     state: HolidayAdjustmentsUiState,
+    rows: List<ManualDayCopyRow>,
     onToggle: (Boolean) -> Unit,
     onRecompute: () -> Unit,
     onDownloadTable: () -> Unit,
-    onRestoreSuppressed: () -> Unit
+    onRestoreSuppressed: () -> Unit,
+    onDeleteRow: (ManualDayCopyRow) -> Unit
 ) {
     Column(modifier = Modifier.padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "自动调课",
-                color = TextPrimary,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
-            Switch(checked = state.autoDayCopyEnabled, onCheckedChange = onToggle)
-        }
+        SectionTitle(
+            accent = Accent,
+            title = "自动调休",
+            subtitle = "系统按学校通知补课，不需要你操作",
+            trailing = { Switch(checked = state.autoDayCopyEnabled, onCheckedChange = onToggle) }
+        )
+
+        // 第一行只说结果，第二行只说数据来源：原来是「已启用 · 补了几天 · 对照表 rev N」挤成
+        // 一个中间点串，而且 rev 在下一行的说明里又说了一遍。
         Text(
             text = if (state.autoDayCopyEnabled) {
-                autoStatusText(state)
+                autoResultText(state)
             } else {
                 "未启用：只有你手动添加的调课生效"
             },
             color = if (state.autoDayCopyEnabled && !state.remoteTableReady) WarningText else TextSecondary,
             fontSize = 13.sp,
             lineHeight = 19.sp,
-            modifier = Modifier.padding(top = 6.dp)
+            modifier = Modifier.padding(top = 10.dp, start = 13.dp)
         )
         if (!state.autoDayCopyEnabled) return@Column
 
+        Text(
+            text = autoSourceText(state),
+            color = TextSecondary,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(top = 4.dp, start = 13.dp)
+        )
         if (isMakeupTableStale(state.remoteUpdatedAt)) {
             Text(
                 "对照表可能已过期，可点下方按钮或到首页下拉刷新同步。",
                 color = WarningText,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 4.dp, start = 13.dp)
             )
         }
         state.autoNotices.forEach { notice ->
@@ -474,9 +599,19 @@ private fun AutoDayCopySection(
                 color = TextSecondary,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 4.dp, start = 13.dp)
             )
         }
+
+        // 自动补出来的那几天：组标题与色条都走本分区的身份色。
+        if (rows.isNotEmpty()) {
+            GroupHeader(title = AUTO_ROW_GROUP_TITLE, count = rows.size, accent = Accent)
+            rows.forEachIndexed { index, row ->
+                if (index > 0) Divider()
+                RuleRow(row = row, onDelete = { onDeleteRow(row) })
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -496,64 +631,54 @@ private fun AutoDayCopySection(
     }
 }
 
-/** 开关打开时那一行状态：补了几天、数据来自哪里。 */
-private fun autoStatusText(state: HolidayAdjustmentsUiState): String {
-    val countText = if (state.autoRules.isEmpty()) "暂无自动调课" else "已自动补 ${state.autoRules.size} 天"
-    val tableText = when {
-        !state.remoteTableReady -> "对照表尚未下载，按补班日规律推导"
-        state.remoteRevision != null -> "对照表 rev ${state.remoteRevision}" +
-            state.remoteUpdatedAt.takeIf { it.isNotBlank() }?.let { "（$it）" }.orEmpty()
-        else -> "对照表已就绪"
-    }
-    return "已启用 · $countText · $tableText"
+/** 开关打开时的结果文案：只讲补了什么，不讲数据从哪来（那是 [autoSourceText] 的事）。 */
+private fun autoResultText(state: HolidayAdjustmentsUiState): String =
+    if (state.autoRules.isEmpty()) "暂无自动补课" else "已自动补 ${state.autoRules.size} 天"
+
+/** 开关打开时的来源文案：这批规则是拿什么算出来的。版本号只在这里出现一次。 */
+private fun autoSourceText(state: HolidayAdjustmentsUiState): String {
+    if (!state.remoteTableReady) return "对照表尚未下载，按补班日规律推导"
+    val revision = state.remoteRevision?.let { "rev $it" }
+    val updatedAt = state.remoteUpdatedAt.takeIf { it.isNotBlank() }
+    val version = listOfNotNull(revision, updatedAt).joinToString(" · ")
+    return if (version.isBlank()) "以学校对照表为准" else "以学校对照表为准 · $version"
 }
 
 /**
  * 对照表是否可能过期：超过 120 天没更新就提示一次。
  *
- * 判不出来（维护者没填 updatedAt）时按「不提示」处理——宁可不提示，也不要天天误报。
+ * 判不出来（维护者没填 updatedAt）时按「不提示」处理——宁可不报，也不要天天误报。
  */
 internal fun isMakeupTableStale(updatedAt: String, today: LocalDate = LocalDate.now()): Boolean {
     val parsed = runCatching { LocalDate.parse(updatedAt.trim()) }.getOrNull() ?: return false
     return parsed.plusDays(120).isBefore(today)
 }
 
+/**
+ * 一条调休规则。
+ *
+ * 单行排列：日期在左、复制节数靠右、删除在最右。日期与节数分两行时，日期行会浮在整行的
+ * 上半部分，箭头看着就偏上；来源徽标撤掉之后一行放得下，箭头也就落在整行的中线上。
+ */
 @Composable
 private fun RuleRow(row: ManualDayCopyRow, onDelete: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "${row.rule.sourceDate} → ${row.rule.targetDate}",
-                    color = Color(0xFF202633),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                // 手动规则不带徽标：这是用户自己加的，标注「手动」只是噪音。
-                if (row.origin.isAuto) {
-                    Text(
-                        row.origin.label,
-                        color = DateChipText,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .padding(start = 6.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(DateChipBg)
-                            .padding(horizontal = 5.dp, vertical = 2.dp)
-                    )
-                }
-            }
-            Text(
-                "复制 ${row.courseCount} 节课",
-                color = TextSecondary,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-        }
+        Text(
+            "${row.rule.sourceDate} → ${row.rule.targetDate}",
+            color = RuleDateText,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            "复制 ${row.courseCount} 节课",
+            color = TextSecondary,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(start = 8.dp)
+        )
         Text(
             "删除",
             color = DangerText,
@@ -619,11 +744,11 @@ private fun holidayAdjustmentDatePickerColors() = DatePickerDefaults.colors(
     navigationContentColor = TextPrimary,
     yearContentColor = TextPrimary,
     currentYearContentColor = Accent,
-    selectedYearContentColor = Color.White,
+    selectedYearContentColor = OnAccent,
     selectedYearContainerColor = Accent,
     dayContentColor = TextPrimary,
     selectedDayContainerColor = Accent,
-    selectedDayContentColor = Color.White,
+    selectedDayContentColor = OnAccent,
     todayContentColor = Accent,
     todayDateBorderColor = Accent,
     dividerColor = DividerColor

@@ -84,6 +84,31 @@ data class ManualDayCopyRow(
     val origin: ManualDayCopyRowOrigin = ManualDayCopyRowOrigin.MANUAL
 )
 
+/** 「自动补的」组标题。 */
+internal const val AUTO_ROW_GROUP_TITLE = "自动补的"
+
+/** 「我加的」组标题。 */
+internal const val MANUAL_ROW_GROUP_TITLE = "我加的"
+
+/** 同一来源的一组规则行：共用一个组标题与一条身份色。 */
+data class ManualDayCopyGroup(
+    val title: String,
+    val isAuto: Boolean,
+    val rows: List<ManualDayCopyRow>
+)
+
+/**
+ * 把规则行按来源分成「自动补的 / 我加的」两组，自动在前、手动在后（与列表原本的顺序一致）。
+ *
+ * 空组不出现——只有手动规则时不该冒出一个空的「自动补的 0」。分组之后来源由组标题声明，
+ * 逐行的来源徽标就可以撤掉；那个徽标在长日期文本旁边会被挤成一个字一行。
+ */
+internal fun groupDayCopyRows(rows: List<ManualDayCopyRow>): List<ManualDayCopyGroup> =
+    listOf(
+        ManualDayCopyGroup(AUTO_ROW_GROUP_TITLE, isAuto = true, rows = rows.filter { it.origin.isAuto }),
+        ManualDayCopyGroup(MANUAL_ROW_GROUP_TITLE, isAuto = false, rows = rows.filterNot { it.origin.isAuto })
+    ).filter { it.rows.isNotEmpty() }
+
 /** 自动调课相关的原始 Flow 归约。分开归约是因为主 combine 已经占满 5 个流。 */
 private data class AutoCopyState(
     val enabled: Boolean,
