@@ -158,19 +158,19 @@ fun WechatLoginScreen(
         onDispose {
             webView.stopLoading()
             webView.destroy()
-            CookieManager.getInstance().apply {
-                removeAllCookies(null)
-                flush()
-            }
+            // 只落盘、不清空——理由见上面 LaunchedEffect 里的说明。
+            // flush 是有意义的：不写盘的话，进程被回收时会话就没了，免扫也就无从谈起。
+            CookieManager.getInstance().flush()
         }
     }
 
     LaunchedEffect(webView) {
-        // 先清空再加载：WebView 的 cookie 存储在本项目里只有这一个用途，
-        // 不清的话会直接继承上一次（可能是别人）的统一身份认证会话。
-        CookieManager.getInstance().removeAllCookies {
-            webView.post { webView.loadUrl(CasWebLoginConfig.casLoginUrl()) }
-        }
+        // 这里**故意不清 cookie**：统一身份认证的会话留在 WebView 里，下次打开即可
+        // 直接换成教务会话——用户不必每次重扫，而这正是他最常抱怨的一点。
+        //
+        // 代价与浏览器的「记住登录」完全一样：共用设备上别人也能续用这份登录态。
+        // 换账号的场景另有兜底——导入时会按学号判定并清空旧数据（见 performImport）。
+        webView.post { webView.loadUrl(CasWebLoginConfig.casLoginUrl()) }
     }
 
     // 用户去微信扫码这段时间，App 在后台——页面那套「轮询扫码结果」的定时器会被系统掐住，

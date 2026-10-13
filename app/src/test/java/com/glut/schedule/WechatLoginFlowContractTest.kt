@@ -78,20 +78,25 @@ class WechatLoginFlowContractTest {
     }
 
     /**
-     * WebView 的 cookie 存储在本项目里只有这一个用途，不清就会直接继承上一次
-     * （很可能是别人）的统一身份认证会话。进入前清、退出时再清。
+     * WebView 的 cookie **必须留着**。
+     *
+     * 统一身份认证的会话就存在那里，留着它，下次打开「微信登录」就能直接换成教务会话，
+     * 用户不必每次重扫——这正是扫码头号被抱怨的地方。清空会让「每次都扫码」变成死规定。
+     *
+     * 代价与浏览器的「记住登录」相同（共用设备上别人也能续用），换账号则另有兜底：
+     * 导入时按学号判定并清空旧数据。
      */
     @Test
-    fun cookiesAreWipedBeforeAndAfterTheWebLogin() {
+    fun webLoginKeepsCookiesSoRepeatLoginsSkipTheScan() {
         val screen = page("WechatLoginScreen.kt")
-        val loadIndex = screen.indexOf("webView.loadUrl(CasWebLoginConfig.casLoginUrl())")
-        val disposeIndex = screen.substringAfter("DisposableEffect(webView)").indexOf("removeAllCookies(null)")
 
-        assertTrue("必须加载 CAS 登录页", loadIndex >= 0)
-        assertTrue("退出时必须清 cookie", disposeIndex >= 0)
+        assertFalse(
+            "不得清空 WebView 的 cookie——那会让每次登录都得重新扫码",
+            screen.contains("removeAllCookies")
+        )
         assertTrue(
-            "清 cookie 必须发生在加载之前",
-            screen.substringBefore("webView.loadUrl(CasWebLoginConfig.casLoginUrl())").contains("removeAllCookies")
+            "退出时要落盘，否则进程被回收时会话就丢了，免扫无从谈起",
+            screen.contains("CookieManager.getInstance().flush()")
         )
     }
 
