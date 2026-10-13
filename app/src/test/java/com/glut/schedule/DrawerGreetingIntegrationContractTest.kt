@@ -37,7 +37,9 @@ class DrawerGreetingIntegrationContractTest {
 
         assertTrue(application.contains("greetingTemplateRepository.initializeAndRefresh()"))
         assertTrue(login.contains("AcademicSemesterParser.parseStudentName(enrollmentHtml)"))
-        assertTrue(login.contains("sessionStore.saveAuthenticatedStudent(studentNumber"))
+        // 学号可能来自登录时刻的快照，也可能在导入时从教务页面解析出来（微信登录没有密码可输，
+        // 登录成功那一刻拿不到学号）。无论哪条路，落库的都必须是**当次解析出的那个**。
+        assertTrue(login.contains("sessionStore.saveAuthenticatedStudent(resolvedStudentNumber"))
     }
 
     @Test

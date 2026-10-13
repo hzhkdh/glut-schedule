@@ -49,6 +49,69 @@ object AcademicSemesterParser {
         return null
     }
 
+    /**
+     * 个人信息页里的学号。
+     *
+     * 与 [parseStudentName] 同思路：先按已知 input 名找，再从可见的「学号」表格行兜底。
+     * 只接受 6-14 位纯数字——内部 id、工号之类混进来会让「换账号清缓存」静默失效。
+     */
+    fun parseStudentNumber(html: String): String? {
+        if (html.isBlank()) return null
+        val document = Jsoup.parse(html)
+        val inputs = document.select("input[name]").associate { element ->
+            element.attr("name").lowercase() to element.attr("value").trim()
+        }
+        // 刻意不含 `username` / `usercode`：正方那两栏放的是**内部账号**（实测是六位数字），
+        // 混进来照样通过「6~14 位纯数字」的校验，然后被拿去推算年级、选学期，错得毫无声响。
+        sequenceOf("xh", "studentnumber", "studentno", "studentid")
+            .mapNotNull { inputs[it] }
+            .mapNotNull(::normalizeStudentNumber)
+            .firstOrNull()
+            ?.let { return it }
+
+        document.select("tr").forEach { row ->
+            val cells = row.select("th,td")
+            val labelIndex = cells.indexOfFirst {
+                it.text().trim().removeSuffix("：").removeSuffix(":") == "学号"
+            }
+            if (labelIndex >= 0 && labelIndex + 1 < cells.size) {
+                normalizeStudentNumber(cells[labelIndex + 1].text())?.let { return it }
+            }
+        }
+        return null
+    }
+
+    /**
+     * 从 `framePage.do` 的 JSON 里取学号。
+     *
+     * 该接口 `user` 对象里的 `id` **就是学号**（`ApiProbeService` 正是拿它拼课表 URL 的
+     * `id=` 参数），所以键名与那边的正则在同一条口径上。
+     *
+     * 必须在 user 块**内部**取值：整篇正则会把别处的纯数字（模块 id、学年 id 等）一并捞进来，
+     * 而学号一旦取错，「换账号清数据」就会静默失效——用户会在新账号下看到旧账号的课表。
+     */
+    fun parseStudentNumberFromFrameJson(body: String): String? {
+        if (body.isBlank()) return null
+        val userBlock = Regex(""""user"\s*:\s*\{([^}]*)\}""")
+            .find(body)
+            ?.groupValues
+            ?.get(1)
+            ?: return null
+        // 同样只认明确是学号的键：`user.id` 是 ApiProbeService 用来拼课表 URL 的那个，
+        // 已验证是学号；其余含糊的名字（userName/account/loginName）可能装着内部账号。
+        return sequenceOf("id", "xh")
+            .mapNotNull { key ->
+                Regex(""""$key"\s*:\s*"?([^",}]+)"?""").find(userBlock)?.groupValues?.get(1)
+            }
+            .mapNotNull(::normalizeStudentNumber)
+            .firstOrNull()
+    }
+
+    private fun normalizeStudentNumber(value: String): String? {
+        val normalized = value.trim()
+        return normalized.takeIf { it.length in 6..14 && it.all(Char::isDigit) }
+    }
+
     fun parseEnrollment(
         html: String,
         studentNumber: String = "",

@@ -26,6 +26,21 @@ sealed class AcademicLoginResult {
     }
 }
 
+/**
+ * 响应体是不是一页「登录页」。
+ *
+ * 从 [AcademicLoginHttpClient] 里提出来，是因为微信登录那条路也要用它判「教务到底认没认这个会话」。
+ * 两边必须共用同一套标记，否则会出现「密码登录说没登上、微信登录说登上了」这种自相矛盾的结论。
+ */
+internal fun looksLikeAcademicLoginPage(body: String): Boolean {
+    val compact = body.replace(Regex("""\s+"""), "")
+    return compact.contains("欢迎登录") ||
+        compact.contains("请输入密码") ||
+        compact.contains("账号登录") ||
+        compact.contains("统一身份认证") ||
+        compact.contains("验证码")
+}
+
 class AcademicLoginHttpClient(
     private val cookieJar: CapturingCookieJar = CapturingCookieJar(),
     client: OkHttpClient? = null,
@@ -85,7 +100,7 @@ class AcademicLoginHttpClient(
                 when {
                     response.code == 401 || body.contains("用户名") && body.contains("密码错误") ->
                         AcademicLoginResult.InvalidCredentials
-                    looksLikeLoginPage(body) ->
+                    looksLikeAcademicLoginPage(body) ->
                         AcademicLoginResult.CaptchaOrInteractiveLoginRequired
                     cookie.isBlank() ->
                         AcademicLoginResult.CaptchaOrInteractiveLoginRequired
@@ -154,7 +169,7 @@ class AcademicLoginHttpClient(
             val body = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
             when {
                 response.code == 401 || response.code == 403 -> AcademicLoginResult.InvalidCredentials
-                looksLikeLoginPage(body) -> AcademicLoginResult.CaptchaOrInteractiveLoginRequired
+                looksLikeAcademicLoginPage(body) -> AcademicLoginResult.CaptchaOrInteractiveLoginRequired
                 response.isSuccessful -> AcademicLoginResult.Success(
                     cookie = cookieJar.cookieHeader().ifBlank { cookie },
                     campusBaseUrl = AcademicUrlPolicy.normalizeCampusBaseUrl(baseUrl)
@@ -176,15 +191,6 @@ class AcademicLoginHttpClient(
             }
             .distinct()
             .joinToString("; ")
-    }
-
-    private fun looksLikeLoginPage(body: String): Boolean {
-        val compact = body.replace(Regex("""\s+"""), "")
-        return compact.contains("欢迎登录") ||
-            compact.contains("请输入密码") ||
-            compact.contains("账号登录") ||
-            compact.contains("统一身份认证") ||
-            compact.contains("验证码")
     }
 
     private companion object {

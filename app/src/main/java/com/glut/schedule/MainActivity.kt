@@ -156,6 +156,7 @@ import com.glut.schedule.ui.pages.SemesterOverviewViewModelFactory
 import com.glut.schedule.ui.pages.DirectLoginScreen
 import com.glut.schedule.ui.pages.DirectLoginViewModel
 import com.glut.schedule.ui.pages.DirectLoginViewModelFactory
+import com.glut.schedule.ui.pages.WechatLoginScreen
 import com.glut.schedule.ui.pages.ExamScreen
 import com.glut.schedule.ui.pages.ExamViewModel
 import com.glut.schedule.ui.pages.ExamViewModelFactory
@@ -281,10 +282,16 @@ class MainActivity : ComponentActivity() {
                 var drawerGestureBlocked by remember { mutableStateOf(false) }
                 var pendingBackgroundCrop by remember { mutableStateOf<PendingBackgroundCrop?>(null) }
                 var backgroundCropSaving by remember { mutableStateOf(false) }
+                // 微信登录覆盖层的显隐。渲染方是这里，所以状态也放这里——
+                // ViewModel 只管「准不准开」和登录结果，不越界管界面。
+                var showWechatLogin by remember { mutableStateOf(false) }
 
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
                     when {
+                        // 微信登录覆盖层盖在最上层，返回键必须先关它。
+                        // 覆盖层是纯界面状态，关掉即可；登录流程本身（若有）不受影响。
+                        showWechatLogin -> showWechatLogin = false
                         pendingBackgroundCrop != null -> {
                             // 保存期间消费系统返回键，避免裁剪提交到一半时离开页面。
                             if (!backgroundCropSaving) pendingBackgroundCrop = null
@@ -1029,6 +1036,11 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     onDone = {
                                         selectedItem = DrawerItem.Schedule
                                         scope.launch { drawerState.close() }
+                                    },
+                                    // 覆盖层归 MainActivity 管（见下方 showWechatLogin 的渲染），
+                                    // ViewModel 只负责放行与否——被拒绝时它已经写好了提示文案。
+                                    onOpenWechatLogin = {
+                                        if (directLoginViewModel.startWechatLogin()) showWechatLogin = true
                                     }
                                 )
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
@@ -1176,6 +1188,25 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     backgroundCropSaving = false
                                 }
                             }
+                        }
+                    )
+                }
+
+                // 微信登录覆盖层。与 pendingBackgroundCrop 同级：画在 ModalNavigationDrawer
+                // 之外，所以抽屉开着也能盖住整屏。
+                if (showWechatLogin) {
+                    WechatLoginScreen(
+                        onSuccess = { cookie, studentNumber ->
+                            showWechatLogin = false
+                            directLoginViewModel.onWechatLoginSucceeded(cookie, studentNumber)
+                        },
+                        onCancel = {
+                            showWechatLogin = false
+                            directLoginViewModel.cancelWechatLogin()
+                        },
+                        onFailed = { reason ->
+                            showWechatLogin = false
+                            directLoginViewModel.onWechatLoginFailed(reason)
                         }
                     )
                 }
