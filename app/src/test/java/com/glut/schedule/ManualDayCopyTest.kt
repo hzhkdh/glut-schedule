@@ -1,5 +1,7 @@
 package com.glut.schedule
 
+import com.glut.schedule.data.model.AutoCopyOrigin
+import com.glut.schedule.data.model.AutoDayCopyRule
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ManualDayCopyRule
 import com.glut.schedule.data.model.ScheduleCourse
@@ -302,6 +304,34 @@ class ManualDayCopyTest {
         )
         // 学期最后一天没有次日，保持原日期而不是越界。
         assertEquals(end, nextDateWithinSemester(end, end))
+    }
+
+    @Test
+    fun manualAndAutoCopiesDeduplicateByRuleId() {
+        // 渲染层把自动规则转成 ManualDayCopyRule 后与手动规则合并喂给同一个纯函数。
+        // 两边 id 同构，所以同一条规则不会画出两份副本。
+        val rule = ManualDayCopyRule(
+            sourceDate = LocalDate.of(2026, 3, 18),
+            targetDate = LocalDate.of(2026, 3, 21)
+        )
+        val autoRule = AutoDayCopyRule(
+            sourceDate = LocalDate.of(2026, 3, 18),
+            targetDate = LocalDate.of(2026, 3, 21),
+            origin = AutoCopyOrigin.REMOTE
+        )
+
+        val copied = manualCopyBlocksForWeek(
+            courses = courses,
+            rules = listOf(rule) + listOf(autoRule.asManualRule()),
+            weekNumber = 2,
+            weekMonday = semesterStartMonday.plusWeeks(1)
+        )
+
+        assertEquals(1, copied.size)
+        assertTrue(
+            "副本 id 应带 -manual-copy-<规则id> 后缀，供长按排除与冲突分组识别",
+            copied.single().occurrence.id.endsWith("-manual-copy-${rule.id}")
+        )
     }
 
     private fun course(

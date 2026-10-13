@@ -12,6 +12,7 @@ import com.glut.schedule.data.model.CourseBlock
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.HiddenCardScope
 import com.glut.schedule.data.model.HiddenCourseRule
+import com.glut.schedule.data.model.AutoDayCopyRule
 import com.glut.schedule.data.model.ManualDayCopyRule
 import com.glut.schedule.data.model.ScheduleRefreshDiff
 import com.glut.schedule.data.model.SemesterAdjustment
@@ -50,8 +51,11 @@ import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.AcademicSemesterCalendarResolver
 import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
 import com.glut.schedule.service.academic.ApiProbeService
+import com.glut.schedule.service.holiday.AutoDayCopyCoordinator
+import com.glut.schedule.service.holiday.MakeupTableClient
 import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
 import com.glut.schedule.service.holiday.TimorHolidayClient
+import com.glut.schedule.service.holiday.refreshMakeupTable
 import com.glut.schedule.service.holiday.refreshMissingHolidayYears
 import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.academic.shouldUseExistingAcademicCookie
@@ -180,7 +184,8 @@ private data class ScheduleSettingsUiState(
     val guilinSubCampus: String = GUILIN_SUB_CAMPUS_DEFAULT,
     val classPeriodProfileOverrides: Map<ClassPeriodProfile, List<ClassPeriod>> = emptyMap(),
     val holidayDates: Set<LocalDate> = emptySet(),
-    val manualDayCopiesBySemester: Map<String, List<ManualDayCopyRule>> = emptyMap()
+    val manualDayCopiesBySemester: Map<String, List<ManualDayCopyRule>> = emptyMap(),
+    val autoDayCopiesBySemester: Map<String, List<AutoDayCopyRule>> = emptyMap()
 )
 
 private data class ScheduleCalendarSettings(
@@ -213,7 +218,8 @@ private data class ColoredCoursesState(
  */
 private data class ScheduleCalendarExtras(
     val holidayDates: Set<LocalDate>,
-    val manualDayCopiesBySemester: Map<String, List<ManualDayCopyRule>>
+    val manualDayCopiesBySemester: Map<String, List<ManualDayCopyRule>>,
+    val autoDayCopiesBySemester: Map<String, List<AutoDayCopyRule>>
 )
 
 class ScheduleViewModel(
@@ -223,13 +229,16 @@ class ScheduleViewModel(
     private val loginService: AcademicLoginService,
     private val semesterImportService: AcademicSemesterImportService,
     private val apiProbeService: ApiProbeService,
-    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
+    private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient(),
+    private val makeupTableClient: MakeupTableClient = MakeupTableClient()
 ) : ViewModel() {
     val uiState: StateFlow<ScheduleUiState>
     private var initialWeekSet = false
     private val isRefreshing = MutableStateFlow(false)
     private val refreshGuard = SingleFlightGuard()
     private val holidayFetchGuard = SingleFlightGuard()
+    private val makeupTableFetchGuard = SingleFlightGuard()
     private val message = MutableStateFlow("")
     private val needsInteractiveLogin = MutableStateFlow(false)
 
@@ -279,13 +288,25 @@ class ScheduleViewModel(
             repository.seedIfEmpty()
         }
 
+        // 冷启动同步一次对照表：学校通知发布不定时，用户不该为了拿到它先手动下拉刷新一次。
+        // 拿到新表就立刻重算（重算是纯函数、很便宜）——表里收录了本学期时推导会整学期退场，
+        // 所以这一步不重算的话，「以学校通知为准」要等用户下次刷新才生效。
+        viewModelScope.launch {
+            if (!fetchMakeupTable()) return@launch
+            val semesterId = repository.currentSemester.first()?.id.orEmpty()
+            if (semesterId.isNotBlank()) autoDayCopyCoordinator.recompose(semesterId)
+        }
+
         val calendarExtrasState = combine(
             holidayDatesFlow(),
-            settingsStore.manualDayCopies
-        ) { holidayDates, manualDayCopies ->
+            settingsStore.manualDayCopies,
+            // 自动调课规则（开关关闭时这个 Flow 恒为空表，闸门在 ScheduleSettingsStore 里）。
+            settingsStore.autoDayCopies
+        ) { holidayDates, manualDayCopies, autoDayCopies ->
             ScheduleCalendarExtras(
                 holidayDates = holidayDates,
-                manualDayCopiesBySemester = manualDayCopies
+                manualDayCopiesBySemester = manualDayCopies,
+                autoDayCopiesBySemester = autoDayCopies
             )
         }
 
@@ -340,7 +361,8 @@ class ScheduleViewModel(
                 guilinSubCampus = appearance.guilinSubCampus,
                 classPeriodProfileOverrides = appearance.classPeriodProfileOverrides,
                 holidayDates = extras.holidayDates,
-                manualDayCopiesBySemester = extras.manualDayCopiesBySemester
+                manualDayCopiesBySemester = extras.manualDayCopiesBySemester,
+                autoDayCopiesBySemester = extras.autoDayCopiesBySemester
             )
         }
 
@@ -411,10 +433,15 @@ class ScheduleViewModel(
             val visibleCourses = coloredState.visibleCourses
             // 调休调课只作用于当前学期：历史学期是只读快照，当前学期的规则不得渗进去。
             val currentSemesterId = semesters.firstOrNull { it.isCurrent }?.id.orEmpty()
-            val manualDayCopies = if (isHistorical) {
+            //
+            // 自动与手动规则在这里合并成同一种：两者语义完全一致（manualCopyBlocksForWeek
+            // 只认 source/target），副本 id 都带 -manual-copy- 后缀，于是日期角标、冲突分组、
+            // 「长按不改副本」的排除逻辑全部自动生效，ScheduleScreen 与小组件一行都不用改。
+            val dayCopyRules = if (isHistorical) {
                 emptyList()
             } else {
-                settings.manualDayCopiesBySemester[currentSemesterId].orEmpty()
+                settings.manualDayCopiesBySemester[currentSemesterId].orEmpty() +
+                    settings.autoDayCopiesBySemester[currentSemesterId].orEmpty().map { it.asManualRule() }
             }
             ScheduleUiState(
                 week = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek),
@@ -441,12 +468,12 @@ class ScheduleViewModel(
                         }
                 } + manualCopyBlocksForWeek(
                     courses = visibleCourses,
-                    rules = manualDayCopies,
+                    rules = dayCopyRules,
                     weekNumber = clampedWeekNumber,
                     weekMonday = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek).monday
                 ),
                 holidayDates = if (isHistorical) emptySet() else settings.holidayDates,
-                manualDayCopies = manualDayCopies,
+                manualDayCopies = dayCopyRules,
                 showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
                 showGridLines = settings.showGridLines,
@@ -700,6 +727,8 @@ class ScheduleViewModel(
             // 用户主动刷新时顺带补齐节假日数据。与教务导入互不依赖：
             // 即使下面登录 / 抓取失败，节假日也已经更新过了。
             refreshHolidayYears()
+            // 调休补课对照表同属「用户主动刷新时顺带补齐」的旁路数据，两者互不依赖。
+            fetchMakeupTable()
             try {
                 // 除了门数，还要把完整旧课表留下来算差异明细（对齐小程序的刷新反馈）。
                 val oldCourses = repository.courses.first()
@@ -821,6 +850,8 @@ class ScheduleViewModel(
             semesterEndDate = resolvedCalendar.endDate,
             portalMaxWeek = payload.portalMaxWeek
         )
+        // 重算必须排在落库之后：让位判定读的就是刚落库的 semester_adjustments。
+        autoDayCopyCoordinator.recompose(targetSemester.id)
         settingsStore.setSemesterStartMonday(resolvedCalendar.startMonday)
         settingsStore.setSemesterEndDate(resolvedCalendar.endDate)
         // 刷新校历只校正有效范围，不把用户正在浏览的周次重置为今天所在周。
@@ -911,6 +942,9 @@ class ScheduleViewModel(
                 semesterEndDate = targetSemester.semesterEndDate,
                 portalMaxWeek = targetSemester.portalMaxWeek
             )
+            // 研究生没有教务调课记录，但仍要重算：对照表与补班日推导对研究生来源同样适用
+            // （门户不下发调课，正是自动调课最有价值的场景）。
+            autoDayCopyCoordinator.recompose(targetSemester.id)
             message.value = if (payload.unparsedWeekTextCount > 0) {
                 "课表已刷新；${payload.unparsedWeekTextCount} 条上课时间的周次无法识别"
             } else {
@@ -936,6 +970,22 @@ class ScheduleViewModel(
      * App 一次都不该打 timor 接口。用户刷新后即使 2027 仍未公布，也只是这次白跑一趟，
      * 下次刷新会再问；缓存里的坏数据由读闸门剔除，不会让「已缓存」的假象挡住重试。
      */
+    /**
+     * 拉取调休补课对照表；返回是否拿到了能用的新表。
+     *
+     * 两条触发路径共用：**冷启动同步**（见 `init`）与**用户主动刷新课表**（见 `refreshSchedule`）。
+     * 进入页面仍然只读缓存、不联网；失败沿用上一次同步成功的表（写闸门在 `ScheduleSettingsStore`）。
+     * 用 [makeupTableFetchGuard] 串行化：冷启动那次还没结束时用户又下拉刷新，不会重复打接口。
+     */
+    private suspend fun fetchMakeupTable(): Boolean {
+        if (!makeupTableFetchGuard.tryStart()) return false
+        return try {
+            refreshMakeupTable(makeupTableClient, settingsStore::setHolidayMakeupTableJson)
+        } finally {
+            makeupTableFetchGuard.finish()
+        }
+    }
+
     private suspend fun refreshHolidayYears() {
         if (!holidayFetchGuard.tryStart()) return
         try {
@@ -986,7 +1036,9 @@ class ScheduleViewModelFactory(
     private val loginService: AcademicLoginService,
     private val semesterImportService: AcademicSemesterImportService,
     private val apiProbeService: ApiProbeService,
-    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
+    private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient(),
+    private val makeupTableClient: MakeupTableClient = MakeupTableClient()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -997,7 +1049,9 @@ class ScheduleViewModelFactory(
             loginService,
             semesterImportService,
             apiProbeService,
-            timorHolidayClient
+            autoDayCopyCoordinator,
+            timorHolidayClient,
+            makeupTableClient
         ) as T
     }
 }

@@ -47,7 +47,10 @@ import com.glut.schedule.service.network.MAX_BOOLEAN_RESPONSE_BYTES
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.MAX_IMAGE_RESPONSE_BYTES
 import com.glut.schedule.service.network.readBytesLimited
+import com.glut.schedule.service.holiday.AutoDayCopyCoordinator
+import com.glut.schedule.service.holiday.MakeupTableClient
 import com.glut.schedule.service.holiday.TimorHolidayClient
+import com.glut.schedule.service.holiday.refreshMakeupTable
 import com.glut.schedule.service.holiday.refreshMissingHolidayYears
 import com.glut.schedule.service.network.readStringLimited
 import com.glut.schedule.ui.SingleFlightGuard
@@ -159,7 +162,9 @@ class DirectLoginViewModel(
     private val scoreParser: ScoreParser,
     private val gradeExamParser: GradeExamParser = GradeExamParser(),
     private val studyPlanParser: StudyPlanParser = StudyPlanParser(),
-    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
+    private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient(),
+    private val makeupTableClient: MakeupTableClient = MakeupTableClient()
 ) : ViewModel() {
     private val loginGuard = SingleFlightGuard()
 
@@ -892,6 +897,9 @@ class DirectLoginViewModel(
                     cachedYears = settingsStore.holidayCacheByYear.first(),
                     saveYear = settingsStore::setHolidayYearCache
                 )
+                // 调休补课对照表同属这个入口：新用户导入完就拿到权威的调休安排，
+                // 不必再跑到首页或学期概览去刷一次。同样失败不影响导入。
+                refreshMakeupTable(makeupTableClient, settingsStore::setHolidayMakeupTableJson)
             }
             scheduleRepository.replaceSemesterSchedule(
                 semester = currentSemester,
@@ -909,6 +917,9 @@ class DirectLoginViewModel(
             settingsStore.setCampusType(source.campus)
             settingsStore.setLastImportSource(source)
             courseCount = currentPayload.courses.countDistinctCourseTitles()
+            // 重算排在落库与来源切换之后：让位判定要读刚落库的 semester_adjustments，
+            // 而学期范围要读已写定的校历。开关没打开时它是 no-op。
+            autoDayCopyCoordinator.recompose(currentSemester.id)
 
             // 与考试页共用多接口兜底链路，桂林首选接口返回空结构时仍会继续探测。
             val storedExamApiUrl = sessionStore.examApiUrl.first()
@@ -1362,7 +1373,9 @@ class DirectLoginViewModelFactory(
     private val scoreParser: ScoreParser,
     private val gradeExamParser: GradeExamParser = GradeExamParser(),
     private val studyPlanParser: StudyPlanParser = StudyPlanParser(),
-    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
+    private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient(),
+    private val makeupTableClient: MakeupTableClient = MakeupTableClient()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -1370,7 +1383,8 @@ class DirectLoginViewModelFactory(
             loginService, sessionStore, credentialStore,
             scheduleRepository, settingsStore, apiProbeService,
             academicExamService, semesterImportService, semesterBulkDownloadCoordinator,
-            scoreParser, gradeExamParser, studyPlanParser, timorHolidayClient
+            scoreParser, gradeExamParser, studyPlanParser, autoDayCopyCoordinator,
+            timorHolidayClient, makeupTableClient
         ) as T
     }
 }

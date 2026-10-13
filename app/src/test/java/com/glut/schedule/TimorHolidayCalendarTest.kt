@@ -40,6 +40,12 @@ class TimorHolidayCalendarTest {
             CalendarDayKind.ADJUSTED_WORKDAY,
             calendar.dayInfo(LocalDate.of(2026, 2, 21)).kind
         )
+        // 补班名必须**原样保留**（不能被 normalizeHolidayName 塌缩成「春节」）：
+        // 自动调课的推导靠它判断「属于哪个节、是节前还是节后」。
+        assertEquals(
+            "春节后补班",
+            calendar.dayInfo(LocalDate.of(2026, 2, 21)).holidayName
+        )
         assertEquals(
             CalendarDayKind.ORDINARY,
             calendar.dayInfo(LocalDate.of(2026, 3, 8)).kind
@@ -51,6 +57,33 @@ class TimorHolidayCalendarTest {
         assertEquals("2026-02-16", calendar.holidays.first().startDate)
         assertEquals("2026-02-17", calendar.holidays.first().endDate)
         assertEquals(2, calendar.holidays.first().daysOff)
+    }
+
+    @Test
+    fun adjustedWorkdaysExposeTheRawNameAndAreSorted() {
+        val calendar = TimorHolidayCalendarParser.parse(
+            json = """
+                {
+                  "code": 0,
+                  "holiday": {
+                    "02-21": {"holiday": false, "name": "春节后补班"},
+                    "02-14": {"holiday": false, "name": "春节前补班"},
+                    "02-17": {"holiday": true, "name": "初一"}
+                  }
+                }
+            """.trimIndent(),
+            year = 2026
+        )!!
+
+        assertEquals(
+            listOf(
+                LocalDate.of(2026, 2, 14) to "春节前补班",
+                LocalDate.of(2026, 2, 21) to "春节后补班"
+            ),
+            calendar.adjustedWorkdays.map { it.date to it.name }
+        )
+        // 放假日不进补班日列表，否则推导会把假期本身当成补班日去补课。
+        assertTrue(calendar.adjustedWorkdays.none { it.date == LocalDate.of(2026, 2, 17) })
     }
 
     @Test

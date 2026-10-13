@@ -23,8 +23,11 @@ import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.parser.AcademicScheduleParser
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readStringLimited
+import com.glut.schedule.service.holiday.AutoDayCopyCoordinator
+import com.glut.schedule.service.holiday.MakeupTableClient
 import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
 import com.glut.schedule.service.holiday.TimorHolidayClient
+import com.glut.schedule.service.holiday.refreshMakeupTable
 import com.glut.schedule.service.holiday.refreshMissingHolidayYears
 import com.glut.schedule.ui.SingleFlightGuard
 import kotlinx.coroutines.Dispatchers
@@ -113,7 +116,9 @@ class SemesterOverviewViewModel(
     private val sessionStore: AcademicSessionStore,
     private val scheduleParser: AcademicScheduleParser,
     private val loginService: AcademicLoginService,
-    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
+    private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient(),
+    private val makeupTableClient: MakeupTableClient = MakeupTableClient()
 ) : ViewModel() {
 
     private val _isRefreshing = MutableStateFlow(false)
@@ -315,6 +320,9 @@ class SemesterOverviewViewModel(
                 val adjustments = scheduleParser.parseAdjustments(html)
                 // 使用请求开始时捕获的学期，防止网络等待期间切换学期导致写错缓存。
                 repository.replaceSemesterAdjustments(targetSemesterId, adjustments)
+                // 调课记录刚变，自动调课的「让位教务」判定必须跟着重算：否则教务新下发的
+                // 补课卡会与自动副本同时显示同一节课。非当前学期时 recompose 是 no-op。
+                repository.currentSemester.first()?.id?.let { autoDayCopyCoordinator.recompose(it) }
                 _message.value = if (adjustments.isNotEmpty()) "已更新 ${adjustments.size} 条调课记录"
                 else "当前无调课记录"
             } catch (e: Exception) {
@@ -391,6 +399,11 @@ class SemesterOverviewViewModel(
                 cachedYears = settingsStore.holidayCacheByYear.first(),
                 saveYear = settingsStore::setHolidayYearCache
             )
+            // 调休补课对照表同属「用户主动刷新时才取」的旁路数据。fetchMissing = false 的
+            // 进入页面路径一行都不会走到这里，继续满足「进入页面只读缓存」。
+            refreshMakeupTable(makeupTableClient, settingsStore::setHolidayMakeupTableJson)
+            // 两者都可能变了，刷新完重算一次自动调课（纯本地计算，不联网）。
+            repository.currentSemester.first()?.id?.let { autoDayCopyCoordinator.recompose(it) }
         }
         val cached = settingsStore.holidayCacheByYear.first()
         val allHolidays = mutableListOf<HolidayInfo>()
@@ -442,7 +455,9 @@ class SemesterOverviewViewModelFactory(
     private val sessionStore: AcademicSessionStore,
     private val scheduleParser: AcademicScheduleParser,
     private val loginService: AcademicLoginService,
-    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient()
+    private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
+    private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient(),
+    private val makeupTableClient: MakeupTableClient = MakeupTableClient()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -452,7 +467,9 @@ class SemesterOverviewViewModelFactory(
             sessionStore,
             scheduleParser,
             loginService,
-            timorHolidayClient
+            autoDayCopyCoordinator,
+            timorHolidayClient,
+            makeupTableClient
         ) as T
     }
 }

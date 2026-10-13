@@ -36,6 +36,8 @@ import com.glut.schedule.service.NoticeChecker
 import com.glut.schedule.service.UpdateChecker
 import com.glut.schedule.service.greeting.GreetingTemplateRepository
 import com.glut.schedule.service.greeting.HttpGreetingTemplateRemote
+import com.glut.schedule.service.holiday.AutoDayCopyCoordinator
+import com.glut.schedule.service.holiday.MakeupTableClient
 import com.glut.schedule.service.holiday.TimorHolidayClient
 import com.glut.schedule.partner.PartnerScheduleApiService
 import com.glut.schedule.partner.PartnerScheduleStore
@@ -110,22 +112,25 @@ class ScheduleApplication : Application() {
     @OptIn(FlowPreview::class)
     private fun observeWidgetDataChanges() {
         applicationScope.launch {
-            // 调休规则也要参与触发：否则用户在 App 内新增/删除规则后，
-            // 小组件要等到下一次定时刷新才会跟着变。
-            val currentSemesterManualDayCopies = combine(
+            // 调休规则（手动 + 自动）也要参与触发：否则用户在 App 内新增/删除规则、
+            // 或打开自动调课开关之后，小组件要等到下一次定时刷新才会跟着变。
+            val currentSemesterDayCopies = combine(
                 appContainer.scheduleRepository.currentSemester,
-                appContainer.settingsStore.manualDayCopies
-            ) { semester, rulesBySemester ->
-                rulesBySemester[semester?.id.orEmpty()].orEmpty()
+                appContainer.settingsStore.manualDayCopies,
+                appContainer.settingsStore.autoDayCopies
+            ) { semester, manualRules, autoRules ->
+                val semesterId = semester?.id.orEmpty()
+                manualRules[semesterId].orEmpty() +
+                    autoRules[semesterId].orEmpty().map { it.asManualRule() }
             }
             combine(
                 appContainer.scheduleRepository.currentCourses,
                 appContainer.scheduleRepository.currentClassPeriods,
                 appContainer.settingsStore.semesterStartMonday,
                 appContainer.settingsStore.semesterEndDate,
-                currentSemesterManualDayCopies
-            ) { courses, periods, semesterStart, semesterEnd, manualDayCopies ->
-                listOf(courses, periods, semesterStart, semesterEnd, manualDayCopies)
+                currentSemesterDayCopies
+            ) { courses, periods, semesterStart, semesterEnd, dayCopies ->
+                listOf(courses, periods, semesterStart, semesterEnd, dayCopies)
             }.debounce(500)
                 .collect { ScheduleWidgetUpdater.updateAll(this@ScheduleApplication) }
         }
@@ -252,6 +257,9 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
                 classPeriods = scheduleRepository.currentClassPeriods.first(),
                 portalMaxWeek = payload.portalMaxWeek
             )
+            // 与其余导入路径一致：调课记录刚落库，自动调课的让位判定要跟着重算。
+            // 批量下载通常是历史学期，那时 recompose 是 no-op。
+            autoDayCopyCoordinator.recompose(semester.id)
         },
         updateCacheStatus = scheduleRepository::updateSemesterCacheStatus
     )
@@ -274,4 +282,8 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
     val partnerScheduleApiService = PartnerScheduleApiService()
     // 首页课表角标与学期概览共用同一个客户端与同一份按年缓存，避免两处各自拉取、互相覆盖。
     val timorHolidayClient = TimorHolidayClient()
+    // 调休补课对照表：取数与重算刻意分开——取数只在用户主动刷新时发生（同节假日），
+    // 重算是纯本地的纯函数调用，可以随时重跑。
+    val makeupTableClient = MakeupTableClient()
+    val autoDayCopyCoordinator = AutoDayCopyCoordinator(settingsStore, scheduleRepository)
 }

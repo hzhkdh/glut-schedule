@@ -18,7 +18,7 @@ class ScheduleWidgetDataSource(private val context: Context) {
                 classPeriods = container.scheduleRepository.currentClassPeriods.first(),
                 semesterStartMonday = container.settingsStore.semesterStartMonday.first(),
                 semesterEndDate = container.settingsStore.semesterEndDate.first(),
-                manualDayCopies = loadManualDayCopies()
+                manualDayCopies = loadDayCopies()
             )
         } catch (error: CancellationException) {
             throw error
@@ -36,18 +36,24 @@ class ScheduleWidgetDataSource(private val context: Context) {
     }
 
     /**
-     * 手动调休规则只影响「今天多出来的副本」，拿不到时按「没有规则」处理。
+     * 手动 + 自动的调休规则合并成一份。只影响「今天多出来的副本」，拿不到时按「没有规则」处理。
      *
      * 单独容错而不是并进上面那个大 try：一次 DataStore 抖动不该让整个快照退化成错误态，
      * 那会顺带把当天的刷新链条一起掐断。
+     *
+     * 自动调课与手动调课在小组件里合并成同一种规则（`manualCopyBlocksForWeek` 只认
+     * source/target）。`autoDayCopies` 这个 Flow 在开关关闭时恒为空表——闸门在 store 里，
+     * 所以这里不需要再判断开关状态。
      */
-    private suspend fun loadManualDayCopies(): List<ManualDayCopyRule> {
+    private suspend fun loadDayCopies(): List<ManualDayCopyRule> {
         return try {
             val container = (context.applicationContext as ScheduleApplication).appContainer
             // 调休规则按学期 id 分组存储，这里只取**当前学期**那一份——与首页、与本文件
             // 既有的「小组件永远展示当前学期而非历史学期」口径一致。
             val currentSemesterId = container.scheduleRepository.currentSemester.first()?.id.orEmpty()
-            container.settingsStore.manualDayCopies.first()[currentSemesterId].orEmpty()
+            container.settingsStore.manualDayCopies.first()[currentSemesterId].orEmpty() +
+                container.settingsStore.autoDayCopies.first()[currentSemesterId].orEmpty()
+                    .map { it.asManualRule() }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {

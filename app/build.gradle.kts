@@ -22,6 +22,14 @@ android {
         versionName = "0.25.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+        // 调休补课对照表：与 update.json / notices.json 同域同流水线（Cloudflare Pages）。
+        // 用编译期常量而不是可变配置——地址由发布方决定，不该由用户或远端改写。
+        buildConfigField(
+            "String",
+            "HOLIDAY_MAKEUP_TABLE_URL",
+            "\"https://update.999314.xyz/holiday-makeups.json\""
+        )
+
     }
 
     val keystorePropertiesFile = rootProject.file("keystore.properties")

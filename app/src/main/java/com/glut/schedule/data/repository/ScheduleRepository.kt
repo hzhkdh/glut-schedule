@@ -299,6 +299,17 @@ class ScheduleRepository(
         entities.filter { it.semesterId == semesterId }.map { it.toModel() }
     }
 
+    /**
+     * 指定学期的教务调课记录。
+     *
+     * 自动调课的「让位教务」判定需要**按传进来的学期**取，不能跟着 [viewedSemesterId] 走：
+     * 用户可能正在看历史学期，而规则只作用于当前学期。
+     */
+    suspend fun adjustmentsForSemester(semesterId: String): List<SemesterAdjustment> =
+        dao.observeSemesterAdjustments().first()
+            .filter { it.semesterId == semesterId }
+            .map { it.toModel() }
+
     suspend fun replaceSemesterAdjustments(
         semesterId: String,
         adjustments: List<SemesterAdjustment>

@@ -16,12 +16,19 @@ import com.glut.schedule.data.model.DEFAULT_SEMESTER_START_MONDAY
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
+import com.glut.schedule.data.model.AutoDayCopyRule
 import com.glut.schedule.data.model.HiddenCourseRule
 import com.glut.schedule.data.model.ManualDayCopyRule
 import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.data.model.ScheduleBackgroundPreferences
+import com.glut.schedule.data.model.decodeAutoCopyNotices
+import com.glut.schedule.data.model.decodeAutoDayCopyRules
+import com.glut.schedule.data.model.decodeAutoDayCopySuppressions
 import com.glut.schedule.data.model.decodeHiddenCourseRules
 import com.glut.schedule.data.model.decodeManualDayCopyRules
+import com.glut.schedule.data.model.encodeAutoCopyNotices
+import com.glut.schedule.data.model.encodeAutoDayCopyRules
+import com.glut.schedule.data.model.encodeAutoDayCopySuppressions
 import com.glut.schedule.data.model.encodeHiddenCourseRules
 import com.glut.schedule.data.model.encodeManualDayCopyRules
 import com.glut.schedule.data.model.snapBackgroundDimAmount
@@ -35,7 +42,9 @@ import com.glut.schedule.service.greeting.GreetingTemplateCacheSnapshot
 import com.glut.schedule.service.holiday.encodeHolidayYearCache
 import com.glut.schedule.service.holiday.holidayYearCache
 import com.glut.schedule.service.holiday.isUsableHolidayYearPayload
+import com.glut.schedule.service.holiday.isUsableMakeupTablePayload
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -137,6 +146,15 @@ class ScheduleSettingsStore(
     private val holidaysCacheDateKey = stringPreferencesKey("holidays_cache_date")
     private val holidaysCacheYearsKey = stringPreferencesKey("holidays_cache_years")
     private val manualDayCopiesKey = stringSetPreferencesKey("manual_day_copies")
+    /**
+     * 自动调课开关。**默认关闭**：关闭时「调休调课」的行为与没有这个功能时完全一致，
+     * 只有用户手动添加的规则生效。
+     */
+    private val autoDayCopyEnabledKey = booleanPreferencesKey("auto_day_copy_enabled")
+    private val autoDayCopiesKey = stringSetPreferencesKey("auto_day_copies")
+    private val autoDayCopySuppressionsKey = stringSetPreferencesKey("auto_day_copy_suppressions")
+    private val autoDayCopyNoticesKey = stringPreferencesKey("auto_day_copy_notices")
+    private val holidayMakeupTableKey = stringPreferencesKey("holiday_makeup_table_json")
     private val hiddenCourseCardsKey = stringSetPreferencesKey("hidden_course_cards")
     private val currentSemesterIdKey = stringPreferencesKey("current_semester_id")
     private val confirmedEnrollmentYearKey = intPreferencesKey("confirmed_enrollment_year")
@@ -652,6 +670,109 @@ class ScheduleSettingsStore(
 
     suspend fun clearHiddenCourseRules(semesterId: String) = setHiddenCourseRules(semesterId, emptyList())
 
+    // ---- 自动调课（「调休调课」页的开关打开时生效） ----
+
+    /**
+     * 自动调课开关。**默认打开**（详见 [autoDayCopyEnabledFromStored]）；用户拨过关的保持关闭。
+     */
+    val autoDayCopyEnabled: Flow<Boolean> = context.scheduleSettings.data.map { preferences ->
+        autoDayCopyEnabledFromStored(preferences[autoDayCopyEnabledKey])
+    }.distinctUntilChanged()
+
+    suspend fun setAutoDayCopyEnabled(enabled: Boolean) {
+        context.scheduleSettings.edit { preferences ->
+            preferences[autoDayCopyEnabledKey] = enabled
+        }
+    }
+
+    /**
+     * 自动调课规则。**开关关闭时恒为空表**——这是渲染层的最后一道闸门。
+     *
+     * 关闭开关时调用方会显式清空存储，但那是一次异步写入，期间读取方有可能拿到旧值；
+     * 在这里再闸一次，任何消费方（首页、桌面小组件、编辑页）都不可能把已关闭的规则画出来。
+     */
+    val autoDayCopies: Flow<Map<String, List<AutoDayCopyRule>>> =
+        combine(autoDayCopyEnabled, context.scheduleSettings.data) { enabled, preferences ->
+            if (!enabled) emptyMap() else decodeAutoDayCopyRules(preferences[autoDayCopiesKey].orEmpty())
+        }.distinctUntilChanged()
+
+    suspend fun setAutoDayCopies(semesterId: String, rules: List<AutoDayCopyRule>) {
+        if (semesterId.isBlank()) return
+        context.scheduleSettings.edit { preferences ->
+            val current = decodeAutoDayCopyRules(preferences[autoDayCopiesKey].orEmpty()).toMutableMap()
+            if (rules.isEmpty()) current.remove(semesterId) else current[semesterId] = rules
+            preferences[autoDayCopiesKey] = encodeAutoDayCopyRules(current)
+        }
+    }
+
+    suspend fun clearAutoDayCopies(semesterId: String) = setAutoDayCopies(semesterId, emptyList())
+
+    /**
+     * 被用户删掉的自动规则（每学期一份）。
+     *
+     * 这是「默认生效、不点确认」模式下用户唯一的纠错手段，所以**不随开关关闭而清除**——
+     * 那是用户的意图记录，不是自动生成的数据。要恢复得由用户显式点「恢复已忽略的自动调课」。
+     */
+    val autoDayCopySuppressions: Flow<Map<String, Set<String>>> =
+        context.scheduleSettings.data.map { preferences ->
+            decodeAutoDayCopySuppressions(preferences[autoDayCopySuppressionsKey].orEmpty())
+        }.distinctUntilChanged()
+
+    suspend fun addAutoDayCopySuppression(semesterId: String, ruleId: String) {
+        if (semesterId.isBlank() || ruleId.isBlank()) return
+        context.scheduleSettings.edit { preferences ->
+            val current = decodeAutoDayCopySuppressions(
+                preferences[autoDayCopySuppressionsKey].orEmpty()
+            ).toMutableMap()
+            current[semesterId] = current[semesterId].orEmpty() + ruleId
+            preferences[autoDayCopySuppressionsKey] = encodeAutoDayCopySuppressions(current)
+        }
+    }
+
+    suspend fun clearAutoDayCopySuppressions(semesterId: String) {
+        if (semesterId.isBlank()) return
+        context.scheduleSettings.edit { preferences ->
+            val current = decodeAutoDayCopySuppressions(
+                preferences[autoDayCopySuppressionsKey].orEmpty()
+            ).toMutableMap()
+            current.remove(semesterId)
+            preferences[autoDayCopySuppressionsKey] = encodeAutoDayCopySuppressions(current)
+        }
+    }
+
+    /** 编辑页上「这次为什么没自动补」的说明行。 */
+    val autoDayCopyNotices: Flow<Map<String, List<String>>> =
+        context.scheduleSettings.data.map { preferences ->
+            decodeAutoCopyNotices(preferences[autoDayCopyNoticesKey].orEmpty())
+        }.distinctUntilChanged()
+
+    suspend fun setAutoCopyNotices(semesterId: String, notices: List<String>) {
+        if (semesterId.isBlank()) return
+        context.scheduleSettings.edit { preferences ->
+            val current = decodeAutoCopyNotices(preferences[autoDayCopyNoticesKey].orEmpty()).toMutableMap()
+            if (notices.isEmpty()) current.remove(semesterId) else current[semesterId] = notices
+            preferences[autoDayCopyNoticesKey] = encodeAutoCopyNotices(current)
+        }
+    }
+
+    /** 远端对照表原文（按学期分组的 JSON 由 `MakeupTableModels` 解析）。取数在 `MakeupTableClient`。 */
+    val holidayMakeupTableJson: Flow<String> = context.scheduleSettings.data.map { preferences ->
+        preferences[holidayMakeupTableKey].orEmpty()
+    }.distinctUntilChanged()
+
+    /**
+     * 写入对照表原文。**写闸门**：只有真能解析成表的载荷才落盘。
+     *
+     * 比通知缓存严格是必要的：静态托管在路径不存在时常常返回 200 + 一个 HTML 兜底页，
+     * 而「拿到就存」会让那个 HTML 被解析成「表被清空了」，把远端规则全部抹掉且无法自动恢复。
+     */
+    suspend fun setHolidayMakeupTableJson(json: String) {
+        if (!isUsableMakeupTablePayload(json)) return
+        context.scheduleSettings.edit { preferences ->
+            preferences[holidayMakeupTableKey] = json
+        }
+    }
+
     suspend fun clearAll() {
         context.scheduleSettings.edit { it.clear() }
     }
@@ -741,6 +862,17 @@ class ScheduleSettingsStore(
 }
 
 internal fun greetingEnabledFromStored(value: Boolean?): Boolean = value ?: true
+
+/**
+ * 自动调课开关的默认值：**打开**。
+ *
+ * 新增键对老用户即为打开，不需要任何一次性迁移：学校调休本来就是要补课的，不该要求用户先去
+ * 某个二级页面把开关拨开才能看到正确的课表。**显式关过的人（存了 `false`）保持关闭**——拨过
+ * 开关的选择不会被这次默认值改动覆盖。
+ *
+ * 抽成纯函数是为了让测试能直接钉住上面这两条。
+ */
+internal fun autoDayCopyEnabledFromStored(value: Boolean?): Boolean = value ?: true
 
 internal fun encodeClassPeriods(periods: List<ClassPeriod>): Set<String> {
     return periods.map { period ->
