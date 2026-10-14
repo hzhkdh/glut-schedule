@@ -52,10 +52,13 @@ class MultiSemesterUiContractTest {
     fun admissionParsingUsesTheStudentNumberFromEachAuthenticationAttempt() {
         val viewModel = page("DirectLoginViewModel.kt")
 
-        val successCallsWithSnapshot = viewModel.lineSequence().count { line ->
-            line.contains("onLoginSuccess(") &&
-                line.contains("state.rememberPassword, state.username")
-        }
+        // 断言前先把源码归一化成单行：调用被折成多行时（南宁那条改走 CaptchaLoginSession 后就折了），
+        // 逐行匹配会整条漏掉，于是这条契约会**假绿**——数不到 3，却不报出真正的问题。
+        // 收尾的 `\s*\)` 不能省：折行后 `state.username` 与 `)` 之间会留一个空格。
+        val normalizedViewModel = viewModel.replace(Regex("\\s+"), " ")
+        val successCallsWithSnapshot = Regex(
+            "onLoginSuccess\\([^)]*state\\.rememberPassword,\\s*state\\.username\\s*\\)"
+        ).findAll(normalizedViewModel).count()
         assertTrue(
             "Guilin direct, OA fallback, and Nanning captcha success must pass their student-number snapshot",
             successCallsWithSnapshot == 3

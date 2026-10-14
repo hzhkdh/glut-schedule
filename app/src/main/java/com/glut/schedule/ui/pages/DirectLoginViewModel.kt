@@ -1,7 +1,6 @@
 package com.glut.schedule.ui.pages
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -39,16 +38,13 @@ import com.glut.schedule.service.academic.AcademicSemesterCalendarResolver
 import com.glut.schedule.service.academic.AcademicSemesterProbePlanner
 import com.glut.schedule.service.academic.AcademicSemesterViewPlanner
 import com.glut.schedule.service.academic.ApiProbeService
-import com.glut.schedule.service.academic.CapturingCookieJar
+import com.glut.schedule.service.academic.CaptchaLoginSession
 import com.glut.schedule.service.academic.CredentialStore
-import com.glut.schedule.service.academic.NanningPasswordHash
 import com.glut.schedule.service.academic.hasLocalAcademicSession
 import com.glut.schedule.service.academic.hasUsableAcademicCookie
 import com.glut.schedule.service.academic.shouldClearStoredCredentialsForWechatLogin
 import com.glut.schedule.service.parser.AcademicScheduleParser
-import com.glut.schedule.service.network.MAX_BOOLEAN_RESPONSE_BYTES
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
-import com.glut.schedule.service.network.MAX_IMAGE_RESPONSE_BYTES
 import com.glut.schedule.service.network.readBytesLimited
 import com.glut.schedule.service.holiday.AutoDayCopyCoordinator
 import com.glut.schedule.service.holiday.MakeupTableClient
@@ -72,8 +68,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import java.net.URLEncoder
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
@@ -167,7 +161,14 @@ class DirectLoginViewModel(
     private val studyPlanParser: StudyPlanParser = StudyPlanParser(),
     private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
     private val timorHolidayClient: TimorHolidayClient = TimorHolidayClient(),
-    private val makeupTableClient: MakeupTableClient = MakeupTableClient()
+    private val makeupTableClient: MakeupTableClient = MakeupTableClient(),
+    /**
+     * 南宁/研究生的两步验证码登录。
+     *
+     * 刻意**不复用**全局续期协调器里那一个：导入页的验证码弹窗与「菜单里原地续期」的弹窗
+     * 可能同时存在，共用一个会话实例会让两边互相把对方的 CookieJar 清掉。
+     */
+    private val captchaLogin: CaptchaLoginSession = CaptchaLoginSession()
 ) : ViewModel() {
     private val loginGuard = SingleFlightGuard()
 
@@ -185,25 +186,6 @@ class DirectLoginViewModel(
     private var credentialsCleared = false
     /** 用户是否手动动过来源下拉框；动过就不再被「上次成功的来源」覆盖。 */
     private var sourceTouchedByUser = false
-
-    // 南宁登录会话状态（放在 uiState 之外，避免 data class 里塞大对象）
-    private var nanningCaptchaBytes: ByteArray? = null
-    // 每次南宁登录尝试都换一个全新的 CookieJar → 全新会话
-    private var nanningCookieJar: CapturingCookieJar? = null
-
-    // 研究生会话：CookieJar 承载连接状态，上下文（学年/学期/学号）只在内存里，
-    // 不做任何持久化——它含个人身份信息，且每次登录都会重新取回。
-    private var graduateClient: GraduateClient? = null
-    private var graduateSession: GraduateLoginSession? = null
-
-    // CookieJar-based client: cookies auto-persist across requests like a browser
-    private fun nanningHttpClient(cookieJar: CapturingCookieJar): OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .followRedirects(false)
-        .followSslRedirects(false)
-        .cookieJar(cookieJar)
-        .build()
 
     init {
         viewModelScope.launch {
@@ -360,10 +342,7 @@ class DirectLoginViewModel(
     fun clearLoginState() {
         credentialsCleared = true
         loginHttpClient = AcademicLoginHttpClient()
-        nanningCaptchaBytes = null
-        nanningCookieJar = null
-        graduateClient = null
-        graduateSession = null
+        captchaLogin.reset()
         sourceTouchedByUser = false
         _uiState.value = DirectLoginUiState(
             rememberPassword = false,
@@ -506,43 +485,24 @@ class DirectLoginViewModel(
         _uiState.value = _uiState.value.copy(isLoggingIn = true, message = "正在获取验证码...")
         viewModelScope.launch {
             try {
-                // Create fresh CookieJar for this login session (like a new browser tab)
-                val cj = CapturingCookieJar()
-                nanningCookieJar = cj
-                val client = nanningHttpClient(cj)
+                showCaptchaOrError(captchaLogin.requestCaptcha(ImportSource.NANNING))
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "获取验证码失败: ${e.message}")
+            } finally {
+                loginGuard.finish()
+            }
+        }
+    }
 
-                // Step 1: Fetch login page → CookieJar auto-saves JSESSIONID
-                val pageOk = withContext(Dispatchers.IO) {
-                    runCatching {
-                        client.newCall(Request.Builder()
-                            .url("${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
-                            .header("User-Agent", UA).get().build()
-                        ).execute().use { it.isSuccessful }
-                    }.getOrDefault(false)
-                }
-                if (!pageOk) {
-                    _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "无法连接南宁分校教务系统")
-                    return@launch
-                }
-
-                // Step 2: Download captcha → CookieJar auto-sends JSESSIONID
-                val captchaBytes = withContext(Dispatchers.IO) {
-                    runCatching {
-                        client.newCall(Request.Builder()
-                            .url("${AcademicLoginResult.NANNING_URL}/academic/getCaptcha.do?captchaCheckCode=0&random=${System.nanoTime()}")
-                            .header("User-Agent", UA)
-                            .header("Referer", "${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
-                            .get().build()
-                        ).execute().use { it.body?.readBytesLimited(MAX_IMAGE_RESPONSE_BYTES) }
-                    }.getOrNull()
-                }
-                if (captchaBytes == null) {
-                    _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "无法获取验证码图片")
-                    return@launch
-                }
-                nanningCaptchaBytes = captchaBytes
-
-                val bitmap = BitmapFactory.decodeByteArray(captchaBytes, 0, captchaBytes.size)
+    /**
+     * 把「取图」的结果反映到界面上。
+     *
+     * 取图本身在 [CaptchaLoginSession] 里，这里只负责把结果翻译成
+     * 「弹窗（带图、清空输入）」或「一句失败原因」——界面状态不跨层。
+     */
+    private fun showCaptchaOrError(result: Result<Bitmap>) {
+        result.fold(
+            onSuccess = { bitmap ->
                 _uiState.value = _uiState.value.copy(
                     isLoggingIn = false,
                     showCaptchaDialog = true,
@@ -550,12 +510,14 @@ class DirectLoginViewModel(
                     captchaInput = "",
                     message = ""
                 )
-            } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "获取验证码失败: ${e.message}")
-            } finally {
-                loginGuard.finish()
+            },
+            onFailure = { error ->
+                _uiState.value = _uiState.value.copy(
+                    isLoggingIn = false,
+                    message = error.message?.takeIf { it.isNotBlank() } ?: "无法获取验证码图片"
+                )
             }
-        }
+        )
     }
 
     /** 用户确认验证码输入 —— 按当前来源分派到南宁或研究生登录。 */
@@ -570,8 +532,7 @@ class DirectLoginViewModel(
 
     private fun submitNanningCaptcha() {
         val state = _uiState.value
-        val captchaCode = state.captchaInput.trim()
-        val cj = nanningCookieJar ?: run {
+        if (!captchaLogin.hasSession()) {
             _uiState.value = state.copy(message = "会话已过期，请重新开始")
             return
         }
@@ -580,18 +541,32 @@ class DirectLoginViewModel(
 
         viewModelScope.launch {
             try {
-                val loginCookie = performNanningLogin(cj, state.username, state.password, captchaCode)
-                if (loginCookie != null) {
-                    onLoginSuccess(loginCookie, AcademicLoginResult.NANNING_URL, ImportSource.NANNING, state.rememberPassword, state.username)
-                } else {
-                    refreshCaptcha()
-                    _uiState.value = _uiState.value.copy(
-                        isLoggingIn = false,
-                        showCaptchaDialog = true,
-                        captchaInput = "",
-                        message = "验证码或密码错误，请重试"
-                    )
-                }
+                captchaLogin.submit(
+                    source = ImportSource.NANNING,
+                    username = state.username,
+                    password = state.password,
+                    captcha = state.captchaInput.trim()
+                ).fold(
+                    onSuccess = { renewed ->
+                        onLoginSuccess(
+                            renewed.cookie,
+                            renewed.campusBaseUrl,
+                            ImportSource.NANNING,
+                            state.rememberPassword,
+                            state.username
+                        )
+                    },
+                    onFailure = { error ->
+                        refreshCaptcha()
+                        _uiState.value = _uiState.value.copy(
+                            isLoggingIn = false,
+                            showCaptchaDialog = true,
+                            captchaInput = "",
+                            message = error.message?.takeIf { it.isNotBlank() }
+                                ?: "验证码或密码错误，请重试"
+                        )
+                    }
+                )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "登录失败: ${e.message}")
             } finally {
@@ -602,9 +577,7 @@ class DirectLoginViewModel(
 
     fun cancelCaptcha() {
         _uiState.value = _uiState.value.copy(showCaptchaDialog = false, captchaInput = "", isLoggingIn = false)
-        nanningCaptchaBytes = null
-        nanningCookieJar = null
-        graduateClient = null
+        captchaLogin.reset()
     }
 
     /** 刷新验证码图片（用户点了刷新按钮）。 */
@@ -613,121 +586,11 @@ class DirectLoginViewModel(
     }
 
     fun refreshNanningCaptcha() {
-        val cj = nanningCookieJar ?: return
         viewModelScope.launch {
-            try {
-                val client = nanningHttpClient(cj)
-                val bytes = withContext(Dispatchers.IO) {
-                    runCatching {
-                        client.newCall(Request.Builder()
-                            .url("${AcademicLoginResult.NANNING_URL}/academic/getCaptcha.do?captchaCheckCode=0&random=${System.nanoTime()}")
-                            .header("User-Agent", UA)
-                            .header("Referer", "${AcademicLoginResult.NANNING_URL}/academic/common/security/affairLogin.jsp")
-                            .get().build()
-                        ).execute().use { it.body?.readBytesLimited(MAX_IMAGE_RESPONSE_BYTES) }
-                    }.getOrNull()
-                }
-                if (bytes != null) {
-                    nanningCaptchaBytes = bytes
-                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    _uiState.value = _uiState.value.copy(captchaBitmap = bitmap, captchaInput = "")
-                }
-            } catch (_: Exception) { }
-        }
-    }
-
-    // ---- Nanning HTTP helpers (CookieJar-based, no manual cookie passing) ----
-
-    private suspend fun performNanningLogin(
-        cj: CapturingCookieJar,
-        username: String,
-        password: String,
-        captcha: String
-    ): String? = withContext(Dispatchers.IO) {
-        runCatching {
-            val client = nanningHttpClient(cj)
-            val base = AcademicLoginResult.NANNING_URL
-            val referer = "$base/academic/common/security/affairLogin.jsp"
-
-            // Step 1: Validate captcha (matches validCaptcha() → AJAX)
-            val captchaOk = validateNanningCaptcha(client, captcha, base, referer)
-            if (!captchaOk) return@runCatching null
-
-            // Step 2: Hash password + build login URL
-            val hashedPassword = NanningPasswordHash.hash(password)
-            val loginUrl = "$base/academic/j_acegi_security_check" +
-                "?j_username=${URLEncoder.encode(username, "UTF-8")}" +
-                "&j_password=${URLEncoder.encode(hashedPassword, "UTF-8")}" +
-                "&j_captcha=${URLEncoder.encode(captcha, "UTF-8")}"
-
-            // Step 3: Execute login → CookieJar auto-captures new JSESSIONID from Set-Cookie
-            client.newCall(Request.Builder()
-                .url(loginUrl)
-                .header("User-Agent", UA)
-                .header("Referer", referer)
-                .get().build()
-            ).execute().use { response ->
-                // CookieJar automatically saves any Set-Cookie from this response!
-                val location = response.header("Location") ?: ""
-                when {
-                    location.contains("affairLogin", ignoreCase = true) ||
-                        location.contains("error", ignoreCase = true) -> return@runCatching null
-                    location.isNotBlank() -> followNanningRedirects(client, location, base)
-                }
+            // 有会话就只换图（服务端验证码绑在会话上，换图不能连会话一起换）。
+            captchaLogin.refreshCaptcha(ImportSource.NANNING).onSuccess { bitmap ->
+                _uiState.value = _uiState.value.copy(captchaBitmap = bitmap, captchaInput = "")
             }
-
-            // Step 4: Verify by fetching a protected page
-            verifyNanningLogin(client, base)?.let {
-                cj.cookieHeader()
-            }
-        }.getOrNull()
-    }
-
-    private fun validateNanningCaptcha(
-        client: OkHttpClient, captcha: String, base: String, referer: String
-    ): Boolean {
-        val encoded = URLEncoder.encode(captcha, "UTF-8")
-        return client.newCall(Request.Builder()
-            .url("$base/academic/checkCaptcha.do?captchaCode=$encoded")
-            .header("User-Agent", UA)
-            .header("Referer", referer)
-            .header("X-Requested-With", "XMLHttpRequest")
-            .header("Origin", base)
-            .header("Accept", "text/plain, */*; q=0.01")
-            .method("POST", ByteArray(0).toRequestBody(null))
-            .build()
-        ).execute().use { response ->
-            response.body?.readStringLimited(MAX_BOOLEAN_RESPONSE_BYTES).orEmpty().trim() == "true"
-        }
-    }
-
-    /** Follow redirect chain; CookieJar auto-collects cookies from each hop. */
-    private fun followNanningRedirects(client: OkHttpClient, startUrl: String, base: String) {
-        var url = startUrl
-        for (hop in 1..5) {
-            val resolved = if (url.startsWith("http")) url else "$base$url"
-            client.newCall(Request.Builder()
-                .url(resolved)
-                .header("User-Agent", UA)
-                .get().build()
-            ).execute().use { response ->
-                val location = response.header("Location") ?: ""
-                if (location.isBlank()) return
-                url = location
-            }
-        }
-    }
-
-    private fun verifyNanningLogin(client: OkHttpClient, base: String): Boolean {
-        return client.newCall(Request.Builder()
-            .url("$base/academic/personal/framePage.do")
-            .header("User-Agent", UA)
-            .post(okhttp3.FormBody.Builder().build())
-            .build()
-        ).execute().use { response ->
-            val location = response.header("Location") ?: ""
-            val body = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
-            isAuthenticatedNanningResponse(response.code, location, body)
         }
     }
 
@@ -744,27 +607,9 @@ class DirectLoginViewModel(
         _uiState.value = _uiState.value.copy(isLoggingIn = true, message = "正在获取验证码...")
         viewModelScope.launch {
             try {
-                val client = GraduateClient()
-                val attempt = withContext(Dispatchers.IO) { runCatching { client.captcha() } }
-                val bytes = attempt.getOrNull()
-                if (bytes == null) {
-                    // 把原因带出来。此前用 getOrNull() 直接吞掉异常，界面只有一句
-                    // 「无法获取研究生教务验证码」，看不出是网络、HTTP 状态码还是代码缺陷。
-                    val detail = attempt.exceptionOrNull()?.message?.takeIf { it.isNotBlank() }
-                    _uiState.value = _uiState.value.copy(
-                        isLoggingIn = false,
-                        message = detail?.let { "无法获取研究生教务验证码：$it" } ?: "无法获取研究生教务验证码"
-                    )
-                    return@launch
-                }
-                graduateClient = client
-                _uiState.value = _uiState.value.copy(
-                    isLoggingIn = false,
-                    showCaptchaDialog = true,
-                    captchaBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size),
-                    captchaInput = "",
-                    message = ""
-                )
+                // 取图失败的原因由 CaptchaLoginSession 组装好（网络 / HTTP 状态码 / 代码缺陷），
+                // 这里原样展示，不再用 getOrNull() 把它吞成一句「无法获取验证码」。
+                showCaptchaOrError(captchaLogin.requestCaptcha(ImportSource.GRADUATE))
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "获取验证码失败: ${e.message}")
             } finally {
@@ -775,19 +620,16 @@ class DirectLoginViewModel(
 
     /** 刷新研究生验证码：换一张图，不新建会话。 */
     private fun refreshGraduateCaptcha() {
-        val client = graduateClient ?: return
         viewModelScope.launch {
-            val bytes = withContext(Dispatchers.IO) { runCatching { client.captcha() }.getOrNull() } ?: return@launch
-            _uiState.value = _uiState.value.copy(
-                captchaBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size),
-                captchaInput = ""
-            )
+            captchaLogin.refreshCaptcha(ImportSource.GRADUATE).onSuccess { bitmap ->
+                _uiState.value = _uiState.value.copy(captchaBitmap = bitmap, captchaInput = "")
+            }
         }
     }
 
     private fun submitGraduateCaptcha() {
         val state = _uiState.value
-        val client = graduateClient ?: run {
+        if (!captchaLogin.hasSession()) {
             _uiState.value = state.copy(message = "会话已过期，请重新开始")
             return
         }
@@ -795,13 +637,34 @@ class DirectLoginViewModel(
         _uiState.value = state.copy(isLoggingIn = true, showCaptchaDialog = false, message = "正在登录...")
         viewModelScope.launch {
             try {
-                val session = GraduateImportService.login(
+                captchaLogin.submit(
+                    source = ImportSource.GRADUATE,
                     username = state.username,
                     password = state.password,
-                    captcha = state.captchaInput.trim(),
-                    client = client
+                    captcha = state.captchaInput.trim()
+                ).fold(
+                    onSuccess = { renewed ->
+                        // 研究生导入要用整段会话（客户端 + 学年/学期/学号上下文），不只是 cookie。
+                        val session = renewed.graduateSession
+                        if (session == null) {
+                            _uiState.value = _uiState.value.copy(
+                                isLoggingIn = false,
+                                message = "研究生登录失败，请重试"
+                            )
+                        } else {
+                            onGraduateLoginSuccess(session, state.rememberPassword, state.username)
+                        }
+                    },
+                    onFailure = { error ->
+                        refreshGraduateCaptcha()
+                        _uiState.value = _uiState.value.copy(
+                            isLoggingIn = false,
+                            showCaptchaDialog = true,
+                            captchaInput = "",
+                            message = error.message?.takeIf { it.isNotBlank() } ?: "研究生登录失败，请重试"
+                        )
+                    }
                 )
-                onGraduateLoginSuccess(session, state.rememberPassword, state.username)
             } catch (e: Exception) {
                 refreshGraduateCaptcha()
                 _uiState.value = _uiState.value.copy(
@@ -884,7 +747,6 @@ class DirectLoginViewModel(
         } else {
             credentialStore.clearCredentials()
         }
-        graduateSession = session
         _uiState.value = _uiState.value.copy(message = "登录成功，正在导入数据...")
         performGraduateImport(session, replacePreviousAccount)
     }
@@ -1445,35 +1307,6 @@ internal fun shouldClearAcademicData(previousStudent: String, newStudent: String
     val previous = previousStudent.trim()
     val incoming = newStudent.trim()
     return previous.isNotEmpty() && incoming.isNotEmpty() && previous != incoming
-}
-
-/**
- * 南宁受保护页面必须包含明确的认证标记，普通 2xx 或返回登录表单都不能算成功。
- */
-internal fun isAuthenticatedNanningResponse(
-    httpCode: Int,
-    location: String,
-    body: String
-): Boolean {
-    val redirectAuthenticated = listOf(
-        "framePage",
-        "index_new",
-        "showTimetable",
-        "/personal/",
-        "/manager/"
-    ).any { location.contains(it, ignoreCase = true) }
-    if (redirectAuthenticated) return true
-    if (httpCode !in 200..299) return false
-
-    val loginMarkers = listOf("affairLogin", "j_username", "j_password", "验证码", "loginForm")
-    if (loginMarkers.any { body.contains(it, ignoreCase = true) }) return false
-
-    return listOf(
-        "schoolCalendarStartDate",
-        "currentTodayPlan.do",
-        "moduleMenu.do",
-        "preGotoAffairFrame"
-    ).any { body.contains(it, ignoreCase = true) }
 }
 
 internal fun importCompletionMessage(

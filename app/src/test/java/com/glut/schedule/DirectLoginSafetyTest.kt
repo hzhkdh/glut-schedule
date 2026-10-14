@@ -4,7 +4,7 @@ import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.ui.pages.InitialExamImportData
 import com.glut.schedule.ui.pages.importInitialExams
 import com.glut.schedule.ui.pages.importCompletionMessage
-import com.glut.schedule.ui.pages.isAuthenticatedNanningResponse
+import com.glut.schedule.service.academic.isAuthenticatedNanningResponse
 import com.glut.schedule.ui.pages.shouldClearAcademicData
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
