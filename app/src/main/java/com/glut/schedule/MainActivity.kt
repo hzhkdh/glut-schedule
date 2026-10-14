@@ -140,6 +140,7 @@ import com.glut.schedule.service.greeting.DrawerGreetingContext
 import com.glut.schedule.service.greeting.DrawerGreetingPlanner
 import com.glut.schedule.service.holiday.TimorHolidayCalendarParser
 import com.glut.schedule.service.academic.clearWebLoginSession
+import com.glut.schedule.service.academic.RenewalUiState
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.navigation.campusDrawerItems
 import com.glut.schedule.ui.navigation.isEnabledFor
@@ -189,6 +190,7 @@ import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.components.ScheduleBackgroundImage
 import com.glut.schedule.ui.components.shouldUseCustomBackground
 import com.glut.schedule.ui.components.scheduleFirstFrameReady
+import com.glut.schedule.ui.components.SessionRenewalDialog
 import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
 import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.data.model.snapBackgroundDimAmount
@@ -288,9 +290,17 @@ class MainActivity : ComponentActivity() {
                 // ViewModel 只管「准不准开」和登录结果，不越界管界面。
                 var showWechatLogin by remember { mutableStateOf(false) }
 
+                // 教务会话续期的弹窗状态来自单例协调器：多个菜单同时判定失效也只弹一个。
+                val renewalState by container.sessionRenewalCoordinator.state
+                    .collectAsStateWithLifecycle()
+
                 // 返回键：先关抽屉 → 再回到课表主页 → 最后退出
                 BackHandler(enabled = true) {
                     when {
+                        // 续期弹窗盖在最上层，返回键先关它。关掉即取消续期，
+                        // 触发它的那次刷新会拿到 false，从而保留屏幕上原有的缓存。
+                        renewalState is RenewalUiState.AwaitingCaptcha ->
+                            container.sessionRenewalCoordinator.cancel()
                         // 微信登录覆盖层盖在最上层，返回键必须先关它。
                         // 覆盖层是纯界面状态，关掉即可；登录流程本身（若有）不受影响。
                         showWechatLogin -> showWechatLogin = false
@@ -1191,6 +1201,22 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 }
                             }
                         }
+                    )
+                }
+
+                // 教务会话续期弹窗。与 showWechatLogin 同级：画在 ModalNavigationDrawer 之外，
+                // 所以用户在**任何**菜单里撞上会话失效都能被盖住，不必离开当前页面。
+                (renewalState as? RenewalUiState.AwaitingCaptcha)?.let { renewal ->
+                    SessionRenewalDialog(
+                        source = renewal.source,
+                        captchaBitmap = renewal.captchaBitmap,
+                        prefilledPassword = renewal.prefilledPassword,
+                        error = renewal.error,
+                        // 取图与提交的忙碌态由协调器的 Busy 表达，那时这个弹窗不在渲染路径上。
+                        isBusy = false,
+                        onRefreshCaptcha = container.sessionRenewalCoordinator::refreshCaptcha,
+                        onSubmit = container.sessionRenewalCoordinator::submit,
+                        onDismiss = container.sessionRenewalCoordinator::cancel
                     )
                 }
 

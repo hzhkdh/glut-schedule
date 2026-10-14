@@ -41,6 +41,17 @@ class SessionRenewalUiContractTest {
         .let { if (it.exists()) it else java.io.File("app/src/main/java/com/glut/schedule/$name") }
         .readText()
 
+    @Test
+    fun containerAssemblesTheCoordinatorAndMainActivityMountsIt() {
+        val app = source("ScheduleApplication.kt")
+        val main = source("MainActivity.kt")
+
+        assertTrue(app.contains("SessionRenewalCoordinator("))
+        assertTrue(app.contains("CaptchaLoginSession("))
+        assertTrue("挂在顶层，任何页面都盖得住", main.contains("renewalState"))
+        assertTrue("返回键要能取消续期", main.contains("sessionRenewalCoordinator.cancel()"))
+    }
+
     private fun page(name: String) = java.io.File("src/main/java/com/glut/schedule/ui/pages/$name")
         .let { if (it.exists()) it else java.io.File("app/src/main/java/com/glut/schedule/ui/pages/$name") }
         .readText()

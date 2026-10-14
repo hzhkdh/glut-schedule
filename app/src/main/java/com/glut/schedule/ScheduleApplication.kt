@@ -10,6 +10,8 @@ import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginService
+import com.glut.schedule.service.academic.CaptchaLoginSession
+import com.glut.schedule.service.academic.SessionRenewalCoordinator
 import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.SemesterBulkDownloadCoordinator
 import com.glut.schedule.service.academic.SemesterDownloadSession
@@ -272,6 +274,19 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
     private val campusImageCache = CampusImageFileCache(application.filesDir.resolve("campus_images"))
     val campusImageService = CampusImageService(cache = campusImageCache)
     val academicLoginService = AcademicLoginService(academicSessionStore, credentialStore)
+    // 续期门卫：南宁/研究生会话过期时在菜单内原地弹验证码，而不是把用户赶去导入页。
+    // 单例——多个菜单同时刷新时只弹一个窗（协调器内部单飞）。
+    val captchaLoginSession = CaptchaLoginSession()
+    val sessionRenewalCoordinator = SessionRenewalCoordinator(
+        sessionWriter = academicSessionStore,
+        credentialReader = credentialStore,
+        captchaLogin = captchaLoginSession,
+        // 来源取「上次成功导入的来源」：南宁与研究生共用同一个弹窗，取错就会给错来源取验证码。
+        currentSource = { settingsStore.lastImportSource.first() },
+        // 桂林仍然走静默换票；它是唯一能免密补登录的来源。
+        silentLogin = { academicLoginService.silentLogin() },
+        scope = applicationScope
+    )
     val scoreParser = ScoreParser()
     val gradeExamParser = GradeExamParser()
     val studyPlanParser = StudyPlanParser()
