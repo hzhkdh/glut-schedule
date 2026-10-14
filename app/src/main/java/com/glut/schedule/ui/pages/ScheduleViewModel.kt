@@ -908,7 +908,7 @@ class ScheduleViewModel(
      */
     private suspend fun refreshGraduateSchedule(targetSemester: AcademicSemester) {
         try {
-            val studentId = sessionStore.authenticatedStudentNumber.first()
+            var studentId = sessionStore.authenticatedStudentNumber.first()
             var cookie = sessionStore.academicCookie.first()
 
             // cookie 缺失、学号缺失，或取数报「登录已失效」，都属于同一种情况：门户会话没了。
@@ -926,7 +926,11 @@ class ScheduleViewModel(
                     message.value = "会话已过期，已取消登录"
                     return
                 }
+                // 学号也要重读：它可能是空的（那正是触发续期的原因之一），而本次登录
+                // 已经把门户认到的学号写回会话了。只重读 cookie 的话，重放会拿着空学号
+                // 再失败一次，用户白输一遍验证码。
                 cookie = sessionStore.academicCookie.first()
+                studentId = sessionStore.authenticatedStudentNumber.first()
                 attempt = downloadGraduateSemester(cookie, targetSemester, studentId)
             }
             val payload = attempt.getOrElse { error ->

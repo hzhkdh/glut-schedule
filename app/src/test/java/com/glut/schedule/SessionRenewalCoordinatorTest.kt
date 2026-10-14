@@ -248,6 +248,31 @@ class SessionRenewalCoordinatorTest {
         assertTrue(awaiting.await())
     }
 
+    @Test
+    fun renewalAlsoWritesBackTheStudentNumber() = runTest {
+        // 「学号为空」本身就被算作会话失效的一种（ScheduleViewModel 的 sessionLooksDead）。
+        // 若续期成功后只重读 cookie、不重读学号，重放仍拿那个空学号去请求，必然再失败一次——
+        // 用户认真输完验证码，什么都没换来。学号在 GraduateLoginSession.context 里是现成的，
+        // 协调器必须一并写回，否则调用方「重读学号」也读不到新值。
+        val captchaLogin = FakeCaptchaLoginSession(
+            renewedSession = RenewedSession(
+                cookie = "cookie-after-renew",
+                campusBaseUrl = "https://yjsy.example",
+                studentNumber = "2026000001"
+            )
+        )
+        val store = FakeSessionStore(username = "2026000001")
+        val coordinator = coordinator(captchaLogin, store, ImportSource.GRADUATE)
+
+        val awaiting = async { coordinator.ensureFreshSession() }
+        advanceUntilIdle()
+        coordinator.submit(captcha = "1234", username = "2026000001", password = "pw")
+        advanceUntilIdle()
+
+        assertTrue(awaiting.await())
+        assertEquals("续期必须把学号写回，否则重放还是空学号", "2026000001", store.studentNumber)
+    }
+
     // ---- 手写 fake（本仓库既有测试不引 mock 库）----
 
     /**
@@ -276,7 +301,9 @@ class SessionRenewalCoordinatorTest {
 
     private class FakeCaptchaLoginSession(
         private val submitSucceeds: Boolean = true,
-        private val requestSucceeds: Boolean = true
+        private val requestSucceeds: Boolean = true,
+        private val renewedSession: RenewedSession =
+            RenewedSession("cookie-after-renew", AcademicLoginResult.NANNING_URL)
     ) : CaptchaLoginSession() {
         /** 取图次数：首次取图与「换一张」都算一次。 */
         var requestCount = 0
@@ -301,7 +328,7 @@ class SessionRenewalCoordinatorTest {
         ): Result<RenewedSession> {
             lastUsername = username
             return if (submitSucceeds) {
-                Result.success(RenewedSession("cookie-after-renew", AcademicLoginResult.NANNING_URL))
+                Result.success(renewedSession)
             } else {
                 Result.failure(IllegalStateException("验证码或密码错误"))
             }
@@ -329,10 +356,15 @@ class SessionRenewalCoordinatorTest {
         RenewalSessionWriter, RenewalCredentialReader {
         var cookie: String = ""
         var campusBaseUrl: String = ""
+        var studentNumber: String = ""
 
         override suspend fun saveCookie(cookie: String) { this.cookie = cookie }
 
         override suspend fun saveCampusBaseUrl(url: String) { this.campusBaseUrl = url }
+
+        override suspend fun saveStudentNumber(studentNumber: String) {
+            this.studentNumber = studentNumber
+        }
 
         override fun getUsername(): String = username
 

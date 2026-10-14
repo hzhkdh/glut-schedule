@@ -62,6 +62,11 @@ class AcademicSessionStore(
         }
     }
 
+    /** 续期成功后把门户认到的学号补上；直接复用既有的写入实现。 */
+    override suspend fun saveStudentNumber(studentNumber: String) {
+        saveAuthenticatedStudentNumber(studentNumber)
+    }
+
     override suspend fun saveCampusBaseUrl(url: String) {
         context.academicSessionDataStore.edit { preferences ->
             preferences[campusUrlKey] = AcademicUrlPolicy.normalizeCampusBaseUrl(url)

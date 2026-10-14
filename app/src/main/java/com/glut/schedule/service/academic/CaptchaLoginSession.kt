@@ -41,7 +41,15 @@ internal const val CAPTCHA_UNSUPPORTED_SOURCE_MESSAGE = "该来源不需要验�
 data class RenewedSession(
     val cookie: String,
     val campusBaseUrl: String,
-    val graduateSession: GraduateLoginSession? = null
+    val graduateSession: GraduateLoginSession? = null,
+    /**
+     * 门户在这次登录里认到的学号，**只有研究生非空**。
+     *
+     * 必须往上带：学号为空本身就被算作「会话失效」的一种，而调用方续期成功后要拿它去重放。
+     * 若这里不带回来，`AcademicSessionStore` 里那个空学号就永远不会被补上，
+     * 用户认真输完验证码、重放却仍用空学号请求，必然再失败一次——白登一场。
+     */
+    val studentNumber: String? = null
 )
 
 /**
@@ -144,7 +152,9 @@ open class CaptchaLoginSession {
                 RenewedSession(
                     cookie = session.client.cookieHeader(),
                     campusBaseUrl = GraduateClient.BASE_URL,
-                    graduateSession = session
+                    graduateSession = session,
+                    // 门户在这次登录里认到的学号，现成的——顺手带回去，别让调用方再登一次才拿到。
+                    studentNumber = session.context.studentId.takeIf { it.isNotBlank() }
                 )
             }
         }

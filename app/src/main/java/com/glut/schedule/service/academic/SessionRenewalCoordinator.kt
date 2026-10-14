@@ -58,6 +58,14 @@ sealed interface RenewalUiState {
 interface RenewalSessionWriter {
     suspend fun saveCookie(cookie: String)
     suspend fun saveCampusBaseUrl(url: String)
+
+    /**
+     * 写回学号（目前只有研究生会用到）。
+     *
+     * 学号为空在调用方那里就被算作「会话失效」，所以续期成功后必须把它补上，
+     * 否则重放会拿着空学号再失败一次——用户白登一场。
+     */
+    suspend fun saveStudentNumber(studentNumber: String)
 }
 
 /**
@@ -187,6 +195,10 @@ class SessionRenewalCoordinator(
             // 主机地址用登录结果带回来的那个，而不是在这里按来源再猜一遍：
             // 研究生门户的主机只有 CaptchaLoginSession 知道，猜错会把后续取数发到错误的主机上。
             sessionWriter.saveCampusBaseUrl(renewed.campusBaseUrl)
+            // 学号只在研究生那条路上有；南宁为 null，不写，免得把已有的学号抹成空串。
+            renewed.studentNumber?.takeIf { it.isNotBlank() }?.let {
+                sessionWriter.saveStudentNumber(it)
+            }
             lastError = ""
             _state.value = RenewalUiState.Idle
             completePending(true)
