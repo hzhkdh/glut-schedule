@@ -5,7 +5,7 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
-class CredentialStore(private val context: Context) {
+class CredentialStore(private val context: Context) : RenewalCredentialReader {
 
     // 密钥库不可用时采用失败关闭：禁用持久化，而不是把教务密码降级为明文保存。
     private val prefs: SharedPreferences? = runCatching {
@@ -30,9 +30,9 @@ class CredentialStore(private val context: Context) {
             ?.apply()
     }
 
-    fun getUsername(): String = prefs?.getString(KEY_USERNAME, null).orEmpty()
+    override fun getUsername(): String = prefs?.getString(KEY_USERNAME, null).orEmpty()
 
-    fun getPassword(): String = prefs?.getString(KEY_PASSWORD, null).orEmpty()
+    override fun getPassword(): String = prefs?.getString(KEY_PASSWORD, null).orEmpty()
 
     fun hasCredentials(): Boolean = getUsername().isNotBlank() && getPassword().isNotBlank()
 

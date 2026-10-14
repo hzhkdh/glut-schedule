@@ -11,7 +11,7 @@ private val Context.academicSessionDataStore by preferencesDataStore(name = "aca
 
 class AcademicSessionStore(
     private val context: Context
-) {
+) : RenewalSessionWriter {
     private val cookieKey = stringPreferencesKey("academic_cookie")
     private val lastHtmlPreviewKey = stringPreferencesKey("last_timetable_html_preview")
     private val examApiUrlKey = stringPreferencesKey("exam_api_url")
@@ -44,7 +44,7 @@ class AcademicSessionStore(
         preferences[authenticatedStudentNameKey].orEmpty()
     }
 
-    suspend fun saveCookie(cookie: String) {
+    override suspend fun saveCookie(cookie: String) {
         context.academicSessionDataStore.edit { preferences ->
             preferences[cookieKey] = cookie
         }
@@ -62,7 +62,7 @@ class AcademicSessionStore(
         }
     }
 
-    suspend fun saveCampusBaseUrl(url: String) {
+    override suspend fun saveCampusBaseUrl(url: String) {
         context.academicSessionDataStore.edit { preferences ->
             preferences[campusUrlKey] = AcademicUrlPolicy.normalizeCampusBaseUrl(url)
         }
