@@ -331,7 +331,12 @@ open class CaptchaLoginSession {
                         ?: "无法获取研究生教务验证码"
                 )
             )
-        return Result.success(BitmapFactory.decodeByteArray(bytes, 0, bytes.size))
+        // 与南宁那条同形：门户返回非图片（200 的 HTML 错误页、空 body）时解码会得到 null，
+        // 而 `Result<Bitmap>` 允许持有 null——直接 `Result.success(null)` 会让界面进入
+        // 「成功但没有图」的状态：弹窗里没有验证码图、也没有任何原因，用户无从知道发生了什么。
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            ?: return Result.failure(IllegalStateException("无法获取研究生教务验证码图片"))
+        return Result.success(bitmap)
     }
 
     private companion object {
