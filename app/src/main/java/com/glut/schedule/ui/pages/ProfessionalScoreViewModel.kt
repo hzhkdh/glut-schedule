@@ -60,6 +60,29 @@ private data class ProfessionalScoreBase(
     val semesterEndDate: LocalDate
 )
 
+/**
+ * 刷新结束后状态条该显示什么；返回 null 表示**保持现状、不要覆盖**。
+ *
+ * 抽成纯函数是为了能单测：原先这段决策写死在 `refreshData()` 的 `when` 里，
+ * 于是「用户在续期弹窗里点了取消」这件事刚写下的提示会被立刻覆盖——
+ * 取消路径写「会话已过期，已取消登录」，紧接着那个 `when` 无条件改写成
+ * 「未获取到可用于计算的数据」，既不准确，又把用户刚做的动作抹掉，
+ * 用户会以为自己点错了。
+ */
+internal fun professionalScoreRefreshMessage(
+    renewalCancelled: Boolean,
+    scoreUnavailableReason: String,
+    scoreCount: Int,
+    courseCount: Int
+): String? = when {
+    renewalCancelled -> null
+    // 被评教拦住这类原因必须说出来，否则用户只看到「未获取到可用于计算的数据」，
+    // 会以为自己没有成绩。
+    scoreUnavailableReason.isNotBlank() -> scoreUnavailableReason
+    scoreCount > 0 || courseCount > 0 -> "已更新：$scoreCount 条成绩，$courseCount 门计划课程"
+    else -> "未获取到可用于计算的数据"
+}
+
 internal fun canUseProfessionalScoreRemoteDataWithoutLoginRetry(
     hasCookie: Boolean,
     hasScores: Boolean,
@@ -164,12 +187,14 @@ class ProfessionalScoreViewModel(
                 }
                 _scoreUnavailableReason.value = remoteData.scoreUnavailableReason
 
-                _message.value = when {
-                    remoteData.scoreUnavailableReason.isNotBlank() -> remoteData.scoreUnavailableReason
-                    remoteData.scores.isNotEmpty() || remoteData.groups.isNotEmpty() ->
-                        "已更新：${remoteData.scores.size} 条成绩，${remoteData.courses.size} 门计划课程"
-                    else -> "未获取到可用于计算的数据"
-                }
+                // 返回 null 表示保持现状：用户刚在续期弹窗里取消，那句「会话已过期，已取消登录」
+                // 不该被这里盖成「未获取到可用于计算的数据」——那会抹掉他刚做的动作。
+                professionalScoreRefreshMessage(
+                    renewalCancelled = remoteData.renewalCancelled,
+                    scoreUnavailableReason = remoteData.scoreUnavailableReason,
+                    scoreCount = remoteData.scores.size,
+                    courseCount = remoteData.courses.size
+                )?.let { _message.value = it }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -224,7 +249,8 @@ class ProfessionalScoreViewModel(
         // 由界面照常提示，不再像以前那样 throw 出去把整页打成错误态。
         if (!renewal.ensureFreshSession()) {
             _message.value = "会话已过期，已取消登录"
-            return data
+            // 打上标记：让 refreshData 别再改这条提示——用户刚做的动作不该被抹掉。
+            return data.copy(renewalCancelled = true)
         }
         // 续期成功后重读会话：cookie 与主机都由协调器写好了，这里不再自己猜。
         cookie = sessionStore.academicCookie.first()
@@ -403,7 +429,9 @@ class ProfessionalScoreViewModel(
         val scores: List<ScoreInfo> = emptyList(),
         val groups: List<StudyPlanGroup> = emptyList(),
         val courses: List<StudyPlanCourse> = emptyList(),
-        val scoreUnavailableReason: String = ""
+        val scoreUnavailableReason: String = "",
+        /** 用户在续期弹窗里点了取消；此时状态条上那句提示已经写好，不要再覆盖。 */
+        val renewalCancelled: Boolean = false
     ) {
         val hasAnyRemoteData: Boolean = scores.isNotEmpty() || groups.isNotEmpty() || courses.isNotEmpty()
     }

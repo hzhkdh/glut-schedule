@@ -78,6 +78,13 @@ fun SessionRenewalDialog(
     prefilledPassword: String,
     /** 上一次失败原因（验证码错、取图失败）；首次为空。 */
     error: String,
+    /**
+     * 副标题；留空则用续期语境那一句。
+     *
+     * 必须能按入口换：续期时说「不用去导入页重新登录」是对的，但**导入页**上这句就自相矛盾了
+     * ——用户此刻就在导入页。两个入口共用一个组件，文案就不能写死。
+     */
+    subtitle: String = "",
     isBusy: Boolean,
     onRefreshCaptcha: () -> Unit,
     onSubmit: (captcha: String, username: String, password: String) -> Unit,
@@ -103,7 +110,7 @@ fun SessionRenewalDialog(
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    "输入验证码后继续刷新，不用去导入页重新登录",
+                    subtitle.ifBlank { "输入验证码后继续刷新，不用去导入页重新登录" },
                     color = DialogSecondary,
                     fontSize = 12.sp,
                     modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)

@@ -124,6 +124,24 @@ class SessionRenewalUiContractTest {
     }
 
     /**
+     * 弹窗的副标题必须能按入口换。
+     *
+     * 续期语境的副标题是「不用去导入页重新登录」——但那句话在**导入页**上是自相矛盾的：
+     * 用户此刻就在导入页。两个入口共用一个组件，副标题就不能写死。
+     */
+    @Test
+    fun theDialogSubtitleIsNotContradictoryOnTheImportPage() {
+        val dialog = component("SessionRenewalDialog.kt")
+        val login = page("DirectLoginScreen.kt")
+
+        assertTrue("弹窗要能按入口换副标题", dialog.contains("subtitle"))
+        assertTrue(
+            "导入页必须传自己的副标题——否则用户就在导入页，却被告知「不用去导入页」",
+            login.contains("subtitle =")
+        )
+    }
+
+    /**
      * 七个教务菜单都不再接受 `loginService`。
      *
      * 续期门卫接管后，这七个类体里已经没有一处读它（逐个 grep 确认过），只剩构造参数在传递。

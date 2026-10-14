@@ -331,6 +331,8 @@ fun DirectLoginScreen(
             prefilledUsername = uiState.username,
             prefilledPassword = uiState.password,
             error = uiState.message,
+            // 用户此刻**就在**导入页，所以不能说「不用去导入页」——那句是给菜单续期用的。
+            subtitle = "输入验证码后继续登录",
             isBusy = uiState.isLoggingIn,
             onRefreshCaptcha = viewModel::refreshCaptcha,
             onSubmit = viewModel::submitCaptcha,
