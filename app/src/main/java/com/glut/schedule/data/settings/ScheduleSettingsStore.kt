@@ -33,6 +33,8 @@ import com.glut.schedule.data.model.encodeHiddenCourseRules
 import com.glut.schedule.data.model.encodeManualDayCopyRules
 import com.glut.schedule.data.model.snapBackgroundDimAmount
 import com.glut.schedule.data.model.AcademicSemester
+import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.automaticScheduleDisplay
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
@@ -376,6 +378,15 @@ class ScheduleSettingsStore(
     suspend fun setShowNoon(showNoon: Boolean) {
         context.scheduleSettings.edit { preferences ->
             preferences[showNoonKey] = showNoon
+        }
+    }
+
+    /** 导入或切换课表后按完整课次重置默认显示，手动开关仍可在下次数据更新前生效。 */
+    suspend fun setAutomaticScheduleDisplay(campus: CampusType, courses: List<ScheduleCourse>) {
+        val display = automaticScheduleDisplay(courses, campus)
+        context.scheduleSettings.edit { preferences ->
+            preferences[showWeekendKey] = display.showWeekend
+            preferences[showNoonKey] = display.showNoon
         }
     }
 

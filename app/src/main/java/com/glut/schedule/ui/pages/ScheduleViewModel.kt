@@ -559,6 +559,8 @@ class ScheduleViewModel(
                 fallbackEnd = settingsStore.semesterEndDate.first()
             )
             repository.selectSemester(semesterId)
+            // 学期切换也属于当前课表数据源变化，按该学期完整课程恢复应展示的区域。
+            settingsStore.setAutomaticScheduleDisplay(semester.campus, repository.courses.first())
             settingsStore.setCurrentWeekNumber(week)
         }
     }
@@ -567,6 +569,10 @@ class ScheduleViewModel(
         viewModelScope.launch {
             repository.resetViewedSemesterToCurrent()
             val current = repository.currentSemester.first()
+            settingsStore.setAutomaticScheduleDisplay(
+                current?.campus ?: CampusType.GUILIN,
+                repository.courses.first()
+            )
             val start = current?.semesterStartDate ?: settingsStore.semesterStartMonday.first()
             val end = current?.semesterEndDate ?: settingsStore.semesterEndDate.first()
             settingsStore.setCurrentWeekNumber(

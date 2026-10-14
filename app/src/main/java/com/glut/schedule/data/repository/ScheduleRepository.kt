@@ -48,7 +48,8 @@ class ScheduleRepository(
     private val courseColorOverrides: Flow<Map<String, String>> = flowOf(emptyMap()),
     private val classPeriodOverrides: Flow<Map<CampusType, List<ClassPeriod>>> = flowOf(emptyMap()),
     private val classPeriodProfileOverrides: Flow<Map<ClassPeriodProfile, List<ClassPeriod>>> = flowOf(emptyMap()),
-    private val guilinSubCampus: Flow<String> = flowOf(GUILIN_SUB_CAMPUS_DEFAULT)
+    private val guilinSubCampus: Flow<String> = flowOf(GUILIN_SUB_CAMPUS_DEFAULT),
+    private val onCurrentScheduleReplaced: suspend (CampusType, List<ScheduleCourse>) -> Unit = { _, _ -> }
 ) {
     private val _viewedSemesterId = MutableStateFlow(AcademicSemester.LEGACY_CURRENT_ID)
     val viewedSemesterId: StateFlow<String> = _viewedSemesterId
@@ -342,6 +343,7 @@ class ScheduleRepository(
             adjustments = dao.observeSemesterAdjustments().first()
                 .filter { it.semesterId == semester.id }
         )
+        onCurrentScheduleReplaced(campus, coloredCourses)
     }
 
     suspend fun replaceSemesterSchedule(
@@ -372,6 +374,7 @@ class ScheduleRepository(
         if (semester.isCurrent && semester.id != AcademicSemester.LEGACY_CURRENT_ID) {
             dao.deleteSemester(AcademicSemester.LEGACY_CURRENT_ID)
         }
+        if (semester.isCurrent) onCurrentScheduleReplaced(semester.campus, coloredCourses)
     }
 
     suspend fun saveSemesterCatalog(catalog: List<AcademicSemester>) {

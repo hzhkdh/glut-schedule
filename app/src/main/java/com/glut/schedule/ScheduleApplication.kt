@@ -167,7 +167,8 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
         settingsStore.courseColorOverrides,
         settingsStore.classPeriodOverrides,
         classPeriodProfileOverrides = settingsStore.classPeriodProfileOverrides,
-        guilinSubCampus = settingsStore.guilinSubCampus
+        guilinSubCampus = settingsStore.guilinSubCampus,
+        onCurrentScheduleReplaced = settingsStore::setAutomaticScheduleDisplay
     )
     val backgroundStore = ScheduleBackgroundStore(application)
     val remoteBackgroundRepository = RemoteBackgroundRepository(
