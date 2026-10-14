@@ -73,7 +73,6 @@ class ProfessionalScoreViewModel(
     private val repository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
-    private val loginService: AcademicLoginService,
     /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
     private val renewal: SessionRenewalCoordinator,
     private val scoreParser: ScoreParser = ScoreParser(),
@@ -419,7 +418,6 @@ class ProfessionalScoreViewModelFactory(
     private val repository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
-    private val loginService: AcademicLoginService,
     /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
     private val renewal: SessionRenewalCoordinator,
     private val scoreParser: ScoreParser = ScoreParser(),
@@ -431,7 +429,6 @@ class ProfessionalScoreViewModelFactory(
             repository = repository,
             settingsStore = settingsStore,
             sessionStore = sessionStore,
-            loginService = loginService,
             renewal = renewal,
             scoreParser = scoreParser,
             studyPlanParser = studyPlanParser

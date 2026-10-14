@@ -49,7 +49,6 @@ data class ScoreUiState(
 class ScoreViewModel(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
-    private val loginService: AcademicLoginService,
     /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
     private val renewal: SessionRenewalCoordinator,
     private val scoreParser: ScoreParser = ScoreParser(),
@@ -369,7 +368,6 @@ class ScoreViewModel(
 class ScoreViewModelFactory(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
-    private val loginService: AcademicLoginService,
     /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
     private val renewal: SessionRenewalCoordinator,
     private val scoreParser: ScoreParser = ScoreParser(),
@@ -379,7 +377,7 @@ class ScoreViewModelFactory(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return ScoreViewModel(
-            repository, sessionStore, loginService, renewal,
+            repository, sessionStore, renewal,
             scoreParser, studyPlanParser, campusTypeFlow
         ) as T
     }

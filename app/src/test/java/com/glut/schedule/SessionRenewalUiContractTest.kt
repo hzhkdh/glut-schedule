@@ -124,6 +124,29 @@ class SessionRenewalUiContractTest {
     }
 
     /**
+     * 七个教务菜单都不再接受 `loginService`。
+     *
+     * 续期门卫接管后，这七个类体里已经没有一处读它（逐个 grep 确认过），只剩构造参数在传递。
+     * 留着它比留一段死代码更糟：**下一位读者会以为门卫之外还有登录路径**，
+     * 从而不敢删、或照着它再写一条旁路。
+     */
+    @Test
+    fun academicMenusNoLongerCarryADeadLoginService() {
+        listOf(
+            "ScoreViewModel.kt", "GradeExamViewModel.kt", "StudyPlanViewModel.kt",
+            "SemesterOverviewViewModel.kt", "ExamViewModel.kt",
+            "ScheduleViewModel.kt", "ProfessionalScoreViewModel.kt"
+        ).forEach { file ->
+            assertFalse("$file 仍带着类体里零读取的 loginService", page(file).contains("loginService"))
+        }
+        // 导入页例外：它自己就是登录入口，loginService 是真在用的。
+        assertTrue(
+            "导入页应当保留 loginService——它就是登录本身",
+            page("DirectLoginViewModel.kt").contains("loginService")
+        )
+    }
+
+    /**
      * 「去导入课表页重新登录」正是本功能要消灭的那句话。哪个 ViewModel 里还留着它，
      * 就说明**还有分支没接门卫**。
      *

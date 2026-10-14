@@ -227,7 +227,6 @@ class ScheduleViewModel(
     private val repository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
-    private val loginService: AcademicLoginService,
     /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
     private val renewal: SessionRenewalCoordinator,
     private val semesterImportService: AcademicSemesterImportService,
@@ -903,8 +902,8 @@ class ScheduleViewModel(
      * [importExactSemester]，而是走研究生的独立客户端；学年/学期参数直接取学期自身保存的
      * 门户值，学号取会话里记住的那个。
      *
-     * **不做静默登录**：研究生门户还需要图形验证码，无法在后台补登录；会话失效时
-     * 直接提示用户回导入页重新登录，而不是在这里拿密码硬试。
+     * **不做静默登录**：研究生门户还需要图形验证码，无法在后台补登录——会话失效时走 [renewal]
+     * 原地弹验证码并重放这一次刷新，而不是在这里拿密码硬试。
      */
     private suspend fun refreshGraduateSchedule(targetSemester: AcademicSemester) {
         try {
@@ -1037,7 +1036,6 @@ class ScheduleViewModelFactory(
     private val repository: ScheduleRepository,
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
-    private val loginService: AcademicLoginService,
     /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
     private val renewal: SessionRenewalCoordinator,
     private val semesterImportService: AcademicSemesterImportService,
@@ -1052,7 +1050,6 @@ class ScheduleViewModelFactory(
             repository,
             settingsStore,
             sessionStore,
-            loginService,
             renewal,
             semesterImportService,
             apiProbeService,

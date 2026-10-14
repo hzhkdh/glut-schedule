@@ -323,7 +323,6 @@ class MainActivity : ComponentActivity() {
                         repository = container.scheduleRepository,
                         settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
-                        loginService = container.academicLoginService,
                         renewal = container.sessionRenewalCoordinator,
                         semesterImportService = container.academicSemesterImportService,
                         apiProbeService = container.apiProbeService,
@@ -337,7 +336,6 @@ class MainActivity : ComponentActivity() {
                         repository = container.scheduleRepository,
                         sessionStore = container.academicSessionStore,
                         examService = container.academicExamService,
-                        loginService = container.academicLoginService,
                         renewal = container.sessionRenewalCoordinator
                     )
                 )
@@ -345,7 +343,6 @@ class MainActivity : ComponentActivity() {
                     factory = ScoreViewModelFactory(
                         repository = container.scheduleRepository,
                         sessionStore = container.academicSessionStore,
-                        loginService = container.academicLoginService,
                         renewal = container.sessionRenewalCoordinator,
                         scoreParser = container.scoreParser,
                         // 刷新时才读来源：ViewModel 是 Activity 级缓存实例，构造时还不知道会导入哪个来源。
@@ -357,7 +354,6 @@ class MainActivity : ComponentActivity() {
                         repository = container.scheduleRepository,
                         settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
-                        loginService = container.academicLoginService,
                         renewal = container.sessionRenewalCoordinator,
                         scoreParser = container.scoreParser,
                         studyPlanParser = container.studyPlanParser
@@ -367,7 +363,6 @@ class MainActivity : ComponentActivity() {
                     factory = GradeExamViewModelFactory(
                         repository = container.scheduleRepository,
                         sessionStore = container.academicSessionStore,
-                        loginService = container.academicLoginService,
                         renewal = container.sessionRenewalCoordinator,
                         gradeExamParser = container.gradeExamParser
                     )
@@ -376,7 +371,6 @@ class MainActivity : ComponentActivity() {
                     factory = StudyPlanViewModelFactory(
                         repository = container.scheduleRepository,
                         sessionStore = container.academicSessionStore,
-                        loginService = container.academicLoginService,
                         renewal = container.sessionRenewalCoordinator,
                         settingsStore = container.settingsStore,
                         studyPlanParser = container.studyPlanParser
@@ -388,7 +382,6 @@ class MainActivity : ComponentActivity() {
                         settingsStore = container.settingsStore,
                         sessionStore = container.academicSessionStore,
                         scheduleParser = container.academicScheduleParser,
-                        loginService = container.academicLoginService,
                         renewal = container.sessionRenewalCoordinator,
                         autoDayCopyCoordinator = container.autoDayCopyCoordinator,
                         timorHolidayClient = container.timorHolidayClient,

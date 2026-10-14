@@ -116,7 +116,6 @@ class SemesterOverviewViewModel(
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val scheduleParser: AcademicScheduleParser,
-    private val loginService: AcademicLoginService,
     /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
     private val renewal: SessionRenewalCoordinator,
     private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
@@ -435,7 +434,6 @@ class SemesterOverviewViewModelFactory(
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val scheduleParser: AcademicScheduleParser,
-    private val loginService: AcademicLoginService,
     /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
     private val renewal: SessionRenewalCoordinator,
     private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
@@ -449,7 +447,6 @@ class SemesterOverviewViewModelFactory(
             settingsStore,
             sessionStore,
             scheduleParser,
-            loginService,
             renewal,
             autoDayCopyCoordinator,
             timorHolidayClient,

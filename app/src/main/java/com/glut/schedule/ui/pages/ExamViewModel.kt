@@ -23,13 +23,12 @@ class ExamViewModelFactory(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
     private val examService: AcademicExamService,
-    private val loginService: AcademicLoginService,
     /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
     private val renewal: SessionRenewalCoordinator
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return ExamViewModel(repository, sessionStore, examService, loginService, renewal) as T
+        return ExamViewModel(repository, sessionStore, examService, renewal) as T
     }
 }
 
@@ -45,7 +44,6 @@ class ExamViewModel(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
     private val examService: AcademicExamService,
-    private val loginService: com.glut.schedule.service.academic.AcademicLoginService,
     /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
     private val renewal: SessionRenewalCoordinator
 ) : ViewModel() {

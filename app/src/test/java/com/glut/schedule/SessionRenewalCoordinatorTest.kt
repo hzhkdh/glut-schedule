@@ -9,6 +9,7 @@ import com.glut.schedule.service.academic.RenewalSessionWriter
 import com.glut.schedule.service.academic.RenewalUiState
 import com.glut.schedule.service.academic.RenewedSession
 import com.glut.schedule.service.academic.SessionRenewalCoordinator
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -27,6 +28,7 @@ import org.junit.Test
  * （不拿一个可能又失效的会话去搪塞用户）。取数与写库在真机上要靠 `CaptchaLoginSession`
  * 打真实门户，所以全部用手写 fake。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class SessionRenewalCoordinatorTest {
 
     @Test
