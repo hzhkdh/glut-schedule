@@ -106,10 +106,16 @@ class MultiSemesterUiContractTest {
         assertFalse(viewModel.contains("enrollmentSeason"))
         assertFalse(viewModel.contains("pendingCatalogHtml"))
         assertFalse(viewModel.contains("confirmedEnrollmentStart"))
-        // 验证码弹窗改名：南宁与研究生共用同一个弹窗，旧名 NanningCaptchaDialog 会误导后来的读者。
-        assertTrue(screen.contains("LoginCaptchaDialog"))
+        // 验证码弹窗上移到 ui/components，并与菜单里撞上会话失效时的原地续期共用同一个组件。
+        // 断言随之从「名字叫什么」升级为「导入页确实在用那个共用组件、且自己不再私养一份」——
+        // 后者才是这次搬迁真正要保住的东西。
+        assertTrue(screen.contains("SessionRenewalDialog("))
+        assertFalse(screen.contains("private fun LoginCaptchaDialog("))
         assertTrue(screen.contains("showCaptchaDialog"))
-        assertTrue(screen.contains("onRefresh, modifier = Modifier.size(48.dp)"))
+        assertTrue(
+            "刷新按钮搬到了共用组件里",
+            component("SessionRenewalDialog.kt").contains("onRefreshCaptcha, modifier = Modifier.size(48.dp)")
+        )
         assertTrue(viewModel.contains("submitCaptcha"))
     }
 

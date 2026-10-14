@@ -291,6 +291,18 @@ class DirectLoginViewModel(
 
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
 
+    /**
+     * 共用验证码弹窗的提交入口：验证码与该弹窗里填的密码一起交上来。
+     *
+     * 弹窗自己不持有账号密码（它同时服务导入页与菜单里的原地续期），所以密码必须由它带进来。
+     * 不能改成「界面先调两个 setter 再调 [submitCaptcha]」：那三步之间任何一次状态复位
+     * 都会让提交用上界面以为已经写进去、实际却不是的值。
+     */
+    fun submitCaptcha(captcha: String, password: String) {
+        _uiState.value = _uiState.value.copy(captchaInput = captcha, password = password)
+        submitCaptcha()
+    }
+
     fun downloadSemester(semesterId: String) {
         viewModelScope.launch {
             updateDownloadStartMessage(semesterBulkDownloadCoordinator.startSingle(semesterId))

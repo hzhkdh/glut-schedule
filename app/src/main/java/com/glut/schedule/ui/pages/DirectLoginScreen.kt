@@ -1,9 +1,7 @@
 package com.glut.schedule.ui.pages
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,10 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -53,7 +49,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -67,6 +62,7 @@ import com.glut.schedule.data.settings.ImportSource
 import com.glut.schedule.service.academic.SemesterDownloadItemStatus
 import com.glut.schedule.service.academic.SemesterDownloadMode
 import com.glut.schedule.service.academic.SemesterDownloadState
+import com.glut.schedule.ui.components.SessionRenewalDialog
 
 private val LoginPrimary = Color(0xFF141821)
 private val LoginSecondary = Color(0xFF667085)
@@ -325,15 +321,18 @@ fun DirectLoginScreen(
             Spacer(modifier = Modifier.height(32.dp))
     }
 
-    // 验证码弹窗：南宁与研究生共用（两者都要求图形验证码）。
-    if (uiState.showCaptchaDialog && uiState.captchaBitmap != null) {
-        LoginCaptchaDialog(
-            captchaBitmap = uiState.captchaBitmap!!,
-            captchaInput = uiState.captchaInput,
-            isLoggingIn = uiState.isLoggingIn,
-            onCaptchaInputChange = viewModel::updateCaptchaInput,
-            onRefresh = viewModel::refreshCaptcha,
-            onConfirm = viewModel::submitCaptcha,
+    // 验证码弹窗：南宁与研究生共用（两者都要求图形验证码），
+    // 与菜单里撞上会话失效时的原地续期也是同一个组件——两处形状一致，分开写必然漂移。
+    if (uiState.showCaptchaDialog) {
+        SessionRenewalDialog(
+            source = uiState.importSource,
+            captchaBitmap = uiState.captchaBitmap,
+            // 导入页本来就在收集密码，已填的直接预填进弹窗，不让用户再输一遍。
+            prefilledPassword = uiState.password,
+            error = uiState.message,
+            isBusy = uiState.isLoggingIn,
+            onRefreshCaptcha = viewModel::refreshCaptcha,
+            onSubmit = viewModel::submitCaptcha,
             onDismiss = viewModel::cancelCaptcha
         )
     }
@@ -526,91 +525,6 @@ private fun SemesterManagementSection(
             // 重下不再改变取值口径，提示随之删除。
         }
     }
-}
-
-/**
- * 图形验证码弹窗。
- *
- * 原名 `NanningCaptchaDialog`；研究生登录同样需要验证码，弹窗内容与交互完全一致，
- * 因此合并成一个并改名，避免留下一个「南宁专用」却给两个来源用的误导性名字。
- */
-@Composable
-private fun LoginCaptchaDialog(
-    captchaBitmap: android.graphics.Bitmap,
-    captchaInput: String,
-    isLoggingIn: Boolean,
-    onCaptchaInputChange: (String) -> Unit,
-    onRefresh: () -> Unit,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text("请输入验证码", fontWeight = FontWeight.SemiBold, color = LoginPrimary)
-        },
-        text = {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                // Captcha image — click to refresh, enlarged for readability
-                Image(
-                    bitmap = captchaBitmap.asImageBitmap(),
-                    contentDescription = "验证码",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(72.dp)
-                        .clickable { onRefresh() }
-                )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                ) {
-                    IconButton(onClick = onRefresh, modifier = Modifier.size(48.dp)) {
-                        Icon(
-                            Icons.Outlined.Refresh,
-                            contentDescription = "刷新验证码",
-                            tint = LoginSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Text("点击图片刷新", color = LoginSecondary, fontSize = 11.sp)
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = captchaInput,
-                    onValueChange = onCaptchaInputChange,
-                    label = { Text("验证码", color = LoginSecondary) },
-                    singleLine = true,
-                    colors = loginTextFieldColors(),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = onConfirm,
-                enabled = !isLoggingIn,
-                colors = ButtonDefaults.buttonColors(containerColor = LoginAccent)
-            ) {
-                if (isLoggingIn) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
-                } else {
-                    Text("确认登录", color = Color.White, fontSize = 14.sp)
-                }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isLoggingIn) {
-                Text("取消", color = LoginSecondary)
-            }
-        },
-        containerColor = Color.White,
-        shape = RoundedCornerShape(16.dp)
-    )
 }
 
 @Composable
