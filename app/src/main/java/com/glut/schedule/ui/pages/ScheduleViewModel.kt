@@ -803,9 +803,6 @@ class ScheduleViewModel(
         oldCourseCount: Int,
         cookie: String
     ) {
-        require(payload.courses.isNotEmpty()) {
-            "${targetSemester.displayName}未获取到课程，已保留现有缓存"
-        }
         val campusBaseUrl = sessionStore.campusBaseUrl.first()
             .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
         // 普通刷新也读取门户当前校历；正式切换学期后，它会覆盖提前晋升阶段的推导或估算日期。
