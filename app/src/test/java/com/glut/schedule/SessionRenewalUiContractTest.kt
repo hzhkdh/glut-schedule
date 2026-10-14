@@ -66,6 +66,27 @@ class SessionRenewalUiContractTest {
     }
 
     /**
+     * 本地没存账号是**新装的默认状态**，不是边缘情况：没勾「记住密码」时
+     * `DirectLoginViewModel` 调的是 `clearCredentials()`，账号和密码一起清掉；
+     * 而全新安装的复选状态又按「本地有没有账号」复位，也就是默认不勾。
+     *
+     * 弹窗若只收验证码和密码，这群人点确认只会一直拿到「验证码或密码错误」，
+     * 根本看不出真正缺的是账号——于是陷入「换一张图 → 再错一次」的死循环。
+     * 而他们恰恰是计划里真机验证点名要覆盖的那群人。
+     */
+    @Test
+    fun renewalDialogCollectsTheAccountNotJustThePassword() {
+        val dialog = component("SessionRenewalDialog.kt")
+
+        assertTrue("必须能当场填账号，而不只依赖本机保存的", dialog.contains("prefilledUsername"))
+        assertTrue("账号要有独立输入框", dialog.contains("Text(\"学号\""))
+        assertTrue(
+            "提交时要把账号一起交出去",
+            dialog.contains("onSubmit(captchaInput, usernameInput, passwordInput)")
+        )
+    }
+
+    /**
      * `needsInteractiveLogin` 曾写了 14 次、还配了 `consumeInteractiveLoginRequest()`，
      * 但全仓零消费方——续期门卫接管后连写入点都成了孤儿。这类「有人写没人读」的信号
      * 最容易在下次重构时被误当成「还有人在用」而保留下来，所以用一条断言钉死它不再回来。

@@ -67,17 +67,25 @@ private val DialogError = Color(0xFFD64545)
 fun SessionRenewalDialog(
     source: ImportSource,
     captchaBitmap: Bitmap?,
+    /**
+     * 本机已保存的账号；没有则为空串，由用户当场填。
+     *
+     * 必须能当场填：没勾「记住密码」的用户本地账号和密码都是空的（`clearCredentials()`），
+     * 而这恰恰是新装的默认状态。少了这个框，他们点确认只会一直得到「验证码或密码错误」。
+     */
+    prefilledUsername: String,
     /** 本机已保存的密码；没有则为空串，由用户当场填。 */
     prefilledPassword: String,
     /** 上一次失败原因（验证码错、取图失败）；首次为空。 */
     error: String,
     isBusy: Boolean,
     onRefreshCaptcha: () -> Unit,
-    onSubmit: (captcha: String, password: String) -> Unit,
+    onSubmit: (captcha: String, username: String, password: String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var captchaInput by remember { mutableStateOf("") }
-    // 预填以「本机保存的密码」为键：换了一位用户或密码变了才重新取，用户自己的改动不会被覆盖。
+    // 预填以「本机保存的账号/密码」为键：换了账号或密码变了才重新取，用户自己的改动不会被覆盖。
+    var usernameInput by remember(prefilledUsername) { mutableStateOf(prefilledUsername) }
     var passwordInput by remember(prefilledPassword) { mutableStateOf(prefilledPassword) }
     var passwordVisible by remember { mutableStateOf(false) }
 
@@ -148,6 +156,19 @@ fun SessionRenewalDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedTextField(
+                    value = usernameInput,
+                    onValueChange = { usernameInput = it },
+                    label = { Text("学号", color = DialogSecondary) },
+                    singleLine = true,
+                    colors = renewalTextFieldColors(),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
                     value = passwordInput,
                     onValueChange = { passwordInput = it },
                     label = { Text("密码", color = DialogSecondary) },
@@ -195,7 +216,7 @@ fun SessionRenewalDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSubmit(captchaInput, passwordInput) },
+                onClick = { onSubmit(captchaInput, usernameInput, passwordInput) },
                 enabled = !isBusy,
                 colors = ButtonDefaults.buttonColors(containerColor = DialogAccent)
             ) {

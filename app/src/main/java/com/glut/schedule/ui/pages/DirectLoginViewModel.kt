@@ -298,8 +298,18 @@ class DirectLoginViewModel(
      * 不能改成「界面先调两个 setter 再调 [submitCaptcha]」：那三步之间任何一次状态复位
      * 都会让提交用上界面以为已经写进去、实际却不是的值。
      */
-    fun submitCaptcha(captcha: String, password: String) {
-        _uiState.value = _uiState.value.copy(captchaInput = captcha, password = password)
+    /**
+     * 弹窗点了确认：把弹窗里三个输入框的值收进 state，再走既有的提交流程。
+     *
+     * 账号也要收：导入页虽然自己有账号框，但共用弹窗允许用户在弹窗里改，
+     * 改了就该以弹窗里的为准，否则用户会看到自己改的账号没生效。
+     */
+    fun submitCaptcha(captcha: String, username: String, password: String) {
+        _uiState.value = _uiState.value.copy(
+            captchaInput = captcha,
+            username = username,
+            password = password
+        )
         submitCaptcha()
     }
 

@@ -42,7 +42,7 @@ class SessionRenewalCoordinatorTest {
         assertEquals("", state.error)
         assertFalse(awaiting.isCompleted)
 
-        coordinator.submit(captcha = "1234", password = "pw")
+        coordinator.submit(captcha = "1234", username = "2026000000", password = "pw")
         advanceUntilIdle()
 
         assertTrue(awaiting.await())
@@ -58,7 +58,7 @@ class SessionRenewalCoordinatorTest {
 
         val awaiting = async { coordinator.ensureFreshSession() }
         advanceUntilIdle()
-        coordinator.submit(captcha = "0000", password = "pw")
+        coordinator.submit(captcha = "0000", username = "2026000000", password = "pw")
         advanceUntilIdle()
 
         val state = coordinator.state.value as RenewalUiState.AwaitingCaptcha
@@ -95,7 +95,7 @@ class SessionRenewalCoordinatorTest {
 
         assertEquals("只应取一次验证码", 1, captchaLogin.requestCount)
 
-        coordinator.submit("1234", "pw")
+        coordinator.submit(captcha = "1234", username = "2026000000", password = "pw")
         advanceUntilIdle()
 
         assertTrue(a.await())
@@ -132,7 +132,7 @@ class SessionRenewalCoordinatorTest {
 
         val awaiting = async { coordinator.ensureFreshSession() }
         advanceUntilIdle()
-        coordinator.submit(captcha = "1234", password = "   ")
+        coordinator.submit(captcha = "1234", username = "2026000000", password = "   ")
         advanceUntilIdle()
 
         val state = coordinator.state.value as RenewalUiState.AwaitingCaptcha
@@ -174,7 +174,7 @@ class SessionRenewalCoordinatorTest {
 
         val first = async { coordinator.ensureFreshSession() }
         advanceUntilIdle()
-        coordinator.submit("1234", "pw")
+        coordinator.submit(captcha = "1234", username = "2026000000", password = "pw")
         advanceUntilIdle()
         assertTrue(first.await())
 
@@ -184,6 +184,47 @@ class SessionRenewalCoordinatorTest {
         coordinator.cancel()
         advanceUntilIdle()
         assertFalse(second.await())
+    }
+
+    @Test
+    fun userCanTypeTheAccountWhenNothingIsSavedLocally() = runTest {
+        // 「记住密码」没勾时 DirectLoginViewModel 调的是 clearCredentials，**账号和密码一起清掉**，
+        // 而全新安装的复选状态按 savedUsername.isNotBlank() 复位——也就是默认不勾。
+        // 所以这类用户本地是空的，弹窗必须让他们当场把账号补上，否则永远登不进去。
+        val captchaLogin = FakeCaptchaLoginSession()
+        val coordinator = coordinator(captchaLogin, FakeSessionStore(username = ""), ImportSource.NANNING)
+
+        val awaiting = async { coordinator.ensureFreshSession() }
+        advanceUntilIdle()
+
+        val state = coordinator.state.value as RenewalUiState.AwaitingCaptcha
+        assertEquals("本地没存账号时预填应为空串", "", state.prefilledUsername)
+
+        coordinator.submit(captcha = "1234", username = "2026000000", password = "pw")
+        advanceUntilIdle()
+
+        assertTrue(awaiting.await())
+        assertEquals("提交时必须用用户当场填的账号", "2026000000", captchaLogin.lastUsername)
+    }
+
+    @Test
+    fun blankAccountIsRejectedWithoutClosingTheDialog() = runTest {
+        val coordinator = coordinator(FakeCaptchaLoginSession(), FakeSessionStore(username = ""), ImportSource.NANNING)
+
+        val awaiting = async { coordinator.ensureFreshSession() }
+        advanceUntilIdle()
+        coordinator.submit(captcha = "1234", username = "   ", password = "pw")
+        advanceUntilIdle()
+
+        val state = coordinator.state.value as RenewalUiState.AwaitingCaptcha
+        // 不能只报「验证码或密码错误」：那样用户根本看不出是账号没填。
+        assertTrue("应明确提示账号未填，实际是「${state.error}」", state.error.contains("学号"))
+        assertFalse(awaiting.isCompleted)
+
+        // 收尾：取消释放等待，否则 runTest 会因「子协程未结束」报错。
+        coordinator.cancel()
+        advanceUntilIdle()
+        assertFalse(awaiting.await())
     }
 
     // ---- 手写 fake（本仓库既有测试不引 mock 库）----
@@ -220,6 +261,10 @@ class SessionRenewalCoordinatorTest {
         var requestCount = 0
             private set
 
+        /** 最后一次提交用的账号，用来钉死「用的是用户当场填的那个，而不是本地存的」。 */
+        var lastUsername: String = ""
+            private set
+
         override suspend fun requestCaptcha(source: ImportSource): Result<Bitmap> {
             requestCount++
             return if (requestSucceeds) successWithoutCreatingABitmap() else networkFailure()
@@ -232,12 +277,14 @@ class SessionRenewalCoordinatorTest {
 
         override suspend fun submit(
             source: ImportSource, username: String, password: String, captcha: String
-        ): Result<RenewedSession> =
-            if (submitSucceeds) {
+        ): Result<RenewedSession> {
+            lastUsername = username
+            return if (submitSucceeds) {
                 Result.success(RenewedSession("cookie-after-renew", AcademicLoginResult.NANNING_URL))
             } else {
                 Result.failure(IllegalStateException("验证码或密码错误"))
             }
+        }
 
         /**
          * JVM 单测里 `android.graphics.Bitmap` 的方法全是 stub，调用即抛，造不出真图。
@@ -253,7 +300,12 @@ class SessionRenewalCoordinatorTest {
             Result.failure(IllegalStateException("网络不可用"))
     }
 
-    private class FakeSessionStore : RenewalSessionWriter, RenewalCredentialReader {
+    /**
+     * [username] 可传空串，用来模拟「用户没勾记住密码」——此时本地账号与密码都被清掉了。
+     * 这是**默认人群**，不是边缘情况，所以必须能测。
+     */
+    private class FakeSessionStore(private val username: String = "2026000000") :
+        RenewalSessionWriter, RenewalCredentialReader {
         var cookie: String = ""
         var campusBaseUrl: String = ""
 
@@ -261,9 +313,9 @@ class SessionRenewalCoordinatorTest {
 
         override suspend fun saveCampusBaseUrl(url: String) { this.campusBaseUrl = url }
 
-        /** 本地没存密码：弹窗应留空、由用户当场填。 */
-        override fun getUsername(): String = "2026000000"
+        override fun getUsername(): String = username
 
+        /** 本地没存密码：弹窗应留空、由用户当场填。 */
         override fun getPassword(): String = ""
     }
 }

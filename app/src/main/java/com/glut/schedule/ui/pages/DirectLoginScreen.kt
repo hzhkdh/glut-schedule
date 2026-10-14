@@ -327,7 +327,8 @@ fun DirectLoginScreen(
         SessionRenewalDialog(
             source = uiState.importSource,
             captchaBitmap = uiState.captchaBitmap,
-            // 导入页本来就在收集密码，已填的直接预填进弹窗，不让用户再输一遍。
+            // 导入页本来就在收集账号与密码，已填的直接预填进弹窗，不让用户再输一遍。
+            prefilledUsername = uiState.username,
             prefilledPassword = uiState.password,
             error = uiState.message,
             isBusy = uiState.isLoggingIn,

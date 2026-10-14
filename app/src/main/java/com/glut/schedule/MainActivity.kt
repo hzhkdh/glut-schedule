@@ -1217,6 +1217,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                     SessionRenewalDialog(
                         source = renewal.source,
                         captchaBitmap = renewal.captchaBitmap,
+                        prefilledUsername = renewal.prefilledUsername,
                         prefilledPassword = renewal.prefilledPassword,
                         error = renewal.error,
                         // 取图与提交的忙碌态由协调器的 Busy 表达，那时这个弹窗不在渲染路径上。
