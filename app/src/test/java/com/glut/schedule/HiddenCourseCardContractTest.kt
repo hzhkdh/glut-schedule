@@ -47,6 +47,16 @@ class HiddenCourseCardContractTest {
     }
 
     @Test
+    fun importedEmptySemesterUsesItsOwnEmptyStateCopy() {
+        val screen = page("ScheduleScreen.kt")
+
+        assertTrue(screen.contains("hasImportedEmptySchedule"))
+        assertTrue(screen.contains("本学期暂无课程"))
+        assertTrue(screen.contains("已成功导入课表，本学期暂未安排课程。"))
+        assertTrue(screen.contains("重新导入课表"))
+    }
+
+    @Test
     fun refreshAndImportPathsDoNotFilterCourses() {
         // 刷新走整表替换，写进去的必须是教务给的完整数据；一旦掺进过滤，
         // 隐藏过的课会被当成「教务删掉了」，刷新结果的 diff 也会跟着报错。

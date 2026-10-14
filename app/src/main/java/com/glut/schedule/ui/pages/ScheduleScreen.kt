@@ -59,6 +59,7 @@ import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
 import com.glut.schedule.data.model.ManualDayCopyRule
 import com.glut.schedule.data.model.ScheduleCourse
+import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.isActiveInWeek
 import com.glut.schedule.data.model.manualCopyBlocksForWeek
@@ -233,7 +234,11 @@ fun ScheduleScreen(
             // 空态判定必须用**完整**课表：用户把某周或某课次的卡片全隐藏之后，
             // 展示列表会变空，但课表本身还在，不该整页变成「还没有课表 / 去导入课表」。
             if (uiState.allCourses.isEmpty()) {
-                ScheduleEmptyState(onImportClick, Modifier.weight(1f).fillMaxWidth())
+                ScheduleEmptyState(
+                    hasImportedEmptySchedule = uiState.viewedSemester?.cacheStatus == SemesterCacheStatus.CACHED,
+                    onImportClick = onImportClick,
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                )
             } else HorizontalPager(
                 state = pagerState,
                 key = { page -> page },
@@ -542,19 +547,30 @@ private fun ScheduleRefreshDiffItem.Kind.badgeForeground(): Color = when (this) 
 }
 
 @Composable
-private fun ScheduleEmptyState(onImportClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun ScheduleEmptyState(
+    hasImportedEmptySchedule: Boolean,
+    onImportClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val title = if (hasImportedEmptySchedule) "本学期暂无课程" else "还没有课表"
+    val description = if (hasImportedEmptySchedule) {
+        "已成功导入课表，本学期暂未安排课程。"
+    } else {
+        "登录教务系统，导入你的课程与考试"
+    }
+    val action = if (hasImportedEmptySchedule) "重新导入课表" else "去导入课表"
     Box(modifier = modifier.padding(horizontal = 28.dp, vertical = 72.dp), contentAlignment = Alignment.Center) {
         Surface(color = Color(0xF2FFFFFB), shape = androidx.compose.foundation.shape.RoundedCornerShape(26.dp)) {
             Column(
                 modifier = Modifier.padding(horizontal = 30.dp, vertical = 34.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("还没有课表", color = Color(0xFF141821), fontSize = 25.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                Text("登录教务系统，导入你的课程与考试", color = Color(0xFF5F6673), fontSize = 15.sp, modifier = Modifier.padding(top = 12.dp))
+                Text(title, color = Color(0xFF141821), fontSize = 25.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                Text(description, color = Color(0xFF5F6673), fontSize = 15.sp, modifier = Modifier.padding(top = 12.dp))
                 Surface(
                     modifier = Modifier.padding(top = 28.dp).clickable(onClick = onImportClick),
                     color = Color(0xFF3F7DF6), shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
-                ) { Text("去导入课表", color = Color.White, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 30.dp, vertical = 14.dp)) }
+                ) { Text(action, color = Color.White, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 30.dp, vertical = 14.dp)) }
             }
         }
     }
