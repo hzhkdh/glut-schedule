@@ -2,7 +2,7 @@ package com.glut.schedule.data.model
 
 import kotlin.math.roundToInt
 
-const val DEFAULT_BACKGROUND_DIM_AMOUNT = 0.5f
+const val DEFAULT_BACKGROUND_DIM_AMOUNT = 0.3f
 const val MAX_BACKGROUND_DIM_AMOUNT = 0.8f
 const val BACKGROUND_DIM_STEP = 0.05f
 

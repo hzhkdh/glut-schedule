@@ -189,6 +189,7 @@ import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.ui.components.ScheduleBackgroundImage
 import com.glut.schedule.ui.components.shouldUseCustomBackground
 import com.glut.schedule.ui.components.scheduleFirstFrameReady
+import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
 import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.data.model.snapBackgroundDimAmount
 import com.glut.schedule.ui.pages.ScoreDisplayPolicy
@@ -1702,7 +1703,8 @@ private fun SettingsPage(
     onGreetingEnabledChange: (Boolean) -> Unit = {},
     customBackgroundUri: String = "",
     customBackgroundCrop: NormalizedCropRect? = null,
-    backgroundDimAmount: Float = 0.5f,
+    // 兜底值引用常量而不是写死 0.5f：写死的那一份不会跟着默认值一起变，改默认值时会漏掉它。
+    backgroundDimAmount: Float = DEFAULT_BACKGROUND_DIM_AMOUNT,
     backgroundStore: ScheduleBackgroundStore,
     hasCustomBackground: Boolean = false,
     onPickBackground: () -> Unit = {},
