@@ -20,6 +20,8 @@ import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readBytesLimited
 import com.glut.schedule.service.graduate.GraduateClient
 import com.glut.schedule.service.graduate.GraduateParser
+import com.glut.schedule.service.graduate.GraduateSessionExpiredException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -153,24 +155,70 @@ class StudyPlanViewModel(
 
     /** 研究生培养计划走独立 JSON 网关，不得回退本科 HTML 或本科静默登录。 */
     private suspend fun refreshGraduateStudyPlan() {
-        val cookie = sessionStore.academicCookie.first()
-        val studentId = sessionStore.authenticatedStudentNumber.first()
-        if (cookie.isBlank() || studentId.isBlank()) {
-            _message.value = "研究生登录已失效，请到导入课表页面重新登录"
+        var cookie = sessionStore.academicCookie.first()
+        var studentId = sessionStore.authenticatedStudentNumber.first()
+
+        // cookie 缺失、学号缺失，或门户报「登录已失效」，都属于同一种情况：会话没了。
+        // 研究生门户要图形验证码、无法静默补登录——原地续期（弹验证码）后重试一次。
+        // 只对**会话失效**续期：网络抖动之类的失败照旧直接提示，不该为它弹验证码框。
+        var attempt = if (cookie.isBlank() || studentId.isBlank()) {
+            Result.failure(GraduateSessionExpiredException("研究生登录已失效，请重新登录"))
+        } else {
+            fetchGraduateStudyPlan(cookie, studentId)
+        }
+        val sessionLooksDead = cookie.isBlank() || studentId.isBlank() ||
+            attempt.exceptionOrNull() is GraduateSessionExpiredException
+        if (attempt.isFailure && sessionLooksDead) {
+            if (!renewal.ensureFreshSession()) {
+                // 用户取消或续期失败：保留屏幕上已有的培养计划，只提示。
+                _message.value = "会话已过期，已取消登录"
+                return
+            }
+            // 续期用的账号可能刚落盘，学号也要重读，不能拿旧的空学号去重放。
+            cookie = sessionStore.academicCookie.first()
+            studentId = sessionStore.authenticatedStudentNumber.first()
+            attempt = fetchGraduateStudyPlan(cookie, studentId)
+        }
+        val (groups, courses) = attempt.getOrElse { error ->
+            _message.value = "获取失败: ${error.message}"
             return
         }
-        val client = GraduateClient(cookie)
-        val raw = withContext(Dispatchers.IO) { client.studyPlan(studentId) }
-        val (groups, courses) = GraduateParser.studyPlan(raw)
         // 合法空结果同样覆盖旧来源缓存，避免本科培养计划残留。
         repository.replaceStudyPlanData(groups, courses)
-        sessionStore.saveCookie(client.cookieHeader())
         _message.value = if (groups.isEmpty()) {
             "暂无培养计划数据"
         } else {
             "已获取 ${groups.size} 个课程类别，共 ${courses.size} 门课程"
         }
     }
+
+    /**
+     * 研究生培养计划的一次取数。
+     *
+     * 返回 `Result` 而不是直接抛：调用方要靠 `exceptionOrNull()` 判断是不是会话失效，
+     * 再决定续期还是照旧提示。`CancellationException` 必须原样抛出，否则页面退出时
+     * 会被当成「取数失败」而弹出一个验证码框。
+     *
+     * 成功时照旧把响应里的 cookie 写回：门户可能中途换过会话，原实现就有这一句，语义不变。
+     */
+    private suspend fun fetchGraduateStudyPlan(
+        cookie: String,
+        studentId: String
+    ): Result<Pair<List<StudyPlanGroup>, List<StudyPlanCourse>>> =
+        try {
+            Result.success(
+                withContext(Dispatchers.IO) {
+                    val client = GraduateClient(cookie)
+                    val raw = client.studyPlan(studentId)
+                    sessionStore.saveCookie(client.cookieHeader())
+                    GraduateParser.studyPlan(raw)
+                }
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
 
     internal suspend fun fetchStudyPlanData(
         cookie: String,

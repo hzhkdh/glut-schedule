@@ -100,6 +100,29 @@ class SessionRenewalUiContractTest {
         }
     }
 
+    /**
+     * 「去导入课表页重新登录」正是本功能要消灭的那句话。哪个 ViewModel 里还留着它，
+     * 就说明**还有分支没接门卫**。
+     *
+     * 为什么不能只靠 `everyAcademicMenuGoesThroughTheRenewalGate`：那条断言的是
+     * 「文件里出现过 `ensureFreshSession()`」，一个文件只要**任意一处**接入就通过。
+     * `ScoreViewModel` 与 `StudyPlanViewModel` 各自有一个研究生分支，本科分支接了门卫、
+     * 研究生分支没接，于是那条断言照样报绿——这正是评审 C2 抓到的漏洞。
+     * 所以这里按「旧文案必须消失」来钉，它对「漏掉一个分支」是敏感的。
+     */
+    @Test
+    fun noMenuStillSendsTheUserBackToTheImportPageOnExpiry() {
+        listOf(
+            "ScoreViewModel.kt", "GradeExamViewModel.kt", "StudyPlanViewModel.kt",
+            "SemesterOverviewViewModel.kt", "ExamViewModel.kt",
+            "ScheduleViewModel.kt", "ProfessionalScoreViewModel.kt"
+        ).forEach { file ->
+            val source = page(file)
+            assertFalse("$file 仍提示用户去导入页登录研究生教务", source.contains("请先在导入课表页面登录研究生教务"))
+            assertFalse("$file 仍提示用户去导入课表页", source.contains("请到导入课表页面重新登录"))
+        }
+    }
+
     private fun page(name: String) = java.io.File("src/main/java/com/glut/schedule/ui/pages/$name")
         .let { if (it.exists()) it else java.io.File("app/src/main/java/com/glut/schedule/ui/pages/$name") }
         .readText()

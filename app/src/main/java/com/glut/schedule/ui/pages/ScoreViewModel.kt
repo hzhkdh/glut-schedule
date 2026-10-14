@@ -14,10 +14,12 @@ import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.SessionRenewalCoordinator
 import com.glut.schedule.service.graduate.GraduateClient
 import com.glut.schedule.service.graduate.GraduateParser
+import com.glut.schedule.service.graduate.GraduateSessionExpiredException
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.StudyPlanParser
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readBytesLimited
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -155,21 +157,39 @@ class ScoreViewModel(
     /**
      * 研究生成绩刷新：一个网关调用，**不做静默登录**。
      *
-     * 门户需要图形验证码，无法在后台补登录；会话失效时如实提示用户回导入页重新登录，
-     * 而不是拿记住的密码去撞本科教务。失败时保留已有缓存。
+     * 门户需要图形验证码，无法在后台补登录——会话失效时走 [renewal] 原地弹验证码并重放这一次取数，
+     * 而不是拿记住的密码去撞本科教务。用户取消或续期失败都保留已有缓存。
      */
     private suspend fun refreshGraduateScores() {
         _isRefreshing.value = true
         _message.value = "正在获取成绩..."
         try {
-            val cookie = sessionStore.academicCookie.first()
-            val studentId = sessionStore.authenticatedStudentNumber.first()
-            if (cookie.isBlank() || studentId.isBlank()) {
-                _message.value = "请先在导入课表页面登录研究生教务"
-                return
+            var cookie = sessionStore.academicCookie.first()
+            var studentId = sessionStore.authenticatedStudentNumber.first()
+
+            // cookie 缺失、学号缺失，或门户报「登录已失效」，都属于同一种情况：会话没了。
+            // 研究生门户要图形验证码、无法静默补登录——原地续期（弹验证码）后重试一次。
+            // 只对**会话失效**续期：网络抖动之类的失败照旧直接提示，不该为它弹验证码框。
+            var attempt = if (cookie.isBlank() || studentId.isBlank()) {
+                Result.failure(GraduateSessionExpiredException("研究生登录已失效，请重新登录"))
+            } else {
+                fetchGraduateScores(cookie, studentId)
             }
-            val scores = withContext(Dispatchers.IO) {
-                GraduateParser.scores(GraduateClient(cookie).scores(studentId))
+            val sessionLooksDead = cookie.isBlank() || studentId.isBlank() ||
+                attempt.exceptionOrNull() is GraduateSessionExpiredException
+            if (attempt.isFailure && sessionLooksDead) {
+                if (!renewal.ensureFreshSession()) {
+                    // 用户取消或续期失败：保留屏幕上已有的成绩，只提示。
+                    _message.value = "会话已过期，已取消登录"
+                    return
+                }
+                cookie = sessionStore.academicCookie.first()
+                studentId = sessionStore.authenticatedStudentNumber.first()
+                attempt = fetchGraduateScores(cookie, studentId)
+            }
+            val scores = attempt.getOrElse { error ->
+                _message.value = "获取失败: ${error.message}"
+                return
             }
             repository.replaceScores(scores)
             _message.value = if (scores.isEmpty()) {
@@ -185,6 +205,26 @@ class ScoreViewModel(
             _message.value = ""
         }
     }
+
+    /**
+     * 研究生成绩的一次取数。
+     *
+     * 返回 `Result` 而不是直接抛：调用方要靠 `exceptionOrNull()` 判断是不是会话失效，
+     * 再决定续期还是照旧提示。`CancellationException` 必须原样抛出，否则页面退出时
+     * 会被当成「取数失败」而弹出一个验证码框。
+     */
+    private suspend fun fetchGraduateScores(cookie: String, studentId: String): Result<List<ScoreInfo>> =
+        try {
+            Result.success(
+                withContext(Dispatchers.IO) {
+                    GraduateParser.scores(GraduateClient(cookie).scores(studentId))
+                }
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
 
     private suspend fun fetchAllScores(cookie: String): List<ScoreInfo> {
         val campusBaseUrl = sessionStore.campusBaseUrl.first()
