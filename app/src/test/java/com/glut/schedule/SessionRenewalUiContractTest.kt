@@ -101,6 +101,29 @@ class SessionRenewalUiContractTest {
     }
 
     /**
+     * Busy 期间弹窗必须**继续挂着**，否则用户点完「确认登录」会看到它凭空消失好几秒
+     * （南宁要串行跑验证码校验、登录、重定向链、框架页验证），既没进度反馈也按不了取消；
+     * 更糟的是弹窗重建时 `remember` 被销毁，刚填的密码和验证码会一起丢，错一次重打一次。
+     */
+    @Test
+    fun theRenewalDialogStaysMountedWhileBusy() {
+        val main = source("MainActivity.kt")
+
+        assertTrue(
+            "Busy 期间要沿用上一次的表单内容，而不是把弹窗卸载",
+            main.contains("is RenewalUiState.Busy -> current.form")
+        )
+        assertTrue(
+            "忙碌态要真的传给组件，而不是硬编码 false（那会让转圈变成死代码）",
+            main.contains("isBusy = renewalState is RenewalUiState.Busy")
+        )
+        assertTrue(
+            "Busy 期间返回键要能取消，否则用户只能干等网络超时",
+            main.contains("renewalState is RenewalUiState.Busy ->")
+        )
+    }
+
+    /**
      * 「去导入课表页重新登录」正是本功能要消灭的那句话。哪个 ViewModel 里还留着它，
      * 就说明**还有分支没接门卫**。
      *

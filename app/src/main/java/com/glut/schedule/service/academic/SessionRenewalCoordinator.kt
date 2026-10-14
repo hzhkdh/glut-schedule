@@ -16,8 +16,18 @@ sealed interface RenewalUiState {
     /** 没有续期在进行中。 */
     data object Idle : RenewalUiState
 
-    /** 正在取验证码或正在提交。 */
-    data class Busy(val source: ImportSource) : RenewalUiState
+    /**
+     * 正在取验证码或正在提交。
+     *
+     * [form] 是进入 Busy 之前那张表单的快照，**首次取图时为 null**。
+     * 带上它是为了让界面在等待期间**继续显示**弹窗（只置灰 + 转圈）而不是把它卸载：
+     * 卸载会让用户点完「确认登录」后看到弹窗凭空消失数秒，且重建时连刚填的密码和验证码
+     * 都会随 `remember` 一起丢掉，错一次就要重打一次。
+     */
+    data class Busy(
+        val source: ImportSource,
+        val form: AwaitingCaptcha? = null
+    ) : RenewalUiState
 
     /** 等用户输入。 */
     data class AwaitingCaptcha(
@@ -157,7 +167,8 @@ class SessionRenewalCoordinator(
             _state.value = state.copy(error = "请输入密码")
             return
         }
-        _state.value = RenewalUiState.Busy(source)
+        // 把表单快照带进 Busy：提交期间界面继续显示它，用户不会以为点空了。
+        _state.value = RenewalUiState.Busy(source, state)
         scope.launch {
             val result = captchaLogin.submit(
                 source = source,
@@ -205,7 +216,18 @@ class SessionRenewalCoordinator(
         source: ImportSource,
         fetch: suspend (ImportSource) -> Result<Bitmap>
     ) {
-        _state.value = RenewalUiState.Busy(source)
+        // 保留上一次的表单快照：Busy 期间界面继续渲染它（置灰 + 转圈），
+        // 而不是把弹窗整个卸载——卸载会让用户看到它消失数秒、并丢掉已输入的内容。
+        //
+        // 要**穿透 Busy** 再取：提交失败后紧接着就会调到这里换新图，此时当前状态正是
+        // `submit` 刚写入的 `Busy(source, form)`。若只看 `AwaitingCaptcha`，这里会拿到
+        // null，弹窗恰好在「刚输错、正在换图」那一刻被卸载——正是最不该消失的时候。
+        val previousForm = when (val current = _state.value) {
+            is RenewalUiState.AwaitingCaptcha -> current
+            is RenewalUiState.Busy -> current.form
+            else -> null
+        }
+        _state.value = RenewalUiState.Busy(source, previousForm)
         scope.launch {
             val result = fetch(source)
             _state.value = RenewalUiState.AwaitingCaptcha(

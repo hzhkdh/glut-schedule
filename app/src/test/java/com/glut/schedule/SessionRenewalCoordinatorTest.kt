@@ -15,6 +15,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -225,6 +226,26 @@ class SessionRenewalCoordinatorTest {
         coordinator.cancel()
         advanceUntilIdle()
         assertFalse(awaiting.await())
+    }
+
+    @Test
+    fun busyKeepsTheFormSoTheDialogIsNotUnmounted() = runTest {
+        // 取图与提交都会先把状态置为 Busy。若 Busy 不带表单内容，界面就只能把弹窗整个卸掉：
+        // 用户点完「确认登录」会看到弹窗凭空消失好几秒（南宁要串行跑验证码校验、登录、
+        // 重定向链、框架页验证），既没有进度反馈、又连取消都按不了；
+        // 而且弹窗重建时 remember 被销毁，**用户刚填的密码和验证码也会一起丢**，
+        // 错一次就要重打一次。所以 Busy 必须把刚才那张表单一起带上。
+        val coordinator = coordinator(FakeCaptchaLoginSession(), FakeSessionStore(username = ""), ImportSource.NANNING)
+
+        val awaiting = async { coordinator.ensureFreshSession() }
+        advanceUntilIdle()
+        coordinator.submit(captcha = "1234", username = "2026000000", password = "pw")
+
+        val busy = coordinator.state.value as RenewalUiState.Busy
+        assertNotNull("Busy 期间界面要能继续显示表单，否则弹窗被卸载", busy.form)
+
+        advanceUntilIdle()
+        assertTrue(awaiting.await())
     }
 
     // ---- 手写 fake（本仓库既有测试不引 mock 库）----

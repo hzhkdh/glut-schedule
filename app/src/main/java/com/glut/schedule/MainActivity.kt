@@ -299,7 +299,10 @@ class MainActivity : ComponentActivity() {
                     when {
                         // 续期弹窗盖在最上层，返回键先关它。关掉即取消续期，
                         // 触发它的那次刷新会拿到 false，从而保留屏幕上原有的缓存。
-                        renewalState is RenewalUiState.AwaitingCaptcha ->
+                        // Busy 也要算：取图/提交期间弹窗仍然显示着，若这时返回键不认它，
+                        // 用户就只能干等网络超时——恰恰在最需要「算了不登了」的时候。
+                        renewalState is RenewalUiState.AwaitingCaptcha ||
+                            renewalState is RenewalUiState.Busy ->
                             container.sessionRenewalCoordinator.cancel()
                         // 微信登录覆盖层盖在最上层，返回键必须先关它。
                         // 覆盖层是纯界面状态，关掉即可；登录流程本身（若有）不受影响。
@@ -1213,15 +1216,26 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
 
                 // 教务会话续期弹窗。与 showWechatLogin 同级：画在 ModalNavigationDrawer 之外，
                 // 所以用户在**任何**菜单里撞上会话失效都能被盖住，不必离开当前页面。
-                (renewalState as? RenewalUiState.AwaitingCaptcha)?.let { renewal ->
+                //
+                // Busy 期间**继续渲染同一个实例**：取图与提交都会先进入 Busy，若那时把它卸载，
+                // 用户点完「确认登录」会看到弹窗凭空消失好几秒（南宁要串行跑验证码校验、登录、
+                // 重定向链、框架页验证），既没有任何进度反馈、也按不了取消；而且弹窗重建时
+                // `remember` 被销毁，刚填的密码和验证码会一起丢，错一次就要重打一次。
+                // 所以沿用上一次的表单内容，只把按钮置灰并转圈。调用点位置保持不变，
+                // Compose 才会认成同一个实例、保住输入框里的内容。
+                val renewalForm = when (val current = renewalState) {
+                    is RenewalUiState.AwaitingCaptcha -> current
+                    is RenewalUiState.Busy -> current.form
+                    else -> null
+                }
+                if (renewalForm != null) {
                     SessionRenewalDialog(
-                        source = renewal.source,
-                        captchaBitmap = renewal.captchaBitmap,
-                        prefilledUsername = renewal.prefilledUsername,
-                        prefilledPassword = renewal.prefilledPassword,
-                        error = renewal.error,
-                        // 取图与提交的忙碌态由协调器的 Busy 表达，那时这个弹窗不在渲染路径上。
-                        isBusy = false,
+                        source = renewalForm.source,
+                        captchaBitmap = renewalForm.captchaBitmap,
+                        prefilledUsername = renewalForm.prefilledUsername,
+                        prefilledPassword = renewalForm.prefilledPassword,
+                        error = renewalForm.error,
+                        isBusy = renewalState is RenewalUiState.Busy,
                         onRefreshCaptcha = container.sessionRenewalCoordinator::refreshCaptcha,
                         onSubmit = container.sessionRenewalCoordinator::submit,
                         onDismiss = container.sessionRenewalCoordinator::cancel
