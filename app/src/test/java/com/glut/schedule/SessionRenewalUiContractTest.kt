@@ -65,6 +65,20 @@ class SessionRenewalUiContractTest {
         }
     }
 
+    /**
+     * `needsInteractiveLogin` 曾写了 14 次、还配了 `consumeInteractiveLoginRequest()`，
+     * 但全仓零消费方——续期门卫接管后连写入点都成了孤儿。这类「有人写没人读」的信号
+     * 最容易在下次重构时被误当成「还有人在用」而保留下来，所以用一条断言钉死它不再回来。
+     */
+    @Test
+    fun theDeadInteractiveLoginFlagIsGone() {
+        listOf("ScheduleViewModel.kt", "ExamViewModel.kt").forEach { file ->
+            val source = page(file)
+            assertFalse("$file 仍有无人消费的 needsInteractiveLogin", source.contains("needsInteractiveLogin"))
+            assertFalse("$file 仍有无人消费的 consumeInteractiveLoginRequest", source.contains("consumeInteractiveLoginRequest"))
+        }
+    }
+
     private fun page(name: String) = java.io.File("src/main/java/com/glut/schedule/ui/pages/$name")
         .let { if (it.exists()) it else java.io.File("app/src/main/java/com/glut/schedule/ui/pages/$name") }
         .readText()

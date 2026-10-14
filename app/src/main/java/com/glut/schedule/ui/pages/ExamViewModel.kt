@@ -38,8 +38,7 @@ data class ExamUiState(
     val hasCookie: Boolean = false,
     val isRefreshing: Boolean = false,
     val message: String = "",
-    val examCount: Int = 0,
-    val needsInteractiveLogin: Boolean = false
+    val examCount: Int = 0
 )
 
 class ExamViewModel(
@@ -53,22 +52,19 @@ class ExamViewModel(
 
     private val _isRefreshing = MutableStateFlow(false)
     private val _message = MutableStateFlow("")
-    private val _needsInteractiveLogin = MutableStateFlow(false)
 
     val uiState: StateFlow<ExamUiState> = combine(
         repository.exams,
         sessionStore.academicCookie,
         _isRefreshing,
-        _message,
-        _needsInteractiveLogin
-    ) { exams, cookie, isRefreshing, message, needsInteractiveLogin ->
+        _message
+    ) { exams, cookie, isRefreshing, message ->
         ExamUiState(
             exams = exams,
             hasCookie = cookie.isNotBlank(),
             isRefreshing = isRefreshing,
             message = message,
-            examCount = exams.size,
-            needsInteractiveLogin = needsInteractiveLogin
+            examCount = exams.size
         )
     }.stateIn(
         scope = viewModelScope,
@@ -80,7 +76,6 @@ class ExamViewModel(
         viewModelScope.launch {
             _isRefreshing.value = true
             _message.value = "正在刷新..."
-            _needsInteractiveLogin.value = false
             try {
                 val existingCookie = sessionStore.academicCookie.first()
                 if (shouldUseExistingAcademicCookie(existingCookie) && fetchAndSaveExams(existingCookie)) {
@@ -91,21 +86,19 @@ class ExamViewModel(
                 // 用户取消或续期失败都**保留已有缓存**，只提示、不动屏幕上已有的考试安排。
                 if (!renewal.ensureFreshSession()) {
                     _message.value = "会话已过期，已取消登录"
-                    _needsInteractiveLogin.value = true
                     return@launch
                 }
                 val cookie = sessionStore.academicCookie.first()
                 if (cookie.isBlank()) {
                     _message.value = "未获取到教务登录态，请重新登录"
-                    _needsInteractiveLogin.value = true
                     return@launch
                 }
-                if (!fetchAndSaveExams(cookie)) {
-                    _needsInteractiveLogin.value = true
-                }
+                // 不再接 fetchAndSaveExams 的布尔返回值：它原先只是用来置位一个
+                // 「需要交互登录」开关，而那个开关全仓无人消费（已删除），
+                // 失败文案照旧由 onFailure 分支写进 _message。
+                fetchAndSaveExams(cookie)
             } catch (e: Exception) {
                 _message.value = "网络错误: ${e.message}"
-                _needsInteractiveLogin.value = true
             } finally {
                 _isRefreshing.value = false
                 kotlinx.coroutines.delay(4000)
@@ -136,9 +129,4 @@ class ExamViewModel(
     fun clearMessage() {
         _message.value = ""
     }
-
-    fun consumeInteractiveLoginRequest() {
-        _needsInteractiveLogin.value = false
-    }
-
 }

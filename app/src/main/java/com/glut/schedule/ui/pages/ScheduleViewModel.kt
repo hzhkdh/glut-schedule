@@ -112,7 +112,6 @@ data class ScheduleUiState(
     val courseColorOverrides: Map<String, String> = emptyMap(),
     val isRefreshing: Boolean = false,
     val message: String = "",
-    val needsInteractiveLogin: Boolean = false,
     val semesters: List<AcademicSemester> = emptyList(),
     val viewedSemester: AcademicSemester? = null,
     val isHistoricalSemester: Boolean = false,
@@ -244,7 +243,6 @@ class ScheduleViewModel(
     private val holidayFetchGuard = SingleFlightGuard()
     private val makeupTableFetchGuard = SingleFlightGuard()
     private val message = MutableStateFlow("")
-    private val needsInteractiveLogin = MutableStateFlow(false)
 
     /**
      * 删除卡片后的一次性撤销提示。
@@ -499,13 +497,11 @@ class ScheduleViewModel(
         uiState = combine(
             scheduleState,
             isRefreshing,
-            message,
-            needsInteractiveLogin
-        ) { state, refreshing, currentMessage, interactiveLogin ->
+            message
+        ) { state, refreshing, currentMessage ->
             state.copy(
                 isRefreshing = refreshing,
-                message = currentMessage,
-                needsInteractiveLogin = interactiveLogin
+                message = currentMessage
             )
         }.stateIn(
             scope = viewModelScope,
@@ -513,8 +509,7 @@ class ScheduleViewModel(
             initialValue = ScheduleUiState(
                 week = initialWeek,
                 isRefreshing = isRefreshing.value,
-                message = message.value,
-                needsInteractiveLogin = needsInteractiveLogin.value
+                message = message.value
             )
         )
     }
@@ -727,7 +722,6 @@ class ScheduleViewModel(
         }
         viewModelScope.launch {
             message.value = "正在刷新课表..."
-            needsInteractiveLogin.value = false
             // 用户主动刷新时顺带补齐节假日数据。与教务导入互不依赖：
             // 即使下面登录 / 抓取失败，节假日也已经更新过了。
             refreshHolidayYears()
@@ -771,7 +765,6 @@ class ScheduleViewModel(
                 if (payload == null) {
                     val failure = importResult?.exceptionOrNull()
                     message.value = refreshFailureMessage(failure, targetSemester)
-                    needsInteractiveLogin.value = isAuthenticationFailure(failure)
                     return@launch
                 }
                 saveExactSemester(targetSemester, payload, oldCourseCount, refreshCookie)
@@ -931,7 +924,6 @@ class ScheduleViewModel(
             if (attempt.isFailure && sessionLooksDead) {
                 if (!renewal.ensureFreshSession()) {
                     message.value = "会话已过期，已取消登录"
-                    needsInteractiveLogin.value = true
                     return
                 }
                 cookie = sessionStore.academicCookie.first()
@@ -939,7 +931,6 @@ class ScheduleViewModel(
             }
             val payload = attempt.getOrElse { error ->
                 message.value = refreshFailureMessage(error, targetSemester)
-                needsInteractiveLogin.value = true
                 return
             }
             require(payload.courses.isNotEmpty()) {
@@ -1028,10 +1019,6 @@ class ScheduleViewModel(
 
     fun clearMessage() {
         message.value = ""
-    }
-
-    fun consumeInteractiveLoginRequest() {
-        needsInteractiveLogin.value = false
     }
 
     private fun estimatedSemesterStart(semester: AcademicSemester): LocalDate {
