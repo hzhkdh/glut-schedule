@@ -7,6 +7,7 @@ import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.data.model.historicalAcademicMaxWeek
 import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicSessionStore
+import com.glut.schedule.service.academic.importSourceForCampusBaseUrl
 import com.glut.schedule.service.academic.ApiProbeService
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginService
@@ -282,7 +283,10 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
         credentialReader = credentialStore,
         captchaLogin = captchaLoginSession,
         // 来源取「上次成功导入的来源」：南宁与研究生共用同一个弹窗，取错就会给错来源取验证码。
-        currentSource = { settingsStore.lastImportSource.first() },
+        // 来源由**会话主机**反推，而不是读 lastImportSource：后者要等整份课表导入成功才落库，
+        // 而 cookie 与 campusBaseUrl 在登录成功那一刻就写好了。两者在「登录成功、导入失败」时
+        // 会分叉，按旧来源分派会让南宁会话被当成桂林——不弹窗、静默换票必失败、功能静默失效。
+        currentSource = { importSourceForCampusBaseUrl(academicSessionStore.campusBaseUrl.first()) },
         // 桂林仍然走静默换票；它是唯一能免密补登录的来源。
         silentLogin = { academicLoginService.silentLogin() },
         scope = applicationScope
