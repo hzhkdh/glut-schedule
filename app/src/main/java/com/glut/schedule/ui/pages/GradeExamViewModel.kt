@@ -70,7 +70,7 @@ class GradeExamViewModel(
             _isRefreshing.value = true
             _message.value = "正在获取等级考试成绩..."
             try {
-                val campusBaseUrl = sessionStore.campusBaseUrl.first()
+                var campusBaseUrl = sessionStore.campusBaseUrl.first()
                     .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
 
                 // Try existing cookie first
@@ -89,6 +89,10 @@ class GradeExamViewModel(
                         return@launch
                     }
                     cookie = sessionStore.academicCookie.first()
+                    // 主机地址也要重读：协调器刚把新值写回 DataStore，而这里手上还是门卫之前读的旧值。
+                    // 漏掉这一行，重放会把新 cookie 发到旧主机上（南宁换研究生时必然失败）。
+                    campusBaseUrl = sessionStore.campusBaseUrl.first()
+                        .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
                     allExams = fetchGradeExams(cookie, campusBaseUrl)
                 }
 
