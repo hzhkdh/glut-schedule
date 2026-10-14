@@ -58,9 +58,11 @@ data class HolidayAdjustmentsUiState(
     val autoNotices: List<String> = emptyList(),
     /** 被用户删掉、因此不再自动出现的规则条数（用于「恢复已忽略」按钮）。 */
     val suppressedAutoCount: Int = 0,
-    /** 远端对照表的状态：未下载 / 已下载但没覆盖本学期，文案不同。 */
+    /** 对照表是否已下载并解析成功。为 false 时页面会说明「以下为推算结果，可能不准」。 */
     val remoteTableReady: Boolean = false,
+    /** 对照表版本号。**当前不在界面上渲染**——rev 是维护者的版本控制概念，用户读不懂也做不了决定。 */
     val remoteRevision: Int? = null,
+    /** 对照表更新日期，用作「可能已过期」的判据。 */
     val remoteUpdatedAt: String = ""
 ) {
     /** 学期起止日期缺失时无法确定可选范围，整页退化为空状态。 */

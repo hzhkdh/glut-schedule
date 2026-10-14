@@ -562,28 +562,32 @@ private fun AutoDayCopySection(
             trailing = { Switch(checked = state.autoDayCopyEnabled, onCheckedChange = onToggle) }
         )
 
-        // 第一行只说结果，第二行只说数据来源：原来是「已启用 · 补了几天 · 对照表 rev N」挤成
-        // 一个中间点串，而且 rev 在下一行的说明里又说了一遍。
+        // 只说结果，不说数据从哪来——来源由下面那条「可能不准」的警告负责，且只在没有对照表时出现。
+        // 原来是「已启用 · 补了几天 · 对照表 rev N」全挤在一个中间点串里。
         Text(
             text = if (state.autoDayCopyEnabled) {
                 autoResultText(state)
             } else {
                 "未启用：只有你手动添加的调课生效"
             },
-            color = if (state.autoDayCopyEnabled && !state.remoteTableReady) WarningText else TextSecondary,
+            color = TextSecondary,
             fontSize = 13.sp,
             lineHeight = 19.sp,
             modifier = Modifier.padding(top = 10.dp, start = 13.dp)
         )
         if (!state.autoDayCopyEnabled) return@Column
 
-        Text(
-            text = autoSourceText(state),
-            color = TextSecondary,
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
-            modifier = Modifier.padding(top = 4.dp, start = 13.dp)
-        )
+        // 只有「这批规则不是学校通知来的」才需要说明——那是用户唯一能据此判断准不准的信息。
+        // 有对照表时**什么都不显示**：rev 与更新日期是维护者概念，用户读不懂，也做不了任何决定。
+        if (!state.remoteTableReady) {
+            Text(
+                "学校通知尚未录入，以下为推算结果，可能不准",
+                color = WarningText,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.padding(top = 4.dp, start = 13.dp)
+            )
+        }
         if (isMakeupTableStale(state.remoteUpdatedAt)) {
             Text(
                 "对照表可能已过期，可点下方按钮或到首页下拉刷新同步。",
@@ -631,18 +635,15 @@ private fun AutoDayCopySection(
     }
 }
 
-/** 开关打开时的结果文案：只讲补了什么，不讲数据从哪来（那是 [autoSourceText] 的事）。 */
+/**
+ * 开关打开时的结果文案：只讲补了什么。
+ *
+ * 数据从哪来不在这里说——那是"可能不准"那条警告的事，而且只在没有对照表时才出现。
+ * 对照表的版本号与更新日期**刻意不展示**：`rev 1` 是维护者的版本控制概念，用户既读不懂，
+ * 也无法据此做任何决定；真正对用户有用的只有"这批补课可不可信"。
+ */
 private fun autoResultText(state: HolidayAdjustmentsUiState): String =
     if (state.autoRules.isEmpty()) "暂无自动补课" else "已自动补 ${state.autoRules.size} 天"
-
-/** 开关打开时的来源文案：这批规则是拿什么算出来的。版本号只在这里出现一次。 */
-private fun autoSourceText(state: HolidayAdjustmentsUiState): String {
-    if (!state.remoteTableReady) return "对照表尚未下载，按补班日规律推导"
-    val revision = state.remoteRevision?.let { "rev $it" }
-    val updatedAt = state.remoteUpdatedAt.takeIf { it.isNotBlank() }
-    val version = listOfNotNull(revision, updatedAt).joinToString(" · ")
-    return if (version.isBlank()) "以学校对照表为准" else "以学校对照表为准 · $version"
-}
 
 /**
  * 对照表是否可能过期：超过 120 天没更新就提示一次。
@@ -655,10 +656,11 @@ internal fun isMakeupTableStale(updatedAt: String, today: LocalDate = LocalDate.
 }
 
 /**
- * 一条调休规则。
+ * 一条调休规则：日期一行，复制节数一行，删除在最右侧。
  *
- * 单行排列：日期在左、复制节数靠右、删除在最右。日期与节数分两行时，日期行会浮在整行的
- * 上半部分，箭头看着就偏上；来源徽标撤掉之后一行放得下，箭头也就落在整行的中线上。
+ * 日期**必须独占一行**。整行可用的宽度是「面板宽 − 复制节数 − 删除」，而
+ * `2026-10-06 → 2026-09-20` 在 15sp 下要占约 168dp，三者挤在一行里超出面板宽度，日期会被
+ * 压到折行、箭头吊在行尾（真机实测过）。日期独占一行后既不会折行，箭头也必然与日期同基线。
  */
 @Composable
 private fun RuleRow(row: ManualDayCopyRow, onDelete: () -> Unit) {
@@ -666,19 +668,21 @@ private fun RuleRow(row: ManualDayCopyRow, onDelete: () -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            "${row.rule.sourceDate} → ${row.rule.targetDate}",
-            color = RuleDateText,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            "复制 ${row.courseCount} 节课",
-            color = TextSecondary,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(start = 8.dp)
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "${row.rule.sourceDate} → ${row.rule.targetDate}",
+                color = RuleDateText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+            Text(
+                "复制 ${row.courseCount} 节课",
+                color = TextSecondary,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
         Text(
             "删除",
             color = DangerText,

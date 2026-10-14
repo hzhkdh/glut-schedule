@@ -89,13 +89,10 @@ class AutoDayCopyCoordinator(
         )
 
         val notices = composed.notices.toMutableList()
-        when {
-            // tableCoversSemester 为真即蕴含 table 非空（covers 是 table 上的调用），不必再判一次。
-            tableCoversSemester ->
-                // 不带 rev：版本号由编辑页的状态行显示一次就够了，这里再说一遍只是噪音。
-                notices += "对照表已收录本学期：以学校通知为准，推导已停用。"
-            table != null ->
-                notices += "对照表已同步（rev ${table.revision}）但未覆盖本学期，当前来自补班日规律推导。"
+        // 对照表已收录本学期时**一个字都不加**：那是正常状态，用户不需要知道数据是怎么算出来的。
+        // 只有「表拿到了、但里面没有本学期」这一种要提示——此时规则是推算的，可信度不同。
+        if (table != null && !tableCoversSemester) {
+            notices += "学校通知尚未收录本学期，以下为推算结果"
         }
 
         settingsStore.setAutoDayCopies(semesterId, composed.rules)
