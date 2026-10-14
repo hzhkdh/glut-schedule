@@ -52,6 +52,19 @@ class SessionRenewalUiContractTest {
         assertTrue("返回键要能取消续期", main.contains("sessionRenewalCoordinator.cancel()"))
     }
 
+    @Test
+    fun everyAcademicMenuGoesThroughTheRenewalGate() {
+        listOf(
+            "ScoreViewModel.kt", "GradeExamViewModel.kt", "StudyPlanViewModel.kt",
+            "SemesterOverviewViewModel.kt", "ExamViewModel.kt",
+            "ScheduleViewModel.kt", "ProfessionalScoreViewModel.kt"
+        ).forEach { file ->
+            val source = page(file)
+            assertFalse("$file 不该再直接调 silentLogin", source.contains("loginService.silentLogin()"))
+            assertTrue("$file 应经续期门卫", source.contains("ensureFreshSession()"))
+        }
+    }
+
     private fun page(name: String) = java.io.File("src/main/java/com/glut/schedule/ui/pages/$name")
         .let { if (it.exists()) it else java.io.File("app/src/main/java/com/glut/schedule/ui/pages/$name") }
         .readText()

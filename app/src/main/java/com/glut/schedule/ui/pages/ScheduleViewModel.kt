@@ -46,6 +46,7 @@ import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
+import com.glut.schedule.service.academic.SessionRenewalCoordinator
 import com.glut.schedule.service.academic.AcademicSemesterImportPayload
 import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.AcademicSemesterCalendarResolver
@@ -60,6 +61,7 @@ import com.glut.schedule.service.holiday.refreshMissingHolidayYears
 import com.glut.schedule.ui.SingleFlightGuard
 import com.glut.schedule.service.academic.shouldUseExistingAcademicCookie
 import com.glut.schedule.service.graduate.GraduateImportService
+import com.glut.schedule.service.graduate.GraduateSessionExpiredException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -227,6 +229,8 @@ class ScheduleViewModel(
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
+    /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
+    private val renewal: SessionRenewalCoordinator,
     private val semesterImportService: AcademicSemesterImportService,
     private val apiProbeService: ApiProbeService,
     private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
@@ -754,32 +758,14 @@ class ScheduleViewModel(
                     }
                 }
 
-                when (val loginResult = loginService.silentLogin()) {
-                    is AcademicLoginResult.Success -> {
-                        refreshCookie = loginResult.cookie
-                        importResult = importExactSemester(loginResult.cookie, targetSemester)
-                    }
-                    AcademicLoginResult.MissingCredentials -> {
-                        message.value = "请先登录教务系统以保存账号密码"
-                        needsInteractiveLogin.value = true
-                        return@launch
-                    }
-                    AcademicLoginResult.InvalidCredentials -> {
-                        message.value = "教务账号或密码错误，请重新登录"
-                        needsInteractiveLogin.value = true
-                        return@launch
-                    }
-                    AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
-                        message.value = "教务系统需要手动验证，请重新登录"
-                        needsInteractiveLogin.value = true
-                        return@launch
-                    }
-                    is AcademicLoginResult.NetworkError -> {
-                        message.value = "登录失败: ${loginResult.message}"
-                        needsInteractiveLogin.value = true
-                        return@launch
-                    }
+                // 会话失效：原地续期——南宁/研究生弹验证码，桂林静默换票。
+                // 用户在弹窗里取消（或续期失败）就**保留已有缓存**，只提示、不重取。
+                if (!renewal.ensureFreshSession()) {
+                    message.value = "会话已过期，已取消登录"
+                    return@launch
                 }
+                refreshCookie = sessionStore.academicCookie.first()
+                importResult = importExactSemester(refreshCookie, targetSemester)
 
                 val payload = importResult?.getOrNull()
                 if (payload == null) {
@@ -901,6 +887,22 @@ class ScheduleViewModel(
         error?.message.orEmpty().contains("登录状态已失效")
 
     /**
+     * 研究生学期课表取数。
+     *
+     * 单独抽出来是因为刷新链路要**调用它两次**（续期前后各一次），
+     * 内联会让那段控制流看不出「同一件事做了两遍」。
+     */
+    private suspend fun downloadGraduateSemester(
+        cookie: String,
+        semester: AcademicSemester,
+        studentId: String
+    ) = GraduateImportService.downloadSemester(
+        cookie = cookie,
+        semester = semester,
+        studentId = studentId
+    )
+
+    /**
      * 研究生课表刷新。
      *
      * 与本科/南宁的取数完全不同：没有个人课表页、没有周次落地页、没有校历探测接口，
@@ -913,18 +915,29 @@ class ScheduleViewModel(
      */
     private suspend fun refreshGraduateSchedule(targetSemester: AcademicSemester) {
         try {
-            val cookie = sessionStore.academicCookie.first()
             val studentId = sessionStore.authenticatedStudentNumber.first()
-            if (cookie.isBlank() || studentId.isBlank()) {
-                message.value = "研究生会话已过期，请重新登录后再刷新"
-                needsInteractiveLogin.value = true
-                return
+            var cookie = sessionStore.academicCookie.first()
+
+            // cookie 缺失、学号缺失，或取数报「登录已失效」，都属于同一种情况：门户会话没了。
+            // 研究生门户要图形验证码，无法静默补登录——原地续期（弹验证码）后重试一次。
+            // 只对**会话失效**续期：网络抖动之类的失败照旧直接提示，不该为它弹一个验证码框。
+            var attempt = if (cookie.isBlank() || studentId.isBlank()) {
+                Result.failure(GraduateSessionExpiredException("研究生登录已失效，请重新登录"))
+            } else {
+                downloadGraduateSemester(cookie, targetSemester, studentId)
             }
-            val payload = GraduateImportService.downloadSemester(
-                cookie = cookie,
-                semester = targetSemester,
-                studentId = studentId
-            ).getOrElse { error ->
+            val sessionLooksDead = cookie.isBlank() || studentId.isBlank() ||
+                attempt.exceptionOrNull() is GraduateSessionExpiredException
+            if (attempt.isFailure && sessionLooksDead) {
+                if (!renewal.ensureFreshSession()) {
+                    message.value = "会话已过期，已取消登录"
+                    needsInteractiveLogin.value = true
+                    return
+                }
+                cookie = sessionStore.academicCookie.first()
+                attempt = downloadGraduateSemester(cookie, targetSemester, studentId)
+            }
+            val payload = attempt.getOrElse { error ->
                 message.value = refreshFailureMessage(error, targetSemester)
                 needsInteractiveLogin.value = true
                 return
@@ -1034,6 +1047,8 @@ class ScheduleViewModelFactory(
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
+    /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
+    private val renewal: SessionRenewalCoordinator,
     private val semesterImportService: AcademicSemesterImportService,
     private val apiProbeService: ApiProbeService,
     private val autoDayCopyCoordinator: AutoDayCopyCoordinator,
@@ -1047,6 +1062,7 @@ class ScheduleViewModelFactory(
             settingsStore,
             sessionStore,
             loginService,
+            renewal,
             semesterImportService,
             apiProbeService,
             autoDayCopyCoordinator,

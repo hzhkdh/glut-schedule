@@ -9,6 +9,7 @@ import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicSessionStore
+import com.glut.schedule.service.academic.SessionRenewalCoordinator
 import com.glut.schedule.service.academic.shouldUseExistingAcademicCookie
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,11 +23,13 @@ class ExamViewModelFactory(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
     private val examService: AcademicExamService,
-    private val loginService: AcademicLoginService
+    private val loginService: AcademicLoginService,
+    /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
+    private val renewal: SessionRenewalCoordinator
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return ExamViewModel(repository, sessionStore, examService, loginService) as T
+        return ExamViewModel(repository, sessionStore, examService, loginService, renewal) as T
     }
 }
 
@@ -43,7 +46,9 @@ class ExamViewModel(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
     private val examService: AcademicExamService,
-    private val loginService: com.glut.schedule.service.academic.AcademicLoginService
+    private val loginService: com.glut.schedule.service.academic.AcademicLoginService,
+    /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
+    private val renewal: SessionRenewalCoordinator
 ) : ViewModel() {
 
     private val _isRefreshing = MutableStateFlow(false)
@@ -82,28 +87,12 @@ class ExamViewModel(
                     return@launch
                 }
 
-                when (val loginResult = loginService.silentLogin()) {
-                    is AcademicLoginResult.Success -> Unit
-                    AcademicLoginResult.MissingCredentials -> {
-                        _message.value = "请先登录教务系统以保存账号密码"
-                        _needsInteractiveLogin.value = true
-                        return@launch
-                    }
-                    AcademicLoginResult.InvalidCredentials -> {
-                        _message.value = "教务账号或密码错误，请重新登录"
-                        _needsInteractiveLogin.value = true
-                        return@launch
-                    }
-                    AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
-                        _message.value = "教务系统需要手动验证，请重新登录"
-                        _needsInteractiveLogin.value = true
-                        return@launch
-                    }
-                    is AcademicLoginResult.NetworkError -> {
-                        _message.value = "登录失败: ${loginResult.message}"
-                        _needsInteractiveLogin.value = true
-                        return@launch
-                    }
+                // 会话失效：原地续期——南宁/研究生弹验证码，桂林静默换票。
+                // 用户取消或续期失败都**保留已有缓存**，只提示、不动屏幕上已有的考试安排。
+                if (!renewal.ensureFreshSession()) {
+                    _message.value = "会话已过期，已取消登录"
+                    _needsInteractiveLogin.value = true
+                    return@launch
                 }
                 val cookie = sessionStore.academicCookie.first()
                 if (cookie.isBlank()) {

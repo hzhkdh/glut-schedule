@@ -16,6 +16,7 @@ import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.scorePageUnavailableReason
 import com.glut.schedule.service.academic.AcademicSessionStore
+import com.glut.schedule.service.academic.SessionRenewalCoordinator
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.StudyPlanParser
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
@@ -73,6 +74,8 @@ class ProfessionalScoreViewModel(
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
+    /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
+    private val renewal: SessionRenewalCoordinator,
     private val scoreParser: ScoreParser = ScoreParser(),
     private val studyPlanParser: StudyPlanParser = StudyPlanParser()
 ) : ViewModel() {
@@ -217,27 +220,18 @@ class ProfessionalScoreViewModel(
         } else {
             _message.value = "会话已过期，正在尝试自动登录..."
         }
-        when (val loginResult = loginService.silentLogin()) {
-            is AcademicLoginResult.Success -> {
-                cookie = sessionStore.academicCookie.first()
-                campusBaseUrl = loginResult.campusBaseUrl
-                sessionStore.saveCampusBaseUrl(campusBaseUrl)
-                data = fetchIfPossible()
-            }
-            AcademicLoginResult.MissingCredentials ->
-                throw IllegalStateException("请先在导入课表页面登录教务系统并保存账号")
-            AcademicLoginResult.InvalidCredentials ->
-                throw IllegalStateException("教务账号或密码错误，请重新登录")
-            AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
-                val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
-                throw IllegalStateException(
-                    if (isNanning) "南宁登录需验证码，请到导入课表页面重新登录"
-                    else "教务需要手动验证，请到导入课表页面重新登录"
-                )
-            }
-            is AcademicLoginResult.NetworkError ->
-                throw IllegalStateException("自动登录失败：${loginResult.message}")
+        // 会话失效：原地续期——南宁/研究生弹验证码，桂林静默换票。
+        // 用户取消或续期失败都**保留已有缓存**：直接返回手上这份数据（可能为空），
+        // 由界面照常提示，不再像以前那样 throw 出去把整页打成错误态。
+        if (!renewal.ensureFreshSession()) {
+            _message.value = "会话已过期，已取消登录"
+            return data
         }
+        // 续期成功后重读会话：cookie 与主机都由协调器写好了，这里不再自己猜。
+        cookie = sessionStore.academicCookie.first()
+        campusBaseUrl = sessionStore.campusBaseUrl.first()
+            .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
+        data = fetchIfPossible()
         return data
     }
 
@@ -426,6 +420,8 @@ class ProfessionalScoreViewModelFactory(
     private val settingsStore: ScheduleSettingsStore,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
+    /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
+    private val renewal: SessionRenewalCoordinator,
     private val scoreParser: ScoreParser = ScoreParser(),
     private val studyPlanParser: StudyPlanParser = StudyPlanParser()
 ) : ViewModelProvider.Factory {
@@ -436,6 +432,7 @@ class ProfessionalScoreViewModelFactory(
             settingsStore = settingsStore,
             sessionStore = sessionStore,
             loginService = loginService,
+            renewal = renewal,
             scoreParser = scoreParser,
             studyPlanParser = studyPlanParser
         ) as T

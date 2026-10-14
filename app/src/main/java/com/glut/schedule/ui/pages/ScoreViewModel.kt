@@ -11,6 +11,7 @@ import com.glut.schedule.service.academic.AcademicLoginResult
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.scorePageUnavailableReason
 import com.glut.schedule.service.academic.AcademicSessionStore
+import com.glut.schedule.service.academic.SessionRenewalCoordinator
 import com.glut.schedule.service.graduate.GraduateClient
 import com.glut.schedule.service.graduate.GraduateParser
 import com.glut.schedule.service.parser.ScoreParser
@@ -47,6 +48,8 @@ class ScoreViewModel(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
+    /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
+    private val renewal: SessionRenewalCoordinator,
     private val scoreParser: ScoreParser = ScoreParser(),
     private val studyPlanParser: StudyPlanParser = StudyPlanParser(),
     /** 当前来源；刷新链路对研究生必须换网关（见 [refreshScores]）。刷新时读取，不做构造快照。 */
@@ -113,44 +116,18 @@ class ScoreViewModel(
             var cookie = sessionStore.academicCookie.first()
             var allScores = if (cookie.isNotBlank()) fetchAllScores(cookie) else emptyList()
 
-            // If cookie expired or missing, try silent login
+            // 会话失效：原地续期——南宁/研究生弹验证码，桂林静默换票。
+            // 用户取消或续期失败都**保留已有缓存**，只提示、不动屏幕上已有的成绩。
+            // 续期成功后只重放这一次取数；仍为空就交给下面的评教判定与空状态处理，语义不变。
             if (allScores.isEmpty()) {
-                _message.value = "会话已过期，正在使用已保存的账号自动登录..."
-                when (val loginResult = loginService.silentLogin()) {
-                    is AcademicLoginResult.Success -> {
-                        cookie = sessionStore.academicCookie.first()
-                        allScores = fetchAllScores(cookie)
-                    }
-                    AcademicLoginResult.MissingCredentials -> {
-                        _message.value = "请先在导入课表页面登录教务系统以保存账号密码"
-                        delay(4000)
-                        _message.value = ""
-                        return
-                    }
-                    AcademicLoginResult.InvalidCredentials -> {
-                        _message.value = "教务账号或密码错误，请重新登录"
-                        delay(4000)
-                        _message.value = ""
-                        return
-                    }
-                    is AcademicLoginResult.NetworkError -> {
-                        _message.value = "自动登录失败: ${loginResult.message}"
-                        delay(4000)
-                        _message.value = ""
-                        return
-                    }
-                    AcademicLoginResult.CaptchaOrInteractiveLoginRequired -> {
-                        val campusBaseUrl = sessionStore.campusBaseUrl.first()
-                        val isNanning = campusBaseUrl == AcademicLoginResult.NANNING_URL
-                        _message.value = if (isNanning)
-                            "南宁登录需验证码，请到导入课表页面重新登录"
-                        else
-                            "教务需要手动验证，请到导入课表页面重新登录"
-                        delay(4000)
-                        _message.value = ""
-                        return
-                    }
+                if (!renewal.ensureFreshSession()) {
+                    _message.value = "会话已过期，已取消登录"
+                    delay(4000)
+                    _message.value = ""
+                    return
                 }
+                cookie = sessionStore.academicCookie.first()
+                allScores = fetchAllScores(cookie)
             }
 
             if (scoreBlockedByEvaluation) {
@@ -353,6 +330,8 @@ class ScoreViewModelFactory(
     private val repository: ScheduleRepository,
     private val sessionStore: AcademicSessionStore,
     private val loginService: AcademicLoginService,
+    /** 会话失效时的续期门卫：南宁/研究生原地弹验证码，桂林静默换票。 */
+    private val renewal: SessionRenewalCoordinator,
     private val scoreParser: ScoreParser = ScoreParser(),
     private val studyPlanParser: StudyPlanParser = StudyPlanParser(),
     private val campusTypeFlow: Flow<CampusType> = flowOf(CampusType.GUILIN)
@@ -360,7 +339,8 @@ class ScoreViewModelFactory(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return ScoreViewModel(
-            repository, sessionStore, loginService, scoreParser, studyPlanParser, campusTypeFlow
+            repository, sessionStore, loginService, renewal,
+            scoreParser, studyPlanParser, campusTypeFlow
         ) as T
     }
 }
