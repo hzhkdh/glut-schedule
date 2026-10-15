@@ -4,6 +4,7 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.ScoreInfo
+import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.StudyPlanCourse
 import com.glut.schedule.data.model.StudyPlanGroup
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
@@ -19,7 +20,14 @@ data class GraduateScheduleWrite(
     val classPeriods: List<ClassPeriod>,
     val semesterStartDate: LocalDate?,
     val semesterEndDate: LocalDate?,
-    val portalMaxWeek: Int
+    val portalMaxWeek: Int,
+    /**
+     * 门户的调课记录。
+     *
+     * **只落库、不改主课表**：门户的课表接口已经把调课落实在目标时段（课程名带 `[调课]` 前缀、
+     * 原时段那一周被摘掉）。这些记录供「调休调课」页、学期概览的调课一览与课时统计使用。
+     */
+    val adjustments: List<SemesterAdjustment> = emptyList()
 )
 
 /** 导入结果，供界面渲染；失败模块逐项列出，互不牵连。 */
@@ -128,7 +136,9 @@ class GraduateImportCoordinator(
                 // 周数优先用门户 `TeachWeekEnd`；门户没给才按课次反推（反推只是下界）。
                 // **绝不为 null**：CourseTimeStats 会把 portalMaxWeek 为 null 的学期整学期判为不可统计。
                 portalMaxWeek = payload.teachWeekEnd
-                    ?: historicalAcademicMaxWeek(current.portalMaxWeek, payload.courses)
+                    ?: historicalAcademicMaxWeek(current.portalMaxWeek, payload.courses),
+                // 调课记录随课表一起落库：只进本地调课模型，不参与网格渲染。
+                adjustments = payload.adjustments
             )
         )
         effects.saveCatalog(catalog)

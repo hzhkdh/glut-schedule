@@ -216,8 +216,8 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
                 ).map { payload ->
                     com.glut.schedule.service.academic.AcademicSemesterImportPayload(
                         courses = payload.courses,
-                        // 研究生的调课不并入课表，历史学期同样不例外。
-                        adjustments = emptyList(),
+                        // 调课记录随课表一起落库，历史学期同样不例外；只进调课模型，不改网格。
+                        adjustments = payload.adjustments,
                         currcourseHtml = "",
                         timetableHtml = "",
                         responseKind = com.glut.schedule.service.academic.AcademicSemesterResponseKind

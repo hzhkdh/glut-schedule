@@ -915,4 +915,93 @@ class GraduateSupportTest {
         val expired = GraduateSessionExpiredException("请重新登录")
         assertTrue(expired.message!!.contains("重新登录"))
     }
+
+    // ---- 调课记录 ----
+    //
+    // 结构照抄 2026-10-15 门户 `TimeTableNewService/GetCheckedAdjustCourseList` 的实测响应：
+    // 字段名、把两侧时间各塞进一个中文字符串的写法（`6-6周 【星期二】3,4节 `），
+    // 以及第 3、4 条那种**跨周**调课（原 6-6 周周五 → 目标 7-7 周周二）。
+    // 值一律是合成数据，与小程序端 `tests/graduate-adjustments.synthetic.json` 同形。
+
+    private val syntheticAdjustmentRows = """
+        [
+          {"CourseID":"SYN0001","CourseName":"合成课程甲","Class":"合成班级甲","Teacher":"T0001","TeacherName":"测试教师甲","PreClassTime":"6-6周 【星期二】3,4节 ","PreClassRoomName":"测试教室A","ToClassTime":"6-6周 【星期四】11,12节 ","ToClassRoomName":"测试教室B","Year":"2026-2027","Term":"1","Week":"4"},
+          {"CourseID":"SYN0001","CourseName":"合成课程甲","Class":"合成班级甲","Teacher":"T0001","TeacherName":"测试教师甲","PreClassTime":"6-6周 【星期二】1,2节 ","PreClassRoomName":"测试教室A","ToClassTime":"6-6周 【星期四】9,10节 ","ToClassRoomName":"测试教室B","Year":"2026-2027","Term":"1","Week":"4"},
+          {"CourseID":"SYN0002","CourseName":"合成课程乙","Class":"合成班级乙","Teacher":"T0002","TeacherName":"测试教师乙","PreClassTime":"6-6周 【星期五】11,12节 ","PreClassRoomName":"测试教室C","ToClassTime":"7-7周 【星期二】11,12节 ","ToClassRoomName":"测试教室D","Year":"2026-2027","Term":"1","Week":"2"},
+          {"CourseID":"SYN0002","CourseName":"合成课程乙","Class":"合成班级乙","Teacher":"T0002","TeacherName":"测试教师乙","PreClassTime":"6-6周 【星期五】9,10节 ","PreClassRoomName":"测试教室C","ToClassTime":"7-7周 【星期二】9,10节 ","ToClassRoomName":"测试教室D","Year":"2026-2027","Term":"1","Week":"2"}
+        ]
+    """.trimIndent()
+
+    @Test
+    fun mapsAdjustmentRowsOntoOriginalAndMakeupSides() {
+        // 门户把原时段写在 PreClassTime、目标时段写在 ToClassTime，与本科的列式调课表完全不同。
+        val parsed = GraduateParser.adjustments(syntheticAdjustmentRows)
+
+        assertEquals(4, parsed.adjustments.size)
+        assertEquals(0, parsed.warningCount)
+
+        val first = parsed.adjustments.first { it.originalDay == 2 && it.originalStartSection == 3 }
+        assertEquals("调课", first.type)
+        assertEquals("合成课程甲", first.title)
+        assertEquals("测试教师甲", first.teacher)
+        assertEquals(6, first.originalWeek)
+        assertEquals(4, first.originalEndSection)
+        assertEquals("测试教室A", first.originalRoom)
+        assertEquals(6, first.makeupWeek)
+        assertEquals(4, first.makeupDay)
+        assertEquals(11, first.makeupStartSection)
+        assertEquals(12, first.makeupEndSection)
+        assertEquals("测试教室B", first.makeupRoom)
+    }
+
+    @Test
+    fun crossWeekAdjustmentKeepsBothWeeksApart() {
+        // 把目标周错写成原周，记录就会指到一个根本没发生调课的周次上：列表看着有、周次是错的。
+        val cross = GraduateParser.adjustments(syntheticAdjustmentRows)
+            .adjustments.first { it.originalDay == 5 && it.originalStartSection == 11 }
+
+        assertEquals("合成课程乙", cross.title)
+        assertEquals(6, cross.originalWeek)
+        assertEquals("测试教室C", cross.originalRoom)
+        assertEquals(7, cross.makeupWeek)
+        assertEquals(2, cross.makeupDay)
+        assertEquals(11, cross.makeupStartSection)
+        assertEquals("测试教室D", cross.makeupRoom)
+    }
+
+    @Test
+    fun adjustmentIdsAreStableAcrossReparses() {
+        // 课表刷新会整批重放解析结果。id 只要带上每次都会变的序号，同一条调课就会在本地越攒越多。
+        val once = GraduateParser.adjustments(syntheticAdjustmentRows).adjustments.map { it.id }
+        val twice = GraduateParser.adjustments(syntheticAdjustmentRows).adjustments.map { it.id }
+
+        assertEquals(once, twice)
+        assertEquals(once.size, once.toSet().size)
+    }
+
+    @Test
+    fun unreadableAdjustmentRowsAreCountedAndNeverGuessedAsSuspension() {
+        // 目标时段为空时**不能**自作主张当成停课：停课在课时统计里会扣掉那一周的课时，
+        // 猜错就是凭空少算。现有样本里没有任何停课/代课形态，认不出就只计数。
+        val broken = """
+            [
+              {"CourseName":"合成课程甲","PreClassTime":"待定","PreClassRoomName":"测试教室A","ToClassTime":"","ToClassRoomName":""},
+              {"CourseName":"","PreClassTime":"6-6周 【星期二】3,4节","ToClassTime":"6-6周 【星期四】5,6节"}
+            ]
+        """.trimIndent()
+
+        val parsed = GraduateParser.adjustments(broken)
+
+        assertTrue(parsed.adjustments.isEmpty())
+        assertEquals(2, parsed.warningCount)
+        assertFalse(parsed.adjustments.any { it.type == "停课" })
+    }
+
+    @Test
+    fun unrecognizedAdjustmentPayloadYieldsAnEmptyResultWithoutThrowing() {
+        // 门户偶发返回非行数组时，导入不能被一条调课查询拖垮。
+        assertTrue(GraduateParser.adjustments("不是 JSON").adjustments.isEmpty())
+        assertEquals(0, GraduateParser.adjustments("不是 JSON").warningCount)
+        assertEquals(0, GraduateParser.adjustments("").warningCount)
+    }
 }

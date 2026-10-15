@@ -4,6 +4,7 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.ScoreInfo
+import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.StudyPlanCourse
@@ -89,7 +90,8 @@ class GraduateImportCoordinatorTest {
         scores: Result<List<ScoreInfo>> = Result.success(emptyList()),
         studyPlan: Result<Pair<List<StudyPlanGroup>, List<StudyPlanCourse>>> =
             Result.success(emptyList<StudyPlanGroup>() to emptyList()),
-        catalog: List<AcademicSemester> = listOf(currentSemester, historicalSemester)
+        catalog: List<AcademicSemester> = listOf(currentSemester, historicalSemester),
+        onWrite: (GraduateScheduleWrite) -> Unit = {}
     ) = GraduateImportEffects(
         fetchCatalog = { catalog },
         fetchSemester = { _, _ -> payload },
@@ -106,6 +108,7 @@ class GraduateImportCoordinatorTest {
             recorder.add("writeSchedule")
             // 写入的必须是**研究生**档案的作息，而不是「当前校区」的（那会拿到上一个来源的）。
             assertEquals(graduateClassPeriods(), write.classPeriods)
+            onWrite(write)
         },
         writeScores = { recorder.add("writeScores") },
         writeStudyPlan = { _, _ -> recorder.add("writeStudyPlan") },
@@ -131,16 +134,53 @@ class GraduateImportCoordinatorTest {
         startMonday: LocalDate? = LocalDate.of(2026, 9, 7),
         endDate: LocalDate? = LocalDate.of(2027, 1, 15),
         teachWeekEnd: Int? = 19,
-        skippedRowCount: Int = 0
+        skippedRowCount: Int = 0,
+        adjustments: List<SemesterAdjustment> = emptyList()
     ) = GraduateSemesterPayload(
         courses = courses,
         unparsedWeekTextCount = 0,
         semesterStartMonday = startMonday,
         semesterEndDate = endDate,
         teachWeekEnd = teachWeekEnd,
+        adjustments = adjustments,
         adjustmentWarning = "",
         skippedRowCount = skippedRowCount
     )
+
+    /** 调课记录必须随课表一起交给落库，否则「调休调课」页与课时统计永远是空的。 */
+    @Test
+    fun adjustmentsReachTheScheduleWrite() = runTest {
+        val recorder = Recorder()
+        val adjustments = listOf(
+            SemesterAdjustment(
+                id = "synthetic-adjustment",
+                type = "调课",
+                title = "合成课程甲",
+                teacher = "测试教师甲",
+                originalWeek = 6,
+                originalDay = 2,
+                originalStartSection = 3,
+                originalEndSection = 4,
+                originalRoom = "测试教室A",
+                makeupWeek = 6,
+                makeupDay = 4,
+                makeupStartSection = 11,
+                makeupEndSection = 12,
+                makeupRoom = "测试教室B"
+            )
+        )
+        var written: GraduateScheduleWrite? = null
+
+        GraduateImportCoordinator(
+            effects(
+                recorder,
+                Result.success(payload(adjustments = adjustments)),
+                onWrite = { written = it }
+            )
+        ).run(session()).getOrThrow()
+
+        assertEquals(adjustments, written?.adjustments)
+    }
 
     /** 被跳过的坏记录条数必须原样带回结果，供界面如实提示。 */
     @Test

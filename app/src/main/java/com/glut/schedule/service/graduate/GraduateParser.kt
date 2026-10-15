@@ -6,6 +6,7 @@ import com.glut.schedule.data.model.CourseStatus
 import com.glut.schedule.data.model.GRADUATE_SECTION_COUNT
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.ScoreInfo
+import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.StudyPlanCourse
 import com.glut.schedule.data.model.StudyPlanGroup
@@ -29,6 +30,17 @@ data class GraduateScheduleParseResult(
     val courses: List<ScheduleCourse>,
     val adjustmentWarning: String = "",
     val skippedCount: Int = 0
+)
+
+/**
+ * 研究生调课记录的一次解析结果。
+ *
+ * [warningCount] 是**认不出**的行数：缺课程名、或两侧时间串读不懂。必须如实回传，
+ * 否则表现就是「调课记录少了几条」而用户无从知道少了什么。
+ */
+data class GraduateAdjustmentParseResult(
+    val adjustments: List<SemesterAdjustment> = emptyList(),
+    val warningCount: Int = 0
 )
 
 /**
@@ -397,6 +409,115 @@ object GraduateParser {
             )
         }
         return groups.values.toList() to courses
+    }
+
+    // ---- 调课记录 ----
+
+    /** 门户 `GetCheckedAdjustCourseList` 目前只给「原时段 → 目标时段」这一类。 */
+    const val ADJUSTMENT_TYPE_ADJUSTED = "调课"
+
+    /** 教学周的安全上界；与课表解析同一口径。 */
+    private const val MAX_ADJUSTMENT_WEEK = 30
+
+    private val CHINESE_DAY_INDEX = mapOf(
+        '一' to 1, '二' to 2, '三' to 3, '四' to 4, '五' to 5, '六' to 6, '日' to 7, '天' to 7
+    )
+
+    /**
+     * 门户把两侧时间各塞进**一个中文字符串**，如 `6-6周 【星期二】3,4节 `。
+     *
+     * 与本科的列式调课表完全不同（那边是「星期 / 节次 / 周次 / 教室」四列），所以只能自己拆。
+     * 周次是闭区间；节次两种写法都认（`3,4节` 与 `3-4节`）。
+     */
+    private val adjustmentTimePattern = Regex(
+        """^(\d{1,2})(?:\s*[-~－—]\s*(\d{1,2}))?\s*周\s*[【\[]?\s*星期\s*([一二三四五六日天])\s*[】\]]?\s*第?\s*(\d{1,2})(?:\s*(?:[,，]|[-~－—])\s*(\d{1,2}))?\s*节"""
+    )
+
+    /**
+     * 拆一个时间串，返回 `[首周, 末周, 星期, 起始节, 结束节]`。
+     *
+     * 读不懂返回 null —— 由调用方计入告警，**不要在这里猜一个默认值**：猜出来的周次会直接
+     * 进课时统计，错一周就是凭空多算或少算一次课。
+     */
+    private fun parseAdjustmentTime(value: String): IntArray? {
+        val match = adjustmentTimePattern.find(value.trim()) ?: return null
+        val firstWeek = match.groupValues[1].toInt()
+        val lastWeek = match.groupValues[2].ifBlank { match.groupValues[1] }.toInt()
+        val day = CHINESE_DAY_INDEX[match.groupValues[3].first()] ?: return null
+        val startSection = match.groupValues[4].toInt()
+        val endSection = match.groupValues[5].ifBlank { match.groupValues[4] }.toInt()
+        if (firstWeek < 1 || lastWeek < firstWeek || lastWeek > MAX_ADJUSTMENT_WEEK) return null
+        if (day < 1 || startSection < 1 || endSection < startSection) return null
+        if (endSection > GRADUATE_SECTION_COUNT) return null
+        return intArrayOf(firstWeek, lastWeek, day, startSection, endSection)
+    }
+
+    /**
+     * 解析调课记录 → 本地 `SemesterAdjustment`。
+     *
+     * **只落记录，不碰课表**：门户的 `GetTimeTableByStudent` 已经把调课落实在目标时段了——
+     * 生成一条课程名带 `[调课]` 前缀的块，并把原时段那一周从周次里摘掉（2026-10-15 真实账号确认）。
+     * 再走一遍本科的 makeup 建卡链路会多出一张重复卡：那一步的去重靠标题相等，`[调课]` 前缀过不了。
+     *
+     * **不认「停课」**：停课在课时统计里要扣掉那一周的课时，把「缺目标时段」的记录猜成停课
+     * 就是凭空少算。现有样本 4 条全是「原时段 → 目标时段」，没有任何停课/代课形态，
+     * 所以认不出的行只计入 [GraduateAdjustmentParseResult.warningCount]，让用户去门户核对。
+     */
+    fun adjustments(raw: String): GraduateAdjustmentParseResult {
+        val rows = rowsOf(raw) ?: return GraduateAdjustmentParseResult()
+        val adjustments = mutableListOf<SemesterAdjustment>()
+        var warningCount = 0
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONObject(index)
+            val title = row?.optString("CourseName").orEmpty().trim()
+            val original = parseAdjustmentTime(row?.optString("PreClassTime").orEmpty())
+            val makeup = parseAdjustmentTime(row?.optString("ToClassTime").orEmpty())
+            if (row == null || title.isEmpty() || original == null || makeup == null) {
+                warningCount++
+                continue
+            }
+            val originalSpan = original[1] - original[0]
+            val makeupSpan = makeup[1] - makeup[0]
+            // 两侧都是单周（现有样本全是），或两侧是**等长**区间时，逐周一一对应展开：
+            // SemesterAdjustment 一条只承载单周，揉成一条会把中间几周漏掉、周次判定也会错位。
+            // 区间不等长是个没有样本的形态，配错周比不配更糟，如实计入告警。
+            if (originalSpan != makeupSpan) {
+                warningCount++
+                continue
+            }
+            val teacher = row.optString("TeacherName").trim()
+            val originalRoom = row.optString("PreClassRoomName").trim()
+            val makeupRoom = row.optString("ToClassRoomName").trim()
+            for (offset in 0..originalSpan) {
+                val originalWeek = original[0] + offset
+                val makeupWeek = makeup[0] + offset
+                adjustments += SemesterAdjustment(
+                    // 与本科 `stableId` 同一口径：按两侧时段取摘要，刷新重放时 id 稳定，
+                    // 同一条调课不会在本地越攒越多。
+                    id = GraduateProtocol.md5(
+                        listOf(
+                            "adj", ADJUSTMENT_TYPE_ADJUSTED, title, teacher,
+                            originalWeek, original[2], original[3], original[4], originalRoom,
+                            makeupWeek, makeup[2], makeup[3], makeup[4], makeupRoom
+                        ).joinToString("|")
+                    ).take(12),
+                    type = ADJUSTMENT_TYPE_ADJUSTED,
+                    title = title,
+                    teacher = teacher,
+                    originalWeek = originalWeek,
+                    originalDay = original[2],
+                    originalStartSection = original[3],
+                    originalEndSection = original[4],
+                    originalRoom = originalRoom,
+                    makeupWeek = makeupWeek,
+                    makeupDay = makeup[2],
+                    makeupStartSection = makeup[3],
+                    makeupEndSection = makeup[4],
+                    makeupRoom = makeupRoom
+                )
+            }
+        }
+        return GraduateAdjustmentParseResult(adjustments, warningCount)
     }
 
     /**

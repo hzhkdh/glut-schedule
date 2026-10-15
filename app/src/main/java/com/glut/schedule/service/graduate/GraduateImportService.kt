@@ -3,6 +3,7 @@ package com.glut.schedule.service.graduate
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.ScoreInfo
+import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.StudyPlanCourse
 import com.glut.schedule.data.model.StudyPlanGroup
 import com.glut.schedule.data.model.countUnparsedWeekTexts
@@ -27,7 +28,20 @@ data class GraduateSemesterPayload(
     val semesterEndDate: LocalDate? = null,
     /** 门户 `TeachWeekEnd`：教学周上界。缺失时才退回按课次反推。 */
     val teachWeekEnd: Int? = null,
-    /** 非空时只作提示展示，绝不据此改动主课表。 */
+    /**
+     * 门户的调课记录（`GetCheckedAdjustCourseList`）。
+     *
+     * **只落库、不改主课表**：门户的课表接口已经把调课落实在目标时段了——生成一条课程名带
+     * `[调课]` 前缀的块、原时段那一周从周次里摘掉。这些记录供「调休调课」页、学期概览的
+     * 调课一览与课时统计使用，**不参与网格渲染**，也不进本科那套 makeup 建卡链路
+     *（它靠标题相等去重，`[调课]` 前缀过不了，会多出重复卡）。
+     */
+    val adjustments: List<SemesterAdjustment> = emptyList(),
+    /**
+     * 调课这一块的提示：查询本身失败、或有记录认不出时非空。
+     *
+     * 查询失败**不阻断导入**（课表已经拿到了），但必须如实提示，不能把整块数据静默丢掉。
+     */
     val adjustmentWarning: String = "",
     /**
      * 无法识别而被**跳过**的课程条数。
@@ -96,6 +110,12 @@ object GraduateImportService {
             val isCurrent = semester.isCurrent ||
                 (semester.portalYearId == session.context.year &&
                     semester.portalTermId == session.context.term)
+            val adjustmentFetch = fetchAdjustments(
+                client = session.client,
+                year = semester.portalYearId,
+                term = semester.portalTermId,
+                studentId = session.context.studentId
+            )
             GraduateSemesterPayload(
                 courses = parsed.courses,
                 unparsedWeekTextCount = countUnparsedWeekTexts(parsed.courses),
@@ -103,33 +123,44 @@ object GraduateImportService {
                 semesterStartMonday = session.context.currentSemesterStartMonday.takeIf { isCurrent },
                 semesterEndDate = session.context.currentSemesterEndDate.takeIf { isCurrent },
                 teachWeekEnd = session.context.teachWeekEndValue.takeIf { isCurrent },
-                adjustmentWarning = adjustmentWarning(session, semester),
+                adjustments = adjustmentFetch.adjustments,
+                adjustmentWarning = adjustmentFetch.warning,
                 skippedRowCount = parsed.skippedCount
             )
         }
     }
 
     /**
-     * 调课查询：**只作提示**。
+     * 调课查询：**取到就落库，取不到只提示**。
      *
-     * 当前样本为空，尚未确认「有调课时主课表是否已反映变更」，因此既不套用本科的调课算法，
-     * 也不二次修改主课表。查询失败同样不阻断导入。
+     * 它不参与课表构建，所以失败绝不能连累导入——但也不能静默：调课记录少了，用户在
+     * 「调休调课」页看到的就是一片空白，无从知道是门户没数据还是我们没取到。
      */
-    private fun adjustmentWarning(
-        session: GraduateLoginSession,
-        semester: AcademicSemester
-    ): String = runCatchingCancellable {
-        val raw = session.client.adjustments(
-            year = semester.portalYearId,
-            term = semester.portalTermId,
-            studentId = session.context.studentId
+    private suspend fun fetchAdjustments(
+        client: GraduateClient,
+        year: String,
+        term: String,
+        studentId: String
+    ): GraduateAdjustmentFetch = runCatchingCancellable {
+        // 用与课表同一份包装识别逻辑（`rowsOf`）：`GetCheckedAdjustCourseList` 同属
+        // TimeTableNewService，返回裸数组的可能性很高。自己再写一份 `JSONObject(raw)`
+        // 会在裸数组上抛异常、被外层吃掉，于是**明明取到了数据却报「调课信息未能获取」**。
+        val parsed = GraduateParser.adjustments(client.adjustments(year = year, term = term, studentId = studentId))
+        GraduateAdjustmentFetch(
+            adjustments = parsed.adjustments,
+            warning = if (parsed.warningCount > 0) {
+                "有 ${parsed.warningCount} 条调课记录未能识别，请在研究生门户核对"
+            } else {
+                ""
+            }
         )
-        // 用与课表同一份包装识别逻辑：`GetCheckedAdjustCourseList` 同属 TimeTableNewService，
-        // 返回裸数组的可能性很高。自己再写一份 `JSONObject(raw)` 会在裸数组上抛异常、
-        // 被外层 runCatching 吃掉，于是**明明取到了数据却报「调课信息未能获取」**。
-        val count = GraduateParser.rowsOf(raw)?.length() ?: 0
-        if (count > 0) "门户有 $count 条调课记录，暂未自动并入课表，请以研究生门户为准" else ""
-    }.getOrElse { "调课信息未能获取，请在研究生门户核对" }
+    }.getOrElse { GraduateAdjustmentFetch(warning = "调课信息未能获取，请在研究生门户核对") }
+
+    /** 一次调课查询的结果：要落库的记录，以及需要如实告知用户的提示。 */
+    private data class GraduateAdjustmentFetch(
+        val adjustments: List<SemesterAdjustment> = emptyList(),
+        val warning: String = ""
+    )
 
     /** 成绩：门户不给绩点，界面不得推算，因此只返回真实分数与学分。 */
     suspend fun scores(session: GraduateLoginSession): Result<List<ScoreInfo>> =
@@ -164,11 +195,19 @@ object GraduateImportService {
                 studentId = studentId
             )
             val parsed = GraduateParser.scheduleWithDiagnostics(rows)
+            val adjustmentFetch = fetchAdjustments(
+                client = client,
+                year = semester.portalYearId,
+                term = semester.portalTermId,
+                studentId = studentId
+            )
             GraduateSemesterPayload(
                 courses = parsed.courses,
                 unparsedWeekTextCount = countUnparsedWeekTexts(parsed.courses),
                 // 历史学期没有权威校历，一律留空，由调用方沿用学期自身已有的日期。
                 semesterStartMonday = null,
+                adjustments = adjustmentFetch.adjustments,
+                adjustmentWarning = adjustmentFetch.warning,
                 skippedRowCount = parsed.skippedCount
             )
         }

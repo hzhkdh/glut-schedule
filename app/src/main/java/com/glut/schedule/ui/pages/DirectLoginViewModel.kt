@@ -1193,8 +1193,9 @@ class DirectLoginViewModel(
                     scheduleRepository.replaceSemesterSchedule(
                         semester = write.semester,
                         courses = write.courses,
-                        // 研究生的调课记录当前不并入课表：未经真实样本确认前，只作提示。
-                        adjustments = emptyList(),
+                        // 调课记录只落库：门户的主课表已经反映了调课结果（课程名带 `[调课]` 前缀、
+                        // 原时段那一周被摘掉），这里再套本科的 makeup 算法会多出重复卡。
+                        adjustments = write.adjustments,
                         classPeriods = write.classPeriods,
                         semesterStartDate = write.semesterStartDate,
                         semesterEndDate = write.semesterEndDate,

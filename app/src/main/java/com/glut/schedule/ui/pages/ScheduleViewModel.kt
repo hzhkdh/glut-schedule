@@ -945,15 +945,16 @@ class ScheduleViewModel(
             repository.replaceSemesterSchedule(
                 semester = targetSemester,
                 courses = payload.courses,
-                // 研究生的调课不并入课表；刷新也不改变这条口径。
-                adjustments = emptyList(),
+                // 调课记录随课表一起落库：只进本地调课模型（调课一览 / 课时统计），不改网格。
+                // 门户的主课表已经反映了调课结果，这里再套本科的 makeup 算法会多出重复卡。
+                adjustments = payload.adjustments,
                 classPeriods = repository.currentClassPeriods.first(),
                 semesterStartDate = targetSemester.semesterStartDate,
                 semesterEndDate = targetSemester.semesterEndDate,
                 portalMaxWeek = targetSemester.portalMaxWeek
             )
-            // 研究生没有教务调课记录，但仍要重算：对照表与补班日推导对研究生来源同样适用
-            // （门户不下发调课，正是自动调课最有价值的场景）。
+            // 自动调课仍要重算：对照表与补班日推导对研究生来源同样适用，而门户一次只下发
+            // 已审批的那几条调课，后续补班安排仍得靠这套规则兜底。
             autoDayCopyCoordinator.recompose(targetSemester.id)
             message.value = if (payload.unparsedWeekTextCount > 0) {
                 "课表已刷新；${payload.unparsedWeekTextCount} 条上课时间的周次无法识别"
