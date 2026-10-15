@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.HolidayInfo
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.SemesterAdjustment
+import com.glut.schedule.data.model.overviewWeek
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.settings.CampusType
@@ -201,9 +202,7 @@ class SemesterOverviewViewModel(
             elapsedDays = progress.elapsedDays,
             remainingDays = progress.remainingDays,
             holidays = if (isArchiveMode) emptyList() else holidaysWithVacation,
-            adjustmentsByWeek = base.adjustments.groupBy { adj ->
-                if (adj.originalWeek > 0) adj.originalWeek else adj.makeupWeek
-            },
+            adjustmentsByWeek = base.adjustments.groupBy(SemesterAdjustment::overviewWeek),
             isRefreshing = isRefreshing,
             message = message,
             // 中午节次是「来源」属性，不是「是不是南宁」：研究生同样没有中午节次，

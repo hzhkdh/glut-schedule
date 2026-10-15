@@ -132,7 +132,7 @@ class SessionRenewalCoordinator(
                 return true
             }
             if (isWechatSession && result == AcademicLoginResult.CaptchaOrInteractiveLoginRequired) {
-                _state.value = RenewalUiState.WechatReauthenticationRequired
+                return awaitWechatReauthentication()
             }
             return false
         }
@@ -143,9 +143,41 @@ class SessionRenewalCoordinator(
             return false
         }
 
-        // 「看一眼有没有在飞的续期」与「没有就认领一个」必须在**同一个原子段**里完成：
-        // 分开写的话，两个并发调用会都读到 null，于是各弹各的窗、各等各的
-        // CompletableDeferred，单飞失效。
+        val mine = claimPending(source)
+        mine.inFlight?.let { return it.await() }
+
+        fetchCaptcha(source, captchaLogin::requestCaptcha)
+        return mine.owned.await()
+    }
+
+    /**
+     * 微信统一认证票据过期时，让原先失败的取数操作保持等待。
+     *
+     * 扫码成功后 [completeWechatReauthentication] 会写回新会话并完成这个 deferred，
+     * 调用方随即重读 cookie、重放原请求；不能像旧实现那样先返回 false，
+     * 否则会出现「新会话已经有了，但用户还得再点一次刷新」的断层。
+     */
+    private suspend fun awaitWechatReauthentication(): Boolean {
+        val mine = claimPending(ImportSource.GUILIN)
+        mine.inFlight?.let { return it.await() }
+        _state.value = RenewalUiState.WechatReauthenticationRequired
+        return mine.owned.await()
+    }
+
+    /** 扫码页已拿到新教务会话：持久化后释放原先等待重放的刷新请求。 */
+    fun completeWechatReauthentication(cookie: String) {
+        if (pending == null) return
+        scope.launch {
+            // 续期路径不能依赖导入页异步写库的时序；先由门卫写回，重放读取时必定是新票据。
+            sessionWriter.saveCookie(cookie)
+            sessionWriter.saveCampusBaseUrl(AcademicLoginResult.DEFAULT_GUILIN_URL)
+            _state.value = RenewalUiState.Idle
+            completePending(true)
+        }
+    }
+
+    /** 认领或加入正在进行的续期，南宁验证码与微信扫码共用同一个单飞闸门。 */
+    private suspend fun claimPending(source: ImportSource): PendingClaim {
         val mine = CompletableDeferred<Boolean>()
         val inFlight = mutex.withLock {
             val current = pending
@@ -157,11 +189,13 @@ class SessionRenewalCoordinator(
                 null
             }
         }
-        inFlight?.let { return it.await() }
-
-        fetchCaptcha(source, captchaLogin::requestCaptcha)
-        return mine.await()
+        return PendingClaim(owned = mine, inFlight = inFlight)
     }
+
+    private data class PendingClaim(
+        val owned: CompletableDeferred<Boolean>,
+        val inFlight: CompletableDeferred<Boolean>?
+    )
 
     /** 用户在弹窗里点了确认。 */
     fun submit(captcha: String) {

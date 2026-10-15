@@ -179,8 +179,16 @@ class SessionRenewalCoordinatorTest {
             silentWechatLogin = { AcademicLoginResult.CaptchaOrInteractiveLoginRequired }
         )
 
-        assertFalse(coordinator.ensureFreshSession())
+        val awaiting = async { coordinator.ensureFreshSession() }
+        advanceUntilIdle()
+
         assertTrue(coordinator.state.value is RenewalUiState.WechatReauthenticationRequired)
+        assertFalse("扫码页完成前，原刷新任务必须继续等待以便重放", awaiting.isCompleted)
+
+        coordinator.completeWechatReauthentication("cookie-after-scan")
+        advanceUntilIdle()
+
+        assertTrue("扫码成功后必须让原刷新任务继续，而不是要求用户再点一次刷新", awaiting.await())
     }
 
     @Test

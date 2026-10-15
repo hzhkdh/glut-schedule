@@ -114,6 +114,16 @@ class SessionRenewalUiContractTest {
         assertFalse("不应再要求用户点击无业务意义的去登录确认框", main.contains("需要重新微信登录"))
     }
 
+    @Test
+    fun successfulWechatReauthenticationReplaysTheOriginalRefresh() {
+        val main = source("MainActivity.kt")
+
+        assertTrue(
+            "扫码成功写回会话后，要释放续期门卫等待的原刷新任务",
+            main.contains("sessionRenewalCoordinator.completeWechatReauthentication(cookie)")
+        )
+    }
+
     /**
      * Busy 期间弹窗必须**继续挂着**，否则用户点完「确认登录」会看到它凭空消失好几秒
      * （南宁要串行跑验证码校验、登录、重定向链、框架页验证），既没进度反馈也按不了取消；

@@ -430,8 +430,11 @@ class MainActivity : ComponentActivity() {
                 // 只会让用户多点一次「去登录」。状态到达时直接切换到扫码覆盖层即可。
                 LaunchedEffect(renewalState) {
                     if (renewalState is RenewalUiState.WechatReauthenticationRequired) {
-                        container.sessionRenewalCoordinator.cancel()
-                        if (directLoginViewModel.startWechatLogin()) showWechatLogin = true
+                        if (directLoginViewModel.startWechatLogin()) {
+                            showWechatLogin = true
+                        } else {
+                            container.sessionRenewalCoordinator.cancel()
+                        }
                     }
                 }
                 LaunchedEffect(container.semesterBulkDownloadCoordinator) {
@@ -1269,14 +1272,17 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                         onSuccess = { cookie, studentNumber ->
                             showWechatLogin = false
                             directLoginViewModel.onWechatLoginSucceeded(cookie, studentNumber)
+                            container.sessionRenewalCoordinator.completeWechatReauthentication(cookie)
                         },
                         onCancel = {
                             showWechatLogin = false
                             directLoginViewModel.cancelWechatLogin()
+                            container.sessionRenewalCoordinator.cancel()
                         },
                         onFailed = { reason ->
                             showWechatLogin = false
                             directLoginViewModel.onWechatLoginFailed(reason)
+                            container.sessionRenewalCoordinator.cancel()
                         }
                     )
                 }

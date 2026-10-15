@@ -342,7 +342,9 @@ class MultiSemesterUiContractTest {
         assertTrue(viewModel.contains("isArchiveMode"))
         assertTrue(viewModel.contains("holidays = if (isArchiveMode) emptyList()"))
         assertFalse(screen.contains("教务系统未提供该历史学期的权威校历"))
-        assertTrue(viewModel.contains("if (adj.originalWeek > 0) adj.originalWeek else adj.makeupWeek"))
+        // 调课一览展示的是实际调后安排，归组规则统一收口到模型扩展函数：
+        // 调/补课优先调后周次，停/代课没有调后时段才回退原周次。
+        assertTrue(viewModel.contains("groupBy(SemesterAdjustment::overviewWeek)"))
     }
 
     private fun page(name: String): String {

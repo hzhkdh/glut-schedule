@@ -4,6 +4,7 @@ import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.adjustmentMarkerFor
+import com.glut.schedule.data.model.overviewWeek
 import com.glut.schedule.data.model.readableMarkerColor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -16,6 +17,17 @@ import org.junit.Test
  * 那时两个课次会被合并成同一门课，只看 (课程名, 星期, 节次) 会把常规周也标上。
  */
 class AdjustmentMarkerTest {
+
+    @Test
+    fun adjustmentOverviewGroupsChangedClassByItsNewWeek() {
+        val adjustment = SemesterAdjustment(
+            id = "moved", type = "调课", title = "合成课程", teacher = "教师",
+            originalWeek = 9, originalDay = 1, originalStartSection = 3, originalEndSection = 4, originalRoom = "A",
+            makeupWeek = 7, makeupDay = 4, makeupStartSection = 7, makeupEndSection = 8, makeupRoom = "B"
+        )
+
+        assertEquals("调课一览应按调后周次归组", 7, adjustment.overviewWeek())
+    }
 
     private fun occurrence(
         dayOfWeek: Int = 2,
