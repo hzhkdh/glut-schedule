@@ -17,18 +17,13 @@ import kotlin.coroutines.resume
  * 使用 App 已持久化的 WebView 统一认证会话，静默换取新的教务 JSESSIONID。
  *
  * 不把 CASTGC/TGC 复制到 DataStore 或凭据库；票据始终由 WebView CookieManager 保管。
- * 当学校已让票据失效时会落到登录页，调用方再请用户确认是否重新扫码。
+ * 不可只按某个 Cookie 名提前判定会话失效：统一认证页本身可能借助已有状态自动跳回教务。
+ * 仅在页面稳定停留于扫码登录页后，才通知调用方展示二维码。
  */
 class WechatSsoSessionResumer(private val context: Context) {
     suspend fun resume(): AcademicLoginResult = withContext(Dispatchers.Main.immediate) {
         suspendCancellableCoroutine { continuation ->
             val cookieManager = CookieManager.getInstance()
-            val casCookie = cookieManager.getCookie(CasWebLoginConfig.CAS_COOKIE_URL).orEmpty()
-            if (!hasCasSession(casCookie)) {
-                continuation.resume(AcademicLoginResult.CaptchaOrInteractiveLoginRequired)
-                return@suspendCancellableCoroutine
-            }
-
             val handler = Handler(Looper.getMainLooper())
             lateinit var webView: WebView
             var finished = false
@@ -42,8 +37,10 @@ class WechatSsoSessionResumer(private val context: Context) {
             }
 
             webView = WebView(context.applicationContext).apply {
-                settings.javaScriptEnabled = false
-                settings.domStorageEnabled = false
+                // 与可见扫码页保持同一认证能力：CAS 的已有登录态与回跳都可能由脚本触发。
+                // 安全性仍由下方顶层导航白名单、禁用文件访问和不注册 JS Bridge 保证。
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
                 webViewClient = object : WebViewClient() {
@@ -68,8 +65,15 @@ class WechatSsoSessionResumer(private val context: Context) {
                                     finish(AcademicLoginResult.Success(cookie))
                                 }
                             }
-                            WechatNav.ACADEMIC_LOGIN_PAGE ->
-                                finish(AcademicLoginResult.CaptchaOrInteractiveLoginRequired)
+                            WechatNav.ACADEMIC_LOGIN_PAGE -> {
+                                // 已有统一认证状态时，登录页会在脚本运行后很快回跳教务。
+                                // 不能一落到此页就销毁 WebView，否则会把可静默恢复的会话误判成要扫码。
+                                handler.postDelayed({
+                                    if (!finished && classifyWechatNavigation(view.url ?: url) == WechatNav.ACADEMIC_LOGIN_PAGE) {
+                                        finish(AcademicLoginResult.CaptchaOrInteractiveLoginRequired)
+                                    }
+                                }, INTERACTIVE_LOGIN_PROBE_DELAY_MILLIS)
+                            }
                             else -> Unit
                         }
                     }
@@ -90,10 +94,9 @@ class WechatSsoSessionResumer(private val context: Context) {
         }
     }
 
-    private fun hasCasSession(cookieHeader: String): Boolean =
-        cookieHeader.contains("CASTGC=", ignoreCase = true) || cookieHeader.contains("TGC=", ignoreCase = true)
-
     private companion object {
         const val RESUME_TIMEOUT_MILLIS = 10_000L
+        /** 给统一认证页自动回跳留出的窗口；到期仍在登录页才真正展示二维码。 */
+        const val INTERACTIVE_LOGIN_PROBE_DELAY_MILLIS = 1_000L
     }
 }

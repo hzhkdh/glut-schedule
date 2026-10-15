@@ -101,6 +101,22 @@ class WechatLoginFlowContractTest {
     }
 
     /**
+     * 续期探测必须让统一认证页的脚本有机会把已有登录态换成教务会话。
+     * 只查 CASTGC/TGC 或刚落到登录页就结束，都会把本可静默恢复的会话误判成要扫码，
+     * 用户因而看到二维码页面一闪而过。
+     */
+    @Test
+    fun sessionResumerWaitsForActualInteractiveLoginBeforeShowingQr() {
+        val resumer = source("service/academic/WechatSsoSessionResumer.kt")
+
+        assertTrue("后台续期也必须允许统一认证页执行必要脚本", resumer.contains("settings.javaScriptEnabled = true"))
+        assertTrue("后台续期也必须保留认证页的 DOM 存储", resumer.contains("settings.domStorageEnabled = true"))
+        assertFalse("不能只凭特定 Cookie 名提前判定需要扫码", resumer.contains("hasCasSession("))
+        assertTrue("落到登录页后应留出短暂探测窗口", resumer.contains("INTERACTIVE_LOGIN_PROBE_DELAY_MILLIS"))
+        assertTrue("探测窗口必须由主线程延迟回调执行", resumer.contains("handler.postDelayed"))
+    }
+
+    /**
      * 这条是 WebView 加固的核心。一旦有人为了图方便注册 JS 桥，
      * 页面（以及任何被它加载的第三方脚本）就能直接调进 Kotlin。
      * App → 页面方向的 `evaluateJavascript` 是单向的，安全，允许。
