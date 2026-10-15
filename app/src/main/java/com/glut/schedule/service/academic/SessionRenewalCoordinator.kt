@@ -34,22 +34,15 @@ sealed interface RenewalUiState {
         val source: ImportSource,
         /** 取图失败时为 null，此时 [error] 一定有值。 */
         val captchaBitmap: Bitmap?,
-        /**
-         * 已保存的账号，用于预填；本地没有则为空串，由用户当场填。
-         *
-         * 本地没有账号是**常态而非边缘**：没勾「记住密码」时 `clearCredentials()` 把账号和密码
-         * 一起清掉，而全新安装的复选状态就是按「本地有没有账号」复位的（默认不勾）。
-         * 所以弹窗必须有账号输入框，否则这类用户永远登不进去。
-         */
-        val prefilledUsername: String,
-        /** 已保存的密码，用于预填；本地没有则为空串，由用户当场填。 */
-        val prefilledPassword: String,
         /** 上一次失败原因；首次为空。 */
         val error: String = ""
     ) : RenewalUiState
 
     /** 微信统一认证票据失效，等待用户确认后重新扫码。 */
     data object WechatReauthenticationRequired : RenewalUiState
+
+    /** 原地续期没有可用凭据，保留菜单缓存并引导用户回导入页登录。 */
+    data class ImportLoginRequired(val source: ImportSource) : RenewalUiState
 }
 
 /**
@@ -144,6 +137,12 @@ class SessionRenewalCoordinator(
             return false
         }
 
+        // 验证码无法替代账号密码；未保存凭据时不在菜单暴露输入框。
+        if (credentialReader.getUsername().isBlank() || credentialReader.getPassword().isBlank()) {
+            _state.value = RenewalUiState.ImportLoginRequired(source)
+            return false
+        }
+
         // 「看一眼有没有在飞的续期」与「没有就认领一个」必须在**同一个原子段**里完成：
         // 分开写的话，两个并发调用会都读到 null，于是各弹各的窗、各等各的
         // CompletableDeferred，单飞失效。
@@ -165,28 +164,15 @@ class SessionRenewalCoordinator(
     }
 
     /** 用户在弹窗里点了确认。 */
-    fun submit(captcha: String, username: String, password: String) {
+    fun submit(captcha: String) {
         val source = pendingSource ?: return
         val state = _state.value as? RenewalUiState.AwaitingCaptcha ?: return
         if (captcha.isBlank()) {
             _state.value = state.copy(error = "请输入验证码")
             return
         }
-        // 本地没存账号/密码时弹窗是空的，由用户当场填；填了就用填的那个。
-        //
-        // 账号这一项过去**只**从 credentialReader 取，用户无从补填——本地没存账号的用户
-        // 会陷入「填完密码和验证码 → 后端拒绝 → 换一张图」的死循环，且提示是
-        // 「验证码或密码错误」，看不出真正缺的是账号。所以这里必须用弹窗传上来的值。
-        val effectiveUsername = username.ifBlank { state.prefilledUsername }
-        if (effectiveUsername.isBlank()) {
-            _state.value = state.copy(error = "请输入学号")
-            return
-        }
-        val effectivePassword = password.ifBlank { state.prefilledPassword }
-        if (effectivePassword.isBlank()) {
-            _state.value = state.copy(error = "请输入密码")
-            return
-        }
+        val effectiveUsername = credentialReader.getUsername()
+        val effectivePassword = credentialReader.getPassword()
         // 把表单快照带进 Busy：提交期间界面继续显示它，用户不会以为点空了。
         _state.value = RenewalUiState.Busy(source, state)
         scope.launch {
@@ -264,8 +250,6 @@ class SessionRenewalCoordinator(
             _state.value = RenewalUiState.AwaitingCaptcha(
                 source = source,
                 captchaBitmap = result.getOrNull(),
-                prefilledUsername = credentialReader.getUsername(),
-                prefilledPassword = credentialReader.getPassword(),
                 // 取图失败时把原因写进 error；成功时保留上一次的失败原因（如「验证码或密码错误」），
                 // 让用户知道刚刚为什么被弹回来，而不是面对一张新图却不知发生了什么。
                 error = if (result.isFailure) {

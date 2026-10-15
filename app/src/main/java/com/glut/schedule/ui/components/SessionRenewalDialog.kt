@@ -15,8 +15,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,12 +36,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.glut.schedule.data.settings.ImportSource
 
 // 与导入页同一套浅色板。这里自带一份而不去 import 那边：那些常量在 DirectLoginScreen.kt 里是
 // private，且本仓库各组件的既有做法就是自带色板（见 CourseCardManageSheet.kt）。
@@ -65,17 +59,8 @@ private val DialogError = Color(0xFFD64545)
  */
 @Composable
 fun SessionRenewalDialog(
-    source: ImportSource,
+    title: String,
     captchaBitmap: Bitmap?,
-    /**
-     * 本机已保存的账号；没有则为空串，由用户当场填。
-     *
-     * 必须能当场填：没勾「记住密码」的用户本地账号和密码都是空的（`clearCredentials()`），
-     * 而这恰恰是新装的默认状态。少了这个框，他们点确认只会一直得到「验证码或密码错误」。
-     */
-    prefilledUsername: String,
-    /** 本机已保存的密码；没有则为空串，由用户当场填。 */
-    prefilledPassword: String,
     /** 上一次失败原因（验证码错、取图失败）；首次为空。 */
     error: String,
     /**
@@ -87,20 +72,10 @@ fun SessionRenewalDialog(
     subtitle: String = "",
     isBusy: Boolean,
     onRefreshCaptcha: () -> Unit,
-    onSubmit: (captcha: String, username: String, password: String) -> Unit,
+    onSubmit: (captcha: String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var captchaInput by remember { mutableStateOf("") }
-    // 预填以「本机保存的账号/密码」为键：换了账号或密码变了才重新取，用户自己的改动不会被覆盖。
-    var usernameInput by remember(prefilledUsername) { mutableStateOf(prefilledUsername) }
-    var passwordInput by remember(prefilledPassword) { mutableStateOf(prefilledPassword) }
-    var passwordVisible by remember { mutableStateOf(false) }
-
-    val title = when (source) {
-        ImportSource.NANNING -> "南宁教务会话已过期"
-        ImportSource.GRADUATE -> "研究生教务会话已过期"
-        else -> "教务会话已过期"
-    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -155,60 +130,9 @@ fun SessionRenewalDialog(
                     label = { Text("验证码", color = DialogSecondary) },
                     singleLine = true,
                     colors = renewalTextFieldColors(),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp)
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = usernameInput,
-                    onValueChange = { usernameInput = it },
-                    label = { Text("学号", color = DialogSecondary) },
-                    singleLine = true,
-                    colors = renewalTextFieldColors(),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = passwordInput,
-                    onValueChange = { passwordInput = it },
-                    label = { Text("密码", color = DialogSecondary) },
-                    singleLine = true,
-                    visualTransformation = if (passwordVisible) {
-                        VisualTransformation.None
-                    } else {
-                        PasswordVisualTransformation()
-                    },
-                    trailingIcon = {
-                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                            Icon(
-                                if (passwordVisible) Icons.Outlined.VisibilityOff
-                                else Icons.Outlined.Visibility,
-                                contentDescription = null,
-                                tint = DialogSecondary
-                            )
-                        }
-                    },
-                    colors = renewalTextFieldColors(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
-                )
-
-                Text(
-                    "只用于本次重新登录，不会改动「记住密码」的设置",
-                    color = DialogSecondary,
-                    fontSize = 11.sp,
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
                 )
 
                 if (error.isNotBlank()) {
@@ -223,7 +147,7 @@ fun SessionRenewalDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSubmit(captchaInput, usernameInput, passwordInput) },
+                onClick = { onSubmit(captchaInput) },
                 enabled = !isBusy,
                 colors = ButtonDefaults.buttonColors(containerColor = DialogAccent)
             ) {

@@ -1223,15 +1223,34 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                 }
                 if (renewalForm != null) {
                     SessionRenewalDialog(
-                        source = renewalForm.source,
+                        title = when (renewalForm.source) {
+                            com.glut.schedule.data.settings.ImportSource.NANNING -> "南宁教务会话已过期"
+                            com.glut.schedule.data.settings.ImportSource.GRADUATE -> "研究生教务会话已过期"
+                            else -> "教务会话已过期"
+                        },
                         captchaBitmap = renewalForm.captchaBitmap,
-                        prefilledUsername = renewalForm.prefilledUsername,
-                        prefilledPassword = renewalForm.prefilledPassword,
                         error = renewalForm.error,
                         isBusy = renewalState is RenewalUiState.Busy,
                         onRefreshCaptcha = container.sessionRenewalCoordinator::refreshCaptcha,
                         onSubmit = container.sessionRenewalCoordinator::submit,
                         onDismiss = container.sessionRenewalCoordinator::cancel
+                    )
+                }
+
+                if (renewalState is RenewalUiState.ImportLoginRequired) {
+                    AlertDialog(
+                        onDismissRequest = container.sessionRenewalCoordinator::cancel,
+                        title = { Text("需要重新登录") },
+                        text = { Text("未保存账号或密码，请到导入课表页重新登录。") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                container.sessionRenewalCoordinator.cancel()
+                                selectedItem = DrawerItem.Import
+                            }) { Text("去导入页") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = container.sessionRenewalCoordinator::cancel) { Text("取消") }
+                        }
                     )
                 }
 

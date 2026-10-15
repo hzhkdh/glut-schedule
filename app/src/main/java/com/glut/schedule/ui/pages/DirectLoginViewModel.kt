@@ -292,25 +292,9 @@ class DirectLoginViewModel(
 
     fun updateCaptchaInput(input: String) { _uiState.value = _uiState.value.copy(captchaInput = input) }
 
-    /**
-     * 共用验证码弹窗的提交入口：验证码与该弹窗里填的密码一起交上来。
-     *
-     * 弹窗自己不持有账号密码（它同时服务导入页与菜单里的原地续期），所以密码必须由它带进来。
-     * 不能改成「界面先调两个 setter 再调 [submitCaptcha]」：那三步之间任何一次状态复位
-     * 都会让提交用上界面以为已经写进去、实际却不是的值。
-     */
-    /**
-     * 弹窗点了确认：把弹窗里三个输入框的值收进 state，再走既有的提交流程。
-     *
-     * 账号也要收：导入页虽然自己有账号框，但共用弹窗允许用户在弹窗里改，
-     * 改了就该以弹窗里的为准，否则用户会看到自己改的账号没生效。
-     */
-    fun submitCaptcha(captcha: String, username: String, password: String) {
-        _uiState.value = _uiState.value.copy(
-            captchaInput = captcha,
-            username = username,
-            password = password
-        )
+    /** 首次登录的账号密码已在导入页主表单收集，弹窗只接收本次验证码。 */
+    fun submitCaptcha(captcha: String) {
+        _uiState.value = _uiState.value.copy(captchaInput = captcha)
         submitCaptcha()
     }
 

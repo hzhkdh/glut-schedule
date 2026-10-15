@@ -27,11 +27,12 @@ class SessionRenewalUiContractTest {
     }
 
     @Test
-    fun renewalDialogCollectsPasswordNotJustCaptcha() {
+    fun renewalDialogOnlyCollectsCaptcha() {
         val dialog = component("SessionRenewalDialog.kt")
 
-        assertTrue("会话过期后本地可能没有密码，必须能当场填", dialog.contains("PasswordVisualTransformation"))
-        assertTrue("已保存的密码要能预填", dialog.contains("prefilledPassword"))
+        assertFalse("会话续期弹窗不应再暴露密码输入框", dialog.contains("PasswordVisualTransformation"))
+        assertFalse("会话续期弹窗不应再暴露学号输入框", dialog.contains("Text(\"学号\""))
+        assertTrue("提交只应带验证码", dialog.contains("onSubmit(captchaInput)"))
         assertTrue("不传容器色会落到 darkColorScheme 的深灰", dialog.contains("containerColor ="))
         assertTrue("取图失败的原因要显示在弹窗里", dialog.contains("error"))
     }
@@ -75,15 +76,12 @@ class SessionRenewalUiContractTest {
      * 而他们恰恰是计划里真机验证点名要覆盖的那群人。
      */
     @Test
-    fun renewalDialogCollectsTheAccountNotJustThePassword() {
-        val dialog = component("SessionRenewalDialog.kt")
+    fun firstGraduateLoginUsesLoginTitleInsteadOfExpiryTitle() {
+        val login = page("DirectLoginScreen.kt")
 
-        assertTrue("必须能当场填账号，而不只依赖本机保存的", dialog.contains("prefilledUsername"))
-        assertTrue("账号要有独立输入框", dialog.contains("Text(\"学号\""))
-        assertTrue(
-            "提交时要把账号一起交出去",
-            dialog.contains("onSubmit(captchaInput, usernameInput, passwordInput)")
-        )
+        assertTrue("首次研究生登录必须显示登录语义", login.contains("研究生教务登录"))
+        assertTrue("首次南宁登录必须显示登录语义", login.contains("南宁分校教务登录"))
+        assertFalse("导入页首次登录不能沿用续期标题", login.contains("研究生教务会话已过期"))
     }
 
     /**

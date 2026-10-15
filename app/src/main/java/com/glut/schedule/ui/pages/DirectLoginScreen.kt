@@ -325,11 +325,8 @@ fun DirectLoginScreen(
     // 与菜单里撞上会话失效时的原地续期也是同一个组件——两处形状一致，分开写必然漂移。
     if (uiState.showCaptchaDialog) {
         SessionRenewalDialog(
-            source = uiState.importSource,
+            title = if (uiState.importSource == ImportSource.GRADUATE) "研究生教务登录" else "南宁分校教务登录",
             captchaBitmap = uiState.captchaBitmap,
-            // 导入页本来就在收集账号与密码，已填的直接预填进弹窗，不让用户再输一遍。
-            prefilledUsername = uiState.username,
-            prefilledPassword = uiState.password,
             error = uiState.message,
             // 用户此刻**就在**导入页，所以不能说「不用去导入页」——那句是给菜单续期用的。
             subtitle = "输入验证码后继续登录",
