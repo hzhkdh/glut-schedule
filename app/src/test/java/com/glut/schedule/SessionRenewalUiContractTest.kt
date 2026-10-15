@@ -99,6 +99,22 @@ class SessionRenewalUiContractTest {
     }
 
     /**
+     * 微信上次授权已经失效时，用户需要扫码是认证方的要求；但中间那层“去登录”确认框
+     * 不做任何认证工作，只会让一次刷新多一次点击。状态一到就应直接拉起扫码覆盖层。
+     */
+    @Test
+    fun expiredWechatSessionOpensTheLoginOverlayWithoutAnExtraConfirmation() {
+        val main = source("MainActivity.kt")
+
+        assertTrue(
+            "微信续期状态应由副作用自动开启扫码页",
+            main.contains("LaunchedEffect(renewalState)") &&
+                main.contains("renewalState is RenewalUiState.WechatReauthenticationRequired")
+        )
+        assertFalse("不应再要求用户点击无业务意义的去登录确认框", main.contains("需要重新微信登录"))
+    }
+
+    /**
      * Busy 期间弹窗必须**继续挂着**，否则用户点完「确认登录」会看到它凭空消失好几秒
      * （南宁要串行跑验证码校验、登录、重定向链、框架页验证），既没进度反馈也按不了取消；
      * 更糟的是弹窗重建时 `remember` 被销毁，刚填的密码和验证码会一起丢，错一次重打一次。

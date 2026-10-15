@@ -426,6 +426,14 @@ class MainActivity : ComponentActivity() {
                         semesterBulkDownloadCoordinator = container.semesterBulkDownloadCoordinator
                     )
                 )
+                // 微信统一认证票据失效后，重新扫码是唯一恢复途径；此前的确认弹窗不参与认证，
+                // 只会让用户多点一次「去登录」。状态到达时直接切换到扫码覆盖层即可。
+                LaunchedEffect(renewalState) {
+                    if (renewalState is RenewalUiState.WechatReauthenticationRequired) {
+                        container.sessionRenewalCoordinator.cancel()
+                        if (directLoginViewModel.startWechatLogin()) showWechatLogin = true
+                    }
+                }
                 LaunchedEffect(container.semesterBulkDownloadCoordinator) {
                     container.semesterBulkDownloadCoordinator.completionEvents.collect { summary ->
                         val succeeded = summary.items.count {
@@ -1247,25 +1255,6 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 container.sessionRenewalCoordinator.cancel()
                                 selectedItem = DrawerItem.Import
                             }) { Text("去导入页") }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = container.sessionRenewalCoordinator::cancel) { Text("取消") }
-                        }
-                    )
-                }
-
-                // 微信票据也过期时，不应把用户赶回导入页，更不能误用残留的账号密码。
-                // 保留当前菜单缓存，用户确认后才打开扫码覆盖层重新建立身份。
-                if (renewalState is RenewalUiState.WechatReauthenticationRequired) {
-                    AlertDialog(
-                        onDismissRequest = container.sessionRenewalCoordinator::cancel,
-                        title = { Text("需要重新微信登录") },
-                        text = { Text("微信登录状态已失效，请重新扫码登录学校统一身份认证。") },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                container.sessionRenewalCoordinator.cancel()
-                                if (directLoginViewModel.startWechatLogin()) showWechatLogin = true
-                            }) { Text("去登录") }
                         },
                         dismissButton = {
                             TextButton(onClick = container.sessionRenewalCoordinator::cancel) { Text("取消") }
