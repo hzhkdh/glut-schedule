@@ -27,6 +27,7 @@ import com.glut.schedule.service.graduate.GraduateClient
 import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginHttpClient
 import com.glut.schedule.service.academic.AcademicLoginResult
+import com.glut.schedule.service.academic.AcademicSessionAuthMethod
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.scorePageUnavailableReason
 import com.glut.schedule.service.academic.AcademicOALoginClient
@@ -430,7 +431,8 @@ class DirectLoginViewModel(
                     remember = false,
                     // 学号来自 IAM 递给教务的跳转（权威）；拿不到才留空，由 performImport 去解析兜底。
                     studentNumber = studentNumber.orEmpty(),
-                    updateCredentials = false
+                    updateCredentials = false,
+                    authMethod = AcademicSessionAuthMethod.WECHAT_SSO
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(isLoggingIn = false, message = "登录失败: ${e.message}")
@@ -709,6 +711,7 @@ class DirectLoginViewModel(
         source: ImportSource,
         remember: Boolean,
         studentNumber: String,
+        authMethod: AcademicSessionAuthMethod = AcademicSessionAuthMethod.PASSWORD,
         /**
          * 本次登录是否要改写本机保存的学号密码。
          *
@@ -735,6 +738,7 @@ class DirectLoginViewModel(
             }
         }
         sessionStore.saveCookie(cookie)
+        sessionStore.saveSessionAuthMethod(authMethod)
         sessionStore.saveCampusBaseUrl(campusBaseUrl)
         // 微信登录此刻还拿不到学号。写空会把**上一位学生**的学号抹掉，
         // 下一轮 `shouldClearAcademicData` 读到空值就恒为 false，换账号清理彻底失效。
@@ -745,7 +749,7 @@ class DirectLoginViewModel(
         // 来源切换**不在这里**：它必须发生在课表成功写入之后，否则中途失败会让界面停在
         // 「新来源的菜单 + 旧来源的数据」这种半切换状态。切换由 performImport 负责。
         _uiState.value = _uiState.value.copy(message = "登录成功，正在导入数据...")
-        performImport(cookie, campusBaseUrl, source, knownStudentNumber)
+        performImport(cookie, campusBaseUrl, source, knownStudentNumber, authMethod)
     }
 
     /**
@@ -787,7 +791,8 @@ class DirectLoginViewModel(
         cookie: String,
         campusBaseUrl: String,
         source: ImportSource,
-        studentNumber: String
+        studentNumber: String,
+        authMethod: AcademicSessionAuthMethod
     ) {
         // 旧学号要在**任何写入之前**取：换账号判定有可能被推迟到解析出学号之后补做
         // （微信登录进来时 `studentNumber` 还是空串），那时这里读到的值已经被覆盖了。
@@ -852,6 +857,7 @@ class DirectLoginViewModel(
                 sessionStore.clearAll()
                 sessionStore.saveCookie(activeCookie)
                 sessionStore.saveCampusBaseUrl(campusBaseUrl)
+                sessionStore.saveSessionAuthMethod(authMethod)
             }
             sessionStore.saveAuthenticatedStudent(resolvedStudentNumber, studentName)
             // 凭据主人与当前学号对一次账。微信登录不写凭据，但机器上可能留着**另一个人**的密码，

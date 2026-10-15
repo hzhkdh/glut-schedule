@@ -9,6 +9,12 @@ import kotlinx.coroutines.flow.map
 
 private val Context.academicSessionDataStore by preferencesDataStore(name = "academic_session")
 
+/** 当前教务 Cookie 的建立方式，用于在失效时选对续期链路。 */
+enum class AcademicSessionAuthMethod {
+    PASSWORD,
+    WECHAT_SSO
+}
+
 class AcademicSessionStore(
     private val context: Context
 ) : RenewalSessionWriter {
@@ -19,6 +25,7 @@ class AcademicSessionStore(
     private val timetableUrlKey = stringPreferencesKey("timetable_url")
     private val authenticatedStudentNumberKey = stringPreferencesKey("authenticated_student_number")
     private val authenticatedStudentNameKey = stringPreferencesKey("authenticated_student_name")
+    private val authMethodKey = stringPreferencesKey("academic_session_auth_method")
 
     val academicCookie: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
         preferences[cookieKey].orEmpty()
@@ -44,9 +51,22 @@ class AcademicSessionStore(
         preferences[authenticatedStudentNameKey].orEmpty()
     }
 
+    val sessionAuthMethod: Flow<AcademicSessionAuthMethod> = context.academicSessionDataStore.data.map { preferences ->
+        when (preferences[authMethodKey]) {
+            AcademicSessionAuthMethod.WECHAT_SSO.name -> AcademicSessionAuthMethod.WECHAT_SSO
+            else -> AcademicSessionAuthMethod.PASSWORD
+        }
+    }
+
     override suspend fun saveCookie(cookie: String) {
         context.academicSessionDataStore.edit { preferences ->
             preferences[cookieKey] = cookie
+        }
+    }
+
+    suspend fun saveSessionAuthMethod(method: AcademicSessionAuthMethod) {
+        context.academicSessionDataStore.edit { preferences ->
+            preferences[authMethodKey] = method.name
         }
     }
 

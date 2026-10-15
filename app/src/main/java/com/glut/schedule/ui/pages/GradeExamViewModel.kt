@@ -7,9 +7,9 @@ import androidx.lifecycle.viewModelScope
 import com.glut.schedule.data.model.GradeExamInfo
 import com.glut.schedule.data.repository.ScheduleRepository
 import com.glut.schedule.service.academic.AcademicLoginResult
-import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.AcademicSessionStore
 import com.glut.schedule.service.academic.SessionRenewalCoordinator
+import com.glut.schedule.service.academic.looksLikeAcademicLoginPage
 import com.glut.schedule.service.parser.GradeExamParser
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readBytesLimited
@@ -34,6 +34,13 @@ data class GradeExamUiState(
     val message: String = "",
     val hasCookie: Boolean = false
 )
+
+/** 等级考试页面响应必须区分“无记录”和“会话已失效”，避免空列表误触发验证码续期。 */
+private sealed interface GradeExamFetchResult {
+    data class Success(val exams: List<GradeExamInfo>) : GradeExamFetchResult
+    data object SessionExpired : GradeExamFetchResult
+    data class Failure(val message: String) : GradeExamFetchResult
+}
 
 class GradeExamViewModel(
     private val repository: ScheduleRepository,
@@ -74,13 +81,13 @@ class GradeExamViewModel(
 
                 // Try existing cookie first
                 var cookie = sessionStore.academicCookie.first()
-                var allExams = if (cookie.isNotBlank()) {
-                    fetchGradeExams(cookie, campusBaseUrl)
-                } else emptyList()
+                var fetchResult = if (cookie.isNotBlank()) {
+                    fetchGradeExamResult(cookie, campusBaseUrl)
+                } else GradeExamFetchResult.SessionExpired
 
                 // 会话失效：原地续期——南宁/研究生弹验证码，桂林静默换票。
                 // 用户取消或续期失败都**保留已有缓存**，只提示、不动屏幕上已有的数据。
-                if (allExams.isEmpty()) {
+                if (fetchResult == GradeExamFetchResult.SessionExpired) {
                     if (!renewal.ensureFreshSession()) {
                         _message.value = "会话已过期，已取消登录"
                         delay(4000)
@@ -92,14 +99,25 @@ class GradeExamViewModel(
                     // 漏掉这一行，重放会把新 cookie 发到旧主机上（南宁换研究生时必然失败）。
                     campusBaseUrl = sessionStore.campusBaseUrl.first()
                         .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
-                    allExams = fetchGradeExams(cookie, campusBaseUrl)
+                    fetchResult = fetchGradeExamResult(cookie, campusBaseUrl)
                 }
 
-                if (allExams.isNotEmpty()) {
-                    repository.replaceGradeExams(allExams)
-                    _message.value = "已获取 ${allExams.size} 条等级考试记录"
-                } else {
-                    _message.value = "暂无等级考试记录"
+                when (fetchResult) {
+                    is GradeExamFetchResult.Success -> {
+                        val allExams = fetchResult.exams
+                        if (allExams.isNotEmpty()) {
+                            repository.replaceGradeExams(allExams)
+                            _message.value = "已获取 ${allExams.size} 条等级考试记录"
+                        } else {
+                            _message.value = "暂无等级考试记录"
+                        }
+                    }
+                    GradeExamFetchResult.SessionExpired -> {
+                        _message.value = "会话续期后仍未恢复，请稍后重试"
+                    }
+                    is GradeExamFetchResult.Failure -> {
+                        throw IllegalStateException(fetchResult.message)
+                    }
                 }
             } catch (e: Exception) {
                 _message.value = "获取失败: ${e.message}"
@@ -112,7 +130,7 @@ class GradeExamViewModel(
         }
     }
 
-    internal suspend fun fetchGradeExams(cookie: String, campusBaseUrl: String): List<GradeExamInfo> {
+    private suspend fun fetchGradeExamResult(cookie: String, campusBaseUrl: String): GradeExamFetchResult {
         val client = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
@@ -128,12 +146,12 @@ class GradeExamViewModel(
             .get()
             .build()
 
-        val (body, contentType) = withContext(Dispatchers.IO) {
+        val (statusCode, body, contentType) = withContext(Dispatchers.IO) {
             client.newCall(request).execute().use { response ->
                 val rawBytes = response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES)
                     ?: ByteArray(0)
                 val ct = response.header("Content-Type") ?: ""
-                Pair(rawBytes, ct)
+                Triple(response.code, rawBytes, ct)
             }
         }
 
@@ -150,7 +168,13 @@ class GradeExamViewModel(
         }
         val html = String(body, charset)
 
-        return gradeExamParser.parse(html)
+        if (statusCode == 401 || statusCode == 403 || looksLikeAcademicLoginPage(html)) {
+            return GradeExamFetchResult.SessionExpired
+        }
+        if (statusCode !in 200..299) {
+            return GradeExamFetchResult.Failure("教务系统返回 HTTP $statusCode")
+        }
+        return GradeExamFetchResult.Success(gradeExamParser.parse(html))
     }
 
     companion object {

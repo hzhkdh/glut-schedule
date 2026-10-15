@@ -3,16 +3,19 @@ package com.glut.schedule
 import android.graphics.Bitmap
 import com.glut.schedule.data.settings.ImportSource
 import com.glut.schedule.service.academic.AcademicLoginResult
+import com.glut.schedule.service.academic.AcademicSessionAuthMethod
 import com.glut.schedule.service.academic.CaptchaLoginSession
 import com.glut.schedule.service.academic.RenewalCredentialReader
 import com.glut.schedule.service.academic.RenewalSessionWriter
 import com.glut.schedule.service.academic.RenewalUiState
 import com.glut.schedule.service.academic.RenewedSession
 import com.glut.schedule.service.academic.SessionRenewalCoordinator
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -88,6 +91,26 @@ class SessionRenewalCoordinatorTest {
     }
 
     @Test
+    fun cancelledCaptchaRequestCannotReopenTheDialogAfterItCompletes() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val coordinator = coordinator(
+            FakeCaptchaLoginSession(requestGate = gate), FakeSessionStore(), ImportSource.NANNING
+        )
+
+        val awaiting = async { coordinator.ensureFreshSession() }
+        runCurrent()
+        assertTrue(coordinator.state.value is RenewalUiState.Busy)
+
+        coordinator.cancel()
+        assertFalse(awaiting.await())
+        assertTrue(coordinator.state.value is RenewalUiState.Idle)
+
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue("取消后的旧取图不得重新打开验证码弹窗", coordinator.state.value is RenewalUiState.Idle)
+    }
+
+    @Test
     fun concurrentCallsShareOneDialogAndOneResult() = runTest {
         val captchaLogin = FakeCaptchaLoginSession()
         val coordinator = coordinator(captchaLogin, FakeSessionStore(), ImportSource.NANNING)
@@ -127,6 +150,37 @@ class SessionRenewalCoordinatorTest {
 
         assertFalse(coordinator.ensureFreshSession())
         assertTrue(coordinator.state.value is RenewalUiState.Idle)
+    }
+
+    @Test
+    fun guilinWechatSessionUsesSavedWebSessionInsteadOfPasswordLogin() = runTest {
+        val store = FakeSessionStore()
+        val coordinator = coordinator(
+            captchaLogin = FakeCaptchaLoginSession(),
+            store = store,
+            source = ImportSource.GUILIN,
+            currentSessionAuthMethod = { AcademicSessionAuthMethod.WECHAT_SSO },
+            silentLogin = { error("微信会话不能退回到账号密码登录") },
+            silentWechatLogin = { AcademicLoginResult.Success("cookie-from-wechat") }
+        )
+
+        assertTrue(coordinator.ensureFreshSession())
+        assertEquals("cookie-from-wechat", store.cookie)
+        assertTrue(coordinator.state.value is RenewalUiState.Idle)
+    }
+
+    @Test
+    fun expiredWechatSessionRequestsInteractiveWechatLogin() = runTest {
+        val coordinator = coordinator(
+            captchaLogin = FakeCaptchaLoginSession(),
+            store = FakeSessionStore(),
+            source = ImportSource.GUILIN,
+            currentSessionAuthMethod = { AcademicSessionAuthMethod.WECHAT_SSO },
+            silentWechatLogin = { AcademicLoginResult.CaptchaOrInteractiveLoginRequired }
+        )
+
+        assertFalse(coordinator.ensureFreshSession())
+        assertTrue(coordinator.state.value is RenewalUiState.WechatReauthenticationRequired)
     }
 
     @Test
@@ -289,8 +343,14 @@ class SessionRenewalCoordinatorTest {
         captchaLogin: CaptchaLoginSession,
         store: FakeSessionStore,
         source: ImportSource,
+        currentSessionAuthMethod: suspend () -> AcademicSessionAuthMethod = {
+            AcademicSessionAuthMethod.PASSWORD
+        },
         silentLogin: suspend () -> AcademicLoginResult = {
             AcademicLoginResult.Success("cookie-from-silent")
+        },
+        silentWechatLogin: suspend () -> AcademicLoginResult = {
+            AcademicLoginResult.CaptchaOrInteractiveLoginRequired
         }
     ) = SessionRenewalCoordinator(
         sessionWriter = store,
@@ -298,12 +358,15 @@ class SessionRenewalCoordinatorTest {
         captchaLogin = captchaLogin,
         currentSource = { source },
         silentLogin = silentLogin,
+        currentSessionAuthMethod = currentSessionAuthMethod,
+        silentWechatLogin = silentWechatLogin,
         scope = this
     )
 
     private class FakeCaptchaLoginSession(
         private val submitSucceeds: Boolean = true,
         private val requestSucceeds: Boolean = true,
+        private val requestGate: CompletableDeferred<Unit>? = null,
         private val renewedSession: RenewedSession =
             RenewedSession("cookie-after-renew", AcademicLoginResult.NANNING_URL)
     ) : CaptchaLoginSession() {
@@ -316,6 +379,7 @@ class SessionRenewalCoordinatorTest {
             private set
 
         override suspend fun requestCaptcha(source: ImportSource): Result<Bitmap> {
+            requestGate?.await()
             requestCount++
             return if (requestSucceeds) successWithoutCreatingABitmap() else networkFailure()
         }

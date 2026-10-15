@@ -1235,6 +1235,25 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                     )
                 }
 
+                // 微信票据也过期时，不应把用户赶回导入页，更不能误用残留的账号密码。
+                // 保留当前菜单缓存，用户确认后才打开扫码覆盖层重新建立身份。
+                if (renewalState is RenewalUiState.WechatReauthenticationRequired) {
+                    AlertDialog(
+                        onDismissRequest = container.sessionRenewalCoordinator::cancel,
+                        title = { Text("需要重新微信登录") },
+                        text = { Text("微信登录状态已失效，请重新扫码登录学校统一身份认证。") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                container.sessionRenewalCoordinator.cancel()
+                                if (directLoginViewModel.startWechatLogin()) showWechatLogin = true
+                            }) { Text("去登录") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = container.sessionRenewalCoordinator::cancel) { Text("取消") }
+                        }
+                    )
+                }
+
                 // 微信登录覆盖层。与 pendingBackgroundCrop 同级：画在 ModalNavigationDrawer
                 // 之外，所以抽屉开着也能盖住整屏。
                 if (showWechatLogin) {

@@ -68,7 +68,9 @@ class MultiSemesterUiContractTest {
         // 来源参数(source)只是多带了一个来源，快照语义不变；参数名改成 knownStudentNumber 是因为
         // 微信登录这一刻还没有学号（传空串，由 performImport 从教务回答里反查），
         // 名字必须诚实反映「可能是空的」。
-        assertTrue(viewModel.contains("performImport(cookie, campusBaseUrl, source, knownStudentNumber)"))
+        // 微信会话续期还要保留本次认证来源；换账号时 performImport 会清空 DataStore，
+        // 不把 authMethod 一并传入并写回，后续菜单会误退回账号密码续期。
+        assertTrue(viewModel.contains("performImport(cookie, campusBaseUrl, source, knownStudentNumber, authMethod)"))
         // 微信路径的学号来自 IAM 递给教务的跳转 URL（可能是 null，故 orEmpty），
         // 无论如何都不是回头去读 uiState.username。
         assertTrue(viewModel.contains("studentNumber = studentNumber.orEmpty()"))

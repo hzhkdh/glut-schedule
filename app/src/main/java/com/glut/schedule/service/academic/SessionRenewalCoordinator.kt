@@ -47,6 +47,9 @@ sealed interface RenewalUiState {
         /** 上一次失败原因；首次为空。 */
         val error: String = ""
     ) : RenewalUiState
+
+    /** 微信统一认证票据失效，等待用户确认后重新扫码。 */
+    data object WechatReauthenticationRequired : RenewalUiState
 }
 
 /**
@@ -100,6 +103,8 @@ class SessionRenewalCoordinator(
     private val captchaLogin: CaptchaLoginSession,
     private val currentSource: suspend () -> ImportSource,
     private val silentLogin: suspend () -> AcademicLoginResult,
+    private val currentSessionAuthMethod: suspend () -> AcademicSessionAuthMethod,
+    private val silentWechatLogin: suspend () -> AcademicLoginResult,
     private val scope: CoroutineScope
 ) {
     private val _state = MutableStateFlow<RenewalUiState>(RenewalUiState.Idle)
@@ -110,6 +115,9 @@ class SessionRenewalCoordinator(
     /** 正在等用户操作的那次续期；没有则为 null。单飞的锚点。 */
     private var pending: CompletableDeferred<Boolean>? = null
     private var pendingSource: ImportSource? = null
+
+    /** 每次取图递增；取消或刷新后，旧协程即使晚到也不得覆盖当前弹窗状态。 */
+    private var captchaRequestGeneration: Long = 0
 
     /** 上一次失败原因，用于取到新图后仍然把原因显示在弹窗里。 */
     private var lastError: String = ""
@@ -122,12 +130,16 @@ class SessionRenewalCoordinator(
     suspend fun ensureFreshSession(): Boolean {
         val source = currentSource()
         if (source != ImportSource.NANNING && source != ImportSource.GRADUATE) {
-            // 桂林能静默换票，不需要验证码，也就不该弹窗。
-            val result = silentLogin()
+            // 桂林既可能是账号密码会话，也可能是微信扫码会话；两者的静默续期凭据不同。
+            val isWechatSession = currentSessionAuthMethod() == AcademicSessionAuthMethod.WECHAT_SSO
+            val result = if (isWechatSession) silentWechatLogin() else silentLogin()
             if (result is AcademicLoginResult.Success) {
                 sessionWriter.saveCookie(result.cookie)
                 sessionWriter.saveCampusBaseUrl(result.campusBaseUrl)
                 return true
+            }
+            if (isWechatSession && result == AcademicLoginResult.CaptchaOrInteractiveLoginRequired) {
+                _state.value = RenewalUiState.WechatReauthenticationRequired
             }
             return false
         }
@@ -212,6 +224,8 @@ class SessionRenewalCoordinator(
 
     /** 用户取消：返回 false，调用方据此**保留已有缓存**，不要清屏。 */
     fun cancel() {
+        // 先作废在飞取图，再切 Idle：否则旧协程完成后会把已关闭的弹窗重新打开。
+        captchaRequestGeneration += 1
         _state.value = RenewalUiState.Idle
         completePending(false)
         lastError = ""
@@ -228,6 +242,7 @@ class SessionRenewalCoordinator(
         source: ImportSource,
         fetch: suspend (ImportSource) -> Result<Bitmap>
     ) {
+        val requestGeneration = ++captchaRequestGeneration
         // 保留上一次的表单快照：Busy 期间界面继续渲染它（置灰 + 转圈），
         // 而不是把弹窗整个卸载——卸载会让用户看到它消失数秒、并丢掉已输入的内容。
         //
@@ -242,6 +257,10 @@ class SessionRenewalCoordinator(
         _state.value = RenewalUiState.Busy(source, previousForm)
         scope.launch {
             val result = fetch(source)
+            // 取消、刷新或新一轮续期已接管状态时，丢弃旧网络响应。
+            if (requestGeneration != captchaRequestGeneration || pendingSource != source || pending == null) {
+                return@launch
+            }
             _state.value = RenewalUiState.AwaitingCaptcha(
                 source = source,
                 captchaBitmap = result.getOrNull(),

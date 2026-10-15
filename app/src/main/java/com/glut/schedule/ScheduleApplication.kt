@@ -13,6 +13,7 @@ import com.glut.schedule.service.academic.AcademicExamService
 import com.glut.schedule.service.academic.AcademicLoginService
 import com.glut.schedule.service.academic.CaptchaLoginSession
 import com.glut.schedule.service.academic.SessionRenewalCoordinator
+import com.glut.schedule.service.academic.WechatSsoSessionResumer
 import com.glut.schedule.service.academic.AcademicSemesterImportService
 import com.glut.schedule.service.academic.SemesterBulkDownloadCoordinator
 import com.glut.schedule.service.academic.SemesterDownloadSession
@@ -276,6 +277,7 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
     private val campusImageCache = CampusImageFileCache(application.filesDir.resolve("campus_images"))
     val campusImageService = CampusImageService(cache = campusImageCache)
     val academicLoginService = AcademicLoginService(academicSessionStore, credentialStore)
+    val wechatSsoSessionResumer = WechatSsoSessionResumer(application)
     // 续期门卫：南宁/研究生会话过期时在菜单内原地弹验证码，而不是把用户赶去导入页。
     // 单例——多个菜单同时刷新时只弹一个窗（协调器内部单飞）。
     val captchaLoginSession = CaptchaLoginSession()
@@ -290,6 +292,8 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
         currentSource = { importSourceForCampusBaseUrl(academicSessionStore.campusBaseUrl.first()) },
         // 桂林仍然走静默换票；它是唯一能免密补登录的来源。
         silentLogin = { academicLoginService.silentLogin() },
+        currentSessionAuthMethod = { academicSessionStore.sessionAuthMethod.first() },
+        silentWechatLogin = { wechatSsoSessionResumer.resume() },
         scope = applicationScope
     )
     val scoreParser = ScoreParser()
