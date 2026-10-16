@@ -438,12 +438,20 @@ class ScheduleViewModel(
             // 自动与手动规则在这里合并成同一种：两者语义完全一致（manualCopyBlocksForWeek
             // 只认 source/target），副本 id 都带 -manual-copy- 后缀，于是日期角标、冲突分组、
             // 「长按不改副本」的排除逻辑全部自动生效，ScheduleScreen 与小组件一行都不用改。
+            val autoRules = if (isHistorical) {
+                emptyList()
+            } else {
+                settings.autoDayCopiesBySemester[currentSemesterId].orEmpty()
+            }
             val dayCopyRules = if (isHistorical) {
                 emptyList()
             } else {
                 settings.manualDayCopiesBySemester[currentSemesterId].orEmpty() +
-                    settings.autoDayCopiesBySemester[currentSemesterId].orEmpty().map { it.asManualRule() }
+                    autoRules.map { it.asManualRule() }
             }
+            // 学校补班常落在周末。原课表即使全在工作日，只要自动规则要在周末复制课程，
+            // 网格就必须临时展开第六、第七列；这不写回用户的“显示周末”偏好。
+            val autoWeekendMakeup = autoRules.any { it.targetDate.dayOfWeek.value > 5 }
             ScheduleUiState(
                 week = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek),
                 today = today,
@@ -475,7 +483,7 @@ class ScheduleViewModel(
                 ),
                 holidayDates = if (isHistorical) emptySet() else settings.holidayDates,
                 manualDayCopies = dayCopyRules,
-                showWeekend = settings.showWeekend,
+                showWeekend = settings.showWeekend || autoWeekendMakeup,
                 showNoon = settings.showNoon,
                 showGridLines = settings.showGridLines,
                 customBackgroundUri = settings.customBackgroundUri,
@@ -722,7 +730,13 @@ class ScheduleViewModel(
         // 研究生走完全独立的取数链路：上面那套「个人课表页 + 周次落地页 + 校历探测」
         // 对它一个都不适用，硬套只会请求到无关页面并报出误导性的错误。
         if (targetSemester.campus == CampusType.GRADUATE) {
-            viewModelScope.launch { refreshGraduateSchedule(targetSemester) }
+            viewModelScope.launch {
+                // 公共节假日与学校统一补班不属于研究生门户协议；已有研究生用户只点
+                // “刷新课表”时，也要像其他来源一样更新“休/调”所需缓存。
+                refreshHolidayYears()
+                fetchMakeupTable()
+                refreshGraduateSchedule(targetSemester)
+            }
             return
         }
         viewModelScope.launch {

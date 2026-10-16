@@ -923,21 +923,7 @@ class DirectLoginViewModel(
             settingsStore.setSemesterStartMonday(resolvedCalendar.startMonday)
             settingsStore.setSemesterEndDate(resolvedCalendar.endDate)
             settingsStore.setCurrentWeekNumber(resolvedCalendar.currentWeekNumber)
-            // 学期日期刚写定，此时补齐该学期跨越年份的节假日数据。
-            // 「重新导入课表」是新用户拿到节假日角标的唯一入口——他们必须先导入才能用，
-            // 而其余取数入口（刷新课表 / 刷新学期概览）都需要用户主动点击。
-            // 不依赖教务会话，失败也不影响导入，因此单独兜住异常。
-            runCatching {
-                refreshMissingHolidayYears(
-                    client = timorHolidayClient,
-                    years = resolvedCalendar.startMonday.year..resolvedCalendar.endDate.year,
-                    cachedYears = settingsStore.holidayCacheByYear.first(),
-                    saveYear = settingsStore::setHolidayYearCache
-                )
-                // 调休补课对照表同属这个入口：新用户导入完就拿到权威的调休安排，
-                // 不必再跑到首页或学期概览去刷一次。同样失败不影响导入。
-                refreshMakeupTable(makeupTableClient, settingsStore::setHolidayMakeupTableJson)
-            }
+            refreshHolidayAndMakeupData(resolvedCalendar.startMonday, resolvedCalendar.endDate)
             scheduleRepository.replaceSemesterSchedule(
                 semester = currentSemester,
                 courses = currentPayload.courses,
@@ -1219,35 +1205,57 @@ class DirectLoginViewModel(
                 }
             )
         )
-        coordinator.run(session)
-            .onSuccess { outcome ->
-                _uiState.value = _uiState.value.copy(
-                    isLoggingIn = false,
-                    message = graduateImportCompletionMessage(
-                        failedModules = outcome.failedModules,
-                        skippedRowCount = outcome.skippedRowCount,
-                        unparsedWeekTextCount = outcome.unparsedWeekTextCount
-                    ),
-                    importResult = ImportResult(
-                        courseCount = outcome.courseCount,
-                        examCount = 0,
-                        scoreCount = outcome.scoreCount,
-                        gradeExamCount = 0,
-                        studyPlanCount = outcome.studyPlanCount
-                    ),
-                    // 与本科路径同口径：课表成功写入即算导入完成。
-                    importCompleted = true,
-                    unparsedWeekTextCount = outcome.unparsedWeekTextCount,
-                    adjustmentWarning = outcome.adjustmentWarning
-                )
-            }
-            .onFailure { error ->
-                _uiState.value = _uiState.value.copy(
-                    isLoggingIn = false,
-                    message = "部分导入失败: ${error.message}",
-                    importResult = ImportResult(0, 0, 0, 0, 0)
-                )
-            }
+        val outcome = coordinator.run(session).getOrElse { error ->
+            _uiState.value = _uiState.value.copy(
+                isLoggingIn = false,
+                message = "部分导入失败: ${error.message}",
+                importResult = ImportResult(0, 0, 0, 0, 0)
+            )
+            return
+        }
+        // 研究生同样需要公共节假日与学校统一补班。它们不依赖门户会话，失败也不影响
+        // 已成功导入的课表；调课记录已落库后才重算，才能让位给门户已经下发的补课。
+        refreshHolidayAndMakeupData(
+            settingsStore.semesterStartMonday.first(),
+            settingsStore.semesterEndDate.first()
+        )
+        scheduleRepository.currentSemester.first()?.id?.let { autoDayCopyCoordinator.recompose(it) }
+        _uiState.value = _uiState.value.copy(
+            isLoggingIn = false,
+            message = graduateImportCompletionMessage(
+                failedModules = outcome.failedModules,
+                skippedRowCount = outcome.skippedRowCount,
+                unparsedWeekTextCount = outcome.unparsedWeekTextCount
+            ),
+            importResult = ImportResult(
+                courseCount = outcome.courseCount,
+                examCount = 0,
+                scoreCount = outcome.scoreCount,
+                gradeExamCount = 0,
+                studyPlanCount = outcome.studyPlanCount
+            ),
+            // 与本科路径同口径：课表成功写入即算导入完成。
+            importCompleted = true,
+            unparsedWeekTextCount = outcome.unparsedWeekTextCount,
+            adjustmentWarning = outcome.adjustmentWarning
+        )
+    }
+
+    /**
+     * 用户主动导入后补齐公共节假日与学校统一补班对照表。
+     *
+     * 这两类数据不依赖教务会话；网络失败时保留旧缓存，不能让已经成功的课表导入失败。
+     */
+    private suspend fun refreshHolidayAndMakeupData(startDate: LocalDate, endDate: LocalDate) {
+        runCatching {
+            refreshMissingHolidayYears(
+                client = timorHolidayClient,
+                years = startDate.year..endDate.year,
+                cachedYears = settingsStore.holidayCacheByYear.first(),
+                saveYear = settingsStore::setHolidayYearCache
+            )
+            refreshMakeupTable(makeupTableClient, settingsStore::setHolidayMakeupTableJson)
+        }
     }
 
     private companion object {

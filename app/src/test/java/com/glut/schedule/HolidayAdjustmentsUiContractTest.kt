@@ -143,8 +143,10 @@ class HolidayAdjustmentsUiContractTest {
         assertTrue(overview.contains("loadHolidays(fetchMissing = false)"))
         // 不能又在 init 里自动取数——那等于把「只在主动刷新时请求」重新变成后台轮询。
         assertFalse(schedule.contains("ensureHolidayYearsForCurrentSemester"))
-        // 出现次数就是「定义 1 次 + 刷新入口调用 1 次」；多一处即意味着又冒出了自动触发点。
-        assertEquals(2, Regex("refreshHolidayYears").findAll(schedule).count())
+        // 出现次数就是「定义 1 次 + 刷新入口调用 2 次（本科/南宁分支、研究生分支）」。
+        // 研究生取数链路完全独立，若只让本科分支同步，研究生用户点「刷新课表」拿不到「休」角标。
+        // 多一处即意味着又冒出了自动触发点。
+        assertEquals(3, Regex("refreshHolidayYears").findAll(schedule).count())
     }
 
     /**
@@ -167,6 +169,59 @@ class HolidayAdjustmentsUiContractTest {
         assertTrue(editor.contains("fun downloadMakeupTable()"))
         assertTrue(editor.substringAfter("fun downloadMakeupTable()").contains("refreshMakeupTable("))
         assertTrue(overview.contains("loadHolidays(fetchMissing = false)"))
+    }
+
+    /**
+     * 研究生也要显示国家法定节假日，并执行学校统一补班；门户有没有下发某门课的调课记录
+     * 是另一回事。若只沿用本科导入后的同步逻辑，研究生首次导入后没有节假日缓存，日期栏
+     * 就缺少「休」，而自动补班只能等用户绕到别的页面刷新。
+     */
+    @Test
+    fun graduateImportSynchronizesHolidayAndMakeupDataBeforeRecomposingRules() {
+        val login = page("DirectLoginViewModel.kt")
+        val graduateImport = login.substringAfter("private suspend fun performGraduateImport(")
+            .substringBefore("private companion object")
+
+        assertTrue(
+            "研究生课表成功写入后也必须补齐节假日与补班对照表",
+            graduateImport.contains("refreshHolidayAndMakeupData(")
+        )
+        val sync = login.substringAfter("private suspend fun refreshHolidayAndMakeupData(")
+            .substringBefore("private suspend fun performImport(")
+        assertTrue(sync.contains("refreshMissingHolidayYears("))
+        assertTrue(sync.contains("refreshMakeupTable("))
+        // 重算必须晚于研究生课程与门户调课记录落库，否则自动规则无法对已下发补课让位。
+        assertTrue(graduateImport.contains("autoDayCopyCoordinator.recompose("))
+    }
+
+    @Test
+    fun automaticWeekendMakeupsExpandTheGridWithoutOverwritingUserPreference() {
+        val viewModel = page("ScheduleViewModel.kt")
+
+        assertTrue(
+            "自动规则目标日在周末时，课表必须展开周末列，否则补课卡会被五列网格过滤",
+            viewModel.contains("autoRules.any { it.targetDate.dayOfWeek.value > 5 }")
+        )
+        assertTrue(
+            "自动展开只影响当前渲染，仍要保留用户手动显示周末的设置",
+            viewModel.contains("settings.showWeekend || autoWeekendMakeup")
+        )
+    }
+
+    @Test
+    fun graduateManualRefreshAlsoSynchronizesHolidayAndMakeupCaches() {
+        val viewModel = page("ScheduleViewModel.kt")
+        val refresh = viewModel.substringAfter("fun refreshSchedule()")
+            .substringBefore("private suspend fun importExactSemester(")
+        val graduateStart = refresh.indexOf("if (targetSemester.campus == CampusType.GRADUATE)")
+        val graduateLaunch = refresh.indexOf("viewModelScope.launch {", graduateStart)
+        val ordinaryLaunch = refresh.indexOf("viewModelScope.launch {", graduateLaunch + 1)
+        assertTrue(graduateStart >= 0 && graduateLaunch > graduateStart && ordinaryLaunch > graduateLaunch)
+        val graduateBranch = refresh.substring(graduateStart, ordinaryLaunch)
+
+        assertTrue("研究生手动刷新也要补齐公共节假日缓存", graduateBranch.contains("refreshHolidayYears()"))
+        assertTrue("研究生手动刷新也要同步学校补班对照表", graduateBranch.contains("fetchMakeupTable()"))
+        assertTrue("旁路缓存同步后才刷新研究生课表", graduateBranch.contains("refreshGraduateSchedule(targetSemester)"))
     }
 
     @Test
@@ -267,7 +322,8 @@ class HolidayAdjustmentsUiContractTest {
         // 刷新课表（本科 + 研究生两条分支）+ 冷启动同步对照表之后（表里收录了本学期时推导要退场，
         // 不重算就得等用户下次刷新才生效）。
         assertEquals(3, Regex("autoDayCopyCoordinator\\.recompose\\(").findAll(page("ScheduleViewModel.kt")).count())
-        assertEquals(1, Regex("autoDayCopyCoordinator\\.recompose\\(").findAll(page("DirectLoginViewModel.kt")).count())
+        // 本科/南宁导入与研究生导入都在成功落库后重算，缺任一条都会让首次导入看不到补班规则。
+        assertEquals(2, Regex("autoDayCopyCoordinator\\.recompose\\(").findAll(page("DirectLoginViewModel.kt")).count())
         // 学期概览：刷新节假日之后 + 「刷新调课」写入新记录之后。
         assertEquals(2, Regex("autoDayCopyCoordinator\\.recompose\\(").findAll(page("SemesterOverviewViewModel.kt")).count())
         // 批量下载历史学期那条路径写在 AppContainer 的 commit 里。
