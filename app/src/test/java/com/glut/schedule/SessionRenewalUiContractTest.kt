@@ -125,6 +125,31 @@ class SessionRenewalUiContractTest {
     }
 
     /**
+     * 同一张扫码页同时服务两条业务路径：导入页主动扫码要全量导入，菜单会话续期只应重放
+     * 原请求。若续期成功也调用 [DirectLoginViewModel.onWechatLoginSucceeded]，就会在重放成绩、
+     * 考试等请求的同时启动全量导入，两个网络流程并发可能覆盖页面和缓存状态。
+     */
+    @Test
+    fun wechatReauthenticationOnlyReplaysThePendingRequestWithoutStartingAnImport() {
+        val main = source("MainActivity.kt")
+        val successCallback = main.substringAfter("onSuccess = { cookie, studentNumber ->")
+            .substringBefore("onCancel = {")
+
+        assertTrue(
+            "扫码成功必须按是否处于续期状态分流",
+            successCallback.contains("if (renewalState is RenewalUiState.WechatReauthenticationRequired)")
+        )
+        val renewalBranch = successCallback
+            .substringAfter("if (renewalState is RenewalUiState.WechatReauthenticationRequired)")
+            .substringBefore("} else {")
+        assertTrue("续期分支只应释放原请求", renewalBranch.contains("completeWechatReauthentication(cookie)"))
+        assertFalse("续期分支不得启动全量导入", renewalBranch.contains("onWechatLoginSucceeded(cookie, studentNumber)"))
+
+        val directImportBranch = successCallback.substringAfter("} else {")
+        assertTrue("导入页主动扫码仍应继续全量导入", directImportBranch.contains("onWechatLoginSucceeded(cookie, studentNumber)"))
+    }
+
+    /**
      * Busy 期间弹窗必须**继续挂着**，否则用户点完「确认登录」会看到它凭空消失好几秒
      * （南宁要串行跑验证码校验、登录、重定向链、框架页验证），既没进度反馈也按不了取消；
      * 更糟的是弹窗重建时 `remember` 被销毁，刚填的密码和验证码会一起丢，错一次重打一次。

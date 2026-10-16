@@ -1271,8 +1271,14 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                     WechatLoginScreen(
                         onSuccess = { cookie, studentNumber ->
                             showWechatLogin = false
-                            directLoginViewModel.onWechatLoginSucceeded(cookie, studentNumber)
-                            container.sessionRenewalCoordinator.completeWechatReauthentication(cookie)
+                            if (renewalState is RenewalUiState.WechatReauthenticationRequired) {
+                                // 菜单里的扫码只用于恢复失效会话。协调器释放 pending 后会重放
+                                // 原来的成绩/考试等请求；这里若再走导入成功处理，会并发启动全量导入。
+                                container.sessionRenewalCoordinator.completeWechatReauthentication(cookie)
+                            } else {
+                                // 用户从导入页主动扫码时，维持既有的完整课表导入流程。
+                                directLoginViewModel.onWechatLoginSucceeded(cookie, studentNumber)
+                            }
                         },
                         onCancel = {
                             showWechatLogin = false
