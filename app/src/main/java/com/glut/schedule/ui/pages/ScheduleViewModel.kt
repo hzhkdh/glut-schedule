@@ -449,9 +449,6 @@ class ScheduleViewModel(
                 settings.manualDayCopiesBySemester[currentSemesterId].orEmpty() +
                     autoRules.map { it.asManualRule() }
             }
-            // 学校补班常落在周末。原课表即使全在工作日，只要自动规则要在周末复制课程，
-            // 网格就必须临时展开第六、第七列；这不写回用户的“显示周末”偏好。
-            val autoWeekendMakeup = autoRules.any { it.targetDate.dayOfWeek.value > 5 }
             ScheduleUiState(
                 week = scheduleWeekForNumber(clampedWeekNumber, normalizedStart, maxAcademicWeek),
                 today = today,
@@ -483,7 +480,10 @@ class ScheduleViewModel(
                 ),
                 holidayDates = if (isHistorical) emptySet() else settings.holidayDates,
                 manualDayCopies = dayCopyRules,
-                showWeekend = settings.showWeekend || autoWeekendMakeup,
+                // 周末列只由用户在设置里选定的「显示周末」决定，**不再**因为对照表的补班
+                // 落在周末就临时撑开：补班课在「调休调课 → 自动补的」分组里仍然查得到，
+                // 而自动展开会让设置页那个开关看起来关不掉。
+                showWeekend = settings.showWeekend,
                 showNoon = settings.showNoon,
                 showGridLines = settings.showGridLines,
                 customBackgroundUri = settings.customBackgroundUri,
@@ -567,8 +567,12 @@ class ScheduleViewModel(
                 fallbackEnd = settingsStore.semesterEndDate.first()
             )
             repository.selectSemester(semesterId)
-            // 学期切换也属于当前课表数据源变化，按该学期完整课程恢复应展示的区域。
-            settingsStore.setAutomaticScheduleDisplay(semester.campus, repository.courses.first())
+            // 只有当前学期才播种：show_weekend / show_noon 是全局唯一的键，
+            // 而历史学期是只读快照，拿它的课次改写首页显示偏好属于数据越界
+            //（用户关掉周末列后只是去看一眼历史学期，当前学期就会被打回展开）。
+            if (semester.isCurrent) {
+                settingsStore.seedAutomaticScheduleDisplay(semester.campus, repository.courses.first())
+            }
             settingsStore.setCurrentWeekNumber(week)
         }
     }
@@ -577,7 +581,7 @@ class ScheduleViewModel(
         viewModelScope.launch {
             repository.resetViewedSemesterToCurrent()
             val current = repository.currentSemester.first()
-            settingsStore.setAutomaticScheduleDisplay(
+            settingsStore.seedAutomaticScheduleDisplay(
                 current?.campus ?: CampusType.GUILIN,
                 repository.courses.first()
             )

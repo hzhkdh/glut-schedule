@@ -194,17 +194,30 @@ class HolidayAdjustmentsUiContractTest {
         assertTrue(graduateImport.contains("autoDayCopyCoordinator.recompose("))
     }
 
+    /**
+     * 周末列的展开权**只**属于设置页那个开关，对照表的补班不得染指它。
+     *
+     * 曾经这里加过一个 `settings.showWeekend || autoWeekendMakeup` 的兜底，好让周末补班课
+     * 在五列网格里可见。代价有两重：对照表一旦有周末补班就自动展开周末列（需求上不该），
+     * 而且这个 OR 过的值被设置页开关直接读到，用户手动关掉后开关纹丝不动——「强制不给关闭」。
+     * 补班课在「调休调课 → 自动补的」分组里永远查得到，不需要占用周末列。
+     */
     @Test
-    fun automaticWeekendMakeupsExpandTheGridWithoutOverwritingUserPreference() {
+    fun weekendMakeupsNeverExpandTheGridNorRewriteUserPreference() {
         val viewModel = page("ScheduleViewModel.kt")
 
-        assertTrue(
-            "自动规则目标日在周末时，课表必须展开周末列，否则补课卡会被五列网格过滤",
-            viewModel.contains("autoRules.any { it.targetDate.dayOfWeek.value > 5 }")
+        assertFalse(
+            "autoWeekendMakeup 已移除；重新引入它等于把对照表变回显示偏好的来源",
+            viewModel.contains("autoWeekendMakeup")
         )
+        assertFalse(
+            "settings.showWeekend || ... 正是「在设置里关掉、刷新又打开」的成因",
+            viewModel.contains("settings.showWeekend ||")
+        )
+        // 网格与设置页开关读同一个持久化值：删掉 OR 后这一行同时保证两件事。
         assertTrue(
-            "自动展开只影响当前渲染，仍要保留用户手动显示周末的设置",
-            viewModel.contains("settings.showWeekend || autoWeekendMakeup")
+            "网格必须原样透传持久化值，否则设置页开关与网格又会分叉",
+            viewModel.contains("showWeekend = settings.showWeekend,")
         )
     }
 

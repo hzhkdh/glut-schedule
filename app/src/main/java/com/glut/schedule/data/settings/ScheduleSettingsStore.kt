@@ -34,7 +34,7 @@ import com.glut.schedule.data.model.encodeManualDayCopyRules
 import com.glut.schedule.data.model.snapBackgroundDimAmount
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ScheduleCourse
-import com.glut.schedule.data.model.automaticScheduleDisplay
+import com.glut.schedule.data.model.planAutomaticScheduleSeed
 import com.glut.schedule.data.model.SemesterSeason
 import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
@@ -113,6 +113,13 @@ class ScheduleSettingsStore(
     private val currentWeekKey = intPreferencesKey("current_week")
     private val showWeekendKey = booleanPreferencesKey("show_weekend")
     private val showNoonKey = booleanPreferencesKey("show_noon")
+    /**
+     * 上次播种自动显示时课表内容的签名（校区 + 星期/节次集合）。
+     *
+     * 与 `show_weekend` / `show_noon` 同一次 `edit` 写入，三个键永远属于同一份状态。
+     * 键本身在 `clearAll()` 的 `edit { it.clear() }` 里自动连带清掉，不需要额外维护。
+     */
+    private val automaticDisplaySignatureKey = stringPreferencesKey("auto_display_signature")
     /** 课表网格线；默认关闭，新增键对老用户即为关闭，不需要额外迁移。 */
     private val showGridLinesKey = booleanPreferencesKey("show_grid_lines")
     private val partnerShowWeekendKey = booleanPreferencesKey("partner_show_weekend")
@@ -381,12 +388,26 @@ class ScheduleSettingsStore(
         }
     }
 
-    /** 导入或切换课表后按完整课次重置默认显示，手动开关仍可在下次数据更新前生效。 */
-    suspend fun setAutomaticScheduleDisplay(campus: CampusType, courses: List<ScheduleCourse>) {
-        val display = automaticScheduleDisplay(courses, campus)
+    /**
+     * 导入完成或切回当前学期后，**只在课表内容真的变了时**才重新播种默认显示。
+     *
+     * 内容签名相同就整个跳过：无条件覆写等于每次刷新都把用户手动的「显示周末 / 显示中午」
+     * 改回推导值，这正是「在设置里关掉周末，刷新一次又自己打开」的成因。
+     *
+     * 判据在 `edit` 事务内读、在同一事务内写，避免读—判—写之间被另一次写入插队。
+     * 判据只认原生课次（[planAutomaticScheduleSeed] 的输入里没有补班副本），
+     * 所以学校统一补班对照表永远不会成为周末列的开关来源。
+     */
+    suspend fun seedAutomaticScheduleDisplay(campus: CampusType, courses: List<ScheduleCourse>) {
         context.scheduleSettings.edit { preferences ->
-            preferences[showWeekendKey] = display.showWeekend
-            preferences[showNoonKey] = display.showNoon
+            val seed = planAutomaticScheduleSeed(
+                storedSignature = preferences[automaticDisplaySignatureKey],
+                courses = courses,
+                campus = campus
+            ) ?: return@edit
+            preferences[showWeekendKey] = seed.display.showWeekend
+            preferences[showNoonKey] = seed.display.showNoon
+            preferences[automaticDisplaySignatureKey] = seed.signature
         }
     }
 
