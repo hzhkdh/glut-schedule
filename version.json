@@ -1,7 +1,7 @@
 {
-  "version": "v0.25.0",
-  "versionCode": 42,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.25.0",
-  "releaseNotes": "支持研究生课表查看",
-  "publishedAt": "2026-10-10T14:28:24Z"
+  "version": "v0.26.0",
+  "versionCode": 43,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.26.0",
+  "releaseNotes": "- 本科生新增【免密登入】功能\r\n- 新增自动调课功能\r\n- 专科、研究生会话过期后刷新各菜单原地弹出验证码输入框，不再需要去到导入页重新登入\r\n- 新增研究生调课记录查看\r\n- 自动判断是否开启显示中午、显示周末",
+  "publishedAt": "2026-10-16T09:40:34Z"
 }
