@@ -279,6 +279,8 @@ class DirectLoginViewModel(
                     remember = false,
                     // 学号已存在会话里；传空也不会出岔子，performImport 会解析兜底。
                     studentNumber = sessionStore.authenticatedStudentNumber.first(),
+                    // 重新导入复用原会话，认证来源也必须沿用；否则微信会话会被误记成密码会话。
+                    authMethod = sessionStore.sessionAuthMethod.first(),
                     // 重新导入不该动凭据：用户没提供任何新密码。
                     updateCredentials = false
                 )
