@@ -45,6 +45,7 @@ import com.glut.schedule.service.holiday.MakeupTableClient
 import com.glut.schedule.service.holiday.TimorHolidayClient
 import com.glut.schedule.partner.PartnerScheduleApiService
 import com.glut.schedule.partner.PartnerScheduleStore
+import com.glut.schedule.ui.AutoRefreshGate
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.widget.ScheduleWidgetUpdater
 import kotlinx.coroutines.CoroutineScope
@@ -158,6 +159,8 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
      .build()
 
     val settingsStore = ScheduleSettingsStore(application)
+    // 自动刷新的闸门：判定「距上次尝试是否满 8 小时」并原子地记录本次尝试。
+    val autoRefreshGate = AutoRefreshGate(settingsStore)
     val greetingTemplateRepository = GreetingTemplateRepository(
         cache = settingsStore,
         remote = HttpGreetingTemplateRemote()
