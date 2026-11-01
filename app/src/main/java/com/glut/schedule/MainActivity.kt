@@ -143,6 +143,7 @@ import com.glut.schedule.service.academic.clearWebLoginSession
 import com.glut.schedule.service.academic.RenewalUiState
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.navigation.campusDrawerItems
+import com.glut.schedule.ui.pages.ChaoxingHomeworkScreen
 import com.glut.schedule.ui.navigation.isEnabledFor
 import com.glut.schedule.ui.navigation.otherDrawerItems
 import com.glut.schedule.ui.navigation.prepareDrawerSelection
@@ -1007,6 +1008,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                     ) { padding ->
                         Box(modifier = Modifier.padding(padding)) {
                             when (selectedItem) {
+                                DrawerItem.ChaoxingHomework -> ChaoxingHomeworkScreen()
                                 DrawerItem.Schedule -> ScheduleDestination(
                                     viewModel = scheduleViewModel,
                                     backgroundStore = container.backgroundStore,

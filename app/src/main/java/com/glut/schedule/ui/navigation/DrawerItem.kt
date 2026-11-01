@@ -39,6 +39,7 @@ enum class DrawerItem(
     PartnerSchedule("情侣/基友课表", Icons.Outlined.PeopleAlt),
     Finance("财务", Icons.Outlined.AccountBalanceWallet),
     StudyPlan("教学计划", Icons.Outlined.MenuBook),
+    ChaoxingHomework("学习通作业", Icons.Outlined.MenuBook),
     Import("导入课表", Icons.Outlined.Download),
     Settings("设置", Icons.Outlined.Settings),
     Notice("通知", Icons.Outlined.Notifications),
@@ -88,6 +89,7 @@ internal fun DrawerItem.requiredCapability(): MenuCapability? = when (this) {
     DrawerItem.Finance -> MenuCapability.FINANCE
     DrawerItem.StudyPlan -> MenuCapability.STUDY_PLAN
     DrawerItem.Schedule,
+    DrawerItem.ChaoxingHomework,
     DrawerItem.Import,
     DrawerItem.Settings,
     DrawerItem.Notice,
@@ -104,6 +106,7 @@ internal fun DrawerItem.unsupportedHintFor(campus: CampusType): String? =
     if (isEnabledFor(campus)) null else CampusCapabilities.UNSUPPORTED_HINT
 
 internal val otherDrawerItems = listOf(
+    DrawerItem.ChaoxingHomework,
     DrawerItem.Settings,
     DrawerItem.Notice,
     DrawerItem.FAQ,
