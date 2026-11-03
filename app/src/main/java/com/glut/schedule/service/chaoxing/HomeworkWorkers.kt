@@ -20,20 +20,17 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
-private val syncMutex = Mutex()
+private val sessionGate = HomeworkSessionGate()
 private const val REMINDER_TAG = "chaoxing_reminders"
 
 class HomeworkSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
-    override suspend fun doWork(): Result {
-        // 重叠触发加入现有工作，不排队再执行一次全量同步。
-        if (!syncMutex.tryLock()) return Result.success()
-        return try { withContext(Dispatchers.IO) {
+    override suspend fun doWork(): Result = sessionGate.sync {
+        // 详情占用会话时等待；只有另一同步已认领名额时，才复用已有同步。
+        withContext(Dispatchers.IO) {
             val store = HomeworkStore(applicationContext)
             store.markAttempt()
             try {
@@ -47,8 +44,8 @@ class HomeworkSyncWorker(context: Context, params: WorkerParameters) : Coroutine
                 store.saveError("同步失败，请检查网络或重新登录学习通")
                 Result.failure()
             }
-        } } finally { syncMutex.unlock() }
-    }
+        }
+    } ?: Result.success()
 }
 
 fun scheduleHomeworkSync(context: Context) {
@@ -65,7 +62,7 @@ fun refreshHomework(context: Context) {
 }
 
 /** 只清理学习通域名，不调用会影响教务登录的全局 Cookie 清理。 */
-suspend fun disconnectChaoxing(context: Context) = syncMutex.withLock {
+suspend fun disconnectChaoxing(context: Context) = sessionGate.withSession {
     withContext(Dispatchers.IO) {
         val manager = WorkManager.getInstance(context)
         manager.cancelUniqueWork("chaoxing_sync").result.get()
@@ -121,7 +118,7 @@ class HomeworkReminderWorker(context: Context, params: WorkerParameters) : Corou
 }
 
 /** 列表同步和详情会进入同一课程会话，必须串行，避免签名与 Cookie 轮换互相穿插。 */
-suspend fun fetchHomeworkDetail(row: CachedHomework, store: HomeworkStore, generation: Long): String = syncMutex.withLock {
+suspend fun fetchHomeworkDetail(row: CachedHomework, store: HomeworkStore, generation: Long): String = sessionGate.withSession {
     check(store.generation == generation) { "学习通账号已变化，请重新打开详情" }
     withContext(Dispatchers.IO) { ChaoxingClient().detail(row) }
 }
