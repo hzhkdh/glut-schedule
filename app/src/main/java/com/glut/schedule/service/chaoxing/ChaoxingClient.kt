@@ -21,16 +21,18 @@ data class HomeworkSyncResult(val courses: List<CourseHomework>, val failed: Lis
 class ChaoxingClient(
     private val transport: ((HttpUrl, String?) -> Pair<HttpUrl, String>)? = null
 ) {
+    // 签名链接仅保留在进程内，绝不进入 SharedPreferences 或日志。
+    private val accesses = if (transport == null) homeworkAccesses else HomeworkAccesses()
     private val cookies by lazy { CookieManager.getInstance() }
     private val client by lazy { OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS).cookieJar(object : CookieJar {
-            override fun loadForRequest(url: HttpUrl): List<Cookie> = cookies.getCookie(url.toString())
-                .orEmpty().split(';').mapNotNull { Cookie.parse(url, it.trim()) }
-            override fun saveFromResponse(url: HttpUrl, values: List<Cookie>) {
+        .readTimeout(25, TimeUnit.SECONDS).cookieJar(ChaoxingCookieJar(
+            read = { url -> cookies.getCookie(url.toString()).orEmpty().split(';')
+                .mapNotNull { Cookie.parse(url, it.trim()) } },
+            write = { url, values ->
                 values.forEach { cookies.setCookie(url.toString(), it.toString()) }
                 cookies.flush()
             }
-        }).build() }
+        )).build() }
 
     private fun fetch(url: HttpUrl, referer: String? = null): Pair<HttpUrl, String> {
         transport?.let { return it(url, referer) }
@@ -39,6 +41,8 @@ class ChaoxingClient(
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36")
         if (referer != null) builder.header("Referer", referer)
         client.newCall(builder.build()).execute().use { response ->
+            // 诊断仅记录主机、固定路径与状态码，绝不输出查询参数、Cookie 或正文。
+            android.util.Log.i("ChaoxingHTTP", "${url.host}${url.encodedPath} -> ${response.request.url.host}${response.request.url.encodedPath} status=${response.code}")
             check(response.isSuccessful) { "学习通请求失败（${response.code}）" }
             return response.request.url to (response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES) ?: error("学习通返回空响应"))
         }
@@ -80,6 +84,7 @@ class ChaoxingClient(
                 check(!html.contains("无权限的操作") && !html.contains("无效的用户")) { "课程查询被拒绝" }
                 stage = "作业列表结构无法识别"
                 check(hasRecognizableHomeworkList(html)) { "作业列表结构无法识别" }
+                rememberAccesses(course, workFinalUrl, html)
                 success.add(CourseHomework(course, parseHomeworkList(html, System.currentTimeMillis())))
             } catch (exception: Exception) {
                 failed.add(course)
@@ -121,16 +126,71 @@ class ChaoxingClient(
         return fetch(work, url.toString())
     }
 
-    /** 重新获取列表定位稳定作业 ID，拒绝执行任何页面脚本或提交动作。 */
+    private fun rememberAccesses(course: ChaoxingCourse, url: HttpUrl, html: String) {
+        Jsoup.parse(html).select("li[data]").forEach { item ->
+            val link = url.resolve(item.attr("data")) ?: return@forEach
+            val id = link.queryParameter("workId").orEmpty()
+            if (id.isNotBlank() && validDetailLink(link)) accesses.put(course.id, course.classId, id, link, url.toString())
+        }
+    }
+
+    /** 优先复用刚同步的官方入口，避免每次展开都重新进入课程并轮换会话。 */
     fun detail(row: CachedHomework): String {
         check(row.workId.isNotBlank() && row.cpi.isNotBlank()) { "请先刷新作业列表，再查看详情" }
-        val (url, html) = workPage(ChaoxingCourse(row.courseId, row.classId, row.cpi, row.courseName))
-        val target = Jsoup.parse(html).select("li[data]").mapNotNull { url.resolve(it.attr("data")) }
-            .firstOrNull { it.queryParameter("workId") == row.workId }
-            ?: error("作业已变更，请刷新列表后重试")
-        check(target.scheme == "https" && target.host == "mooc1.chaoxing.com" &&
-            target.encodedPath in setOf("/mooc-ans/mooc2/work/task", "/mooc2/work/task")) { "无法识别作业入口" }
-        return parseHomeworkDetail(fetch(target, url.toString()).second)
+        val recent = accesses.get(row.courseId, row.classId, row.workId)
+        if (recent != null) {
+            try { return readDetail(recent.first, recent.second) } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            } catch (_: HomeworkDetailException) {
+                accesses.remove(row.courseId, row.classId, row.workId)
+            }
+        }
+        val course = ChaoxingCourse(row.courseId, row.classId, row.cpi, row.courseName)
+        val (url, html) = detailStep("无法获取作业列表，请刷新列表后重试") { workPage(course) }
+        rememberAccesses(course, url, html)
+        val target = accesses.get(row.courseId, row.classId, row.workId)
+            ?: throw HomeworkDetailException("未找到这份作业，请刷新列表后重试")
+        return readDetail(target.first, target.second)
+    }
+
+    private fun validDetailLink(url: HttpUrl): Boolean = url.scheme == "https" &&
+        url.host == "mooc1.chaoxing.com" &&
+        url.encodedPath in setOf("/mooc-ans/mooc2/work/task", "/mooc2/work/task")
+
+    private fun readDetail(target: HttpUrl, referer: String): String {
+        val body = detailStep("详情请求失败，请检查网络后重试") {
+            fetch(target, referer).second
+        }
+        return detailStep("详情页面无法识别，请重新登录后重试") { parseHomeworkDetail(body) }
     }
 
 }
+
+/** 仅暴露固定阶段文案，不把异常中的签名地址或登录票据展示给用户。 */
+class HomeworkDetailException(message: String) : IllegalStateException(message)
+
+private inline fun <T> detailStep(message: String, block: () -> T): T = try {
+    block()
+} catch (e: kotlinx.coroutines.CancellationException) {
+    throw e
+} catch (_: Exception) {
+    throw HomeworkDetailException(message)
+}
+
+/** 缓存只服务刚同步的入口；五分钟后重新定位，退出账号立即销毁。 */
+internal class HomeworkAccesses {
+    private data class Entry(val url: HttpUrl, val referer: String, val at: Long)
+    private val entries = mutableMapOf<Triple<String, String, String>, Entry>()
+    @Synchronized fun put(course: String, clazz: String, work: String, url: HttpUrl, referer: String) {
+        entries[Triple(course, clazz, work)] = Entry(url, referer, androidFreeNow())
+    }
+    @Synchronized fun get(course: String, clazz: String, work: String): Pair<HttpUrl, String>? {
+        val key = Triple(course, clazz, work)
+        val entry = entries[key] ?: return null
+        if (androidFreeNow() - entry.at >= 300_000L) { entries.remove(key); return null }
+        return entry.url to entry.referer
+    }
+    @Synchronized fun remove(course: String, clazz: String, work: String) { entries.remove(Triple(course, clazz, work)) }
+    @Synchronized fun clear() { entries.clear() }
+    private fun androidFreeNow() = System.nanoTime() / 1_000_000L
+}
+internal val homeworkAccesses = HomeworkAccesses()

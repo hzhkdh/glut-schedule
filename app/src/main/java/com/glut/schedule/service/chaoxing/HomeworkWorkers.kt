@@ -71,6 +71,7 @@ suspend fun disconnectChaoxing(context: Context) = syncMutex.withLock {
         manager.cancelUniqueWork("chaoxing_sync").result.get()
         manager.cancelUniqueWork("chaoxing_manual").result.get()
         manager.cancelAllWorkByTag(REMINDER_TAG).result.get()
+        homeworkAccesses.clear()
         HomeworkStore(context).clear()
         val cookieManager = android.webkit.CookieManager.getInstance()
         listOf("passport2.chaoxing.com", "i.mooc.chaoxing.com", "mooc1.chaoxing.com", "mooc1-api.chaoxing.com", "mooc2-ans.chaoxing.com").forEach { host ->
@@ -117,4 +118,10 @@ class HomeworkReminderWorker(context: Context, params: WorkerParameters) : Corou
         manager.notify(inputData.getInt("id", 0), notification)
         return Result.success()
     }
+}
+
+/** 列表同步和详情会进入同一课程会话，必须串行，避免签名与 Cookie 轮换互相穿插。 */
+suspend fun fetchHomeworkDetail(row: CachedHomework, store: HomeworkStore, generation: Long): String = syncMutex.withLock {
+    check(store.generation == generation) { "学习通账号已变化，请重新打开详情" }
+    withContext(Dispatchers.IO) { ChaoxingClient().detail(row) }
 }

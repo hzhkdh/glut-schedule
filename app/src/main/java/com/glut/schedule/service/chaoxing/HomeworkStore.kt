@@ -22,7 +22,7 @@ class HomeworkStore(context: Context) {
     val attemptAt: Long get() = preferences.getLong("attemptAt", 0L)
     val successAt: Long get() = preferences.getLong("successAt", if (failureCount > 0) 0L else updatedAt)
     fun markAttempt() { preferences.edit().putLong("attemptAt", System.currentTimeMillis()).apply() }
-    private fun detailKey(row: CachedHomework) = "detail:${row.courseId}:${row.classId}:${row.workId}"
+    private fun detailKey(row: CachedHomework) = "detail-requirements-v2:${row.courseId}:${row.classId}:${row.workId}"
     fun detail(row: CachedHomework): String = preferences.getString(detailKey(row), "").orEmpty()
     val generation: Long get() = preferences.getLong("generation", 0L)
     fun saveDetail(row: CachedHomework, html: String, expectedGeneration: Long): Boolean = synchronized(detailLock) {

@@ -320,24 +320,31 @@ private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore) {
     var html by remember(row.courseId, row.classId, row.workId) { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
-    var generation by remember { mutableIntStateOf(0) }
+    var generation by remember(row.courseId, row.classId, row.workId) { mutableIntStateOf(0) }
+    var completedGeneration by remember(row.courseId, row.classId, row.workId) { mutableIntStateOf(-1) }
     LaunchedEffect(expanded, generation) {
-        if (!expanded) return@LaunchedEffect
+        // 收起只是隐藏：同一次展示周期已成功加载的详情不因展开而重新请求。
+        if (!expanded || completedGeneration == generation) return@LaunchedEffect
         val sessionGeneration = store.generation
         html = store.detail(row)
         loading = true; error = ""
         try {
-            val detail = withContext(Dispatchers.IO) { ChaoxingClient().detail(row) }
+            val detail = fetchHomeworkDetail(row, store, sessionGeneration)
             if (!store.saveDetail(row, detail, sessionGeneration)) return@LaunchedEffect
             html = detail
+            completedGeneration = generation
         } catch (e: kotlinx.coroutines.CancellationException) { throw e
-        } catch (_: Exception) {
-            error = if (html.isBlank()) "详情加载失败，请刷新列表或重新登录后重试" else "更新失败，正在显示缓存详情"
+        } catch (e: Exception) {
+            val reason = (e as? HomeworkDetailException)?.message ?: "详情加载失败，请刷新列表或重新登录后重试"
+            error = if (html.isBlank()) reason else "$reason（显示缓存详情）"
         } finally { loading = false }
     }
     TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起详情" else "展开详情") }
     if (expanded) {
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (!loading && error.isBlank() && completedGeneration >= 0) {
+            TextButton(onClick = { generation++ }) { Text("刷新详情") }
+        }
         if (error.isNotBlank()) {
             Text(error, style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { generation++ }) { Text("重试") }
@@ -348,6 +355,15 @@ private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore) {
                 settings.javaScriptEnabled = false
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
+                setOnTouchListener { view, event ->
+                    when (event.actionMasked) {
+                        android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE ->
+                            view.parent?.requestDisallowInterceptTouchEvent(true)
+                        android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
+                            view.parent?.requestDisallowInterceptTouchEvent(false)
+                    }
+                    false
+                }
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         if (request.isForMainFrame && request.hasGesture() && request.url.scheme == "https") {
@@ -359,7 +375,7 @@ private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore) {
             } }, update = { view ->
                 if (view.tag != html) {
                     view.tag = html
-                    view.loadDataWithBaseURL("https://mooc1.chaoxing.com/", "<meta name='viewport' content='width=device-width,initial-scale=1'><style>body{font:16px sans-serif;line-height:1.6}img{max-width:100%;height:auto}</style>" + html, "text/html", "UTF-8", null)
+                    view.loadDataWithBaseURL("https://mooc1.chaoxing.com/", homeworkDetailDocument(html), "text/html", "UTF-8", null)
                 }
             }, modifier = Modifier.fillMaxWidth().height(360.dp))
         }
