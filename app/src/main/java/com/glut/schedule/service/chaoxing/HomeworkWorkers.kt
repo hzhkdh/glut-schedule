@@ -9,6 +9,9 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
+import androidx.work.Constraints
+import androidx.work.NetworkType
+import kotlinx.coroutines.CancellationException
 import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -27,27 +30,33 @@ private val syncMutex = Mutex()
 private const val REMINDER_TAG = "chaoxing_reminders"
 
 class HomeworkSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
-    override suspend fun doWork(): Result = syncMutex.withLock {
-        withContext(Dispatchers.IO) {
+    override suspend fun doWork(): Result {
+        // 重叠触发加入现有工作，不排队再执行一次全量同步。
+        if (!syncMutex.tryLock()) return Result.success()
+        return try { withContext(Dispatchers.IO) {
             val store = HomeworkStore(applicationContext)
+            store.markAttempt()
             try {
                 val result = ChaoxingClient().sync()
                 store.merge(result)
                 scheduleHomeworkReminders(applicationContext, store.read())
                 Result.success()
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 store.saveError("同步失败，请检查网络或重新登录学习通")
                 Result.failure()
             }
-        }
+        } } finally { syncMutex.unlock() }
     }
 }
 
 fun scheduleHomeworkSync(context: Context) {
     // 首次同步由手动任务承担，避免周期任务和手动任务连续全量查询。
     val work = PeriodicWorkRequestBuilder<HomeworkSyncWorker>(6, TimeUnit.HOURS)
-        .setInitialDelay(6, TimeUnit.HOURS).build()
-    WorkManager.getInstance(context).enqueueUniquePeriodicWork("chaoxing_sync", ExistingPeriodicWorkPolicy.KEEP, work)
+        .setInitialDelay(6, TimeUnit.HOURS)
+        .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
+    WorkManager.getInstance(context).enqueueUniquePeriodicWork("chaoxing_sync", ExistingPeriodicWorkPolicy.UPDATE, work)
 }
 
 fun refreshHomework(context: Context) {

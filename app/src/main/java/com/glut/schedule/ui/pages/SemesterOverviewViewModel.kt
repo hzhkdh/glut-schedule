@@ -249,6 +249,7 @@ class SemesterOverviewViewModel(
         }
         if (!refreshGuard.tryStart()) return
         val targetSemesterId = repository.viewedSemesterId.value
+        val account = sessionStore
         _isRefreshing.value = true
         viewModelScope.launch {
             // 研究生没有可复用的调课接口（GetCheckedAdjustCourseList 样本为空、且不并入课表）。
@@ -263,19 +264,22 @@ class SemesterOverviewViewModel(
                 return@launch
             }
             _message.value = "正在获取调课信息..."
+            val accountNumber = account.authenticatedStudentNumber.first()
             try {
                 var campusBaseUrl = sessionStore.campusBaseUrl.first()
                     .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
 
                 // Try existing cookie first
                 var cookie = sessionStore.academicCookie.first()
+                var pendingCookie = ""
                 var html = if (cookie.isNotBlank()) {
-                    fetchTimetableHtml(cookie, campusBaseUrl)
+                    fetchTimetableHtml(cookie, campusBaseUrl, targetSemesterId).also { pendingCookie = it.second }.first
                 } else ""
 
                 // 会话失效：原地续期——南宁/研究生弹验证码，桂林静默换票。
                 // 用户取消或续期失败都**保留已有缓存**，只提示、不动屏幕上已有的数据。
                 if (html.isBlank()) {
+                    if (account.authenticatedStudentNumber.first() != accountNumber) return@launch
                     if (!renewal.ensureFreshSession()) {
                         _message.value = "会话已过期，已取消登录"
                         delay(4000)
@@ -287,7 +291,7 @@ class SemesterOverviewViewModel(
                     // 漏掉这一行，重放会把新 cookie 发到旧主机上（南宁换研究生时必然失败）。
                     campusBaseUrl = sessionStore.campusBaseUrl.first()
                         .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
-                    html = fetchTimetableHtml(cookie, campusBaseUrl)
+                    html = fetchTimetableHtml(cookie, campusBaseUrl, targetSemesterId).also { pendingCookie = it.second }.first
                 }
 
                 if (html.isBlank()) {
@@ -296,7 +300,12 @@ class SemesterOverviewViewModel(
                     _message.value = ""
                     return@launch
                 }
+                // 账号或目标学期已经被删除时，丢弃在途响应。
+                if (account.authenticatedStudentNumber.first() != accountNumber ||
+                    repository.semesters.first().none { it.id == targetSemesterId }) return@launch
                 val adjustments = scheduleParser.parseAdjustments(html)
+                com.glut.schedule.service.parser.validateAdjustmentRefresh(html, adjustments.size)
+                if (pendingCookie.isNotBlank()) sessionStore.saveCookie(pendingCookie)
                 // 使用请求开始时捕获的学期，防止网络等待期间切换学期导致写错缓存。
                 repository.replaceSemesterAdjustments(targetSemesterId, adjustments)
                 // 调课记录刚变，自动调课的「让位教务」判定必须跟着重算：否则教务新下发的
@@ -316,43 +325,17 @@ class SemesterOverviewViewModel(
         }
     }
 
-    private suspend fun fetchTimetableHtml(cookie: String, fallbackBaseUrl: String): String = withContext(Dispatchers.IO) {
+    private suspend fun fetchTimetableHtml(cookie: String, fallbackBaseUrl: String, semesterId: String): Pair<String, String> = withContext(Dispatchers.IO) {
         try {
-            // 优先根据当前查看学期动态构造 URL，避免使用 DataStore 中的旧 URL
-            // （旧 URL 可能包含已切换学期的 yearid/termid 参数，导致跨学期调课数据污染）。
-            val viewedSemester = repository.viewedSemester.first()
-            val studentId = sessionStore.authenticatedStudentNumber.first().ifBlank { "" }
-            val url = if (viewedSemester != null && studentId.isNotBlank()) {
-                com.glut.schedule.service.academic.AcademicSemesterRequestBuilder.timetableUrl(
-                    fallbackBaseUrl, studentId, viewedSemester
-                )
-            } else {
-                "$fallbackBaseUrl/academic/manager/coursearrange/showTimetable.do?timetableType=STUDENT&sectionType=BASE"
-            }
-            val client = OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .followRedirects(true)
-                .build()
-            val request = Request.Builder()
-                .url(url)
-                .header("Cookie", cookie)
-                .header("User-Agent", UA)
-                .header("Accept", "text/html,application/json,application/xml;q=0.9,*/*;q=0.8")
-                .header("Accept-Language", "zh-CN,zh;q=0.9")
-                .header("Referer", "$fallbackBaseUrl/academic/preGotoAffairFrame.do")
-                .get()
-                .build()
-            val body = client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
-                } else ""
-            }
-            Log.d(TAG, "Fetched timetable HTML: ${body.length} chars, adjustments found: ${body.contains("调课") || body.contains("补课")}")
-            body
+            // 与导入共用个人课表→内部 ID→大节课表链路，登录学号不能当内部 ID。
+            val semester = repository.semesters.first().firstOrNull { it.id == semesterId } ?: error("学期尚未就绪")
+            val payload = com.glut.schedule.service.academic.AcademicSemesterImportService(
+                com.glut.schedule.service.academic.ApiProbeService(), scheduleParser
+            ).importSemester(cookie, fallbackBaseUrl, semester, "").getOrThrow()
+            payload.timetableHtml to payload.updatedCookie
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch timetable for adjustments", e)
-            ""
+            if (e.message.orEmpty().contains("登录状态已失效")) ("" to "") else throw e
         }
     }
 

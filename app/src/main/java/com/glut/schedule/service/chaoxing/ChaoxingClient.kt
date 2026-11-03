@@ -10,15 +10,19 @@ import okhttp3.Request
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.util.concurrent.TimeUnit
+import com.glut.schedule.service.network.readStringLimited
+import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 
 data class ChaoxingCourse(val id: String, val classId: String, val cpi: String, val title: String)
 data class CourseHomework(val course: ChaoxingCourse, val homework: List<HomeworkEntry>)
 data class HomeworkSyncResult(val courses: List<CourseHomework>, val failed: List<ChaoxingCourse>, val failureReasons: Map<String, Int> = emptyMap())
 
 /** CookieManager 按请求域匹配 Cookie，避免把登录域的会话误发到课程域。 */
-class ChaoxingClient {
-    private val cookies = CookieManager.getInstance()
-    private val client = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS)
+class ChaoxingClient(
+    private val transport: ((HttpUrl, String?) -> Pair<HttpUrl, String>)? = null
+) {
+    private val cookies by lazy { CookieManager.getInstance() }
+    private val client by lazy { OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(25, TimeUnit.SECONDS).cookieJar(object : CookieJar {
             override fun loadForRequest(url: HttpUrl): List<Cookie> = cookies.getCookie(url.toString())
                 .orEmpty().split(';').mapNotNull { Cookie.parse(url, it.trim()) }
@@ -26,14 +30,17 @@ class ChaoxingClient {
                 values.forEach { cookies.setCookie(url.toString(), it.toString()) }
                 cookies.flush()
             }
-        }).build()
+        }).build() }
 
     private fun fetch(url: HttpUrl, referer: String? = null): Pair<HttpUrl, String> {
+        transport?.let { return it(url, referer) }
         val builder = Request.Builder().url(url)
+            // 与网页登录使用同一桌面入口，避免服务器按默认 okhttp UA 返回简化页。
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36")
         if (referer != null) builder.header("Referer", referer)
         client.newCall(builder.build()).execute().use { response ->
             check(response.isSuccessful) { "学习通请求失败（${response.code}）" }
-            return response.request.url to (response.body?.string() ?: error("学习通返回空响应"))
+            return response.request.url to (response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES) ?: error("学习通返回空响应"))
         }
     }
 
@@ -64,21 +71,7 @@ class ChaoxingClient {
         for (course in courses) {
             var stage = "课程页面请求失败"
             try {
-                val middle = "https://mooc1.chaoxing.com/visit/stucoursemiddle".toHttpUrl().newBuilder()
-                    .addQueryParameter("courseid", course.id).addQueryParameter("clazzid", course.classId)
-                    .addQueryParameter("cpi", course.cpi).addQueryParameter("ismooc2", "1").addQueryParameter("v", "2").build()
-                val (finalUrl, page) = fetch(middle)
-                stage = "课程页面未提供可用作业入口"
-                val studentEnc = finalUrl.queryParameter("enc").orEmpty()
-                val workEnc = Jsoup.parse(page).selectFirst("#workEnc")?.attr("value").orEmpty()
-                check(studentEnc.isNotBlank() && workEnc.isNotBlank()) { "无法获取课程作业入口" }
-                val workUrl = "https://mooc1.chaoxing.com/mooc2/work/list".toHttpUrl().newBuilder()
-                    .addQueryParameter("courseId", course.id).addQueryParameter("classId", course.classId)
-                    .addQueryParameter("cpi", course.cpi).addQueryParameter("ut", "s")
-                    .addQueryParameter("t", System.currentTimeMillis().toString())
-                    .addQueryParameter("stuenc", studentEnc).addQueryParameter("enc", workEnc).build()
-                stage = "作业列表请求失败"
-                val (workFinalUrl, html) = fetch(workUrl, finalUrl.toString())
+                val (workFinalUrl, html) = workPage(course)
                 stage = "作业页面发生跳转"
                 check(workFinalUrl.host == "mooc1.chaoxing.com" && workFinalUrl.encodedPath.contains("/work/list")) {
                     "学习通作业页面发生跳转"
@@ -91,10 +84,53 @@ class ChaoxingClient {
             } catch (exception: Exception) {
                 failed.add(course)
                 // 只持久化预定义的失败阶段，不写异常原文、请求地址和登录票据。
-                val reason = if (exception is java.io.IOException) "网络连接失败或超时" else stage
+                val reason = when {
+                    exception is java.io.IOException -> "网络连接失败或超时"
+                    exception.message == "课程页面未提供可用作业入口" -> "课程页面未提供可用作业入口"
+                    else -> stage
+                }
                 reasons[reason] = (reasons[reason] ?: 0) + 1
             }
         }
         return HomeworkSyncResult(success, failed, reasons)
     }
+    /** 课程入口和详情共用最新签名；签名只在本次调用内使用，不进入缓存。 */
+    private fun workPage(course: ChaoxingCourse): Pair<HttpUrl, String> {
+        val middle = "https://mooc1.chaoxing.com/visit/stucoursemiddle".toHttpUrl().newBuilder()
+            .addQueryParameter("courseid", course.id).addQueryParameter("clazzid", course.classId)
+            .addQueryParameter("cpi", course.cpi).addQueryParameter("ismooc2", "1").addQueryParameter("v", "2").build()
+        var (url, html) = fetch(middle)
+        var enc = Jsoup.parse(html).selectFirst("#workEnc")?.attr("value").orEmpty()
+        // 老入口可能返回不完整页面；只重取官方已验证的课程页，不猜测签名。
+        if (enc.isBlank()) {
+            val direct = "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu".toHttpUrl().newBuilder()
+                .addQueryParameter("courseid", course.id).addQueryParameter("clazzid", course.classId)
+                .addQueryParameter("cpi", course.cpi).build()
+            val response = fetch(direct)
+            url = response.first; html = response.second
+            enc = Jsoup.parse(html).selectFirst("#workEnc")?.attr("value").orEmpty()
+        }
+        val studentEnc = url.queryParameter("enc").orEmpty().ifBlank {
+            Jsoup.parse(html).selectFirst("input#enc")?.attr("value").orEmpty()
+        }
+        check(enc.isNotBlank() && studentEnc.isNotBlank()) { "课程页面未提供可用作业入口" }
+        val work = "https://mooc1.chaoxing.com/mooc2/work/list".toHttpUrl().newBuilder()
+            .addQueryParameter("courseId", course.id).addQueryParameter("classId", course.classId)
+            .addQueryParameter("cpi", course.cpi).addQueryParameter("ut", "s")
+            .addQueryParameter("stuenc", studentEnc).addQueryParameter("enc", enc).build()
+        return fetch(work, url.toString())
+    }
+
+    /** 重新获取列表定位稳定作业 ID，拒绝执行任何页面脚本或提交动作。 */
+    fun detail(row: CachedHomework): String {
+        check(row.workId.isNotBlank() && row.cpi.isNotBlank()) { "请先刷新作业列表，再查看详情" }
+        val (url, html) = workPage(ChaoxingCourse(row.courseId, row.classId, row.cpi, row.courseName))
+        val target = Jsoup.parse(html).select("li[data]").mapNotNull { url.resolve(it.attr("data")) }
+            .firstOrNull { it.queryParameter("workId") == row.workId }
+            ?: error("作业已变更，请刷新列表后重试")
+        check(target.scheme == "https" && target.host == "mooc1.chaoxing.com" &&
+            target.encodedPath in setOf("/mooc-ans/mooc2/work/task", "/mooc2/work/task")) { "无法识别作业入口" }
+        return parseHomeworkDetail(fetch(target, url.toString()).second)
+    }
+
 }

@@ -78,6 +78,10 @@ class ScheduleApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         appContainer = AppContainer(this, applicationScope)
+        // 已连接用户启动时补建周期任务；UPDATE 不会因页面重建不断推迟执行时间。
+        if (com.glut.schedule.service.chaoxing.HomeworkStore(this).connected) {
+            com.glut.schedule.service.chaoxing.scheduleHomeworkSync(this)
+        }
         applicationScope.launch {
             val migrationFlags = getSharedPreferences("schedule_migration_flags", MODE_PRIVATE)
             try {

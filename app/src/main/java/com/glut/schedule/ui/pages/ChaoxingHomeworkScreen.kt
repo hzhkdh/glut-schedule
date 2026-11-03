@@ -88,6 +88,17 @@ private fun ChaoxingHomeworkContent() {
     LaunchedEffect(login) { if (login) completedLogin = false }
     val scope = rememberCoroutineScope()
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    // 每次进入或恢复菜单时补检查；持久化时间戳使重建页面不会反复全量刷新。
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        scope.launch {
+            if (store.connected) {
+                scheduleHomeworkSync(context)
+                if (homeworkRefreshDue(System.currentTimeMillis(), store.successAt, store.attemptAt)) {
+                    refreshHomework(context)
+                }
+            }
+        }
+    }
     LaunchedEffect(Unit) {
         while (true) {
             now = System.currentTimeMillis()
@@ -123,7 +134,7 @@ private fun ChaoxingHomeworkContent() {
                                 checking = false
                                 if (!login || completedLogin) return@launch
                                 if (valid) {
-                                    completedLogin = true; login = false; loginError = ""
+                                    completedLogin = true; login = false; loginError = ""; store.markConnected()
                                     if (Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
                                     scheduleHomeworkSync(context); refreshHomework(context)
                                 } else loginError = "未能确认登录状态，请检查网络后重新登录"
@@ -148,7 +159,7 @@ private fun ChaoxingHomeworkContent() {
                 loadUrl("https://passport2.chaoxing.com/login?fid=&refer=https%3A%2F%2Fi.mooc.chaoxing.com%2Fspace%2Findex%3Fws%3D1")
             } }, modifier = Modifier.weight(1f).fillMaxWidth())
         }
-    } else if (updated == 0L && rows.isEmpty() && !syncing) {
+    } else if (!store.connected && updated == 0L && rows.isEmpty() && !syncing) {
         Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), contentAlignment = Alignment.Center) {
             Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFEFB)), border = BorderStroke(1.dp, Color(0xFFE4E2DD))) {
@@ -177,7 +188,7 @@ private fun ChaoxingHomeworkContent() {
                 Icon(Icons.Outlined.MenuBook, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(if (syncing) "正在同步作业…" else if (updated > 0L) "学习通已连接" else "等待同步", fontWeight = FontWeight.SemiBold)
+                    Text(if (syncing) "正在同步作业…" else if (failures > 0) "学习通部分更新" else if (updated > 0L) "学习通已连接" else "等待同步", fontWeight = FontWeight.SemiBold)
                     Text(if (updated == 0L) "尚未同步" else "更新于 ${SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(updated))}",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -191,7 +202,15 @@ private fun ChaoxingHomeworkContent() {
                 Box {
                     IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Outlined.MoreVert, "更多操作") }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        DropdownMenuItem(text = { Text("重新登录") }, onClick = { menuExpanded = false; loginError = ""; login = true })
+                        DropdownMenuItem(text = { Text("重新登录") }, onClick = {
+                            menuExpanded = false
+                            scope.launch {
+                                // 重登录前结束旧账号工作并清掉详情，避免跨账号泄漏缓存。
+                                disconnectChaoxing(context)
+                                rows = emptyList(); updated = 0; failures = 0; error = ""
+                                loginError = ""; login = true
+                            }
+                        })
                         DropdownMenuItem(text = { Text("退出并清除作业") }, onClick = { menuExpanded = false; confirmDisconnect = true })
                     }
                 }
@@ -245,6 +264,7 @@ private fun ChaoxingHomeworkContent() {
                                 Text(row.deadline?.let { "截止 ${SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(it))}" } ?: "暂无截止时间",
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                            HomeworkDetailContent(row, store)
                             remainingHomeworkTime(row.deadline, row.status, now)?.let { remaining ->
                                 Text(remaining, style = MaterialTheme.typography.bodySmall,
                                     color = if (row.deadline!! - now <= 86_400_000L) Color(0xFFB3261E) else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -289,6 +309,59 @@ private fun HomeworkDropdown(title: String, label: String, options: List<Pair<St
                 trailingIcon = { if (key == selected) Icon(Icons.Filled.Check, "已选中", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
                 modifier = Modifier.background(if (key == selected) Color(0xFFEBF2FF) else Color.Transparent),
                 onClick = { expanded = false; onSelect(key) }) }
+        }
+    }
+}
+
+/** 详情仅按需下载；失败时保留缓存，所有网络和解析工作移出主线程。 */
+@Composable
+private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore) {
+    var expanded by remember(row.courseId, row.classId, row.workId) { mutableStateOf(false) }
+    var html by remember(row.courseId, row.classId, row.workId) { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    var generation by remember { mutableIntStateOf(0) }
+    LaunchedEffect(expanded, generation) {
+        if (!expanded) return@LaunchedEffect
+        val sessionGeneration = store.generation
+        html = store.detail(row)
+        loading = true; error = ""
+        try {
+            val detail = withContext(Dispatchers.IO) { ChaoxingClient().detail(row) }
+            if (!store.saveDetail(row, detail, sessionGeneration)) return@LaunchedEffect
+            html = detail
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (_: Exception) {
+            error = if (html.isBlank()) "详情加载失败，请刷新列表或重新登录后重试" else "更新失败，正在显示缓存详情"
+        } finally { loading = false }
+    }
+    TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起详情" else "展开详情") }
+    if (expanded) {
+        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (error.isNotBlank()) {
+            Text(error, style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { generation++ }) { Text("重试") }
+        }
+        if (html.isNotBlank()) {
+            // 内容已清洗且关闭脚本；外链只在用户点击后交给外部应用。
+            AndroidView(factory = { ctx -> WebView(ctx).apply {
+                settings.javaScriptEnabled = false
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                        if (request.isForMainFrame && request.hasGesture() && request.url.scheme == "https") {
+                            runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, request.url)) }
+                        }
+                        return true
+                    }
+                }
+            } }, update = { view ->
+                if (view.tag != html) {
+                    view.tag = html
+                    view.loadDataWithBaseURL("https://mooc1.chaoxing.com/", "<meta name='viewport' content='width=device-width,initial-scale=1'><style>body{font:16px sans-serif;line-height:1.6}img{max-width:100%;height:auto}</style>" + html, "text/html", "UTF-8", null)
+                }
+            }, modifier = Modifier.fillMaxWidth().height(360.dp))
         }
     }
 }
