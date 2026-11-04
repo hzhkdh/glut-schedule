@@ -1,5 +1,8 @@
 package com.glut.schedule.ui.navigation
 
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
@@ -50,7 +53,7 @@ fun DrawerFooter(identity: DrawerIdentity, selected: DrawerItem, modifier: Modif
     Row(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0x99F6F4EF), Color(0xF5F6F4EF))))
         .navigationBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         // 身份在左侧，只显示姓；设置、帮助固定在右侧。
-        Box(Modifier.size(44.dp).background(Color(0xFFE3ECFD), CircleShape), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(48.dp).background(Color(0xFFE3ECFD), CircleShape).clickable { onSelect(DrawerItem.PersonalCenter) }.semantics { contentDescription = "个人中心" }, contentAlignment = Alignment.Center) {
             Text(drawerSurname(identity.name), color = Color(0xFF2459B8))
         }
         Spacer(Modifier.weight(1f))

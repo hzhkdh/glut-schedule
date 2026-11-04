@@ -28,6 +28,7 @@ enum class DrawerItem(
     val title: String,
     val icon: ImageVector
 ) {
+    PersonalCenter("个人中心", Icons.Outlined.PeopleAlt),
     Schedule("课程表", Icons.Outlined.CalendarMonth),
     Score("考试成绩", Icons.Outlined.Assessment),
     ProfessionalScore("专业成绩", Icons.Outlined.Calculate),
@@ -91,6 +92,7 @@ internal fun DrawerItem.requiredCapability(): MenuCapability? = when (this) {
     DrawerItem.PartnerSchedule -> MenuCapability.PARTNER_SCHEDULE
     DrawerItem.Finance -> MenuCapability.FINANCE
     DrawerItem.StudyPlan -> MenuCapability.STUDY_PLAN
+    DrawerItem.PersonalCenter,
     DrawerItem.Schedule,
     DrawerItem.ChaoxingHomework,
     DrawerItem.Import,

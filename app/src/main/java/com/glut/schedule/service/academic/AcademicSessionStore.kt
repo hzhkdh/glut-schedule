@@ -15,6 +15,9 @@ enum class AcademicSessionAuthMethod {
     WECHAT_SSO
 }
 
+/** 同一个 DataStore 版本的身份与会话，避免姓名和学号分开订阅时短暂错配。 */
+data class AcademicProfileSession(val name: String = "", val studentNo: String = "", val base: String = "", val cookie: String = "")
+
 class AcademicSessionStore(
     private val context: Context
 ) : RenewalSessionWriter {
@@ -26,6 +29,11 @@ class AcademicSessionStore(
     private val authenticatedStudentNumberKey = stringPreferencesKey("authenticated_student_number")
     private val authenticatedStudentNameKey = stringPreferencesKey("authenticated_student_name")
     private val authMethodKey = stringPreferencesKey("academic_session_auth_method")
+
+    val profileSession: Flow<AcademicProfileSession> = context.academicSessionDataStore.data.map { preferences ->
+        AcademicProfileSession(preferences[authenticatedStudentNameKey].orEmpty(), preferences[authenticatedStudentNumberKey].orEmpty(),
+            AcademicUrlPolicy.normalizeCampusBaseUrl(preferences[campusUrlKey].orEmpty()), preferences[cookieKey].orEmpty())
+    }
 
     val academicCookie: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
         preferences[cookieKey].orEmpty()
@@ -67,6 +75,15 @@ class AcademicSessionStore(
     suspend fun saveSessionAuthMethod(method: AcademicSessionAuthMethod) {
         context.academicSessionDataStore.edit { preferences ->
             preferences[authMethodKey] = method.name
+        }
+    }
+
+    /** 资料请求可能轮换 Cookie，但旧账号响应不能覆盖刚导入的新会话。 */
+    suspend fun saveProfileCookieIfCurrent(expectedCookie: String, studentNo: String, base: String, cookie: String) {
+        if (cookie.isBlank()) return
+        context.academicSessionDataStore.edit { preferences ->
+            if(preferences[cookieKey].orEmpty() == expectedCookie && preferences[authenticatedStudentNumberKey].orEmpty() == studentNo &&
+                AcademicUrlPolicy.normalizeCampusBaseUrl(preferences[campusUrlKey].orEmpty()) == base) preferences[cookieKey] = cookie
         }
     }
 

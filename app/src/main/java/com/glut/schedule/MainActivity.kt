@@ -699,6 +699,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                var personalCenterRefresh by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+                var personalCenterLoading by remember { mutableStateOf(false) }
                 val drawerContentLayer = rememberGraphicsLayer()
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -873,6 +875,9 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     },
                                     actions = {
                                         when (selectedItem) {
+                                            DrawerItem.PersonalCenter -> IconButton(onClick = { personalCenterRefresh++ }, enabled = !personalCenterLoading) {
+                                                Icon(Icons.Outlined.Refresh, contentDescription = "刷新个人资料")
+                                            }
                                             DrawerItem.Exam -> {
                                                 val examState by examViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
@@ -1025,6 +1030,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                     ) { padding ->
                         Box(modifier = Modifier.padding(padding)) {
                             when (selectedItem) {
+                                DrawerItem.PersonalCenter -> com.glut.schedule.ui.pages.PersonalCenterScreen(campusType, container.academicSessionStore, personalCenterRefresh) { personalCenterLoading = it }
                                 DrawerItem.ChaoxingHomework -> ChaoxingHomeworkScreen()
                                 DrawerItem.Schedule -> ScheduleDestination(
                                     viewModel = scheduleViewModel,
