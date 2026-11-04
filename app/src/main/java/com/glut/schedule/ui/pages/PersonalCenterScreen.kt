@@ -5,7 +5,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,7 +40,7 @@ fun PersonalCenterScreen(campus: CampusType, store: AcademicSessionStore, refres
     val owner = "$campus|$number|$base"
     var values by remember(owner) { mutableStateOf<Map<String,String>>(emptyMap()) }
     var revealed by remember(owner) { mutableStateOf(setOf<String>()) }
-    var expanded by remember(owner) { mutableStateOf(false) }
+    var expanded by remember(owner) { mutableStateOf(setOf("academic")) }
     var message by remember(owner) { mutableStateOf("") }
     var updated by remember(owner) { mutableStateOf("") }
     var loading by remember(owner) { mutableStateOf(false) }
@@ -56,7 +60,7 @@ fun PersonalCenterScreen(campus: CampusType, store: AcademicSessionStore, refres
         val expectedNumber = number
         loading = true; onLoading(true); message = ""
         try {
-            val endpoint = if(campus == CampusType.GUILIN) "https://jw.glut.edu.cn/academic/showPersonalInfo.do"
+            val endpoint = if(campus == CampusType.GUILIN) "https://jw.glut.edu.cn/academic/student/studentinfo/studentInfoModifyIndex.do?frombase=0&wantTag=0&moduleId=2060"
                 else "http://jw.glutnn.cn/academic/student/studentinfo/studentInfoModifyIndex.do?frombase=0&wantTag=0&moduleId=2060"
             val result = ApiProbeService().probeUrl(requestCookie, endpoint) ?: error("network")
             ensureActive()
@@ -77,42 +81,35 @@ fun PersonalCenterScreen(campus: CampusType, store: AcademicSessionStore, refres
     DisposableEffect(Unit) { onDispose { onLoading(false) } }
     Column(Modifier.fillMaxSize().background(Color(0xFFF6F4EF)).verticalScroll(rememberScrollState()).padding(16.dp)) {
         if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(54.dp).background(Color(0xFFE3ECFD), CircleShape), contentAlignment = Alignment.Center) {
-                Text(drawerSurname(values["name"].orEmpty()), color = Color(0xFF2459B8), style = MaterialTheme.typography.headlineSmall)
-            }
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text(values["name"].orEmpty().ifBlank { "个人中心" }, style = MaterialTheme.typography.titleLarge)
-                Text(when(campus) { CampusType.GUILIN -> "桂林本科"; CampusType.NANNING -> "南宁本科"; CampusType.GRADUATE -> "研究生" }, color = Color(0xFF2459B8))
-                if(updated.isNotBlank()) Text("更新于 $updated", style = MaterialTheme.typography.bodySmall, color = Color(0xFF667085))
-            }
-        }
         if(message.isNotBlank()) Text(message, color = Color(0xFF925311), modifier = Modifier.padding(vertical = 12.dp))
-        listOf("academic" to "学籍资料", "contact" to "联系与证件", "more" to "更多资料").forEach { (group, title) ->
-            val fields = PersonalCenterParser.fields.filter { it.group == group && (group == "academic" || values.containsKey(it.key)) }
-            if(fields.isNotEmpty()) {
-                if(group == "more") TextButton(onClick = { expanded = !expanded }) { Text(if(expanded) "更多资料 · 收起" else "更多资料 · 展开") }
-                else Text(title, color = Color(0xFF3F7DF6), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(vertical = 12.dp))
-                if(group != "more" || expanded) Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFFFFFFFC)) {
-                    Column(Modifier.padding(horizontal = 12.dp)) {
-                        fields.forEachIndexed { index, field ->
-                            Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(field.label, color = Color(0xFF667085), modifier = Modifier.widthIn(min = 76.dp, max = 96.dp), style = MaterialTheme.typography.bodyMedium)
-                                Spacer(Modifier.width(12.dp))
+        PersonalCenterParser.groups.forEach { group ->
+            val fields = PersonalCenterParser.groupFields(group, values).filter { campus != CampusType.GRADUATE || values.containsKey(it.key) }
+            if(fields.isNotEmpty()) Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFFFFFFC), modifier = Modifier.padding(bottom = 10.dp)) {
+                Column(Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { expanded = if(group.id in expanded) expanded-group.id else expanded+group.id }.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(group.title, color = Color(0xFF3F7DF6), fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        Icon(if(group.id in expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if(group.id in expanded) "收起" else "展开", tint = Color(0xFF3F7DF6))
+                    }
+                    if(group.id in expanded) Column(Modifier.padding(horizontal = 14.dp).padding(bottom = 6.dp)) {
+                        fields.forEach { field ->
+                            HorizontalDivider(color = Color(0xFFE8E8E3))
+                            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(field.label, color = Color(0xFF667085), modifier = Modifier.width(72.dp).padding(vertical = 8.dp), style = MaterialTheme.typography.bodyMedium)
+                                Spacer(Modifier.width(10.dp))
                                 val value = values[field.key].orEmpty()
                                 Text(if(value.isBlank()) "未提供" else if(field.sensitive && field.key !in revealed) PersonalCenterParser.mask(value, field.key) else value,
-                                    modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                                if(field.sensitive && value.isNotBlank()) TextButton(onClick = { revealed = if(field.key in revealed) revealed-field.key else revealed+field.key }, contentPadding = PaddingValues(4.dp)) {
-                                    Text(if(field.key in revealed) "隐藏" else "显示", style = MaterialTheme.typography.labelSmall)
+                                    modifier = Modifier.weight(1f).padding(vertical = 8.dp), style = MaterialTheme.typography.bodyMedium)
+                                if(field.sensitive && value.isNotBlank()) IconButton(onClick = { revealed = if(field.key in revealed) revealed-field.key else revealed+field.key }, modifier = Modifier.size(48.dp)) {
+                                    Icon(if(field.key in revealed) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff, if(field.key in revealed) "隐藏"+field.label else "显示"+field.label, tint = Color(0xFF667085), modifier = Modifier.size(18.dp))
                                 }
                             }
-                            if(index < fields.lastIndex) HorizontalDivider(color = Color(0xFFE4E2DD))
                         }
                     }
                 }
             }
         }
+        val source = when(campus) { CampusType.GUILIN -> "桂林本科"; CampusType.NANNING -> "南宁本科"; CampusType.GRADUATE -> "研究生" }
+        Text(source + if(updated.isNotBlank()) " · 更新于 "+updated else "", color = Color(0xFF667085), style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().padding(top = 16.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         Text("资料来自教务系统，仅供查看", color = Color(0xFF667085), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
     }
 }

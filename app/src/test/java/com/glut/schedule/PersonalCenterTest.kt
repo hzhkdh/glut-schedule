@@ -6,6 +6,12 @@ import org.junit.Test
 
 /** 匿名资料验证只读解析，不把登录页或相邻标签误当成个人信息。 */
 class PersonalCenterTest {
+    @Test fun academicGroupHasNameAndVisiblePoliticsFirst() {
+        val group = PersonalCenterParser.groups.first()
+        assertEquals(listOf("name", "studentNo", "politics", "department", "major", "grade", "className", "category"), group.keys)
+        assertFalse(PersonalCenterParser.fields.first { it.key == "politics" }.sensitive)
+        assertTrue(PersonalCenterParser.groupFields(PersonalCenterParser.groups.first { it.id == "contact" }, mapOf("phone" to "")).isEmpty())
+    }
     @Test fun parsesAdjacentCellsAndMasksSensitiveValues() {
         val values = PersonalCenterParser.parse("<table><tr><td>用户名</td><td>anonymous-001</td><td>真实姓名</td><td>匿名</td></tr><tr><td>所在院系</td><td>示例学院</td><td>专业</td><td>示例专业</td></tr></table>")
         assertEquals("anonymous-001", values["studentNo"])
