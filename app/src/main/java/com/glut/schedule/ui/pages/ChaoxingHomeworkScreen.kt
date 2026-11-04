@@ -350,34 +350,8 @@ private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore) {
             TextButton(onClick = { generation++ }) { Text("重试") }
         }
         if (html.isNotBlank()) {
-            // 内容已清洗且关闭脚本；外链只在用户点击后交给外部应用。
-            AndroidView(factory = { ctx -> WebView(ctx).apply {
-                settings.javaScriptEnabled = false
-                settings.allowFileAccess = false
-                settings.allowContentAccess = false
-                setOnTouchListener { view, event ->
-                    when (event.actionMasked) {
-                        android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE ->
-                            view.parent?.requestDisallowInterceptTouchEvent(true)
-                        android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
-                            view.parent?.requestDisallowInterceptTouchEvent(false)
-                    }
-                    false
-                }
-                webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        if (request.isForMainFrame && request.hasGesture() && request.url.scheme == "https") {
-                            runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, request.url)) }
-                        }
-                        return true
-                    }
-                }
-            } }, update = { view ->
-                if (view.tag != html) {
-                    view.tag = html
-                    view.loadDataWithBaseURL("https://mooc1.chaoxing.com/", homeworkDetailDocument(html), "text/html", "UTF-8", null)
-                }
-            }, modifier = Modifier.fillMaxWidth().height(360.dp))
+            // 详情随内容展开，整张作业列表统一滚动。
+            com.glut.schedule.ui.requirements.HomeworkRequirementsView(html, Modifier.fillMaxWidth())
         }
     }
 }
