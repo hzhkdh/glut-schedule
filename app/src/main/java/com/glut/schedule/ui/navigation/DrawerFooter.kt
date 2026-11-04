@@ -1,5 +1,11 @@
 package com.glut.schedule.ui.navigation
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -35,16 +41,21 @@ fun drawerIdentity(campus: CampusType, sessionBase: String, name: String): Drawe
 
 /** 独立于中部滚动容器，始终可以找到设置和帮助。 */
 @Composable
-fun DrawerFooter(identity: DrawerIdentity, selected: DrawerItem, onSelect: (DrawerItem) -> Unit) {
-    HorizontalDivider(color = Color(0xFFE4E2DD))
-    Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+fun DrawerFooter(identity: DrawerIdentity, selected: DrawerItem, modifier: Modifier = Modifier, backgroundLayer: GraphicsLayer? = null, onSelect: (DrawerItem) -> Unit) {
+    Box(modifier.fillMaxWidth()) {
+    // 只模糊背后的滚动内容，操作图标与文字保持清晰。
+    if (backgroundLayer != null) Canvas(Modifier.matchParentSize().blur(16.dp)) {
+        translate(top = -(backgroundLayer.size.height - size.height)) { drawLayer(backgroundLayer) }
+    }
+    Row(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0x99F6F4EF), Color(0xF5F6F4EF))))
+        .navigationBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         // 身份在左侧，只显示姓；设置、帮助固定在右侧。
         Box(Modifier.size(44.dp).background(Color(0xFFE3ECFD), CircleShape), contentAlignment = Alignment.Center) {
             Text(drawerSurname(identity.name), color = Color(0xFF2459B8))
         }
         Spacer(Modifier.weight(1f))
         listOf(DrawerItem.Settings to "设置", DrawerItem.FAQ to "帮助").forEach { (item, label) ->
-            TextButton(onClick = { onSelect(item) }, modifier = Modifier.width(48.dp).heightIn(min = 56.dp),
+            TextButton(onClick = { onSelect(item) }, modifier = Modifier.width(48.dp).heightIn(min = 48.dp),
                 contentPadding = PaddingValues(2.dp), colors = ButtonDefaults.textButtonColors(
                     contentColor = if(selected == item) Color(0xFF2459B8) else Color(0xFF667085),
                     containerColor = if(selected == item) Color(0xFFE3ECFD) else Color.Transparent)) {
@@ -55,4 +66,5 @@ fun DrawerFooter(identity: DrawerIdentity, selected: DrawerItem, onSelect: (Draw
             }
         }
     }
+}
 }

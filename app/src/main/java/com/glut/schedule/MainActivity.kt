@@ -61,6 +61,10 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -695,6 +699,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                val drawerContentLayer = rememberGraphicsLayer()
                 ModalNavigationDrawer(
                     drawerState = drawerState,
                     gesturesEnabled = !drawerGestureBlocked,
@@ -718,19 +723,22 @@ class MainActivity : ComponentActivity() {
                                 animationRunId = greetingAnimationRunId
                             )
                             HorizontalDivider(color = Color(0xFFDDE2EA))
-                            Column(
+                            Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(1f)
                                     .background(Color(0xFFF6F4EF))
                             ) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                LazyColumn(Modifier.weight(1f)) {
+                                LazyColumn(Modifier.fillMaxSize().drawWithContent {
+                                    // 仅记录滚动内容，底栏背景采样此图层，不包含按钮自身。
+                                    drawerContentLayer.record { this@drawWithContent.drawContent() }
+                                    drawLayer(drawerContentLayer)
+                                }, contentPadding = PaddingValues(top = 8.dp, bottom = 88.dp)) {
                                     // 常用
                                     item {
                                         Text(
                                             "常用",
-                                            color = Color(0xFF667085),
+                                            color = Color(0xFF3F7DF6),
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium,
                                             modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 4.dp)
@@ -754,7 +762,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     item {
                                         Text(
                                             "成绩",
-                                            color = Color(0xFF667085),
+                                            color = Color(0xFF3F7DF6),
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium,
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
@@ -781,7 +789,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     item {
                                         Text(
                                             "校园",
-                                            color = Color(0xFF667085),
+                                            color = Color(0xFF3F7DF6),
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium,
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
@@ -804,7 +812,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     item {
                                         Text(
                                             "其他",
-                                            color = Color(0xFF667085),
+                                            color = Color(0xFF3F7DF6),
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium,
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
@@ -825,7 +833,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     }
                                 }
                                 com.glut.schedule.ui.navigation.DrawerFooter(
-                                    com.glut.schedule.ui.navigation.drawerIdentity(campusType, drawerSessionBase, studentName), selectedItem
+                                    com.glut.schedule.ui.navigation.drawerIdentity(campusType, drawerSessionBase, studentName), selectedItem,
+                                    modifier = Modifier.align(Alignment.BottomCenter), backgroundLayer = drawerContentLayer
                                 ) { target ->
                                     selectedItem = target
                                     settingsSubPage = SettingsSubPage.ROOT
