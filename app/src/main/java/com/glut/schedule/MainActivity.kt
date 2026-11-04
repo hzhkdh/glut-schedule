@@ -176,6 +176,7 @@ import com.glut.schedule.ui.pages.FinanceViewModelRegistry
 import com.glut.schedule.ui.pages.CampusImageScreen
 import com.glut.schedule.ui.pages.CampusImageViewModel
 import com.glut.schedule.ui.pages.CampusImageViewModelFactory
+import com.glut.schedule.ui.pages.ScheduleExportScreen
 import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.BackgroundCropScreen
 import com.glut.schedule.ui.pages.RemoteBackgroundGalleryScreen
@@ -746,7 +747,7 @@ class MainActivity : ComponentActivity() {
                                             modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 4.dp)
                                         )
                                     }
-items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import)) { item ->
+items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import, DrawerItem.Export)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
@@ -1080,6 +1081,11 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     onOpenWechatLogin = {
                                         if (directLoginViewModel.startWechatLogin()) showWechatLogin = true
                                     }
+                                )
+                                DrawerItem.Export -> ScheduleExportDestination(
+                                    viewModel = scheduleViewModel,
+                                    backgroundStore = container.backgroundStore,
+                                    onImportClick = { selectedItem = DrawerItem.Import }
                                 )
                                 DrawerItem.Settings -> ScheduleSettingsDestination(
                                     viewModel = scheduleViewModel,
@@ -1558,6 +1564,62 @@ private fun ScheduleDestination(
         onImportClick = onImportClick,
         onExamClick = onExamClick,
         onDrawerOpen = onDrawerOpen
+    )
+}
+
+/**
+ * 导出页只需要课表状态与一张已解码的自定义背景图，不参与首帧门控。
+ *
+ * 背景按同一套 ScheduleBackgroundStore 读取：用户选择「当前背景」时，
+ * 导出图片与屏幕看到的一致；自定义图解码失败则自然退回纯色底。
+ */
+@Composable
+private fun ScheduleExportDestination(
+    viewModel: ScheduleViewModel,
+    backgroundStore: ScheduleBackgroundStore,
+    onImportClick: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val adjustments by viewModel.semesterAdjustments.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val metrics = context.resources.displayMetrics
+    var backgroundCacheRevision by remember(uiState.customBackgroundUri, uiState.customBackgroundCrop) {
+        mutableIntStateOf(0)
+    }
+    LaunchedEffect(uiState.customBackgroundUri, uiState.customBackgroundCrop) {
+        val uri = uiState.customBackgroundUri
+        if (shouldUseCustomBackground(uri) && backgroundStore.get(
+                uri, uiState.customBackgroundCrop, metrics.widthPixels, metrics.heightPixels
+            ) == null
+        ) {
+            backgroundStore.preload(
+                uri, uiState.customBackgroundCrop, metrics.widthPixels, metrics.heightPixels
+            )
+            backgroundCacheRevision++
+        }
+    }
+    val backgroundBitmap = remember(
+        uiState.customBackgroundUri,
+        uiState.customBackgroundCrop,
+        backgroundCacheRevision
+    ) {
+        if (shouldUseCustomBackground(uiState.customBackgroundUri)) {
+            backgroundStore.get(
+                uiState.customBackgroundUri,
+                uiState.customBackgroundCrop,
+                metrics.widthPixels,
+                metrics.heightPixels
+            )
+        } else {
+            null
+        }
+    }
+    ScheduleExportScreen(
+        uiState = uiState,
+        adjustments = adjustments,
+        customBackgroundBitmap = backgroundBitmap,
+        onImportClick = onImportClick,
+        onSelectSemester = viewModel::selectSemester
     )
 }
 

@@ -16,6 +16,17 @@
 - 自定义背景按当前设备竖屏比例裁剪，支持拖动、双指缩放（1×–5×）和重新裁剪
 - 背景蒙黑度支持 0%–80%、每档 5% 调节，并同步应用于本人课表与情侣/基友课表
 
+### 课表导出
+- 侧边栏「常用」提供「导出课表」入口，图片与日历两个标签页
+- **图片**：把当前查看周（可切换任意周）的课表渲染成 PNG，可关闭教师/教室、可选当前背景或简洁纯色底
+- 图片默认保存到系统相册 `Pictures/桂工课表/`，也可直接调用系统分享；自定义背景默认不导出，避免私人照片外带
+- **PDF**：把当前周或整学期（每周一页）排版成 A4 纵向 PDF，可保存或分享，适合打印
+- **表格**：导出 CSV（UTF-8 含 BOM），一行一条课次，Excel / WPS 可直接打开
+- **日历**：把整个学期的课次导出为 `.ics`，可保存到 `Download/桂工课表/` 或分享
+- 日历严格按屏幕上的课表生成：停课周不生成事件，调课/补课按实际周次写入，教室写入地点、教师写入备注
+- 研究生门户不提供上课钟点，日历导出会明确提示不可用；在设置里补全 12 节作息后自动可用
+- 导出全部在本机完成，不联网、不上传
+
 ### 课时统计
 - 按课程、教室或教师三个维度统计计划课时，可查看单个学期或全部已下载学期的汇总
 - 环形图展示各项占总时长的比例，点击扇区或明细卡片可查看名称、时长和百分比
@@ -60,6 +71,7 @@
 | 教学计划 | 课组学分/门数要求与完成情况 | studentSelfSchedule.jsdo → studentScheduleLineShow.do（研究生：只读课程列表） |
 | 学期概览 | 学期日期、进度、节假日、调课一览 | 教务日历 + timor.tech 节假日 API |
 | 导入课表 | 登录导入当前数据，按学期或一键下载全部历史课表 | 多端点并行探测 |
+| 导出课表 | 课表图片、PDF、CSV 表格、ICS 日历 | 本地课表 + 作息 + 调休规则 |
 | 通知 | App 内公告、维护提醒、更新提示，支持未读红点 | Cloudflare Pages notices.json |
 | 常见问题 | FAQ 分类展开/收起（常见问题/数据解读/隐私安全/关于项目） | — |
 | 设置 | 显示周末、显示中午（仅桂林）、显示网格线、内置/自定义背景、背景蒙黑度、课程卡片颜色 | — |
@@ -191,6 +203,7 @@ app/src/main/java/com/glut/schedule/
     academic/                       教务登录、会话、凭据、多端点探测、多学期下载与考试请求
     graduate/                       研究生门户客户端（网关签名、RSA 密码加密）、解析器与导入编排
     parser/                         课表、成绩、考试、教学计划和体测解析器
+    export/                         课表图片、PDF、CSV 与 ICS 导出（渲染、命名、落盘、分享）
     fitness/                        体测 API、请求协议、凭据与页面缓存
     finance/                        财务 API、HTML 解析、缓存编解码与加密存储
     campus/                         校园信息图片抓取、可信来源校验与文件缓存
@@ -205,7 +218,7 @@ app/src/main/java/com/glut/schedule/
   ui/
     components/                     课表背景、裁剪计算、表头和网格等复用 Compose 组件
     navigation/                     抽屉菜单定义与校区可见性规则
-    pages/                          各业务页面及 ViewModel，包括背景裁剪、专业成绩、校园信息和财务
+    pages/                          各业务页面及 ViewModel，包括背景裁剪、专业成绩、校园信息、财务和课表导出
     theme/                          Material 3 主题
 
 app/src/main/res/
@@ -219,6 +232,7 @@ app/src/main/res/
 - 教务导入：`AcademicLoginService` / `ApiProbeService` → 各 Parser → `ScheduleRepository`（Room）→ ViewModel `StateFlow` → Compose UI
 - 研究生导入：`GraduateClient`（门户网关签名 + RSA 密码加密）→ `GraduateParser` → `GraduateImportCoordinator` 按「写课表 → 存学期目录 → 选中当前学期 → 写校历 → 切换来源」的顺序落库；成绩与培养计划各自失败互不牵连
 - 首页小组件：Room 中的课表 → Glance 小组件 + WorkManager 后台刷新
+- 课表导出：`ScheduleViewModel` 的周区块 → `ScheduleGrid`（只读）→ GraphicsLayer 截图 → 相册/PDF/分享；同一份区块 → `ScheduleCsvExporter` → `.csv`、`ScheduleIcsExporter` → `.ics`
 - 历史学期：`SemesterBulkDownloadCoordinator` 在应用级作用域串行下载 → Room 按学期保存课表与作息 → 课表和统计页面离线读取
 - 课时统计：多学期课表与作息 → `CourseTimeStatsCalculator` 按课程/教室/教师汇总 → 可交互环形图和双列明细
 - 情侣/基友课表：本人课表快照 → 限时邀请码服务 → `PartnerScheduleStore` 本地保存 → TA/合并视图
@@ -251,5 +265,5 @@ app/src/main/res/
 
 - JUnit 4.13.2 + kotlinx-coroutines-test（OkHttp MockWebServer、org.json 用于协议与解析测试）
 - 覆盖领域模型、Parser、Repository、API Service、缓存编解码、ViewModel 和 UI 契约
-- 包含桂林/南宁/研究生三来源教务、多学期下载、课时统计、情侣/基友课表、专业成绩、体测、财务、校园信息、自定义背景裁剪与解码、首页小组件、通知、更新及发布版本回归测试
+- 包含桂林/南宁/研究生三来源教务、多学期下载、课时统计、情侣/基友课表、专业成绩、体测、财务、校园信息、自定义背景裁剪与解码、首页小组件、通知、更新、课表导出（图片/PDF/CSV/ICS）及发布版本回归测试
 - 测试目录：`app/src/test/java/`
