@@ -109,9 +109,7 @@ internal fun DrawerItem.unsupportedHintFor(campus: CampusType): String? =
     if (isEnabledFor(campus)) null else CampusCapabilities.UNSUPPORTED_HINT
 
 internal val otherDrawerItems = listOf(
-    DrawerItem.Settings,
     DrawerItem.Notice,
-    DrawerItem.FAQ,
     DrawerItem.About
 )
 

@@ -476,6 +476,7 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
+                val drawerSessionBase by container.academicSessionStore.campusBaseUrl.collectAsStateWithLifecycle(initialValue = "")
                 val greetingEnabled by container.settingsStore.greetingEnabled.collectAsStateWithLifecycle(initialValue = true)
                 val studentName by container.academicSessionStore.authenticatedStudentName
                     .collectAsStateWithLifecycle(initialValue = "")
@@ -724,12 +725,12 @@ class MainActivity : ComponentActivity() {
                                     .background(Color(0xFFF6F4EF))
                             ) {
                                 Spacer(modifier = Modifier.height(8.dp))
-                                LazyColumn {
+                                LazyColumn(Modifier.weight(1f)) {
                                     // 常用
                                     item {
                                         Text(
                                             "常用",
-                                            color = Color(0xFF3F7DF6),
+                                            color = Color(0xFF667085),
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium,
                                             modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 4.dp)
@@ -753,7 +754,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     item {
                                         Text(
                                             "成绩",
-                                            color = Color(0xFF3F7DF6),
+                                            color = Color(0xFF667085),
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium,
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
@@ -780,7 +781,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     item {
                                         Text(
                                             "校园",
-                                            color = Color(0xFF3F7DF6),
+                                            color = Color(0xFF667085),
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium,
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
@@ -803,7 +804,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     item {
                                         Text(
                                             "其他",
-                                            color = Color(0xFF3F7DF6),
+                                            color = Color(0xFF667085),
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Medium,
                                             modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp)
@@ -822,6 +823,13 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             }
                                         )
                                     }
+                                }
+                                com.glut.schedule.ui.navigation.DrawerFooter(
+                                    com.glut.schedule.ui.navigation.drawerIdentity(campusType, drawerSessionBase, studentName), selectedItem
+                                ) { target ->
+                                    selectedItem = target
+                                    settingsSubPage = SettingsSubPage.ROOT
+                                    scope.launch { drawerState.close() }
                                 }
                             }
                         }
@@ -1734,10 +1742,10 @@ private fun DrawerMenuItem(
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val bgColor = if (isSelected && enabled) Color(0xFF3F7DF6).copy(alpha = 0.10f) else Color.Transparent
+    val bgColor = if (isSelected && enabled) Color(0xFFE3ECFD) else Color.Transparent
     val contentColor = when {
         !enabled -> Color(0xFF667085).copy(alpha = 0.38f)
-        isSelected -> Color(0xFF3F7DF6)
+        isSelected -> Color(0xFF2459B8)
         else -> Color(0xFF667085)
     }
 
