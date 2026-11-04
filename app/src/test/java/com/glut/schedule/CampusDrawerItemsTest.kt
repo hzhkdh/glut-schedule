@@ -16,7 +16,8 @@ class CampusDrawerItemsTest {
                 DrawerItem.CourseTimeStats,
                 DrawerItem.CampusInfo,
                 DrawerItem.PartnerSchedule,
-                DrawerItem.Finance
+                DrawerItem.Finance,
+                DrawerItem.ChaoxingHomework
             ),
             campusDrawerItems(CampusType.GUILIN)
         )
@@ -33,7 +34,8 @@ class CampusDrawerItemsTest {
                 DrawerItem.CourseTimeStats,
                 DrawerItem.CampusInfo,
                 DrawerItem.PartnerSchedule,
-                DrawerItem.Finance
+                DrawerItem.Finance,
+                DrawerItem.ChaoxingHomework
             ),
             campusDrawerItems(CampusType.NANNING)
         )
@@ -58,7 +60,8 @@ class CampusDrawerItemsTest {
                 DrawerItem.CourseTimeStats,
                 DrawerItem.CampusInfo,
                 DrawerItem.PartnerSchedule,
-                DrawerItem.Finance
+                DrawerItem.Finance,
+                DrawerItem.ChaoxingHomework
             ),
             campusDrawerItems(CampusType.GRADUATE)
         )

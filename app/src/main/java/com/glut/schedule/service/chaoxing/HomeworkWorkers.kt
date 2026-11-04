@@ -43,6 +43,8 @@ class HomeworkSyncWorker(context: Context, params: WorkerParameters) : Coroutine
             } catch (_: Exception) {
                 store.saveError("同步失败，请检查网络或重新登录学习通")
                 Result.failure()
+            } finally {
+                store.finishDetailRefresh()
             }
         }
     } ?: Result.success()

@@ -77,6 +77,7 @@ private fun ChaoxingHomeworkContent() {
     var menuExpanded by remember { mutableStateOf(false) }
     var selectedStatus by rememberSaveable { mutableStateOf("未交") }
     var selectedSubject by rememberSaveable { mutableStateOf("") }
+    var detailRevision by remember { mutableLongStateOf(store.detailRevision) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var completedLogin by remember { mutableStateOf(false) }
     val visibleRows = filterHomework(rows, selectedStatus, selectedSubject)
@@ -102,6 +103,7 @@ private fun ChaoxingHomeworkContent() {
     LaunchedEffect(Unit) {
         while (true) {
             now = System.currentTimeMillis()
+            detailRevision = store.detailRevision
             rows = store.read(); updated = store.updatedAt; failures = store.failureCount; error = store.lastError
             failureSummary = store.failureSummary
             syncing = withContext(Dispatchers.IO) {
@@ -194,6 +196,7 @@ private fun ChaoxingHomeworkContent() {
                 }
                 IconButton(onClick = {
                     if (Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    store.requestDetailRefresh()
                     refreshHomework(context)
                 }, enabled = !syncing) {
                     if (syncing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
@@ -264,12 +267,16 @@ private fun ChaoxingHomeworkContent() {
                                 Text(row.deadline?.let { "截止 ${SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(it))}" } ?: "暂无截止时间",
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            HomeworkDetailContent(row, store)
-                            remainingHomeworkTime(row.deadline, row.status, now)?.let { remaining ->
-                                Text(remaining, style = MaterialTheme.typography.bodySmall,
-                                    color = if (row.deadline!! - now <= 86_400_000L) Color(0xFFB3261E) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(top = 6.dp))
+                            homeworkCountdown(row.deadline, row.status, now)?.let { countdown ->
+                                val fg = when(countdown.tone) { "urgent" -> Color(0xFFB3261E); "warning" -> Color(0xFF925311); else -> MaterialTheme.colorScheme.onSurfaceVariant }
+                                val bg = when(countdown.tone) { "urgent" -> Color(0xFFFDECEC); "warning" -> Color(0xFFFFF1DD); else -> Color.Transparent }
+                                FlowRow(Modifier.fillMaxWidth().padding(top = 8.dp).background(bg, RoundedCornerShape(8.dp)).padding(if(countdown.tone == "normal") 0.dp else 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween) {
+                                    if(countdown.label.isNotEmpty()) Text(countdown.label, color = fg, style = MaterialTheme.typography.bodySmall)
+                                    Text(countdown.text, color = fg, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                                }
                             }
+                            HomeworkDetailContent(row, store, detailRevision)
                         }
                     }
                 }
@@ -315,22 +322,22 @@ private fun HomeworkDropdown(title: String, label: String, options: List<Pair<St
 
 /** 详情仅按需下载；失败时保留缓存，所有网络和解析工作移出主线程。 */
 @Composable
-private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore) {
+private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore, revision: Long) {
     var expanded by remember(row.courseId, row.classId, row.workId) { mutableStateOf(false) }
     var html by remember(row.courseId, row.classId, row.workId) { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var generation by remember(row.courseId, row.classId, row.workId) { mutableIntStateOf(0) }
     var completedGeneration by remember(row.courseId, row.classId, row.workId) { mutableIntStateOf(-1) }
-    LaunchedEffect(expanded, generation) {
+    LaunchedEffect(expanded, generation, revision) {
         // 收起只是隐藏：同一次展示周期已成功加载的详情不因展开而重新请求。
-        if (!expanded || completedGeneration == generation) return@LaunchedEffect
+        if (!expanded || completedGeneration == generation && !store.detailIsStale(row)) return@LaunchedEffect
         val sessionGeneration = store.generation
         html = store.detail(row)
         loading = true; error = ""
         try {
             val detail = fetchHomeworkDetail(row, store, sessionGeneration)
-            if (!store.saveDetail(row, detail, sessionGeneration)) return@LaunchedEffect
+            if (!store.saveDetail(row, detail, sessionGeneration, revision)) return@LaunchedEffect
             html = detail
             completedGeneration = generation
         } catch (e: kotlinx.coroutines.CancellationException) { throw e
@@ -342,9 +349,6 @@ private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore) {
     TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起详情" else "展开详情") }
     if (expanded) {
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (!loading && error.isBlank() && completedGeneration >= 0) {
-            TextButton(onClick = { generation++ }) { Text("刷新详情") }
-        }
         if (error.isNotBlank()) {
             Text(error, style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { generation++ }) { Text("重试") }

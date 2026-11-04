@@ -53,13 +53,15 @@ internal fun campusDrawerItems(campus: CampusType): List<DrawerItem> = when (cam
         DrawerItem.CourseTimeStats,
         DrawerItem.CampusInfo,
         DrawerItem.PartnerSchedule,
-        DrawerItem.Finance
+        DrawerItem.Finance,
+        DrawerItem.ChaoxingHomework
     )
     CampusType.NANNING -> listOf(
         DrawerItem.CourseTimeStats,
         DrawerItem.CampusInfo,
         DrawerItem.PartnerSchedule,
-        DrawerItem.Finance
+        DrawerItem.Finance,
+        DrawerItem.ChaoxingHomework
     )
     // 研究生：门户没有这些模块，但按需求「保留但禁用」——入口照常出现在同一位置，
     // 置灰并提示「研究生暂不支持」，而不是像南宁那样整项消失。
@@ -67,7 +69,8 @@ internal fun campusDrawerItems(campus: CampusType): List<DrawerItem> = when (cam
         DrawerItem.CourseTimeStats,
         DrawerItem.CampusInfo,
         DrawerItem.PartnerSchedule,
-        DrawerItem.Finance
+        DrawerItem.Finance,
+        DrawerItem.ChaoxingHomework
     )
 }
 
@@ -106,7 +109,6 @@ internal fun DrawerItem.unsupportedHintFor(campus: CampusType): String? =
     if (isEnabledFor(campus)) null else CampusCapabilities.UNSUPPORTED_HINT
 
 internal val otherDrawerItems = listOf(
-    DrawerItem.ChaoxingHomework,
     DrawerItem.Settings,
     DrawerItem.Notice,
     DrawerItem.FAQ,

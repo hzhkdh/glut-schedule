@@ -24,10 +24,18 @@ class HomeworkStore(context: Context) {
     fun markAttempt() { preferences.edit().putLong("attemptAt", System.currentTimeMillis()).apply() }
     private fun detailKey(row: CachedHomework) = "detail-requirements-v2:${row.courseId}:${row.classId}:${row.workId}"
     fun detail(row: CachedHomework): String = preferences.getString(detailKey(row), "").orEmpty()
+    // 手动刷新详情的批次与账号会话代次独立，避免自动同步重复拉取正文。
+    val detailRevision: Long get() = preferences.getLong("detailRevision", 0L)
+    fun requestDetailRefresh() { preferences.edit().putBoolean("detailRefreshPending", true).apply() }
+    fun finishDetailRefresh() = synchronized(detailLock) {
+        if (preferences.getBoolean("detailRefreshPending", false)) preferences.edit()
+            .putLong("detailRevision", detailRevision + 1).putBoolean("detailRefreshPending", false).apply()
+    }
+    fun detailIsStale(row: CachedHomework) = preferences.getLong(detailKey(row) + ":revision", -1L) < detailRevision
     val generation: Long get() = preferences.getLong("generation", 0L)
-    fun saveDetail(row: CachedHomework, html: String, expectedGeneration: Long): Boolean = synchronized(detailLock) {
-        if (generation != expectedGeneration) return@synchronized false
-        preferences.edit().putString(detailKey(row), html).apply()
+    fun saveDetail(row: CachedHomework, html: String, expectedGeneration: Long, expectedRevision: Long = detailRevision): Boolean = synchronized(detailLock) {
+        if (generation != expectedGeneration || detailRevision != expectedRevision) return@synchronized false
+        preferences.edit().putString(detailKey(row), html).putLong(detailKey(row) + ":revision", expectedRevision).apply()
         true
     }
     val updatedAt: Long get() = preferences.getLong("updatedAt", 0L)
