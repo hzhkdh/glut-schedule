@@ -151,7 +151,7 @@ private fun ExamList(
 
     LazyColumn(
         modifier = modifier.padding(horizontal = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(22.dp)
+        verticalArrangement = Arrangement.Top
     ) {
         groupedByDate.entries.forEachIndexed { index, (date, dayExams) ->
             item(key = "group_$date") {
@@ -159,6 +159,7 @@ private fun ExamList(
                     date = date,
                     dayExams = dayExams,
                     dateStatus = examGroupDateStatus(date, today, dayExams),
+                    isFirst = index == 0,
                     isLast = index == groupedByDate.size - 1
                 )
             }
@@ -171,6 +172,7 @@ private fun ExamTimelineGroup(
     date: LocalDate,
     dayExams: List<ExamDisplayItem>,
     dateStatus: ExamDateStatus,
+    isFirst: Boolean,
     isLast: Boolean
 ) {
     val statusColors = examDateStatusColors(dateStatus.urgency)
@@ -186,12 +188,13 @@ private fun ExamTimelineGroup(
                 .width(42.dp)
                 .fillMaxHeight()
         ) {
-            if (!isLast) {
+            if (!(isFirst && isLast)) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     drawLine(
                         color = ExamDivider,
-                        start = Offset(x = 12.dp.toPx(), y = 18.dp.toPx()),
-                        end = Offset(x = 12.dp.toPx(), y = size.height),
+                        // 圆点中心为 (9dp,16dp)，首尾收住，中间跨越组间留白。
+                        start = Offset(x = 9.dp.toPx(), y = if(isFirst) 16.dp.toPx() else 0f),
+                        end = Offset(x = 9.dp.toPx(), y = if(isLast) 16.dp.toPx() else size.height),
                         strokeWidth = 1.5.dp.toPx(),
                         cap = StrokeCap.Round
                     )
@@ -206,7 +209,7 @@ private fun ExamTimelineGroup(
             )
         }
         Column(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).padding(bottom = if(isLast) 0.dp else 22.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             ExamDateHeader(date = date, dateStatus = dateStatus)

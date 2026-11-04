@@ -14,6 +14,13 @@ import com.glut.schedule.data.settings.CampusType
 
 /** 仅描述缓存身份，不对登录有效性作承诺；预留未来个人中心回调。 */
 data class DrawerIdentity(val source: String, val name: String, val onOpen: (() -> Unit)? = null)
+
+/** 常见复姓保留完整；缺失身份不把占位文案当成姓氏。 */
+fun drawerSurname(name: String): String {
+    val value = name.trim().takeUnless { it == "暂无身份信息" }.orEmpty()
+    val compound = listOf("欧阳", "司马", "上官", "诸葛", "东方", "皇甫", "尉迟", "公孙", "慕容", "司徒", "司空", "夏侯")
+    return compound.firstOrNull { value.startsWith(it) } ?: value.take(1).ifBlank { "?" }
+}
 fun drawerIdentity(campus: CampusType, sessionBase: String, name: String): DrawerIdentity {
     val host = runCatching { java.net.URI(sessionBase).host }.getOrNull()
     val matches = when(campus) {
@@ -31,6 +38,11 @@ fun drawerIdentity(campus: CampusType, sessionBase: String, name: String): Drawe
 fun DrawerFooter(identity: DrawerIdentity, selected: DrawerItem, onSelect: (DrawerItem) -> Unit) {
     HorizontalDivider(color = Color(0xFFE4E2DD))
     Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        // 身份在左侧，只显示姓；设置、帮助固定在右侧。
+        Box(Modifier.size(44.dp).background(Color(0xFFE3ECFD), CircleShape), contentAlignment = Alignment.Center) {
+            Text(drawerSurname(identity.name), color = Color(0xFF2459B8))
+        }
+        Spacer(Modifier.weight(1f))
         listOf(DrawerItem.Settings to "设置", DrawerItem.FAQ to "帮助").forEach { (item, label) ->
             TextButton(onClick = { onSelect(item) }, modifier = Modifier.width(48.dp).heightIn(min = 56.dp),
                 contentPadding = PaddingValues(2.dp), colors = ButtonDefaults.textButtonColors(
@@ -40,17 +52,6 @@ fun DrawerFooter(identity: DrawerIdentity, selected: DrawerItem, onSelect: (Draw
                     Icon(item.icon, null, Modifier.size(22.dp))
                     Text(label, style = MaterialTheme.typography.labelSmall)
                 }
-            }
-        }
-        Spacer(Modifier.width(8.dp))
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
-            Box(Modifier.size(30.dp).background(Color(0xFFE3ECFD), CircleShape), contentAlignment = Alignment.Center) {
-                Text("人", color = Color(0xFF2459B8))
-            }
-            Spacer(Modifier.width(6.dp))
-            Column(Modifier.weight(1f)) {
-                Text(identity.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                Text(identity.source, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = Color(0xFF667085))
             }
         }
     }
