@@ -942,6 +942,21 @@ class DirectLoginViewModel(
             settingsStore.setCampusType(source.campus)
             settingsStore.setLastImportSource(source)
             courseCount = currentPayload.courses.countDistinctCourseTitles()
+            // 资料只随用户主动导入采集；研究生未核实资料协议，仅保留基础身份。
+            if (source.campus != CampusType.GRADUATE) try {
+                val profileResult = apiProbeService.probeUrl(activeCookie,
+                    "$campusBaseUrl/academic/student/studentinfo/studentInfoModifyIndex.do?frombase=0&wantTag=0&moduleId=2060")
+                if (profileResult?.httpCode == 200) {
+                    val values = com.glut.schedule.service.academic.PersonalCenterParser.parse(profileResult.body)
+                    require(values["studentNo"] == resolvedStudentNumber) { "教务身份与本次导入不一致" }
+                    sessionStore.saveProfileSnapshotIfCurrent(activeCookie,
+                        com.glut.schedule.service.academic.PersonalCenterSnapshot(campusBaseUrl, resolvedStudentNumber, values, System.currentTimeMillis()))
+                    sessionStore.saveProfileCookieIfCurrent(activeCookie, resolvedStudentNumber, campusBaseUrl, profileResult.updatedCookie)
+                    if (profileResult.updatedCookie.isNotBlank()) activeCookie = profileResult.updatedCookie
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled
+            } catch (_: Exception) { /* 附加资料失败不影响课表；原快照时间保持不变。 */ }
+
             // 重算排在落库与来源切换之后：让位判定要读刚落库的 semester_adjustments，
             // 而学期范围要读已写定的校历。开关没打开时它是 no-op。
             autoDayCopyCoordinator.recompose(currentSemester.id)

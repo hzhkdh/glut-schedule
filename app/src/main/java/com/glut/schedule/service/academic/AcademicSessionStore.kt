@@ -1,5 +1,8 @@
 package com.glut.schedule.service.academic
 
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import org.json.JSONObject
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -16,11 +19,44 @@ enum class AcademicSessionAuthMethod {
 }
 
 /** 同一个 DataStore 版本的身份与会话，避免姓名和学号分开订阅时短暂错配。 */
-data class AcademicProfileSession(val name: String = "", val studentNo: String = "", val base: String = "", val cookie: String = "")
+data class AcademicProfileSession(val name: String = "", val studentNo: String = "", val base: String = "", val cookie: String = "", val snapshot: PersonalCenterSnapshot? = null)
 
 class AcademicSessionStore(
     private val context: Context
 ) : RenewalSessionWriter {
+    // 独立加密存储不进入课表数据库、分享导出或日志；密钥不可用时禁止明文降级。
+    private val profilePrefs by lazy {
+        runCatching {
+            EncryptedSharedPreferences.create(context, "glut_secure_personal_snapshot",
+                MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+        }.getOrNull()
+    }
+
+    private fun readSnapshot(base: String, studentNo: String): PersonalCenterSnapshot? = runCatching {
+        val json = JSONObject(profilePrefs?.getString("snapshot", null) ?: return@runCatching null)
+        val data = json.getJSONObject("values")
+        PersonalCenterSnapshot(json.getString("base"), json.getString("studentNo"),
+            PersonalCenterParser.fields.mapNotNull { field -> data.optString(field.key).takeIf { it.isNotBlank() }?.let { field.key to it } }.toMap(),
+            json.getLong("updatedAt")).takeIf { it.matches(base, studentNo) }
+    }.getOrNull()
+
+    /** 与会话更新串行校验，拒绝跨账号、跨来源以及旧 Cookie 的迟到结果。 */
+    suspend fun saveProfileSnapshotIfCurrent(expectedCookie: String, snapshot: PersonalCenterSnapshot) {
+        context.academicSessionDataStore.edit { preferences ->
+            val base = AcademicUrlPolicy.normalizeCampusBaseUrl(preferences[campusUrlKey].orEmpty())
+            if (preferences[cookieKey].orEmpty() == expectedCookie && snapshot.matches(base, preferences[authenticatedStudentNumberKey].orEmpty())) {
+                val json = JSONObject().put("base", snapshot.base).put("studentNo", snapshot.studentNo)
+                    .put("updatedAt", snapshot.updatedAt).put("values", JSONObject(snapshot.values))
+                profilePrefs?.edit()?.putString("snapshot", json.toString())?.commit()
+                // 触发同一身份的订阅更新，不改变快照的真实采集时间。
+                preferences[profileRevisionKey] = java.util.UUID.randomUUID().toString()
+            }
+        }
+    }
+
+    private val profileRevisionKey = stringPreferencesKey("profile_snapshot_revision")
     private val cookieKey = stringPreferencesKey("academic_cookie")
     private val lastHtmlPreviewKey = stringPreferencesKey("last_timetable_html_preview")
     private val examApiUrlKey = stringPreferencesKey("exam_api_url")
@@ -32,7 +68,8 @@ class AcademicSessionStore(
 
     val profileSession: Flow<AcademicProfileSession> = context.academicSessionDataStore.data.map { preferences ->
         AcademicProfileSession(preferences[authenticatedStudentNameKey].orEmpty(), preferences[authenticatedStudentNumberKey].orEmpty(),
-            AcademicUrlPolicy.normalizeCampusBaseUrl(preferences[campusUrlKey].orEmpty()), preferences[cookieKey].orEmpty())
+            AcademicUrlPolicy.normalizeCampusBaseUrl(preferences[campusUrlKey].orEmpty()), preferences[cookieKey].orEmpty(),
+            readSnapshot(AcademicUrlPolicy.normalizeCampusBaseUrl(preferences[campusUrlKey].orEmpty()), preferences[authenticatedStudentNumberKey].orEmpty()))
     }
 
     val academicCookie: Flow<String> = context.academicSessionDataStore.data.map { preferences ->
@@ -146,7 +183,10 @@ class AcademicSessionStore(
     }
 
     suspend fun clearAll() {
-        context.academicSessionDataStore.edit { it.clear() }
+        context.academicSessionDataStore.edit {
+            profilePrefs?.edit()?.clear()?.commit()
+            it.clear()
+        }
     }
 }
 
