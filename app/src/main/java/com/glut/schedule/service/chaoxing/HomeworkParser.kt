@@ -2,7 +2,7 @@ package com.glut.schedule.service.chaoxing
 
 import org.jsoup.Jsoup
 
-data class HomeworkEntry(val title: String, val status: String, val deadlineMillis: Long?, val workId: String = "")
+data class HomeworkEntry(val title: String, val status: String, val deadlineMillis: Long?, val workId: String = "", val taskId: String = workId, val bbsId: String = "")
 
 // 学习通的合法空页面没有 ul，仅在任务列表容器内显示明确的“暂无作业”。
 // 限定容器和文字，避免把错误页中偶然出现的空状态文案当作成功。

@@ -2,6 +2,9 @@ package com.glut.schedule.service.chaoxing
 
 // 使用课程与班级组合键区分同名课程，避免筛选串班。
 fun CachedHomework.subjectKey(): String = "$courseId:$classId"
+// 同名任务和跨类型 ID 可能重合，详情及 Compose 均使用完整身份。
+fun CachedHomework.taskKey(): String = "$courseId:$classId:$kind:${taskId.ifBlank { workId.ifBlank { title } }}"
+fun CachedHomework.kindLabel(): String = when (kind) { "discussion" -> "讨论"; "exam" -> "考试"; else -> "作业" }
 
 /** 本地时钟驱动紧迫程度；与账号同步无关。 */
 data class HomeworkCountdown(val text: String, val tone: String, val label: String)
@@ -21,8 +24,12 @@ fun homeworkCountdown(deadline: Long?, status: String, now: Long): HomeworkCount
     return HomeworkCountdown(text, tone, if (diff>0 && tone!="normal") "即将截止" else "")
 }
 
-fun filterHomework(rows: List<CachedHomework>, status: String, subject: String): List<CachedHomework> =
-    rows.filter { (status.isEmpty() || it.status == status) && (subject.isEmpty() || it.subjectKey() == subject) }
+fun filterHomework(rows: List<CachedHomework>, status: String, subject: String, kind: String = ""): List<CachedHomework> =
+    rows.filter { (when (status) {
+        "todo" -> homeworkState(it.status) == HomeworkState.TODO
+        "done" -> homeworkState(it.status) == HomeworkState.DONE
+        else -> status.isEmpty() || it.status == status
+    }) && (subject.isEmpty() || it.subjectKey() == subject) && (kind.isEmpty() || it.kind == kind) }
 
 fun remainingHomeworkTime(deadline: Long?, status: String, now: Long): String? {
     if (deadline == null || status != "未交") return null

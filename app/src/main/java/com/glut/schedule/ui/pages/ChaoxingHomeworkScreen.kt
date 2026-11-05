@@ -75,14 +75,15 @@ private fun ChaoxingHomeworkContent() {
     var checking by remember { mutableStateOf(false) }
     var loginError by remember { mutableStateOf("") }
     var menuExpanded by remember { mutableStateOf(false) }
-    var selectedStatus by rememberSaveable { mutableStateOf("未交") }
+    var selectedStatus by rememberSaveable { mutableStateOf("todo") }
     var selectedSubject by rememberSaveable { mutableStateOf("") }
     var detailRevision by remember { mutableLongStateOf(store.detailRevision) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var completedLogin by remember { mutableStateOf(false) }
-    val visibleRows = filterHomework(rows, selectedStatus, selectedSubject)
+    var selectedKind by rememberSaveable { mutableStateOf("") }
+    val visibleRows = filterHomework(rows, selectedStatus, selectedSubject, selectedKind)
     LaunchedEffect(rows) {
-        if (selectedStatus.isNotEmpty() && selectedStatus != "未交" && rows.none { it.status == selectedStatus }) selectedStatus = "未交"
+
         if (selectedSubject.isNotEmpty() && rows.none { it.subjectKey() == selectedSubject }) selectedSubject = ""
     }
     BackHandler(enabled = login) { login = false }
@@ -172,7 +173,7 @@ private fun ChaoxingHomeworkContent() {
                     Spacer(Modifier.height(20.dp))
                     Text("连接学习通", style = MaterialTheme.typography.headlineSmall)
                     Spacer(Modifier.height(8.dp))
-                    Text("登录后查看作业和截止时间", style = MaterialTheme.typography.bodyMedium)
+                    Text("登录后查看作业、讨论和考试", style = MaterialTheme.typography.bodyMedium)
                     if (error.isNotBlank()) {
                         Spacer(Modifier.height(12.dp))
                         Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -190,7 +191,7 @@ private fun ChaoxingHomeworkContent() {
                 Icon(Icons.Outlined.MenuBook, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(if (syncing) "正在同步作业…" else if (failures > 0) "学习通部分更新" else if (updated > 0L) "学习通已连接" else "等待同步", fontWeight = FontWeight.SemiBold)
+                    Text(if (syncing) "正在同步任务…" else if (failures > 0) "学习通部分更新" else if (updated > 0L) "学习通已连接" else "等待同步", fontWeight = FontWeight.SemiBold)
                     Text(if (updated == 0L) "尚未同步" else "更新于 ${SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(updated))}",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -200,7 +201,7 @@ private fun ChaoxingHomeworkContent() {
                     refreshHomework(context)
                 }, enabled = !syncing) {
                     if (syncing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Outlined.Refresh, "刷新作业", tint = MaterialTheme.colorScheme.primary)
+                    else Icon(Icons.Outlined.Refresh, "刷新任务和详情", tint = MaterialTheme.colorScheme.primary)
                 }
                 Box {
                     IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Outlined.MoreVert, "更多操作") }
@@ -214,7 +215,7 @@ private fun ChaoxingHomeworkContent() {
                                 loginError = ""; login = true
                             }
                         })
-                        DropdownMenuItem(text = { Text("退出并清除作业") }, onClick = { menuExpanded = false; confirmDisconnect = true })
+                        DropdownMenuItem(text = { Text("退出并清除任务") }, onClick = { menuExpanded = false; confirmDisconnect = true })
                     }
                 }
               }
@@ -232,35 +233,38 @@ private fun ChaoxingHomeworkContent() {
             }
             if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
             Row(Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("作业列表", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text("任务列表", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 Text("${visibleRows.size} / ${rows.size} 项", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             // 两个筛选框等宽且位置固定，长科目名只省略显示，不参与改变锚点宽度。
             Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                HomeworkDropdown("状态", if (selectedStatus.isEmpty()) "全部状态" else selectedStatus,
-                    listOf("" to "全部状态") + (listOf("未交") + rows.map { it.status }).distinct().sorted().map { it to it.ifBlank { "状态未知" } },
+                HomeworkDropdown("状态", when(selectedStatus) { "todo" -> "未交（未讨论）"; "done" -> "已完成（已讨论）"; else -> "全部" },
+                    listOf("" to "全部", "todo" to "未交（未讨论）", "done" to "已完成（已讨论）"),
                     selectedStatus, Modifier.weight(1f)) { selectedStatus = it }
                 val subjects = rows.distinctBy { it.subjectKey() }
                 HomeworkDropdown("科目", subjects.find { it.subjectKey() == selectedSubject }?.courseName ?: "全部科目",
                     listOf("" to "全部科目") + subjects.map { it.subjectKey() to (it.courseName + if (subjects.count { s -> s.courseName == it.courseName } > 1) "（班级 ${it.classId}）" else "") },
                     selectedSubject, Modifier.weight(1f)) { selectedSubject = it }
             }
-            if (visibleRows.isEmpty()) Text(if(rows.isEmpty()) "暂无已同步的作业" else "没有符合条件的作业，请调整筛选")
+            HomeworkDropdown("类型", when(selectedKind) { "homework" -> "作业"; "discussion" -> "讨论"; "exam" -> "考试"; else -> "全部类型" },
+                listOf("" to "全部类型", "homework" to "作业", "discussion" to "讨论", "exam" to "考试"), selectedKind,
+                Modifier.fillMaxWidth().padding(bottom = 12.dp)) { selectedKind = it }
+            if (visibleRows.isEmpty()) Text(if(rows.isEmpty()) "暂无已同步的任务" else "没有符合条件的任务，请调整筛选")
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
-                items(visibleRows.sortedWith(compareBy<CachedHomework> { homeworkState(it.status) != HomeworkState.TODO }.thenBy { it.deadline ?: Long.MAX_VALUE })) { row ->
+                items(visibleRows.sortedWith(compareBy<CachedHomework> { homeworkState(it.status) != HomeworkState.TODO }.thenBy { it.deadline ?: Long.MAX_VALUE }), key = { it.taskKey() }) { row ->
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFEFB)),
                         shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Color(0xFFE4E2DD))) {
                         Column(Modifier.padding(16.dp)) {
                             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Text(row.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                                 // 状态色只承担提示作用，保留原始状态文字避免误解。
-                                val badgeBg = when(row.status) { "未交" -> Color(0xFFFFEAEA); "已完成", "已批阅" -> Color(0xFFE8F5E9); "待批阅" -> Color(0xFFEAF1FF); "待互评" -> Color(0xFFFFF1DD); else -> Color(0xFFF0F0ED) }
-                                val badgeFg = when(row.status) { "未交" -> Color(0xFFB3261E); "已完成", "已批阅" -> Color(0xFF26713A); "待批阅" -> Color(0xFF3264BB); "待互评" -> Color(0xFF99520A); else -> Color(0xFF667085) }
-                                Text(row.status.ifBlank { "状态未知" }, style = MaterialTheme.typography.labelMedium, color = badgeFg,
+                                val badgeBg = when(row.status) { "未交", "未讨论" -> Color(0xFFFFEAEA); "已完成", "已批阅", "已讨论" -> Color(0xFFE8F5E9); "待批阅" -> Color(0xFFEAF1FF); "待互评" -> Color(0xFFFFF1DD); else -> Color(0xFFF0F0ED) }
+                                val badgeFg = when(row.status) { "未交", "未讨论" -> Color(0xFFB3261E); "已完成", "已批阅", "已讨论" -> Color(0xFF26713A); "待批阅" -> Color(0xFF3264BB); "待互评" -> Color(0xFF99520A); else -> Color(0xFF667085) }
+                                Text(row.status.ifBlank { "待确认" }, style = MaterialTheme.typography.labelMedium, color = badgeFg,
                                     modifier = Modifier.background(badgeBg, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 5.dp))
                             }
                             Spacer(Modifier.height(6.dp))
-                            Text(row.courseName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${row.kindLabel()} · ${row.courseName}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(12.dp))
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Icon(Icons.Outlined.Event, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -284,10 +288,10 @@ private fun ChaoxingHomeworkContent() {
         }
     }
     if (confirmDisconnect) AlertDialog(onDismissRequest = { confirmDisconnect = false },
-        title = { Text("退出学习通？") }, text = { Text("将清除本地作业并停止同步和提醒。") },
+        title = { Text("退出学习通？") }, text = { Text("将清除本地任务并停止同步和提醒。") },
         confirmButton = { TextButton(onClick = {
             confirmDisconnect = false
-            scope.launch { disconnectChaoxing(context); rows = emptyList(); updated = 0; failures = 0; error = ""; selectedStatus = "未交"; selectedSubject = "" }
+            scope.launch { disconnectChaoxing(context); rows = emptyList(); updated = 0; failures = 0; error = ""; selectedStatus = "todo"; selectedSubject = "" }
         }) { Text("退出") } }, dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text("取消") } })
 }
 
@@ -323,17 +327,21 @@ private fun HomeworkDropdown(title: String, label: String, options: List<Pair<St
 /** 详情仅按需下载；失败时保留缓存，所有网络和解析工作移出主线程。 */
 @Composable
 private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore, revision: Long) {
-    var expanded by remember(row.courseId, row.classId, row.workId) { mutableStateOf(false) }
-    var html by remember(row.courseId, row.classId, row.workId) { mutableStateOf("") }
+    var expanded by remember(row.taskKey()) { mutableStateOf(false) }
+    var html by remember(row.taskKey()) { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
-    var generation by remember(row.courseId, row.classId, row.workId) { mutableIntStateOf(0) }
-    var completedGeneration by remember(row.courseId, row.classId, row.workId) { mutableIntStateOf(-1) }
+    var generation by remember(row.taskKey()) { mutableIntStateOf(0) }
+    var completedGeneration by remember(row.taskKey()) { mutableIntStateOf(-1) }
     LaunchedEffect(expanded, generation, revision) {
         // 收起只是隐藏：同一次展示周期已成功加载的详情不因展开而重新请求。
         if (!expanded || completedGeneration == generation && !store.detailIsStale(row)) return@LaunchedEffect
         val sessionGeneration = store.generation
         html = store.detail(row)
+        if (html.isNotBlank() && !store.detailIsStale(row) && generation == 0) {
+            completedGeneration = generation
+            return@LaunchedEffect
+        }
         loading = true; error = ""
         try {
             val detail = fetchHomeworkDetail(row, store, sessionGeneration)
@@ -354,8 +362,9 @@ private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore, rev
             TextButton(onClick = { generation++ }) { Text("重试") }
         }
         if (html.isNotBlank()) {
-            // 详情随内容展开，整张作业列表统一滚动。
+            // 详情随内容展开，整张任务列表统一滚动。
             com.glut.schedule.ui.requirements.HomeworkRequirementsView(html, Modifier.fillMaxWidth())
         }
     }
 }
+

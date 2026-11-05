@@ -4,7 +4,8 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class CachedHomework(val courseId: String, val classId: String, val courseName: String, val title: String, val status: String, val deadline: Long?, val workId: String = "", val cpi: String = "")
+// 新字段均有默认值，历史作业缓存和原有调用无需迁移即可继续读取。
+data class CachedHomework(val courseId: String, val classId: String, val courseName: String, val title: String, val status: String, val deadline: Long?, val workId: String = "", val cpi: String = "", val kind: String = "homework", val taskId: String = workId, val bbsId: String = "")
 
 class HomeworkStore(context: Context) {
     private val preferences = context.getSharedPreferences("chaoxing_homework", Context.MODE_PRIVATE)
@@ -13,7 +14,7 @@ class HomeworkStore(context: Context) {
         (0 until array.length()).map { i ->
             val o = array.getJSONObject(i)
             CachedHomework(o.getString("courseId"), o.getString("classId"), o.getString("courseName"),
-                o.getString("title"), o.getString("status"), if (o.isNull("deadline")) null else o.getLong("deadline"), o.optString("workId"), o.optString("cpi"))
+                o.getString("title"), o.getString("status"), if (o.isNull("deadline")) null else o.getLong("deadline"), o.optString("workId"), o.optString("cpi"), o.optString("kind", "homework"), o.optString("taskId", o.optString("workId")), o.optString("bbsId"))
         }
     }.getOrDefault(emptyList())
     val connected: Boolean get() = preferences.getBoolean("connected", updatedAt > 0L)
@@ -22,7 +23,7 @@ class HomeworkStore(context: Context) {
     val attemptAt: Long get() = preferences.getLong("attemptAt", 0L)
     val successAt: Long get() = preferences.getLong("successAt", if (failureCount > 0) 0L else updatedAt)
     fun markAttempt() { preferences.edit().putLong("attemptAt", System.currentTimeMillis()).apply() }
-    private fun detailKey(row: CachedHomework) = "detail-requirements-v2:${row.courseId}:${row.classId}:${row.workId}"
+    private fun detailKey(row: CachedHomework) = if (row.kind == "homework") "detail-requirements-v2:${row.courseId}:${row.classId}:${row.workId}" else "task-detail:${row.taskKey()}"
     fun detail(row: CachedHomework): String = preferences.getString(detailKey(row), "").orEmpty()
     // 手动刷新详情的批次与账号会话代次独立，避免自动同步重复拉取正文。
     val detailRevision: Long get() = preferences.getLong("detailRevision", 0L)
@@ -46,14 +47,14 @@ class HomeworkStore(context: Context) {
 
     @Synchronized fun merge(result: HomeworkSyncResult) {
         // 查询失败的课程沿用旧缓存；成功课程的结果整体替换。
-        val failed = result.failed.map { it.id to it.classId }.toSet()
-        val merged = read().filter { (it.courseId to it.classId) in failed } + result.courses.flatMap { group ->
-            group.homework.map { CachedHomework(group.course.id, group.course.classId, group.course.title, it.title, it.status, it.deadlineMillis, it.workId, group.course.cpi) }
+        val failed = result.failedTasks.map { Triple(it.course.id, it.course.classId, it.kind) }.toSet()
+        val merged = read().filter { Triple(it.courseId, it.classId, it.kind) in failed } + result.courses.flatMap { group ->
+            group.homework.map { CachedHomework(group.course.id, group.course.classId, group.course.title, it.title, it.status, it.deadlineMillis, it.workId, group.course.cpi, group.kind, it.taskId, it.bbsId) }
         }
         val array = JSONArray()
         merged.forEach { row -> array.put(JSONObject().put("courseId", row.courseId).put("classId", row.classId)
             .put("courseName", row.courseName).put("title", row.title).put("status", row.status)
-            .put("workId", row.workId).put("cpi", row.cpi).put("deadline", row.deadline ?: JSONObject.NULL)) }
+            .put("workId", row.workId).put("cpi", row.cpi).put("kind", row.kind).put("taskId", row.taskId).put("bbsId", row.bbsId).put("deadline", row.deadline ?: JSONObject.NULL)) }
         preferences.edit().putString("items", array.toString()).apply {
             if (result.courses.isNotEmpty() || result.failed.isEmpty()) putLong("updatedAt", System.currentTimeMillis())
             if (result.failed.isEmpty()) putLong("successAt", System.currentTimeMillis())

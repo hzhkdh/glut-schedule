@@ -40,7 +40,7 @@ enum class DrawerItem(
     PartnerSchedule("情侣/基友课表", Icons.Outlined.PeopleAlt),
     Finance("财务", Icons.Outlined.AccountBalanceWallet),
     StudyPlan("教学计划", Icons.Outlined.MenuBook),
-    ChaoxingHomework("学习通作业", Icons.Outlined.MenuBook),
+    ChaoxingHomework("学习通任务", Icons.Outlined.MenuBook),
     Import("导入课表", Icons.Outlined.Download),
     Settings("设置", Icons.Outlined.Settings),
     Notice("通知", Icons.Outlined.Notifications),
@@ -125,3 +125,4 @@ internal fun prepareDrawerSelection(
     }
     return target
 }
+

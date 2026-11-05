@@ -58,10 +58,49 @@ class HomeworkDetailTest {
             }
         }
         val result = client.sync()
+        // 老作业入口仍成功；课程本身没有讨论/考试入口是合法空列表，不算失败。
+        assertTrue(result.failedTasks.isEmpty())
         assertTrue(result.failed.isEmpty())
-        assertEquals("7", result.courses.single().homework.single().workId)
+        assertEquals("7", result.courses.single { it.kind == "homework" }.homework.single().workId)
+        assertTrue(result.courses.single { it.kind == "discussion" }.homework.isEmpty())
+        assertTrue(result.courses.single { it.kind == "exam" }.homework.isEmpty())
         assertEquals(3, paths.size)
     }
+    @Test fun unsupportedExamDoesNotMarkWholeCourseFailed() {
+        val client = ChaoxingClient { url, _ ->
+            when (url.encodedPath) {
+                "/mycourse/backclazzdata" -> url to """{"channelList":[{"cpi":"3","content":{"id":"2","course":{"data":[{"id":"1","name":"匿名课程"}]}}}]}"""
+                "/visit/stucoursemiddle" -> "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?enc=test".toHttpUrl() to
+                    "<input id='workEnc' value='test'><a href='https://mooc2-ans.chaoxing.com/mooc2-ans/exam/exam-list?courseid=1&amp;clazzid=2'>考试</a>"
+                "/mooc2/work/list" -> url to """<ul><li aria-label="作业;未交" data="/mooc-ans/mooc2/work/task?workId=7&amp;enc=test"></li></ul>"""
+                "/mooc2-ans/exam/exam-list" -> url to "<div class='exam-list'><a>进入考试</a></div>"
+                else -> error("意外请求 ${url.encodedPath}")
+            }
+        }
+        val result = client.sync()
+        // 考试结构未知只保留旧缓存，不能污染整门课的成功时间或失败数量。
+        assertTrue(result.failed.isEmpty())
+        assertEquals(listOf("exam"), result.failedTasks.map { it.kind })
+        assertFalse(result.courses.any { it.kind == "exam" })
+        assertEquals("7", result.courses.single { it.kind == "homework" }.homework.single().workId)
+    }
+
+    @Test fun emptyDiscussionWithoutBbsidIsALegalEmptyList() {
+        val client = ChaoxingClient { url, _ ->
+            when (url.encodedPath) {
+                "/mycourse/backclazzdata" -> url to """{"channelList":[{"cpi":"3","content":{"id":"2","course":{"data":[{"id":"1","name":"匿名课程"}]}}}]}"""
+                "/visit/stucoursemiddle" -> "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?enc=test".toHttpUrl() to
+                    "<input id='workEnc' value='test'><a href='https://groupweb.chaoxing.com/course/topic/topicList?courseid=1'>讨论</a>"
+                "/mooc2/work/list" -> url to """<ul><li aria-label="作业;未交" data="/mooc-ans/mooc2/work/task?workId=7&amp;enc=test"></li></ul>"""
+                "/course/topic/topicList" -> url to "<div class='dataCon_empty'>暂无讨论</div>"
+                else -> error("意外请求 ${url.encodedPath}")
+            }
+        }
+        val result = client.sync()
+        assertTrue(result.failed.isEmpty())
+        assertTrue(result.courses.single { it.kind == "discussion" }.homework.isEmpty())
+    }
+
     @Test fun missingEntranceKeepsCourseInFailureList() {
         val client = ChaoxingClient { url, _ -> url to if (url.encodedPath == "/mycourse/backclazzdata")
             """{"channelList":[{"cpi":"3","content":{"id":"2","course":{"data":[{"id":"1","name":"匿名课程"}]}}}]}"""

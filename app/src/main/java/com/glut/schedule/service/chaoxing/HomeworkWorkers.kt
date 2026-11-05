@@ -73,7 +73,7 @@ suspend fun disconnectChaoxing(context: Context) = sessionGate.withSession {
         homeworkAccesses.clear()
         HomeworkStore(context).clear()
         val cookieManager = android.webkit.CookieManager.getInstance()
-        listOf("passport2.chaoxing.com", "i.mooc.chaoxing.com", "mooc1.chaoxing.com", "mooc1-api.chaoxing.com", "mooc2-ans.chaoxing.com").forEach { host ->
+        listOf("passport2.chaoxing.com", "i.mooc.chaoxing.com", "mooc1.chaoxing.com", "mooc1-api.chaoxing.com", "mooc2-ans.chaoxing.com", "groupweb.chaoxing.com").forEach { host ->
             val url = "https://$host/"
             cookieManager.getCookie(url).orEmpty().split(';').map { it.substringBefore('=').trim() }
                 .filter { it.isNotEmpty() }.forEach { name ->
@@ -94,7 +94,7 @@ fun scheduleHomeworkReminders(context: Context, rows: List<CachedHomework>) {
         listOf(24L, 1L).forEach { hours ->
             val delay = row.deadline!! - TimeUnit.HOURS.toMillis(hours) - now
             if (delay > 0) {
-                val identity = "${row.courseId}|${row.classId}|${row.title}|$hours"
+                val identity = "${row.taskKey()}|$hours"
                 val digest = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray()).joinToString("") { "%02x".format(it) }
                 val request = OneTimeWorkRequestBuilder<HomeworkReminderWorker>().setInitialDelay(delay, TimeUnit.MILLISECONDS)
                     .setInputData(Data.Builder().putString("title", row.title).putString("course", row.courseName)
