@@ -45,7 +45,6 @@ import com.glut.schedule.service.holiday.MakeupTableClient
 import com.glut.schedule.service.holiday.TimorHolidayClient
 import com.glut.schedule.partner.PartnerScheduleApiService
 import com.glut.schedule.partner.PartnerScheduleStore
-import com.glut.schedule.ui.AutoRefreshGate
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
 import com.glut.schedule.widget.ScheduleWidgetUpdater
 import kotlinx.coroutines.CoroutineScope
@@ -54,6 +53,8 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -115,7 +116,26 @@ class ScheduleApplication : Application() {
         applicationScope.launch {
             appContainer.greetingTemplateRepository.initializeAndRefresh()
         }
+        observeScheduledRefresh()
         observeWidgetDataChanges()
+    }
+
+    /** 全局观察配置与身份，不依赖 Activity；换来源立即撤销旧任务。 */
+    private fun observeScheduledRefresh() {
+        val store = com.glut.schedule.service.refresh.ScheduledRefreshStore(this)
+        applicationScope.launch {
+            combine(
+                store.config.map { it.enabled to it.times }.distinctUntilChanged(),
+                appContainer.settingsStore.campusType,
+                appContainer.academicSessionStore.profileSession.map { it.studentNo to it.base }.distinctUntilChanged()
+            ) { config, campus, identity -> Triple(config, campus, identity) }
+                .distinctUntilChanged().collect { (_, campus, identity) ->
+                    store.bindOwner(identity.first + "|" + identity.second)
+                    val session = appContainer.academicSessionStore.profileSession.first()
+                    com.glut.schedule.service.refresh.reconcileScheduledRefresh(this@ScheduleApplication,
+                        store.config.first(), com.glut.schedule.service.refresh.supportsScheduledRefresh(campus, session))
+                }
+        }
     }
 
     @OptIn(FlowPreview::class)
@@ -163,8 +183,6 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
      .build()
 
     val settingsStore = ScheduleSettingsStore(application)
-    // 自动刷新的闸门：判定「距上次尝试是否满 8 小时」并原子地记录本次尝试。
-    val autoRefreshGate = AutoRefreshGate(settingsStore)
     val greetingTemplateRepository = GreetingTemplateRepository(
         cache = settingsStore,
         remote = HttpGreetingTemplateRemote()

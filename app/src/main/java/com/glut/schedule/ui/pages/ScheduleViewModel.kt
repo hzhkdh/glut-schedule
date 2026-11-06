@@ -70,6 +70,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -245,8 +246,8 @@ class ScheduleViewModel(
     /**
      * 上一次真正去拉对照表的时刻（进程内，不落盘）。
      *
-     * 冷启动的 `init` 与随后 1 秒的自动刷新会前后脚各调一次 [fetchMakeupTable]，
-     * 两次之间没有任何改动，第二次纯属重复请求。用它把 1 分钟内的重复调用挡掉。
+     * 冷启动的 `init` 与紧随其后的用户刷新可能各调用一次 [fetchMakeupTable]，
+     * 同一分钟内复用已拉取结果，避免重复请求。
      * 不落盘是有意的：跨进程重启本就该重新问一次。
      */
     private var makeupTableFetchedAtMillis = 0L
@@ -728,91 +729,88 @@ class ScheduleViewModel(
         }
     }
 
-    fun refreshSchedule() { startScheduleRefresh() }
-
-    /** 自动刷新等待本轮实际完成，考试才能复用续期后的会话。 */
-    suspend fun refreshScheduleAndAwait(): Boolean {
-        val job = startScheduleRefresh() ?: return false
-        job.join()
-        return !job.isCancelled
-    }
-
-    private fun startScheduleRefresh(): kotlinx.coroutines.Job? {
+    /** 用户主动刷新：保留历史学期限制、并发保护和现有登录续期流程。 */
+    fun refreshSchedule() {
         val targetSemester = uiState.value.viewedSemester
         if (targetSemester == null) {
             message.value = "当前学期尚未就绪，请稍后重试"
-            return null
+            return
         }
         if (!targetSemester.isCurrent) {
             message.value = "历史学期为只读缓存，无需刷新"
-            return null
+            return
         }
-        if (!refreshGuard.tryStart()) return null
+        if (!refreshGuard.tryStart()) return
         isRefreshing.value = true
         // 研究生走完全独立的取数链路：上面那套「个人课表页 + 周次落地页 + 校历探测」
         // 对它一个都不适用，硬套只会请求到无关页面并报出误导性的错误。
         if (targetSemester.campus == CampusType.GRADUATE) {
-            return viewModelScope.launch {
-                // 公共节假日与学校统一补班不属于研究生门户协议；已有研究生用户只点
-                // “刷新课表”时，也要像其他来源一样更新“休/调”所需缓存。
-                refreshHolidayYears()
-                fetchMakeupTable()
-                refreshGraduateSchedule(targetSemester)
+            viewModelScope.launch {
+                com.glut.schedule.service.refresh.academicRefreshMutex.withLock {
+                    // 公共节假日与学校统一补班不属于研究生门户协议；已有研究生用户只点
+                    // “刷新课表”时，也要像其他来源一样更新“休/调”所需缓存。
+                    refreshHolidayYears()
+                    fetchMakeupTable()
+                    refreshGraduateSchedule(targetSemester)
+                }
             }
+            return
         }
-        return viewModelScope.launch {
-            message.value = "正在刷新课表..."
-            // 用户主动刷新时顺带补齐节假日数据。与教务导入互不依赖：
-            // 即使下面登录 / 抓取失败，节假日也已经更新过了。
-            refreshHolidayYears()
-            // 调休补课对照表同属「用户主动刷新时顺带补齐」的旁路数据，两者互不依赖。
-            fetchMakeupTable()
-            try {
-                // 除了门数，还要把完整旧课表留下来算差异明细（对齐小程序的刷新反馈）。
-                val oldCourses = repository.courses.first()
-                refreshBaseCourses = oldCourses
-                val oldCourseCount = oldCourses.countDistinctCourseTitles()
-                val existingCookie = sessionStore.academicCookie.first()
-                var refreshCookie = existingCookie
-                var importResult: Result<AcademicSemesterImportPayload>? = null
-                if (shouldUseExistingAcademicCookie(existingCookie)) {
-                    importResult = importExactSemester(existingCookie, targetSemester)
-                    if (importResult.isSuccess) {
-                        saveExactSemester(
-                            targetSemester,
-                            importResult.getOrThrow(),
-                            oldCourseCount,
-                            existingCookie
-                        )
+        viewModelScope.launch {
+            com.glut.schedule.service.refresh.academicRefreshMutex.withLock {
+                message.value = "正在刷新课表..."
+                // 用户主动刷新时顺带补齐节假日数据。与教务导入互不依赖：
+                // 即使下面登录 / 抓取失败，节假日也已经更新过了。
+                refreshHolidayYears()
+                // 调休补课对照表同属「用户主动刷新时顺带补齐」的旁路数据，两者互不依赖。
+                fetchMakeupTable()
+                try {
+                    // 除了门数，还要把完整旧课表留下来算差异明细（对齐小程序的刷新反馈）。
+                    val oldCourses = repository.courses.first()
+                    refreshBaseCourses = oldCourses
+                    val oldCourseCount = oldCourses.countDistinctCourseTitles()
+                    val existingCookie = sessionStore.academicCookie.first()
+                    var refreshCookie = existingCookie
+                    var importResult: Result<AcademicSemesterImportPayload>? = null
+                    if (shouldUseExistingAcademicCookie(existingCookie)) {
+                        importResult = importExactSemester(existingCookie, targetSemester)
+                        if (importResult.isSuccess) {
+                            saveExactSemester(
+                                targetSemester,
+                                importResult.getOrThrow(),
+                                oldCourseCount,
+                                existingCookie
+                            )
+                            return@launch
+                        }
+                        if (!isAuthenticationFailure(importResult.exceptionOrNull())) {
+                            message.value = refreshFailureMessage(importResult.exceptionOrNull(), targetSemester)
+                            return@launch
+                        }
+                    }
+
+                    // 会话失效：原地续期——南宁/研究生弹验证码，桂林静默换票。
+                    // 用户在弹窗里取消（或续期失败）就**保留已有缓存**，只提示、不重取。
+                    if (!renewal.ensureFreshSession()) {
+                        message.value = "会话已过期，已取消登录"
                         return@launch
                     }
-                    if (!isAuthenticationFailure(importResult.exceptionOrNull())) {
-                        message.value = refreshFailureMessage(importResult.exceptionOrNull(), targetSemester)
+                    refreshCookie = sessionStore.academicCookie.first()
+                    importResult = importExactSemester(refreshCookie, targetSemester)
+
+                    val payload = importResult?.getOrNull()
+                    if (payload == null) {
+                        val failure = importResult?.exceptionOrNull()
+                        message.value = refreshFailureMessage(failure, targetSemester)
                         return@launch
                     }
+                    saveExactSemester(targetSemester, payload, oldCourseCount, refreshCookie)
+                } catch (e: Exception) {
+                    message.value = refreshFailureMessage(e, targetSemester)
+                } finally {
+                    isRefreshing.value = false
+                    refreshGuard.finish()
                 }
-
-                // 会话失效：原地续期——南宁/研究生弹验证码，桂林静默换票。
-                // 用户在弹窗里取消（或续期失败）就**保留已有缓存**，只提示、不重取。
-                if (!renewal.ensureFreshSession()) {
-                    message.value = "会话已过期，已取消登录"
-                    return@launch
-                }
-                refreshCookie = sessionStore.academicCookie.first()
-                importResult = importExactSemester(refreshCookie, targetSemester)
-
-                val payload = importResult?.getOrNull()
-                if (payload == null) {
-                    val failure = importResult?.exceptionOrNull()
-                    message.value = refreshFailureMessage(failure, targetSemester)
-                    return@launch
-                }
-                saveExactSemester(targetSemester, payload, oldCourseCount, refreshCookie)
-            } catch (e: Exception) {
-                message.value = refreshFailureMessage(e, targetSemester)
-            } finally {
-                isRefreshing.value = false
-                refreshGuard.finish()
             }
         }
     }
@@ -1028,7 +1026,7 @@ class ScheduleViewModel(
      * 用 [makeupTableFetchGuard] 串行化：冷启动那次还没结束时用户又下拉刷新，不会重复打接口。
      */
     private suspend fun fetchMakeupTable(): Boolean {
-        // 同一分钟内不重复拉：冷启动的 init 刚拉过，1 秒后的自动刷新没必要再问一次。
+        // 同一分钟内不重复拉：冷启动的 init 刚拉过时，用户紧接着刷新可以复用结果。
         if (System.currentTimeMillis() - makeupTableFetchedAtMillis < MAKEUP_TABLE_MIN_INTERVAL_MILLIS) {
             return false
         }
@@ -1080,7 +1078,7 @@ class ScheduleViewModel(
     }
 
     private companion object {
-        /** 对照表在 1 分钟内不重复请求：冷启动与紧随其后的自动刷新只该问一次。 */
+        /** 对照表在 1 分钟内不重复请求：冷启动与紧随其后的用户刷新复用结果。 */
         const val MAKEUP_TABLE_MIN_INTERVAL_MILLIS = 60L * 1000L
     }
 

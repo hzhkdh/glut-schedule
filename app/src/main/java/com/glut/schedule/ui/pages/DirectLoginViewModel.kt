@@ -713,8 +713,8 @@ class DirectLoginViewModel(
         if (shouldClearAcademicData(previousStudent, knownStudentNumber)) {
             // 账号变化时先清空旧教务缓存，避免新账号短暂看到上一位学生的数据。
             semesterBulkDownloadCoordinator.cancelForAccountChange()
-            scheduleRepository.clearAllData()
             sessionStore.clearAll()
+            scheduleRepository.clearAllData()
         }
         if (updateCredentials) {
             if (shouldRemember) {
@@ -839,8 +839,8 @@ class DirectLoginViewModel(
                 // 微信登录走到这里才第一次拿到学号，换账号清理只能延迟到此刻补做。
                 // clearAll() 会把上面刚存的 cookie 一并清掉，所以必须立刻补回。
                 semesterBulkDownloadCoordinator.cancelForAccountChange()
-                scheduleRepository.clearAllData()
                 sessionStore.clearAll()
+                scheduleRepository.clearAllData()
                 sessionStore.saveCookie(activeCookie)
                 sessionStore.saveCampusBaseUrl(campusBaseUrl)
                 sessionStore.saveSessionAuthMethod(authMethod)
@@ -1190,8 +1190,8 @@ class DirectLoginViewModel(
                     // 登录、目录或课表取数失败时，原账号数据保持可用。
                     if (replacePreviousAccount) {
                         semesterBulkDownloadCoordinator.cancelForAccountChange()
-                        scheduleRepository.clearAllData()
                         sessionStore.clearAll()
+                        scheduleRepository.clearAllData()
                     }
                     scheduleRepository.replaceSemesterSchedule(
                         semester = write.semester,

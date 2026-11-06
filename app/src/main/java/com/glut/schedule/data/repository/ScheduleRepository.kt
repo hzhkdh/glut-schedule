@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.flowOf
@@ -420,7 +421,8 @@ class ScheduleRepository(
     }
 
     suspend fun clearAllData() {
-        dao.clearAll()
+        // 清库与后台提交互斥，换号流程会先撤销会话再进入这里。
+        com.glut.schedule.service.refresh.academicCacheWriteMutex.withLock { dao.clearAll() }
     }
 
     private companion object {

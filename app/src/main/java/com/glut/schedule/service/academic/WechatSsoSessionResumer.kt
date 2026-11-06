@@ -89,7 +89,10 @@ class WechatSsoSessionResumer(private val context: Context) {
                 { finish(AcademicLoginResult.NetworkError("统一身份认证响应超时")) },
                 RESUME_TIMEOUT_MILLIS
             )
-            continuation.invokeOnCancellation { if (!finished) finish(AcademicLoginResult.NetworkError("已取消恢复")) }
+            // Worker 可在 IO 线程被取消；WebView 的停止和销毁必须回到主线程。
+            continuation.invokeOnCancellation {
+                handler.post { if (!finished) finish(AcademicLoginResult.NetworkError("已取消恢复")) }
+            }
             webView.loadUrl(CasWebLoginConfig.casLoginUrl())
         }
     }

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -72,35 +73,37 @@ class ExamViewModel(
 
     fun refreshExams() {
         viewModelScope.launch {
-            _isRefreshing.value = true
-            _message.value = "正在刷新..."
-            try {
-                val existingCookie = sessionStore.academicCookie.first()
-                if (shouldUseExistingAcademicCookie(existingCookie) && fetchAndSaveExams(existingCookie)) {
-                    return@launch
-                }
+            com.glut.schedule.service.refresh.academicRefreshMutex.withLock {
+                _isRefreshing.value = true
+                _message.value = "正在刷新..."
+                try {
+                    val existingCookie = sessionStore.academicCookie.first()
+                    if (shouldUseExistingAcademicCookie(existingCookie) && fetchAndSaveExams(existingCookie)) {
+                        return@launch
+                    }
 
-                // 会话失效：原地续期——南宁/研究生弹验证码，桂林静默换票。
-                // 用户取消或续期失败都**保留已有缓存**，只提示、不动屏幕上已有的考试安排。
-                if (!renewal.ensureFreshSession()) {
-                    _message.value = "会话已过期，已取消登录"
-                    return@launch
+                    // 会话失效：原地续期——南宁/研究生弹验证码，桂林静默换票。
+                    // 用户取消或续期失败都**保留已有缓存**，只提示、不动屏幕上已有的考试安排。
+                    if (!renewal.ensureFreshSession()) {
+                        _message.value = "会话已过期，已取消登录"
+                        return@launch
+                    }
+                    val cookie = sessionStore.academicCookie.first()
+                    if (cookie.isBlank()) {
+                        _message.value = "未获取到教务登录态，请重新登录"
+                        return@launch
+                    }
+                    // 不再接 fetchAndSaveExams 的布尔返回值：它原先只是用来置位一个
+                    // 「需要交互登录」开关，而那个开关全仓无人消费（已删除），
+                    // 失败文案照旧由 onFailure 分支写进 _message。
+                    fetchAndSaveExams(cookie)
+                } catch (e: Exception) {
+                    _message.value = "网络错误: ${e.message}"
+                } finally {
+                    _isRefreshing.value = false
+                    kotlinx.coroutines.delay(4000)
+                    _message.value = ""
                 }
-                val cookie = sessionStore.academicCookie.first()
-                if (cookie.isBlank()) {
-                    _message.value = "未获取到教务登录态，请重新登录"
-                    return@launch
-                }
-                // 不再接 fetchAndSaveExams 的布尔返回值：它原先只是用来置位一个
-                // 「需要交互登录」开关，而那个开关全仓无人消费（已删除），
-                // 失败文案照旧由 onFailure 分支写进 _message。
-                fetchAndSaveExams(cookie)
-            } catch (e: Exception) {
-                _message.value = "网络错误: ${e.message}"
-            } finally {
-                _isRefreshing.value = false
-                kotlinx.coroutines.delay(4000)
-                _message.value = ""
             }
         }
     }

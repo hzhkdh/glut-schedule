@@ -84,6 +84,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- 时钟与时区变化仅重排已有任务；开机恢复由 WorkManager 负责。 -->
+        <receiver
+            android:name=".service.refresh.ScheduledRefreshTimeReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

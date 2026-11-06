@@ -14,7 +14,6 @@ import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
-import android.util.Log
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -92,8 +91,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -168,8 +165,6 @@ import com.glut.schedule.ui.pages.DirectLoginViewModel
 import com.glut.schedule.ui.pages.DirectLoginViewModelFactory
 import com.glut.schedule.ui.pages.WechatLoginScreen
 import com.glut.schedule.ui.pages.ExamScreen
-import com.glut.schedule.ui.runAutoRefreshInOrder
-import com.glut.schedule.ui.AutoRefreshPolicy
 import com.glut.schedule.ui.pages.ExamViewModel
 import com.glut.schedule.ui.pages.ExamViewModelFactory
 import com.glut.schedule.ui.pages.FitnessScoreScreen
@@ -193,6 +188,7 @@ import com.glut.schedule.partner.PartnerScheduleScreen
 import com.glut.schedule.partner.PartnerScheduleViewModel
 import com.glut.schedule.partner.PartnerScheduleViewModelFactory
 import com.glut.schedule.ui.pages.ClassPeriodSettingsScreen
+import com.glut.schedule.ui.pages.ScheduledRefreshScreen
 import com.glut.schedule.ui.pages.ScheduleViewModel
 import com.glut.schedule.ui.pages.ScheduleViewModelFactory
 import com.glut.schedule.ui.components.AdvancedColorSheet
@@ -244,6 +240,7 @@ private enum class SettingsSubPage(val title: String) {
     COURSE_COLORS("课程卡片颜色"),
     CLASS_PERIODS("上课时间"),
     HOLIDAY_ADJUSTMENTS("调休调课"),
+    SCHEDULED_REFRESH("定时刷新"),
     BACKGROUND_GALLERY("画廊")
 }
 
@@ -350,14 +347,6 @@ class MainActivity : ComponentActivity() {
                         renewal = container.sessionRenewalCoordinator
                     )
                 )
-                // 用户超过 8 小时没打开过 App 时，替他把课表和考试各刷新一次。
-                // 两个事件覆盖「冷启动 / 重建」与「从后台回到前台」；闸门负责去重。
-                LaunchedEffect(Unit) {
-                    autoRefreshIfDue(container, scheduleViewModel, examViewModel)
-                }
-                LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-                    scope.launch { autoRefreshIfDue(container, scheduleViewModel, examViewModel) }
-                }
                 val scoreViewModel: ScoreViewModel = viewModel(
                     factory = ScoreViewModelFactory(
                         repository = container.scheduleRepository,
@@ -1396,9 +1385,11 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                 fitnessScoreViewModel.clearData()
                                                 financeViewModels.clearAll()
                                                 container.financeStore.clearAll()
-                                                container.scheduleRepository.clearAllData()
-                                                container.settingsStore.clearAll()
                                                 container.academicSessionStore.clearAll()
+                                                // 独立 DataStore 也恢复默认，避免重置后残留定时时刻与运行记录。
+                                                com.glut.schedule.service.refresh.ScheduledRefreshStore(this@MainActivity).clearAll()
+                                                container.settingsStore.clearAll()
+                                                container.scheduleRepository.clearAllData()
                                                 container.credentialStore.clearCredentials()
                                                 withContext(Dispatchers.IO) {
                                                     releaseBackgroundSource(
@@ -1471,73 +1462,6 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
     }
 
 }
-
-/**
- * 「替用户点一次刷新」：课表与考试各刷一遍，条件不满足时什么都不做。
- *
- * 触发前提只有一条——App 在前台。之所以不做后台定时：教务会话寿命短，8 小时后几乎
- * 必然要静默重登，等于在用户看不见的时候代发密码；放在前台，登录与刷新始终有人在场。
- *
- * 每个提前返回都对应一种「刷了也没意义、还会弹错」的情况：
- *  - 状态未恢复完成：此时 viewedSemester 还没就绪，刷新只会弹「当前学期尚未就绪」；
- *  - 正在看历史学期：只读快照，刷新会弹「历史学期为只读缓存」；
- *  - 正在手动刷新：不必叠一层；
- *  - Cookie 为空：从没登录过或刚重置过数据，刷新只会弹「请先登录」。
- *
- * 顺序固定为「先课表、后考试」：课表是用户马上要看的，先落库先渲染；考试随后执行，
- * 复用课表那一步可能刚续期的会话。两条链路各自成败，互不影响。
- */
-private suspend fun autoRefreshIfDue(
-    container: AppContainer,
-    scheduleViewModel: ScheduleViewModel,
-    examViewModel: ExamViewModel
-) {
-    val state = scheduleViewModel.uiState.first { it.isInitialized }
-    if (state.isHistoricalSemester || state.isRefreshing) {
-        Log.d(AUTO_REFRESH_TAG, "跳过：历史学期=${state.isHistoricalSemester} 刷新中=${state.isRefreshing}")
-        return
-    }
-    if (container.academicSessionStore.academicCookie.first().isBlank()) {
-        Log.d(AUTO_REFRESH_TAG, "跳过：无登录会话")
-        return
-    }
-    // 让开屏先完成首帧与既有启动请求（版本、公告、对照表），再开始这两条网络链路，
-    // 免得低端机上几路请求挤在一起。1 秒足够，再长用户就会发现「刚打开就自己在刷」。
-    val initialSession = container.academicSessionStore.profileSession.first()
-    delay(AUTO_REFRESH_START_DELAY_MILLIS)
-    // 让路期间可能换号或切到历史学期，重新核对后再记录节流时间。
-    val currentSession = container.academicSessionStore.profileSession.first()
-    val currentState = scheduleViewModel.uiState.value
-    if (initialSession.studentNo != currentSession.studentNo || initialSession.base != currentSession.base ||
-        initialSession.cookie != currentSession.cookie || currentState.isHistoricalSemester || currentState.isRefreshing) return
-    if (!container.autoRefreshGate.tryAcquire()) {
-        Log.d(AUTO_REFRESH_TAG, "跳过：距上次尝试不足 ${AutoRefreshPolicy.INTERVAL_MILLIS}ms")
-        return
-    }
-
-    Log.i(AUTO_REFRESH_TAG, "开始自动刷新（课表 + 考试），间隔=${AutoRefreshPolicy.INTERVAL_MILLIS}ms")
-    // 专用等待入口保留隐藏记录，不经过 requestRefresh 的确认弹窗。
-    // 原先走 confirmRefresh 而不是 requestRefresh：后者在用户删过卡片时会先弹「是否保留 N 张卡片」
-    // 的确认框。那个框是给「用户主动点刷新」设计的，自动触发时没人操作它，结果是框弹出来、
-    // 刷新却不执行，而闸门已经把时间戳写掉了——等于白等一轮。这里直接按「保留」处理，
-    // 与用户点刷新时默认勾选的结果一致，也不改变手动的交互。
-    runAutoRefreshInOrder(
-        refreshSchedule = { scheduleViewModel.refreshScheduleAndAwait() },
-        refreshExams = {
-            // 课表续期可改变 Cookie；这里只核对身份，避免等待期间换号后追加考试请求。
-            val session = container.academicSessionStore.profileSession.first()
-            if (session.studentNo == initialSession.studentNo && session.base == initialSession.base && session.cookie.isNotBlank()) {
-                examViewModel.refreshExams()
-            }
-        }
-    )
-}
-
-/** 自动刷新日志标签。 */
-private const val AUTO_REFRESH_TAG = "AutoRefresh"
-
-/** 自动刷新开始前的让路时间：等开屏的首帧与既有启动请求先跑起来。 */
-private const val AUTO_REFRESH_START_DELAY_MILLIS = 1_000L
 
 // ---- Drawer Components ----
 
@@ -1725,11 +1649,13 @@ private fun ScheduleSettingsDestination(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val campusCapabilities = capabilitiesFor(uiState.campusType)
-    // 来源在设置子页打开期间也可能被导入流程切换；研究生不能停留在作息编辑页。
+    // 来源切换后同步收起不适用的子页，避免验证码来源仍可操作定时任务。
     val effectiveSubPage = if (
-        subPage == SettingsSubPage.CLASS_PERIODS && !campusCapabilities.supportsClassPeriodSettings
+        (subPage == SettingsSubPage.CLASS_PERIODS && !campusCapabilities.supportsClassPeriodSettings) ||
+        (subPage == SettingsSubPage.SCHEDULED_REFRESH && uiState.campusType != CampusType.GUILIN)
     ) SettingsSubPage.ROOT else subPage
     when (effectiveSubPage) {
+        SettingsSubPage.SCHEDULED_REFRESH -> ScheduledRefreshScreen()
         SettingsSubPage.COURSE_COLORS -> CourseColorsPage(
             // 用完整课表：隐藏掉的卡片也要能在这里改色。
             courses = uiState.allCourses,
@@ -1791,6 +1717,8 @@ private fun ScheduleSettingsDestination(
             classPeriodsEnabled = campusCapabilities.supportsClassPeriodSettings,
             onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
             onHolidayAdjustments = { onSubPageChange(SettingsSubPage.HOLIDAY_ADJUSTMENTS) },
+            scheduledRefreshEnabled = uiState.campusType == CampusType.GUILIN,
+            onScheduledRefresh = { onSubPageChange(SettingsSubPage.SCHEDULED_REFRESH) },
             onReset = onReset
         )
     }
@@ -1958,6 +1886,8 @@ private fun SettingsPage(
     classPeriodsEnabled: Boolean = true,
     onClassPeriods: () -> Unit = {},
     onHolidayAdjustments: () -> Unit = {},
+    scheduledRefreshEnabled: Boolean = true,
+    onScheduledRefresh: () -> Unit = {},
     onReset: () -> Unit = {}
 ) {
     val settingsBg = Color(0xFFF6F4EF)
@@ -2108,6 +2038,28 @@ private fun SettingsPage(
                     }
 
 
+                }
+            }
+            Text("数据更新", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Surface(Modifier.fillMaxWidth(), color = settingsCardBg, shape = RoundedCornerShape(14.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .clickable(enabled = scheduledRefreshEnabled, onClick = onScheduledRefresh)
+                        .heightIn(min = 68.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 不支持的来源整行禁用，并直接说明验证码限制，无需用户点进后才发现。
+                    val rowColor = if (scheduledRefreshEnabled) settingsPrimary else settingsSecondary.copy(alpha = 0.45f)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("定时刷新", color = rowColor, fontSize = 15.sp)
+                        Text(
+                            if (scheduledRefreshEnabled) "每天按设定时间更新教务数据" else "南宁和研究生教务需要验证码，暂不支持定时刷新",
+                            color = if (scheduledRefreshEnabled) settingsSecondary else rowColor,
+                            fontSize = 12.sp
+                        )
+                    }
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = rowColor, modifier = Modifier.size(20.dp))
                 }
             }
             // Background section

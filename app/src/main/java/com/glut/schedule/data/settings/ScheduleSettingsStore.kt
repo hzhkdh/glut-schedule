@@ -173,7 +173,6 @@ class ScheduleSettingsStore(
     private val greetingTemplatesJsonKey = stringPreferencesKey("greeting_templates_json")
     private val greetingTemplatesSuccessAtKey = longPreferencesKey("greeting_templates_success_at")
     private val greetingTemplatesAttemptAtKey = longPreferencesKey("greeting_templates_attempt_at")
-    private val autoRefreshAttemptAtKey = longPreferencesKey("auto_refresh_attempt_at")
 
     val currentWeekNumber: Flow<Int> = context.scheduleSettings.data.map { preferences ->
         clampAcademicWeek(preferences[currentWeekKey] ?: 9)
@@ -803,24 +802,6 @@ class ScheduleSettingsStore(
         if (!isUsableMakeupTablePayload(json)) return
         context.scheduleSettings.edit { preferences ->
             preferences[holidayMakeupTableKey] = json
-        }
-    }
-
-    // ---- 自动刷新 ----
-
-    /**
-     * 上一次「自动刷新」的尝试时刻；0 表示从未自动刷新过。
-     *
-     * 存的是**尝试**而不是成功：密码错误期间若按成功计时，用户每开一次 App 就会撞一次
-     * 登录，有被教务锁号的风险。按尝试计时，8 小时内只撞一次。
-     */
-    val autoRefreshAttemptAt: Flow<Long> = context.scheduleSettings.data.map { preferences ->
-        preferences[autoRefreshAttemptAtKey] ?: 0L
-    }
-
-    suspend fun setAutoRefreshAttemptAt(nowEpochMillis: Long) {
-        context.scheduleSettings.edit { preferences ->
-            preferences[autoRefreshAttemptAtKey] = nowEpochMillis
         }
     }
 
