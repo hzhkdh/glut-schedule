@@ -28,11 +28,13 @@ import com.glut.schedule.data.settings.ClassPeriodProfile
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_DEFAULT
 import com.glut.schedule.data.settings.GUILIN_SUB_CAMPUS_PINGFENG
 import com.glut.schedule.data.settings.classPeriodProfile
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
@@ -355,7 +357,14 @@ class ScheduleRepository(
         semesterEndDate: java.time.LocalDate? = semester.semesterEndDate,
         portalMaxWeek: Int? = semester.portalMaxWeek
     ) {
-        val coloredCourses = CourseColorMapper.assignColors(courses, courseColorOverrides.first())
+        val overrides = courseColorOverrides.first()
+        // 配色与实体映射都是纯 CPU 活：assignColors 内部的相邻色避让是 O(课程数²)，
+        // 每对还要跑一遍 colorKey（正则）与课次的两层比较。这段原本跑在 viewModelScope
+        // 的主线程上，正好落在「刷新回来那一帧」。它只读入参、不碰数据库，因此可以安全地
+        // 切到 Default；dao 调用留在外面——Room 的挂起事务自己管调度，再包一层会干扰它。
+        val coloredCourses = withContext(Dispatchers.Default) {
+            CourseColorMapper.assignColors(courses, overrides)
+        }
         val cachedSemester = semester.copy(
             cacheStatus = SemesterCacheStatus.CACHED,
             importedAtEpochMillis = System.currentTimeMillis(),
@@ -363,10 +372,14 @@ class ScheduleRepository(
             semesterEndDate = semesterEndDate,
             portalMaxWeek = portalMaxWeek
         )
+        val (courseEntities, occurrenceEntities) = withContext(Dispatchers.Default) {
+            coloredCourses.map { it.toEntity(semester.id) } to
+                coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity(semester.id) } }
+        }
         dao.replaceSemesterSchedule(
             semester = cachedSemester.toEntity(),
-            courses = coloredCourses.map { it.toEntity(semester.id) },
-            occurrences = coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity(semester.id) } },
+            courses = courseEntities,
+            occurrences = occurrenceEntities,
             // 历史统计依赖此处冻结的作息，必须保存调用时实际生效的子校区与用户覆盖。
             periods = classPeriods.map { it.toEntity(semester.id) },
             adjustments = adjustments.map { it.toEntity(semester.id) }

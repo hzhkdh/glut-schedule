@@ -9,6 +9,8 @@ import com.glut.schedule.data.model.academicMaxWeekForCalendar
 import com.glut.schedule.data.model.countUnparsedWeekTexts
 import com.glut.schedule.data.model.derivedAcademicMaxWeek
 import com.glut.schedule.service.parser.AcademicScheduleParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.time.LocalDate
@@ -256,12 +258,19 @@ class AcademicSemesterImportService(
         // ── 3. 解析：网格 + 底部调课表一次做完 ──
         // parsePersonalSchedule 内部已按调课表移除被调走的周次，并把补课时段去重追加，
         // 因此这里不需要任何后续的绑定/调整步骤。
-        val courses = scheduleParser.parsePersonalSchedule(timetableHtml)
+        //
+        // 解析放到 Dispatchers.Default：它是纯 CPU 活（Jsoup 建 DOM + 多轮正则 + 配色），
+        // 几万字符的课表页跑在主线程会让界面明显掉帧。本方法被 viewModelScope 调用，
+        // 默认就是主线程，所以这里必须显式切走；纯函数，切线程不改变任何结果。
+        val (courses, adjustments) = withContext(Dispatchers.Default) {
+            val parsedCourses = scheduleParser.parsePersonalSchedule(timetableHtml)
+            val parsedAdjustments = scheduleParser.parseAdjustments(timetableHtml)
+            parsedCourses to parsedAdjustments
+        }
         val responseKind = AcademicSemesterResponseValidator.classify(timetableHtml, courses.size)
         require(responseKind != AcademicSemesterResponseKind.INVALID_STRUCTURE) {
             "无法识别课表结构，未覆盖已有缓存"
         }
-        val adjustments = scheduleParser.parseAdjustments(timetableHtml)
 
         // ── 4. 学期总周数 ──
         // 这里绝不能留 null：CourseTimeStats 会把 portalMaxWeek 为 null 的学期**整学期**
@@ -304,7 +313,10 @@ class AcademicSemesterImportService(
             skippedRowCount = 0,
             updatedCookie = sessionCookie,
             unparsedWeekTextCount = countUnparsedWeekTexts(courses),
-            unscheduledCourseCount = scheduleParser.countUnscheduledCourses(timetableHtml)
+            // 同样是全页解析，一并切离主线程。
+            unscheduledCourseCount = withContext(Dispatchers.Default) {
+                scheduleParser.countUnscheduledCourses(timetableHtml)
+            }
         )
     }
 

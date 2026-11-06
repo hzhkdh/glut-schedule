@@ -73,6 +73,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
@@ -241,6 +242,14 @@ class ScheduleViewModel(
     private val refreshGuard = SingleFlightGuard()
     private val holidayFetchGuard = SingleFlightGuard()
     private val makeupTableFetchGuard = SingleFlightGuard()
+    /**
+     * 上一次真正去拉对照表的时刻（进程内，不落盘）。
+     *
+     * 冷启动的 `init` 与随后 1 秒的自动刷新会前后脚各调一次 [fetchMakeupTable]，
+     * 两次之间没有任何改动，第二次纯属重复请求。用它把 1 分钟内的重复调用挡掉。
+     * 不落盘是有意的：跨进程重启本就该重新问一次。
+     */
+    private var makeupTableFetchedAtMillis = 0L
     private val message = MutableStateFlow("")
 
     /**
@@ -719,31 +728,39 @@ class ScheduleViewModel(
         }
     }
 
-    fun refreshSchedule() {
+    fun refreshSchedule() { startScheduleRefresh() }
+
+    /** 自动刷新等待本轮实际完成，考试才能复用续期后的会话。 */
+    suspend fun refreshScheduleAndAwait(): Boolean {
+        val job = startScheduleRefresh() ?: return false
+        job.join()
+        return !job.isCancelled
+    }
+
+    private fun startScheduleRefresh(): kotlinx.coroutines.Job? {
         val targetSemester = uiState.value.viewedSemester
         if (targetSemester == null) {
             message.value = "当前学期尚未就绪，请稍后重试"
-            return
+            return null
         }
         if (!targetSemester.isCurrent) {
             message.value = "历史学期为只读缓存，无需刷新"
-            return
+            return null
         }
-        if (!refreshGuard.tryStart()) return
+        if (!refreshGuard.tryStart()) return null
         isRefreshing.value = true
         // 研究生走完全独立的取数链路：上面那套「个人课表页 + 周次落地页 + 校历探测」
         // 对它一个都不适用，硬套只会请求到无关页面并报出误导性的错误。
         if (targetSemester.campus == CampusType.GRADUATE) {
-            viewModelScope.launch {
+            return viewModelScope.launch {
                 // 公共节假日与学校统一补班不属于研究生门户协议；已有研究生用户只点
                 // “刷新课表”时，也要像其他来源一样更新“休/调”所需缓存。
                 refreshHolidayYears()
                 fetchMakeupTable()
                 refreshGraduateSchedule(targetSemester)
             }
-            return
         }
-        viewModelScope.launch {
+        return viewModelScope.launch {
             message.value = "正在刷新课表..."
             // 用户主动刷新时顺带补齐节假日数据。与教务导入互不依赖：
             // 即使下面登录 / 抓取失败，节假日也已经更新过了。
@@ -869,12 +886,16 @@ class ScheduleViewModel(
         }
         // 有变化时改用明细卡片说明（与小程序同构），Snackbar 只留下异常行提示，
         // 免得同一件事在两处各说一遍。没变化时保持原来那条简短提示。
-        val diff = buildScheduleRefreshDiff(
-            refreshBaseCourses,
-            payload.courses,
-            // 节次文案要按来源映射；南宁与研究生没有中午节次，直排内部号。
-            hasNoonSections = capabilitiesFor(targetSemester.campus).hasNoonSections
-        )
+        // 差异比对要分组、算指纹、拼文案，同样放到 Default：它和写库连着跑，
+        // 挤在主线程上会直接顶掉一帧。
+        val diff = withContext(Dispatchers.Default) {
+            buildScheduleRefreshDiff(
+                refreshBaseCourses,
+                payload.courses,
+                // 节次文案要按来源映射；南宁与研究生没有中午节次，直排内部号。
+                hasNoonSections = capabilitiesFor(targetSemester.campus).hasNoonSections
+            )
+        }
         refreshBaseCourses = emptyList()
         if (diff.hasChanges) {
             _refreshDiff.value = diff
@@ -1007,10 +1028,16 @@ class ScheduleViewModel(
      * 用 [makeupTableFetchGuard] 串行化：冷启动那次还没结束时用户又下拉刷新，不会重复打接口。
      */
     private suspend fun fetchMakeupTable(): Boolean {
+        // 同一分钟内不重复拉：冷启动的 init 刚拉过，1 秒后的自动刷新没必要再问一次。
+        if (System.currentTimeMillis() - makeupTableFetchedAtMillis < MAKEUP_TABLE_MIN_INTERVAL_MILLIS) {
+            return false
+        }
         if (!makeupTableFetchGuard.tryStart()) return false
+        // 记在 finally 里：失败也算「刚刚问过」，免得一次次重试把接口打爆。
         return try {
             refreshMakeupTable(makeupTableClient, settingsStore::setHolidayMakeupTableJson)
         } finally {
+            makeupTableFetchedAtMillis = System.currentTimeMillis()
             makeupTableFetchGuard.finish()
         }
     }
@@ -1050,6 +1077,11 @@ class ScheduleViewModel(
         val month = if (semester.season == SemesterSeason.AUTUMN) 9 else 3
         return LocalDate.of(semester.portalYear, month, 1)
             .with(TemporalAdjusters.nextOrSame(DayOfWeek.MONDAY))
+    }
+
+    private companion object {
+        /** 对照表在 1 分钟内不重复请求：冷启动与紧随其后的自动刷新只该问一次。 */
+        const val MAKEUP_TABLE_MIN_INTERVAL_MILLIS = 60L * 1000L
     }
 
 }

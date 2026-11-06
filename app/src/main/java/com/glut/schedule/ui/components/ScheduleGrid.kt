@@ -150,6 +150,21 @@ fun ScheduleGrid(
     /** 是否绘制课表网格线；默认关闭，避免在自定义背景图上凭空多出一层线。 */
     showGridLines: Boolean = false,
     /**
+     * 是否启用内部纵向滚动。
+     *
+     * 课表页把它滚动到可视区域内；导出预览与导出图片必须关掉——那里需要的是
+     * 「整张课表一次性画出来」，滚动容器会把内容约束在视口高度上。
+     */
+    scrollable: Boolean = true,
+    /** 是否高亮「今天」所在的日期列；导出图片默认关掉，避免把某天标记成分享者的当天。 */
+    highlightToday: Boolean = true,
+    /** 是否在卡片上显示教师；导出时可由用户关闭，减少个人信息外带。 */
+    showTeacher: Boolean = true,
+    /** 是否在卡片上显示教室；同上。 */
+    showRoom: Boolean = true,
+    /** 浅色底（纯白等）时把表头、节次和网格线切成深色。 */
+    lightContent: Boolean = false,
+    /**
      * 各时段的最后一个内部节次（上午/中午/下午/晚上依次排列），来自 `CampusCapabilities`。
      *
      * 只用来判断相邻两行是否跨时段，从而把分界缝画得比普通行线更重。
@@ -193,24 +208,35 @@ fun ScheduleGrid(
             }
         }
 
+        // 关闭高亮时传一个不可能落在本周的日期：日期栏与「今天」共用同一份判定，
+        // 单独给 isToday 开分支会让两处口径再次分叉。
+        val headerToday = if (highlightToday) today else week.monday.minusDays(7)
         Column {
             ScheduleCalendarHeader(
                 week = week,
-                today = today,
+                today = headerToday,
                 leftWidth = leftWidth,
                 dayWidth = dayWidth,
                 dayCount = dayCount,
                 showCalendarDates = showCalendarDates,
                 holidayDates = holidayDates,
-                manualAdjustmentDates = manualAdjustmentDates
+                manualAdjustmentDates = manualAdjustmentDates,
+                lightContent = lightContent
             )
 
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
+                modifier = (if (scrollable) {
+                    Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                } else {
+                    Modifier.fillMaxWidth()
+                })
                     .drawBehind {
                         if (!showGridLines) return@drawBehind
+                        // 浅色导出预览使用深色细线，主课表沿用背景适配的线色。
+                        val lineColor = if (lightContent) Color.Black.copy(alpha = 0.08f) else GridLineColor
+                        val boundaryColor = if (lightContent) Color.Black.copy(alpha = 0.22f) else GridLineBoundaryColor
                         val rowPx = rowHeight.toPx()
                         val colPx = dayWidth.toPx()
                         val normalStroke = 0.7.dp.toPx()
@@ -220,7 +246,7 @@ fun ScheduleGrid(
                         val boldRows = gridBoldRowIndices(visibleRows, blockEndSections).toSet()
 
                         // 在共同容器绘制横线，使时间栏与课程区贯通。
-                        drawLine(GridLineColor, Offset(0f, normalStroke / 2f), Offset(size.width, normalStroke / 2f), normalStroke)
+                        drawLine(lineColor, Offset(0f, normalStroke / 2f), Offset(size.width, normalStroke / 2f), normalStroke)
                         // 横线：逐行下缘。行号与课程卡片共用同一份 visibleRows，隐藏中午时不会错位。
                         visibleRows.forEachIndexed { index, _ ->
                             val isBoundary = index in boldRows
@@ -228,7 +254,7 @@ fun ScheduleGrid(
                             // 末行贴着容器底边，线宽的一半会被裁掉，所以把 y 收进来半个线宽。
                             val y = (rowPx * (index + 1)).coerceAtMost(size.height - stroke / 2f)
                             drawLine(
-                                color = if (isBoundary) GridLineBoundaryColor else GridLineColor,
+                                color = if (isBoundary) boundaryColor else lineColor,
                                 start = Offset(0f, y),
                                 end = Offset(size.width, y),
                                 strokeWidth = stroke
@@ -240,7 +266,7 @@ fun ScheduleGrid(
                         for (day in 0 until dayCount) {
                             val x = (leftWidth.toPx() + colPx * day).coerceAtMost(size.width - normalStroke / 2f)
                             drawLine(
-                                color = GridLineColor,
+                                color = lineColor,
                                 start = Offset(x, 0f),
                                 end = Offset(x, size.height),
                                 strokeWidth = normalStroke
@@ -252,7 +278,8 @@ fun ScheduleGrid(
                     visibleRows = visibleRows,
                     rowHeight = rowHeight,
                     width = leftWidth,
-                    hasNoonSections = hasNoonSections
+                    hasNoonSections = hasNoonSections,
+                    lightContent = lightContent
                 )
                 TimetableBody(
                     visibleRows = visibleRows,
@@ -263,6 +290,10 @@ fun ScheduleGrid(
                     onCourseLongClick = onCourseLongClick,
                     weekNumber = week.number,
                     adjustments = adjustments,
+                    showTeacher = showTeacher,
+                    allowConflictSwitch = scrollable,
+                    showRoom = showRoom,
+                    lightContent = lightContent,
                 )
             }
         }
@@ -278,10 +309,16 @@ fun ScheduleCalendarHeader(
     dayCount: Int,
     showCalendarDates: Boolean = true,
     holidayDates: Set<LocalDate> = emptySet(),
-    manualAdjustmentDates: Set<LocalDate> = emptySet()
+    manualAdjustmentDates: Set<LocalDate> = emptySet(),
+    lightContent: Boolean = false
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
-        MonthHeader(week = week, width = leftWidth, showCalendarDates = showCalendarDates)
+        MonthHeader(
+            week = week,
+            width = leftWidth,
+            showCalendarDates = showCalendarDates,
+            lightContent = lightContent
+        )
         WeekDayHeader(
             week = week,
             today = today,
@@ -289,7 +326,8 @@ fun ScheduleCalendarHeader(
             dayCount = dayCount,
             showCalendarDates = showCalendarDates,
             holidayDates = holidayDates,
-            manualAdjustmentDates = manualAdjustmentDates
+            manualAdjustmentDates = manualAdjustmentDates,
+            lightContent = lightContent
         )
     }
 }
@@ -298,7 +336,8 @@ fun ScheduleCalendarHeader(
 private fun MonthHeader(
     week: ScheduleWeek,
     width: Dp,
-    showCalendarDates: Boolean
+    showCalendarDates: Boolean,
+    lightContent: Boolean
 ) {
     Box(
         modifier = Modifier
@@ -311,7 +350,11 @@ private fun MonthHeader(
     ) {
         Text(
             text = if (showCalendarDates) scheduleGridMonthText(week.monday) else "周次",
-            color = Color.White.copy(alpha = 0.9f),
+            color = if (lightContent) {
+                Color(0xFF141821).copy(alpha = 0.8f)
+            } else {
+                Color.White.copy(alpha = 0.9f)
+            },
             fontSize = 12.sp,
             lineHeight = 13.sp,
             fontWeight = FontWeight.Bold
@@ -335,7 +378,8 @@ private fun WeekDayHeader(
     dayCount: Int,
     showCalendarDates: Boolean,
     holidayDates: Set<LocalDate>,
-    manualAdjustmentDates: Set<LocalDate>
+    manualAdjustmentDates: Set<LocalDate>,
+    lightContent: Boolean
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
         scheduleCalendarDays(week, today, dayCount, showCalendarDates).forEach { item ->
@@ -353,19 +397,35 @@ private fun WeekDayHeader(
                 ) {
                     Text(
                         text = item.name,
-                        color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.42f),
+                        color = when {
+                            item.isToday && lightContent -> Color(0xFF1B5FE0)
+                            item.isToday -> Color.White
+                            lightContent -> Color(0xFF141821).copy(alpha = 0.55f)
+                            else -> Color.White.copy(alpha = 0.42f)
+                        },
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )
                     item.date?.let { date ->
                         Text(
                             text = date.dayOfMonth.toString(),
-                            color = if (item.isToday) Color.White else Color.White.copy(alpha = 0.34f),
+                            color = when {
+                                item.isToday && lightContent -> Color(0xFF1B5FE0)
+                                item.isToday -> Color.White
+                                lightContent -> Color(0xFF141821).copy(alpha = 0.45f)
+                                else -> Color.White.copy(alpha = 0.34f)
+                            },
                             fontSize = 12.sp,
                             modifier = if (item.isToday) {
                                 Modifier
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White.copy(alpha = 0.22f))
+                                    .background(
+                                        if (lightContent) {
+                                            Color(0xFF3F7DF6).copy(alpha = 0.16f)
+                                        } else {
+                                            Color.White.copy(alpha = 0.22f)
+                                        }
+                                    )
                                     .padding(horizontal = 7.dp, vertical = 2.dp)
                             } else {
                                 Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
@@ -443,7 +503,8 @@ private fun PeriodColumn(
     visibleRows: List<ClassPeriod>,
     rowHeight: Dp,
     width: Dp,
-    hasNoonSections: Boolean = true
+    hasNoonSections: Boolean = true,
+    lightContent: Boolean = false
 ) {
     // 有中午节次的来源（桂林）用 periodLabel() 把内部号映射成「午1/午2 + 5-12」；
     // 南宁与研究生没有中午节次，内部号即显示号，直排。
@@ -457,20 +518,28 @@ private fun PeriodColumn(
             ) {
                 Text(
                     text = if (hasNoonSections) period.periodLabel() else "${period.section}",
-                    color = Color.White,
+                    color = if (lightContent) Color(0xFF141821) else Color.White,
                     style = periodColumnTextStyle(fontSize = 14.sp, lineHeight = 16.sp),
                     maxLines = 1,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     text = period.startsAt,
-                    color = Color.White.copy(alpha = 0.56f),
+                    color = if (lightContent) {
+                        Color(0xFF141821).copy(alpha = 0.55f)
+                    } else {
+                        Color.White.copy(alpha = 0.56f)
+                    },
                     style = periodColumnTextStyle(fontSize = 9.sp, lineHeight = 11.sp),
                     maxLines = 1
                 )
                 Text(
                     text = period.endsAt,
-                    color = Color.White.copy(alpha = 0.56f),
+                    color = if (lightContent) {
+                        Color(0xFF141821).copy(alpha = 0.55f)
+                    } else {
+                        Color.White.copy(alpha = 0.56f)
+                    },
                     style = periodColumnTextStyle(fontSize = 9.sp, lineHeight = 11.sp),
                     maxLines = 1
                 )
@@ -489,6 +558,10 @@ private fun TimetableBody(
     onCourseLongClick: ((CourseBlock) -> Unit)? = null,
     weekNumber: Int = 0,
     adjustments: List<SemesterAdjustment> = emptyList(),
+    showTeacher: Boolean = true,
+    allowConflictSwitch: Boolean = true,
+    showRoom: Boolean = true,
+    lightContent: Boolean = false,
 ) {
     val totalHeight = rowHeight * visibleRows.size
     Box(
@@ -501,7 +574,8 @@ private fun TimetableBody(
             key(groupKey) {
                 var activeIndex by remember { mutableStateOf(0) }
                 val activeBlock = group[activeIndex % group.size]
-                val nextBlock = if (group.size > 1) {
+                // 导出预览固定首课，与图片/PDF模型保持一致，避免预览切换后保存另一门课。
+                val nextBlock = if (group.size > 1 && allowConflictSwitch) {
                     { activeIndex = (activeIndex + 1) % group.size }
                 } else {
                     null
@@ -513,6 +587,8 @@ private fun TimetableBody(
                     onConflictClick = nextBlock,
                     // 交给上层的始终是 activeBlock：冲突组里只有当前显示的那一张是看得见的。
                     onLongClick = onCourseLongClick?.let { callback -> { callback(activeBlock) } },
+                    showTeacher = showTeacher,
+                    showRoom = showRoom,
                     marker = adjustmentMarkerFor(
                         occurrence = activeBlock.occurrence,
                         courseTitle = activeBlock.course.title,
@@ -603,6 +679,8 @@ private fun CourseCard(
     onLongClick: (() -> Unit)? = null,
     /** 「调」/「补」角标文本；为空表示这张卡不是调课/补课产生的。 */
     marker: String? = null,
+    showTeacher: Boolean = true,
+    showRoom: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val color = remember(block.course.colorHex) { Color(android.graphics.Color.parseColor(block.course.colorHex)) }
@@ -622,10 +700,13 @@ private fun CourseCard(
             .then(clickableModifier)
             .padding(horizontal = 4.dp, vertical = 4.dp)
             .semantics {
-                contentDescription =
-                    "${block.course.title}，${block.course.teacher}，${block.course.room}" +
-                    (if (conflictCount > 1) "，共${conflictCount}门冲突课程，单击切换" else "") +
-                    "，长按管理卡片"
+                contentDescription = buildList {
+                    add(block.course.title)
+                    if (showTeacher) add(block.course.teacher)
+                    if (showRoom) add(block.course.room)
+                    if (conflictCount > 1) add("共${conflictCount}门冲突课程，单击切换")
+                    add("长按管理卡片")
+                }.joinToString("，")
             }
     ) {
         Column(
@@ -641,19 +722,23 @@ private fun CourseCard(
                 maxLines = courseCardTitleMaxLines(block.occurrence.sectionSpan),
                 overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = "@${block.course.room}",
-                color = Color.White,
-                fontSize = courseCardRoomTextSize(),
-                lineHeight = courseCardRoomLineHeight(),
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = block.course.teacher,
-                color = Color.White.copy(alpha = 0.95f),
-                fontSize = courseCardTeacherTextSize(),
-                lineHeight = courseCardTeacherLineHeight()
-            )
+            if (showRoom) {
+                Text(
+                    text = "@${block.course.room}",
+                    color = Color.White,
+                    fontSize = courseCardRoomTextSize(),
+                    lineHeight = courseCardRoomLineHeight(),
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (showTeacher) {
+                Text(
+                    text = block.course.teacher,
+                    color = Color.White.copy(alpha = 0.95f),
+                    fontSize = courseCardTeacherTextSize(),
+                    lineHeight = courseCardTeacherLineHeight()
+                )
+            }
         }
 
         if (marker != null) {
