@@ -236,19 +236,20 @@ private fun ChaoxingHomeworkContent() {
                 Text("任务列表", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 Text("${visibleRows.size} / ${rows.size} 项", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            // 两个筛选框等宽且位置固定，长科目名只省略显示，不参与改变锚点宽度。
-            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                HomeworkDropdown("状态", when(selectedStatus) { "todo" -> "未交（未讨论）"; "done" -> "已完成（已讨论）"; else -> "全部" },
-                    listOf("" to "全部", "todo" to "未交（未讨论）", "done" to "已完成（已讨论）"),
+            // 三个筛选框等宽且位置固定，长科目名只省略显示，不参与改变锚点宽度。
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HomeworkDropdown("状态", when(selectedStatus) { "todo" -> "未完成"; "done" -> "已完成"; else -> "全部状态" },
+                    listOf("" to "全部状态", "todo" to "未完成", "done" to "已完成"),
                     selectedStatus, Modifier.weight(1f)) { selectedStatus = it }
                 val subjects = rows.distinctBy { it.subjectKey() }
                 HomeworkDropdown("科目", subjects.find { it.subjectKey() == selectedSubject }?.courseName ?: "全部科目",
                     listOf("" to "全部科目") + subjects.map { it.subjectKey() to (it.courseName + if (subjects.count { s -> s.courseName == it.courseName } > 1) "（班级 ${it.classId}）" else "") },
                     selectedSubject, Modifier.weight(1f)) { selectedSubject = it }
+                HomeworkDropdown("类型", when(selectedKind) { "homework" -> "作业"; "discussion" -> "讨论"; "exam" -> "考试"; else -> "全部类型" },
+                    listOf("" to "全部类型", "homework" to "作业", "discussion" to "讨论", "exam" to "考试"), selectedKind,
+                    Modifier.weight(1f)) { selectedKind = it }
             }
-            HomeworkDropdown("类型", when(selectedKind) { "homework" -> "作业"; "discussion" -> "讨论"; "exam" -> "考试"; else -> "全部类型" },
-                listOf("" to "全部类型", "homework" to "作业", "discussion" to "讨论", "exam" to "考试"), selectedKind,
-                Modifier.fillMaxWidth().padding(bottom = 12.dp)) { selectedKind = it }
+            Spacer(Modifier.height(12.dp))
             if (visibleRows.isEmpty()) Text(if(rows.isEmpty()) "暂无已同步的任务" else "没有符合条件的任务，请调整筛选")
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
                 items(visibleRows.sortedWith(compareBy<CachedHomework> { homeworkState(it.status) != HomeworkState.TODO }.thenBy { it.deadline ?: Long.MAX_VALUE }), key = { it.taskKey() }) { row ->
@@ -303,7 +304,8 @@ private fun HomeworkDropdown(title: String, label: String, options: List<Pair<St
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = modifier) {
         Surface(modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).heightIn(min = 64.dp),
             color = Color(0xFFFFFEFB), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFFE4E2DD))) {
-            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            // 三列共用一行，缩小内边距为长科目保留空间。
+            Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(4.dp))

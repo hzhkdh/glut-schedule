@@ -1868,131 +1868,106 @@ private fun SettingsPage(
         ) {
             // Display section
             Text("显示", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("显示周末", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = showWeekend, onCheckedChange = onShowWeekendChange)
-                }
-            }
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 禁用时标题同步调淡：只置灰开关本身容易让人以为是开关坏了，
-                    // 文字一起变淡才读得出「这一项对当前来源不适用」。
-                    Text(
-                        "显示中午",
-                        color = if (showNoonEnabled) settingsPrimary else settingsSecondary,
-                        fontSize = 15.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Switch(
-                        checked = showNoon,
-                        onCheckedChange = onShowNoonChange,
-                        enabled = showNoonEnabled
-                    )
-                }
-            }
+            // 同组设置合并，保留各行原有的禁用与操作逻辑。
+            Surface(Modifier.fillMaxWidth(), color = settingsCardBg, shape = RoundedCornerShape(14.dp)) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("显示周末", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = showWeekend, onCheckedChange = onShowWeekendChange)
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Color(0xFFEDE8DE))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 禁用时标题同步调淡：只置灰开关本身容易让人以为是开关坏了，
+                        // 文字一起变淡才读得出「这一项对当前来源不适用」。
+                        Text(
+                            "显示中午",
+                            color = if (showNoonEnabled) settingsPrimary else settingsSecondary,
+                            fontSize = 15.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = showNoon,
+                            onCheckedChange = onShowNoonChange,
+                            enabled = showNoonEnabled
+                        )
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Color(0xFFEDE8DE))
 
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("显示网格线", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = showGridLines, onCheckedChange = onShowGridLinesChange)
-                }
-            }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("显示网格线", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = showGridLines, onCheckedChange = onShowGridLinesChange)
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Color(0xFFEDE8DE))
 
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("问候语", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = greetingEnabled, onCheckedChange = onGreetingEnabledChange)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("问候语", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = greetingEnabled, onCheckedChange = onGreetingEnabledChange)
+                    }
+
                 }
             }
             Text("课表外观", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onCourseColors)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("课程卡片颜色", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
-                }
-            }
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = classPeriodsEnabled, onClick = onClassPeriods)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "上课时间",
-                        color = if (classPeriodsEnabled) settingsPrimary else settingsSecondary,
-                        fontSize = 15.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Icon(
-                        Icons.Outlined.ChevronRight,
-                        contentDescription = null,
-                        tint = if (classPeriodsEnabled) settingsSecondary else settingsSecondary.copy(alpha = 0.45f),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onHolidayAdjustments)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("调休调课", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
-                }
-            }
+            // 同组设置合并，保留各行原有的禁用与操作逻辑。
+            Surface(Modifier.fillMaxWidth(), color = settingsCardBg, shape = RoundedCornerShape(14.dp)) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onCourseColors)
+                            .heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("课程卡片颜色", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Color(0xFFEDE8DE))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = classPeriodsEnabled, onClick = onClassPeriods)
+                            .heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "上课时间",
+                            color = if (classPeriodsEnabled) settingsPrimary else settingsSecondary,
+                            fontSize = 15.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            Icons.Outlined.ChevronRight,
+                            contentDescription = null,
+                            tint = if (classPeriodsEnabled) settingsSecondary else settingsSecondary.copy(alpha = 0.45f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Color(0xFFEDE8DE))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onHolidayAdjustments)
+                            .heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("调休调课", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
+                    }
 
+
+                }
+            }
             // Background section
             Text("背景", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Surface(
