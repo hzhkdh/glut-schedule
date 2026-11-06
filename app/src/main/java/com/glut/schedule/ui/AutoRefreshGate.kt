@@ -1,6 +1,7 @@
 package com.glut.schedule.ui
 
 import com.glut.schedule.data.settings.ScheduleSettingsStore
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,4 +29,15 @@ class AutoRefreshGate(private val settingsStore: ScheduleSettingsStore) {
             settingsStore.setAutoRefreshAttemptAt(nowEpochMillis)
             true
         }
+}
+
+/** 两条刷新链路按实际完成顺序执行，取消后不再启动考试。 */
+internal suspend fun runAutoRefreshInOrder(
+    refreshSchedule: suspend () -> Boolean,
+    refreshExams: suspend () -> Unit
+) {
+    // 手动刷新抢先占锁时，不再追加可能同时续期的考试请求。
+    if (!refreshSchedule()) return
+    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+    refreshExams()
 }

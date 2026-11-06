@@ -30,6 +30,9 @@ sealed class ScheduleIcsResult {
     /** 作息没有配置钟点（研究生默认如此）。没有时间就无法生成正确的日历事件。 */
     data object MissingClassTimes : ScheduleIcsResult()
 
+    /** 缺少权威校历时禁止把估算日期写入用户日历。 */
+    data object MissingCalendar : ScheduleIcsResult()
+
     data object NoEvents : ScheduleIcsResult()
 }
 
@@ -48,8 +51,10 @@ fun buildScheduleIcs(
     hasNoonSections: Boolean = true,
     includeRoom: Boolean = true,
     includeTeacher: Boolean = true,
-    generatedAt: Instant = Instant.now()
+    generatedAt: Instant = Instant.now(),
+    hasAuthoritativeCalendar: Boolean = true
 ): ScheduleIcsResult {
+    if (!hasAuthoritativeCalendar) return ScheduleIcsResult.MissingCalendar
     if (!hasConfiguredClassTimes(periods)) return ScheduleIcsResult.MissingClassTimes
 
     val periodBySection = periods.associateBy { it.section }

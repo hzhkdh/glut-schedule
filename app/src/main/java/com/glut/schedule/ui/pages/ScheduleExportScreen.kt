@@ -343,6 +343,7 @@ fun ScheduleExportScreen(
         uiState.classPeriods,
         uiState.semesterStartMonday,
         uiState.maxAcademicWeek,
+        uiState.hasAuthoritativeCalendar,
         adjustments,
         capabilities.hasNoonSections,
         showTeacher,
@@ -357,7 +358,8 @@ fun ScheduleExportScreen(
             adjustments = adjustments,
             hasNoonSections = capabilities.hasNoonSections,
             includeRoom = showRoom,
-            includeTeacher = showTeacher
+            includeTeacher = showTeacher,
+            hasAuthoritativeCalendar = uiState.hasAuthoritativeCalendar
         )
     }
     val icsFileName = scheduleIcsFileName(semesterName)
@@ -951,6 +953,7 @@ private fun CalendarExportTab(
                         } else {
                             "当前作息没有可用的上课时间，无法生成日历。请到设置里检查上课时间。"
                         }
+                        is ScheduleIcsResult.MissingCalendar -> "当前学期缺少可靠校历，无法确定上课日期，暂不支持导出日历。请先刷新或重新导入课表。"
                         is ScheduleIcsResult.NoEvents -> "当前学期没有可写入日历的课次"
                         else -> "· 停课的周次不会生成事件\n· 调课、补课按实际周次写入\n· 节假日不单独生成事件\n· 研究生门户不提供上课时间，无法生成日历"
                     },

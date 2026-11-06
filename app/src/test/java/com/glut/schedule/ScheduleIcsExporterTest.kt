@@ -18,6 +18,13 @@ import org.junit.Test
  * 导出的日历必须与屏幕上的课表同源：周次、节次、停课与调课都在这里钉住。
  */
 class ScheduleIcsExporterTest {
+    /** 历史缓存的估算开学日不能作为真实日历日期导出。 */
+    @Test fun missingCalendarRejectsEstimatedDates() {
+        val result = buildScheduleIcs("示例", emptyMap(), emptyList(), LocalDate.of(2026, 9, 7), 16,
+            hasAuthoritativeCalendar = false)
+        assertEquals(ScheduleIcsResult.MissingCalendar, result)
+    }
+
 
     private val semesterStart = LocalDate.of(2026, 9, 7) // 周一
 

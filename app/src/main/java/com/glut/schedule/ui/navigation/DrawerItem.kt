@@ -29,6 +29,7 @@ enum class DrawerItem(
     val title: String,
     val icon: ImageVector
 ) {
+    PersonalCenter("个人中心", Icons.Outlined.PeopleAlt),
     Schedule("课程表", Icons.Outlined.CalendarMonth),
     Score("考试成绩", Icons.Outlined.Assessment),
     ProfessionalScore("专业成绩", Icons.Outlined.Calculate),
@@ -40,6 +41,7 @@ enum class DrawerItem(
     PartnerSchedule("情侣/基友课表", Icons.Outlined.PeopleAlt),
     Finance("财务", Icons.Outlined.AccountBalanceWallet),
     StudyPlan("教学计划", Icons.Outlined.MenuBook),
+    ChaoxingHomework("学习通任务", Icons.Outlined.MenuBook),
     Import("导入课表", Icons.Outlined.Download),
     Export("导出课表", Icons.Outlined.IosShare),
     Settings("设置", Icons.Outlined.Settings),
@@ -54,13 +56,15 @@ internal fun campusDrawerItems(campus: CampusType): List<DrawerItem> = when (cam
         DrawerItem.CourseTimeStats,
         DrawerItem.CampusInfo,
         DrawerItem.PartnerSchedule,
-        DrawerItem.Finance
+        DrawerItem.Finance,
+        DrawerItem.ChaoxingHomework
     )
     CampusType.NANNING -> listOf(
         DrawerItem.CourseTimeStats,
         DrawerItem.CampusInfo,
         DrawerItem.PartnerSchedule,
-        DrawerItem.Finance
+        DrawerItem.Finance,
+        DrawerItem.ChaoxingHomework
     )
     // 研究生：门户没有这些模块，但按需求「保留但禁用」——入口照常出现在同一位置，
     // 置灰并提示「研究生暂不支持」，而不是像南宁那样整项消失。
@@ -68,7 +72,8 @@ internal fun campusDrawerItems(campus: CampusType): List<DrawerItem> = when (cam
         DrawerItem.CourseTimeStats,
         DrawerItem.CampusInfo,
         DrawerItem.PartnerSchedule,
-        DrawerItem.Finance
+        DrawerItem.Finance,
+        DrawerItem.ChaoxingHomework
     )
 }
 
@@ -89,7 +94,9 @@ internal fun DrawerItem.requiredCapability(): MenuCapability? = when (this) {
     DrawerItem.PartnerSchedule -> MenuCapability.PARTNER_SCHEDULE
     DrawerItem.Finance -> MenuCapability.FINANCE
     DrawerItem.StudyPlan -> MenuCapability.STUDY_PLAN
+    DrawerItem.PersonalCenter,
     DrawerItem.Schedule,
+    DrawerItem.ChaoxingHomework,
     DrawerItem.Import,
     DrawerItem.Export,
     DrawerItem.Settings,
@@ -107,9 +114,7 @@ internal fun DrawerItem.unsupportedHintFor(campus: CampusType): String? =
     if (isEnabledFor(campus)) null else CampusCapabilities.UNSUPPORTED_HINT
 
 internal val otherDrawerItems = listOf(
-    DrawerItem.Settings,
     DrawerItem.Notice,
-    DrawerItem.FAQ,
     DrawerItem.About
 )
 

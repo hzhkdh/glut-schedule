@@ -728,31 +728,39 @@ class ScheduleViewModel(
         }
     }
 
-    fun refreshSchedule() {
+    fun refreshSchedule() { startScheduleRefresh() }
+
+    /** 自动刷新等待本轮实际完成，考试才能复用续期后的会话。 */
+    suspend fun refreshScheduleAndAwait(): Boolean {
+        val job = startScheduleRefresh() ?: return false
+        job.join()
+        return !job.isCancelled
+    }
+
+    private fun startScheduleRefresh(): kotlinx.coroutines.Job? {
         val targetSemester = uiState.value.viewedSemester
         if (targetSemester == null) {
             message.value = "当前学期尚未就绪，请稍后重试"
-            return
+            return null
         }
         if (!targetSemester.isCurrent) {
             message.value = "历史学期为只读缓存，无需刷新"
-            return
+            return null
         }
-        if (!refreshGuard.tryStart()) return
+        if (!refreshGuard.tryStart()) return null
         isRefreshing.value = true
         // 研究生走完全独立的取数链路：上面那套「个人课表页 + 周次落地页 + 校历探测」
         // 对它一个都不适用，硬套只会请求到无关页面并报出误导性的错误。
         if (targetSemester.campus == CampusType.GRADUATE) {
-            viewModelScope.launch {
+            return viewModelScope.launch {
                 // 公共节假日与学校统一补班不属于研究生门户协议；已有研究生用户只点
                 // “刷新课表”时，也要像其他来源一样更新“休/调”所需缓存。
                 refreshHolidayYears()
                 fetchMakeupTable()
                 refreshGraduateSchedule(targetSemester)
             }
-            return
         }
-        viewModelScope.launch {
+        return viewModelScope.launch {
             message.value = "正在刷新课表..."
             // 用户主动刷新时顺带补齐节假日数据。与教务导入互不依赖：
             // 即使下面登录 / 抓取失败，节假日也已经更新过了。

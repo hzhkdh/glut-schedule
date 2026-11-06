@@ -88,7 +88,7 @@ internal fun buildPdfWeekPage(
         PdfDayHeader(
             weekday = day.name,
             dateText = day.date?.dayOfMonth?.toString(),
-            marker = scheduleDayMarker(day.date, holidayDates, manualAdjustmentDates)?.label
+            marker = if (showCalendarDates) scheduleDayMarker(day.date, holidayDates, manualAdjustmentDates)?.label else null
         )
     }
 
@@ -102,8 +102,9 @@ internal fun buildPdfWeekPage(
     }
 
     val weekEnd = week.monday.plusDays(6)
-    val subtitle = "${week.monday.monthValue}月${week.monday.dayOfMonth}日 – " +
-        "${weekEnd.monthValue}月${weekEnd.dayOfMonth}日"
+    // 不把估算开学日当作真实日期印入图片或 PDF。
+    val subtitle = if (showCalendarDates) "${week.monday.monthValue}月${week.monday.dayOfMonth}日 – " +
+        "${weekEnd.monthValue}月${weekEnd.dayOfMonth}日" else ""
     return PdfWeekPage(
         title = "${semesterName.ifBlank { "课表" }} · 第 ${week.number} 周",
         subtitle = subtitle,
@@ -111,7 +112,7 @@ internal fun buildPdfWeekPage(
         rows = rowsData,
         slots = slots,
         footer = "由「桂工课表」导出 · 第 ${week.number} 周",
-        monthText = "${week.monday.monthValue}月",
+        monthText = if (showCalendarDates) "${week.monday.monthValue}月" else "",
         pageNumber = pageNumber,
         pageCount = pageCount
     )

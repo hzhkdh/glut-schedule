@@ -225,13 +225,54 @@ fun ScheduleGrid(
             )
 
             Row(
-                modifier = if (scrollable) {
+                modifier = (if (scrollable) {
                     Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
                 } else {
                     Modifier.fillMaxWidth()
-                }
+                })
+                    .drawBehind {
+                        if (!showGridLines) return@drawBehind
+                        // 浅色导出预览使用深色细线，主课表沿用背景适配的线色。
+                        val lineColor = if (lightContent) Color.Black.copy(alpha = 0.08f) else GridLineColor
+                        val boundaryColor = if (lightContent) Color.Black.copy(alpha = 0.22f) else GridLineBoundaryColor
+                        val rowPx = rowHeight.toPx()
+                        val colPx = dayWidth.toPx()
+                        val normalStroke = 0.7.dp.toPx()
+                        val boundaryStroke = 1.6.dp.toPx()
+                        // 哪些行的下缘是时段分界。判据收在 gridBoldRowIndices 里：线画在**下缘**，
+                        // 就必须跟**下一行**比时段 —— 跟上一行比会把加粗线整体压低一行。
+                        val boldRows = gridBoldRowIndices(visibleRows, blockEndSections).toSet()
+
+                        // 在共同容器绘制横线，使时间栏与课程区贯通。
+                        drawLine(lineColor, Offset(0f, normalStroke / 2f), Offset(size.width, normalStroke / 2f), normalStroke)
+                        // 横线：逐行下缘。行号与课程卡片共用同一份 visibleRows，隐藏中午时不会错位。
+                        visibleRows.forEachIndexed { index, _ ->
+                            val isBoundary = index in boldRows
+                            val stroke = if (isBoundary) boundaryStroke else normalStroke
+                            // 末行贴着容器底边，线宽的一半会被裁掉，所以把 y 收进来半个线宽。
+                            val y = (rowPx * (index + 1)).coerceAtMost(size.height - stroke / 2f)
+                            drawLine(
+                                color = if (isBoundary) boundaryColor else lineColor,
+                                start = Offset(0f, y),
+                                end = Offset(size.width, y),
+                                strokeWidth = stroke
+                            )
+                        }
+
+                        // 竖线：天与天之间的分隔，贯穿整个课表主体。用普通行线的配色 ——
+                        // 它标的是「换了一天」而不是时段分界，不该跟加粗线抢注意力。
+                        for (day in 0 until dayCount) {
+                            val x = (leftWidth.toPx() + colPx * day).coerceAtMost(size.width - normalStroke / 2f)
+                            drawLine(
+                                color = lineColor,
+                                start = Offset(x, 0f),
+                                end = Offset(x, size.height),
+                                strokeWidth = normalStroke
+                            )
+                        }
+                    }
             ) {
                 PeriodColumn(
                     visibleRows = visibleRows,
@@ -246,12 +287,11 @@ fun ScheduleGrid(
                     rowHeight = rowHeight,
                     dayWidth = dayWidth,
                     dayCount = dayCount,
-                    showGridLines = showGridLines,
-                    blockEndSections = blockEndSections,
                     onCourseLongClick = onCourseLongClick,
                     weekNumber = week.number,
                     adjustments = adjustments,
                     showTeacher = showTeacher,
+                    allowConflictSwitch = scrollable,
                     showRoom = showRoom,
                     lightContent = lightContent,
                 )
@@ -515,57 +555,18 @@ private fun TimetableBody(
     rowHeight: Dp,
     dayWidth: Dp,
     dayCount: Int,
-    showGridLines: Boolean = false,
-    blockEndSections: List<Int> = emptyList(),
     onCourseLongClick: ((CourseBlock) -> Unit)? = null,
     weekNumber: Int = 0,
     adjustments: List<SemesterAdjustment> = emptyList(),
     showTeacher: Boolean = true,
+    allowConflictSwitch: Boolean = true,
     showRoom: Boolean = true,
     lightContent: Boolean = false,
 ) {
     val totalHeight = rowHeight * visibleRows.size
-    val lineColor = if (lightContent) Color.Black.copy(alpha = 0.08f) else GridLineColor
-    val boundaryColor = if (lightContent) Color.Black.copy(alpha = 0.22f) else GridLineBoundaryColor
     Box(
         modifier = Modifier
             .size(width = dayWidth * dayCount, height = totalHeight)
-            .drawBehind {
-                if (!showGridLines) return@drawBehind
-                val rowPx = rowHeight.toPx()
-                val colPx = dayWidth.toPx()
-                val normalStroke = 0.7.dp.toPx()
-                val boundaryStroke = 1.6.dp.toPx()
-                // 哪些行的下缘是时段分界。判据收在 gridBoldRowIndices 里：线画在**下缘**，
-                // 就必须跟**下一行**比时段 —— 跟上一行比会把加粗线整体压低一行。
-                val boldRows = gridBoldRowIndices(visibleRows, blockEndSections).toSet()
-
-                // 横线：逐行下缘。行号与课程卡片共用同一份 visibleRows，隐藏中午时不会错位。
-                visibleRows.forEachIndexed { index, _ ->
-                    val isBoundary = index in boldRows
-                    val stroke = if (isBoundary) boundaryStroke else normalStroke
-                    // 末行贴着容器底边，线宽的一半会被裁掉，所以把 y 收进来半个线宽。
-                    val y = (rowPx * (index + 1)).coerceAtMost(size.height - stroke / 2f)
-                    drawLine(
-                        color = if (isBoundary) boundaryColor else lineColor,
-                        start = Offset(0f, y),
-                        end = Offset(size.width, y),
-                        strokeWidth = stroke
-                    )
-                }
-
-                // 竖线：天与天之间的分隔，贯穿整个课表主体。用普通行线的配色 ——
-                // 它标的是「换了一天」而不是时段分界，不该跟加粗线抢注意力。
-                for (day in 1 until dayCount) {
-                    val x = (colPx * day).coerceAtMost(size.width - normalStroke / 2f)
-                    drawLine(
-                        color = lineColor,
-                        start = Offset(x, 0f),
-                        end = Offset(x, size.height),
-                        strokeWidth = normalStroke
-                    )
-                }
-            }
     ) {
         val blockGroups = remember(blocks) { overlappingCourseBlockGroups(blocks) }
         blockGroups.forEach { group ->
@@ -573,7 +574,8 @@ private fun TimetableBody(
             key(groupKey) {
                 var activeIndex by remember { mutableStateOf(0) }
                 val activeBlock = group[activeIndex % group.size]
-                val nextBlock = if (group.size > 1) {
+                // 导出预览固定首课，与图片/PDF模型保持一致，避免预览切换后保存另一门课。
+                val nextBlock = if (group.size > 1 && allowConflictSwitch) {
                     { activeIndex = (activeIndex + 1) % group.size }
                 } else {
                     null

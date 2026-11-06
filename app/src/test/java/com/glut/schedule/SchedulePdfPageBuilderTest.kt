@@ -53,6 +53,7 @@ class SchedulePdfPageBuilderTest {
         showWeekend: Boolean = false,
         showTeacher: Boolean = true,
         showRoom: Boolean = true,
+        showCalendarDates: Boolean = true,
         adjustments: List<SemesterAdjustment> = emptyList()
     ) = buildPdfWeekPage(
         semesterName = "2026-2027学年第一学期",
@@ -62,13 +63,21 @@ class SchedulePdfPageBuilderTest {
         showNoon = showNoon,
         hasNoonSections = true,
         showWeekend = showWeekend,
-        showCalendarDates = true,
+        showCalendarDates = showCalendarDates,
         holidayDates = emptySet(),
         manualAdjustmentDates = emptySet(),
         adjustments = adjustments,
         showTeacher = showTeacher,
         showRoom = showRoom
     )
+
+    /** 无权威校历时，图片和 PDF 的所有日期位置都必须留空。 */
+    @Test fun estimatedDatesStayOutOfExports() {
+        val page = page(emptyList(), showCalendarDates = false)
+        assertEquals("", page.subtitle)
+        assertEquals("", page.monthText)
+        assertTrue(page.days.all { it.dateText.isNullOrBlank() })
+    }
 
     @Test
     fun hiddenNoonAndWeekendShrinkTheGrid() {

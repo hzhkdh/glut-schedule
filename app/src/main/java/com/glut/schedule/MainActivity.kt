@@ -62,6 +62,10 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -146,6 +150,7 @@ import com.glut.schedule.service.academic.clearWebLoginSession
 import com.glut.schedule.service.academic.RenewalUiState
 import com.glut.schedule.ui.navigation.DrawerItem
 import com.glut.schedule.ui.navigation.campusDrawerItems
+import com.glut.schedule.ui.pages.ChaoxingHomeworkScreen
 import com.glut.schedule.ui.navigation.isEnabledFor
 import com.glut.schedule.ui.navigation.otherDrawerItems
 import com.glut.schedule.ui.navigation.prepareDrawerSelection
@@ -163,6 +168,7 @@ import com.glut.schedule.ui.pages.DirectLoginViewModel
 import com.glut.schedule.ui.pages.DirectLoginViewModelFactory
 import com.glut.schedule.ui.pages.WechatLoginScreen
 import com.glut.schedule.ui.pages.ExamScreen
+import com.glut.schedule.ui.runAutoRefreshInOrder
 import com.glut.schedule.ui.AutoRefreshPolicy
 import com.glut.schedule.ui.pages.ExamViewModel
 import com.glut.schedule.ui.pages.ExamViewModelFactory
@@ -488,6 +494,7 @@ class MainActivity : ComponentActivity() {
                     )
                 )
                 val campusType by container.settingsStore.campusType.collectAsStateWithLifecycle(initialValue = CampusType.GUILIN)
+                val drawerSessionBase by container.academicSessionStore.campusBaseUrl.collectAsStateWithLifecycle(initialValue = "")
                 val greetingEnabled by container.settingsStore.greetingEnabled.collectAsStateWithLifecycle(initialValue = true)
                 val studentName by container.academicSessionStore.authenticatedStudentName
                     .collectAsStateWithLifecycle(initialValue = "")
@@ -705,7 +712,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-
+                val drawerContentLayer = rememberGraphicsLayer()
                 ModalNavigationDrawer(
                     drawerState = drawerState,
                     gesturesEnabled = !drawerGestureBlocked,
@@ -729,14 +736,17 @@ class MainActivity : ComponentActivity() {
                                 animationRunId = greetingAnimationRunId
                             )
                             HorizontalDivider(color = Color(0xFFDDE2EA))
-                            Column(
+                            Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(1f)
                                     .background(Color(0xFFF6F4EF))
                             ) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                LazyColumn {
+                                LazyColumn(Modifier.fillMaxSize().drawWithContent {
+                                    // 仅记录滚动内容，底栏背景采样此图层，不包含按钮自身。
+                                    drawerContentLayer.record { this@drawWithContent.drawContent() }
+                                    drawLayer(drawerContentLayer)
+                                }, contentPadding = PaddingValues(top = 8.dp, bottom = 88.dp)) {
                                     // 常用
                                     item {
                                         Text(
@@ -835,6 +845,14 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                         )
                                     }
                                 }
+                                com.glut.schedule.ui.navigation.DrawerFooter(
+                                    com.glut.schedule.ui.navigation.drawerIdentity(campusType, drawerSessionBase, studentName), selectedItem,
+                                    modifier = Modifier.align(Alignment.BottomCenter), backgroundLayer = drawerContentLayer
+                                ) { target ->
+                                    selectedItem = target
+                                    settingsSubPage = SettingsSubPage.ROOT
+                                    scope.launch { drawerState.close() }
+                                }
                             }
                         }
                     }
@@ -868,6 +886,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     },
                                     actions = {
                                         when (selectedItem) {
+                                            DrawerItem.PersonalCenter -> Unit
                                             DrawerItem.Exam -> {
                                                 val examState by examViewModel.uiState.collectAsStateWithLifecycle()
                                                 IconButton(
@@ -1020,6 +1039,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                     ) { padding ->
                         Box(modifier = Modifier.padding(padding)) {
                             when (selectedItem) {
+                                DrawerItem.PersonalCenter -> com.glut.schedule.ui.pages.PersonalCenterScreen(campusType, container.academicSessionStore)
+                                DrawerItem.ChaoxingHomework -> ChaoxingHomeworkScreen()
                                 DrawerItem.Schedule -> ScheduleDestination(
                                     viewModel = scheduleViewModel,
                                     backgroundStore = container.backgroundStore,
@@ -1482,19 +1503,34 @@ private suspend fun autoRefreshIfDue(
     }
     // 让开屏先完成首帧与既有启动请求（版本、公告、对照表），再开始这两条网络链路，
     // 免得低端机上几路请求挤在一起。1 秒足够，再长用户就会发现「刚打开就自己在刷」。
+    val initialSession = container.academicSessionStore.profileSession.first()
     delay(AUTO_REFRESH_START_DELAY_MILLIS)
+    // 让路期间可能换号或切到历史学期，重新核对后再记录节流时间。
+    val currentSession = container.academicSessionStore.profileSession.first()
+    val currentState = scheduleViewModel.uiState.value
+    if (initialSession.studentNo != currentSession.studentNo || initialSession.base != currentSession.base ||
+        initialSession.cookie != currentSession.cookie || currentState.isHistoricalSemester || currentState.isRefreshing) return
     if (!container.autoRefreshGate.tryAcquire()) {
         Log.d(AUTO_REFRESH_TAG, "跳过：距上次尝试不足 ${AutoRefreshPolicy.INTERVAL_MILLIS}ms")
         return
     }
 
     Log.i(AUTO_REFRESH_TAG, "开始自动刷新（课表 + 考试），间隔=${AutoRefreshPolicy.INTERVAL_MILLIS}ms")
-    // 走 confirmRefresh 而不是 requestRefresh：后者在用户删过卡片时会先弹「是否保留 N 张卡片」
+    // 专用等待入口保留隐藏记录，不经过 requestRefresh 的确认弹窗。
+    // 原先走 confirmRefresh 而不是 requestRefresh：后者在用户删过卡片时会先弹「是否保留 N 张卡片」
     // 的确认框。那个框是给「用户主动点刷新」设计的，自动触发时没人操作它，结果是框弹出来、
     // 刷新却不执行，而闸门已经把时间戳写掉了——等于白等一轮。这里直接按「保留」处理，
     // 与用户点刷新时默认勾选的结果一致，也不改变手动的交互。
-    scheduleViewModel.confirmRefresh(keepHidden = true)
-    examViewModel.refreshExams()
+    runAutoRefreshInOrder(
+        refreshSchedule = { scheduleViewModel.refreshScheduleAndAwait() },
+        refreshExams = {
+            // 课表续期可改变 Cookie；这里只核对身份，避免等待期间换号后追加考试请求。
+            val session = container.academicSessionStore.profileSession.first()
+            if (session.studentNo == initialSession.studentNo && session.base == initialSession.base && session.cookie.isNotBlank()) {
+                examViewModel.refreshExams()
+            }
+        }
+    )
 }
 
 /** 自动刷新日志标签。 */
@@ -1858,10 +1894,10 @@ private fun DrawerMenuItem(
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val bgColor = if (isSelected && enabled) Color(0xFF3F7DF6).copy(alpha = 0.10f) else Color.Transparent
+    val bgColor = if (isSelected && enabled) Color(0xFFE3ECFD) else Color.Transparent
     val contentColor = when {
         !enabled -> Color(0xFF667085).copy(alpha = 0.38f)
-        isSelected -> Color(0xFF3F7DF6)
+        isSelected -> Color(0xFF2459B8)
         else -> Color(0xFF667085)
     }
 
@@ -1974,131 +2010,106 @@ private fun SettingsPage(
         ) {
             // Display section
             Text("显示", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("显示周末", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = showWeekend, onCheckedChange = onShowWeekendChange)
-                }
-            }
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 禁用时标题同步调淡：只置灰开关本身容易让人以为是开关坏了，
-                    // 文字一起变淡才读得出「这一项对当前来源不适用」。
-                    Text(
-                        "显示中午",
-                        color = if (showNoonEnabled) settingsPrimary else settingsSecondary,
-                        fontSize = 15.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Switch(
-                        checked = showNoon,
-                        onCheckedChange = onShowNoonChange,
-                        enabled = showNoonEnabled
-                    )
-                }
-            }
+            // 同组设置合并，保留各行原有的禁用与操作逻辑。
+            Surface(Modifier.fillMaxWidth(), color = settingsCardBg, shape = RoundedCornerShape(14.dp)) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("显示周末", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = showWeekend, onCheckedChange = onShowWeekendChange)
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Color(0xFFEDE8DE))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 禁用时标题同步调淡：只置灰开关本身容易让人以为是开关坏了，
+                        // 文字一起变淡才读得出「这一项对当前来源不适用」。
+                        Text(
+                            "显示中午",
+                            color = if (showNoonEnabled) settingsPrimary else settingsSecondary,
+                            fontSize = 15.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = showNoon,
+                            onCheckedChange = onShowNoonChange,
+                            enabled = showNoonEnabled
+                        )
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Color(0xFFEDE8DE))
 
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("显示网格线", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = showGridLines, onCheckedChange = onShowGridLinesChange)
-                }
-            }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("显示网格线", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = showGridLines, onCheckedChange = onShowGridLinesChange)
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Color(0xFFEDE8DE))
 
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("问候语", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = greetingEnabled, onCheckedChange = onGreetingEnabledChange)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("问候语", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = greetingEnabled, onCheckedChange = onGreetingEnabledChange)
+                    }
+
                 }
             }
             Text("课表外观", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onCourseColors)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("课程卡片颜色", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
-                }
-            }
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = classPeriodsEnabled, onClick = onClassPeriods)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "上课时间",
-                        color = if (classPeriodsEnabled) settingsPrimary else settingsSecondary,
-                        fontSize = 15.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Icon(
-                        Icons.Outlined.ChevronRight,
-                        contentDescription = null,
-                        tint = if (classPeriodsEnabled) settingsSecondary else settingsSecondary.copy(alpha = 0.45f),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = settingsCardBg,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onHolidayAdjustments)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("调休调课", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
-                }
-            }
+            // 同组设置合并，保留各行原有的禁用与操作逻辑。
+            Surface(Modifier.fillMaxWidth(), color = settingsCardBg, shape = RoundedCornerShape(14.dp)) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onCourseColors)
+                            .heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("课程卡片颜色", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Color(0xFFEDE8DE))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = classPeriodsEnabled, onClick = onClassPeriods)
+                            .heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "上课时间",
+                            color = if (classPeriodsEnabled) settingsPrimary else settingsSecondary,
+                            fontSize = 15.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            Icons.Outlined.ChevronRight,
+                            contentDescription = null,
+                            tint = if (classPeriodsEnabled) settingsSecondary else settingsSecondary.copy(alpha = 0.45f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = Color(0xFFEDE8DE))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onHolidayAdjustments)
+                            .heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("调休调课", color = settingsPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = settingsSecondary, modifier = Modifier.size(20.dp))
+                    }
 
+
+                }
+            }
             // Background section
             Text("背景", color = settingsSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Surface(
