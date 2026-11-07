@@ -113,7 +113,9 @@ internal fun DrawerItem.isEnabledFor(campus: CampusType): Boolean =
 internal fun DrawerItem.unsupportedHintFor(campus: CampusType): String? =
     if (isEnabledFor(campus)) null else CampusCapabilities.UNSUPPORTED_HINT
 
+// 导出属于低频工具，放在“其他”首位。
 internal val otherDrawerItems = listOf(
+    DrawerItem.Export,
     DrawerItem.Notice,
     DrawerItem.About
 )

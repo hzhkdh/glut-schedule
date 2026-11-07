@@ -9,6 +9,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class CampusDrawerItemsTest {
+    @org.junit.Test fun exportIsFirstOtherTool() {
+        org.junit.Assert.assertEquals(DrawerItem.Export, otherDrawerItems.first())
+    }
+
     @Test
     fun guilinCampusItemsCombinePublicImagesAndKeepFinanceSeparate() {
         assertEquals(

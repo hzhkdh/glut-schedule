@@ -21,7 +21,13 @@ import kotlinx.coroutines.withContext
 
 /** 导出落盘结果。权限缺失单独建模，让界面能先申请权限再重试，而不是报一句笼统的失败。 */
 sealed class ScheduleExportSaveResult {
-    data class Saved(val uri: Uri) : ScheduleExportSaveResult()
+    data class Saved(
+        val uri: Uri,
+        val displayName: String = "",
+        val location: String = "",
+        val mimeType: String = "",
+        val byteCount: Long = 0L
+    ) : ScheduleExportSaveResult()
     data object PermissionRequired : ScheduleExportSaveResult()
     data class Failed(val message: String) : ScheduleExportSaveResult()
 }
@@ -173,14 +179,15 @@ object ScheduleBinaryExporter {
     ): ScheduleExportSaveResult = withContext(Dispatchers.IO) {
         if (!legacyPermissionGranted(context)) return@withContext ScheduleExportSaveResult.PermissionRequired
         try {
+            require(bytes.isNotEmpty()) { "导出内容为空" }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ScheduleExportSaveResult.Saved(
-                    saveWithMediaStoreDownloads(context, fileName, mimeType, bytes)
-                )
+                saveWithMediaStoreDownloads(context, fileName, mimeType, bytes)
             } else {
-                ScheduleExportSaveResult.Saved(
-                    saveToLegacyDownloads(context, fileName, mimeType, bytes)
-                )
+                val uri = saveToLegacyDownloads(context, fileName, mimeType, bytes)
+                val file = File(requireNotNull(uri.path))
+                check(file.length() > 0) { "文件未完整写入" }
+                ScheduleExportSaveResult.Saved(uri, file.name,
+                    "Download/桂工课表", mimeType, file.length())
             }
         } catch (error: Exception) {
             ScheduleExportSaveResult.Failed(error.message ?: "保存失败")
@@ -217,7 +224,7 @@ object ScheduleBinaryExporter {
         fileName: String,
         mimeType: String,
         bytes: ByteArray
-    ): Uri {
+    ): ScheduleExportSaveResult.Saved {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
@@ -233,13 +240,14 @@ object ScheduleBinaryExporter {
         try {
             resolver.openOutputStream(uri)?.use { it.write(bytes) }
                 ?: throw IOException("无法写入下载文件")
-            resolver.update(
+            val published = resolver.update(
                 uri,
                 ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
                 null,
                 null
             )
-            return uri
+            check(published > 0) { "文件未发布到下载目录" }
+            return readPublishedExport(context, uri)
         } catch (error: Exception) {
             resolver.delete(uri, null, null)
             throw error

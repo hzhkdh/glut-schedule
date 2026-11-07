@@ -42,13 +42,13 @@ class FinanceStore(context: Context) : FinanceStorage {
         securePrefs.getString(KEY_PASSWORD, "").orEmpty()
     )
 
-    override fun saveCredentials(value: FinanceCredentials) {
+    @Synchronized override fun saveCredentials(value: FinanceCredentials) {
         securePrefs.edit().putString(KEY_USERNAME, value.username.trim()).putString(KEY_PASSWORD, value.password).apply()
     }
 
     override fun sessionCookie(): String = securePrefs.getString(KEY_COOKIE, "").orEmpty()
-    override fun saveSessionCookie(value: String) { securePrefs.edit().putString(KEY_COOKIE, value).apply() }
-    override fun clearSession() { securePrefs.edit().remove(KEY_COOKIE).commit() }
+    @Synchronized override fun saveSessionCookie(value: String) { securePrefs.edit().putString(KEY_COOKIE, value).apply() }
+    @Synchronized override fun clearSession() { securePrefs.edit().remove(KEY_COOKIE).commit() }
 
     override fun module(module: FinanceModule): CachedFinancePayload? {
         val raw = cachePrefs.getString(dataKey(module), null) ?: return null
@@ -57,16 +57,22 @@ class FinanceStore(context: Context) : FinanceStorage {
         }.getOrNull()
     }
 
-    override fun saveModule(module: FinanceModule, value: CachedFinancePayload) {
+    @Synchronized override fun saveModule(module: FinanceModule, value: CachedFinancePayload) {
         cachePrefs.edit()
             .putString(dataKey(module), FinanceCacheCodec.encode(value.payload))
             .putLong(timeKey(module), value.savedAt)
             .apply()
     }
 
-    override fun clearAll() {
+    @Synchronized override fun clearAll() {
         securePrefs.edit().clear().commit()
         cachePrefs.edit().clear().putInt(KEY_SCHEMA, CACHE_SCHEMA).commit()
+    }
+
+    @Synchronized fun commitIfCurrent(owner: String, cookie: String, write: () -> Unit): Boolean {
+        if (credentials().username != owner || sessionCookie() != cookie) return false
+        write()
+        return true
     }
 
     private fun dataKey(module: FinanceModule) = "module_${module.key}_data"

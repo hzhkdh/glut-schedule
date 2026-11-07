@@ -7,6 +7,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceError
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
@@ -301,8 +304,15 @@ private fun ChaoxingHomeworkContent() {
 private fun HomeworkDropdown(title: String, label: String, options: List<Pair<String, String>>, selected: String,
     modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = modifier) {
-        Surface(modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).heightIn(min = 64.dp),
+    val scroll = rememberScrollState()
+    val density = LocalDensity.current
+    val menuWidth = minOf(if (title == "科目") 280 else 200, LocalConfiguration.current.screenWidthDp - 32).dp
+    LaunchedEffect(expanded) {
+        if (expanded) scroll.scrollTo(with(density) { (options.indexOfFirst { it.first == selected }.coerceAtLeast(0) * if (title == "科目") 64 else 48).dp.roundToPx() })
+    }
+    // 触发框保持三列等宽，菜单独立加宽，不让长科目被拆成窄列。
+    Box(modifier = modifier) {
+        Surface(modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.heightIn(min = 64.dp),
             color = Color(0xFFFFFEFB), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFFE4E2DD))) {
             // 三列共用一行，缩小内边距为长科目保留空间。
             Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -314,13 +324,13 @@ private fun HomeworkDropdown(title: String, label: String, options: List<Pair<St
                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             }
         }
-        // 锚定菜单与框同宽；菜单过长时内部滚动，避免因内容宽度变化左右重定位。
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
-            modifier = Modifier.heightIn(max = 280.dp), containerColor = Color(0xFFFFFEFB), tonalElevation = 0.dp) {
+        // 菜单限高并跟随当前项定位，长名称最多两行，不改变触发框尺寸。
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
+            modifier = Modifier.width(menuWidth).heightIn(max = 320.dp), scrollState = scroll, containerColor = Color(0xFFFFFEFB), tonalElevation = 0.dp) {
             options.forEach { (key, text) -> DropdownMenuItem(
-                text = { Text(text, style = MaterialTheme.typography.bodyMedium) },
+                text = { Text(text, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF141821), maxLines = 2, overflow = TextOverflow.Ellipsis) },
                 trailingIcon = { if (key == selected) Icon(Icons.Filled.Check, "已选中", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
-                modifier = Modifier.background(if (key == selected) Color(0xFFEBF2FF) else Color.Transparent),
+                modifier = Modifier.heightIn(min = if (title == "科目") 64.dp else 48.dp).background(if (key == selected) Color(0xFFEBF2FF) else Color.Transparent),
                 onClick = { expanded = false; onSelect(key) }) }
         }
     }

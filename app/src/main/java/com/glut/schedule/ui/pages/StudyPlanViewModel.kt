@@ -227,6 +227,10 @@ class StudyPlanViewModel(
         cookie: String,
         campusBaseUrl: String
     ): Pair<List<StudyPlanGroup>, List<StudyPlanCourse>> {
+        // 桂林复用后台的同源请求；南宁仍保留原有门户兼容分支。
+        if (campusBaseUrl != AcademicLoginResult.NANNING_URL) {
+            return com.glut.schedule.service.refresh.AcademicRefreshQueries.studyPlan(cookie, campusBaseUrl)
+        }
         val client = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)

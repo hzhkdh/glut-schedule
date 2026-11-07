@@ -51,12 +51,19 @@ class HomeworkSyncWorker(context: Context, params: WorkerParameters) : Coroutine
 }
 
 fun scheduleHomeworkSync(context: Context) {
-    // 首次同步由手动任务承担，避免周期任务和手动任务连续全量查询。
-    val work = PeriodicWorkRequestBuilder<HomeworkSyncWorker>(6, TimeUnit.HOURS)
-        .setInitialDelay(6, TimeUnit.HOURS)
-        .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
-    WorkManager.getInstance(context).enqueueUniquePeriodicWork("chaoxing_sync", ExistingPeriodicWorkPolicy.UPDATE, work)
+    WorkManager.getInstance(context).cancelUniqueWork("chaoxing_sync")
 }
+
+/** 与手动同步、详情共用会话门卫，后台不建立任何交互登录。 */
+suspend fun refreshHomeworkForUnified(context: Context): Boolean = sessionGate.sync {
+    val store = HomeworkStore(context)
+    if (!store.connected) throw com.glut.schedule.service.refresh.ScheduledRefreshLoginRequiredException()
+    val generation = store.generation
+    val result = withContext(Dispatchers.IO) { ChaoxingClient().sync() }
+    if (!store.mergeIfGeneration(result, generation)) return@sync false
+    if (store.generation == generation) scheduleHomeworkReminders(context, store.read())
+    result.failed.isEmpty()
+} ?: false
 
 fun refreshHomework(context: Context) {
     WorkManager.getInstance(context).enqueueUniqueWork("chaoxing_manual", ExistingWorkPolicy.KEEP,

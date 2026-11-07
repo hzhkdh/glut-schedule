@@ -229,6 +229,21 @@ class ScoreViewModel(
         val campusBaseUrl = sessionStore.campusBaseUrl.first()
             .ifBlank { AcademicLoginResult.DEFAULT_GUILIN_URL }
 
+        // 桂林手动与定时刷新复用同一取数服务，评教限制继续由页面明确反馈。
+        if (campusBaseUrl != AcademicLoginResult.NANNING_URL) {
+            scoreBlockedByEvaluation = false
+            scorePageErrorMessage = null
+            return try {
+                com.glut.schedule.service.refresh.AcademicRefreshQueries.scores(cookie, campusBaseUrl)
+            } catch (expired: com.glut.schedule.service.refresh.ScheduledRefreshLoginRequiredException) {
+                emptyList()
+            } catch (unavailable: com.glut.schedule.service.refresh.AcademicDataUnavailableException) {
+                scoreBlockedByEvaluation = unavailable.message.orEmpty().contains("评教")
+                scorePageErrorMessage = unavailable.message.takeUnless { scoreBlockedByEvaluation }
+                emptyList()
+            }
+        }
+
         val scoreClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)

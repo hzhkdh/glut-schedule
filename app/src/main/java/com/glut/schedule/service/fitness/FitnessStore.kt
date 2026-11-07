@@ -42,7 +42,7 @@ class FitnessStore(context: Context) : FitnessStorage {
         migrateCacheIfNeeded()
     }
 
-    override fun saveCredentials(username: String, password: String) {
+    @Synchronized override fun saveCredentials(username: String, password: String) {
         securePrefs.edit()
             .putString(KEY_USERNAME, username.trim())
             .putString(KEY_PASSWORD, password)
@@ -53,17 +53,17 @@ class FitnessStore(context: Context) : FitnessStorage {
 
     override fun getPassword(): String = securePrefs.getString(KEY_PASSWORD, "").orEmpty()
 
-    override fun saveSession(cookie: String) {
+    @Synchronized override fun saveSession(cookie: String) {
         securePrefs.edit().putString(KEY_COOKIE, cookie).apply()
     }
 
     override fun getSession(): String = securePrefs.getString(KEY_COOKIE, "").orEmpty()
 
-    override fun clearSession() {
+    @Synchronized override fun clearSession() {
         securePrefs.edit().remove(KEY_COOKIE).commit()
     }
 
-    override fun saveSnapshot(currentHtml: String, historyHtml: String) {
+    @Synchronized override fun saveSnapshot(currentHtml: String, historyHtml: String) {
         cachePrefs.edit()
             .putString(KEY_CURRENT_HTML, currentHtml)
             .putString(KEY_HISTORY_HTML, historyHtml)
@@ -74,20 +74,20 @@ class FitnessStore(context: Context) : FitnessStorage {
 
     override fun getHistoryHtml(): String = cachePrefs.getString(KEY_HISTORY_HTML, "").orEmpty()
 
-    override fun saveHistoryDetail(year: String, term: String, html: String) {
+    @Synchronized override fun saveHistoryDetail(year: String, term: String, html: String) {
         cachePrefs.edit().putString(historyDetailKey(year, term), html).apply()
     }
 
     override fun getHistoryDetail(year: String, term: String): String =
         cachePrefs.getString(historyDetailKey(year, term), "").orEmpty()
 
-    override fun saveStandard(html: String) {
+    @Synchronized override fun saveStandard(html: String) {
         cachePrefs.edit().putString(KEY_STANDARD_HTML, html).apply()
     }
 
     override fun getStandardHtml(): String = cachePrefs.getString(KEY_STANDARD_HTML, "").orEmpty()
 
-    override fun clearAccountCache() {
+    @Synchronized override fun clearAccountCache() {
         securePrefs.edit().remove(KEY_COOKIE).commit()
         val editor = cachePrefs.edit()
             .remove(KEY_CURRENT_HTML)
@@ -97,7 +97,7 @@ class FitnessStore(context: Context) : FitnessStorage {
         editor.commit()
     }
 
-    override fun clearAll() {
+    @Synchronized override fun clearAll() {
         securePrefs.edit().clear().commit()
         cachePrefs.edit().clear()
             .putInt(KEY_HISTORY_CACHE_VERSION, HISTORY_CACHE_VERSION)
@@ -117,6 +117,12 @@ class FitnessStore(context: Context) : FitnessStorage {
             editor.putInt(KEY_STANDARD_CACHE_VERSION, STANDARD_CACHE_VERSION)
         }
         editor.apply()
+    }
+
+    @Synchronized fun commitIfCurrent(owner: String, cookie: String, write: () -> Unit): Boolean {
+        if (getUsername() != owner || getSession() != cookie) return false
+        write()
+        return true
     }
 
     private fun historyDetailKey(year: String, term: String): String =

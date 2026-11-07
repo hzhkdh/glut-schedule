@@ -94,15 +94,16 @@ class ScheduleExportFilesTest {
     }
 
     @Test
-    fun exportEntrySitsInTheCommonSectionNextToImport() {
+    fun exportEntrySitsFirstInOtherSection() {
         val module = File("src/main/java/com/glut/schedule/MainActivity.kt")
         val main = (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/MainActivity.kt")).readText()
         assertTrue(
             main.contains(
                 "listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, " +
-                    "DrawerItem.SemesterOverview, DrawerItem.Import, DrawerItem.Export)"
+                    "DrawerItem.SemesterOverview, DrawerItem.Import)"
             )
         )
+        assertEquals(DrawerItem.Export, com.glut.schedule.ui.navigation.otherDrawerItems.first())
         assertTrue(main.contains("DrawerItem.Export -> ScheduleExportDestination"))
         assertTrue(main.contains("onSelectSemester = viewModel::selectSemester"))
     }
@@ -128,9 +129,9 @@ class ScheduleExportFilesTest {
         assertTrue(screen.contains("保存到相册"))
         assertTrue(screen.contains("保存 PDF"))
         assertTrue(screen.contains("保存 CSV"))
-        assertTrue(screen.contains("分享 .ics"))
-        assertTrue(screen.contains("自定义背景可能包含私人照片，默认不导出"))
-        assertTrue(screen.contains("研究生课表没有上课时间"))
-        assertTrue(screen.contains("冲突课仅显示当前这张"))
+        assertTrue(screen.contains("保存 ICS"))
+        assertTrue(screen.contains("选择当前背景后，导出将包含你的自定义图片。"))
+        assertTrue(screen.contains("研究生请先在设置中补全 12 节上课时间"))
+        assertTrue(screen.contains("冲突课显示第一门"))
     }
 }

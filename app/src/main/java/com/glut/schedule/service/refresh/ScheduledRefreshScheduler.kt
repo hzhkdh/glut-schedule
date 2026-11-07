@@ -1,6 +1,7 @@
 package com.glut.schedule.service.refresh
 
 import android.content.Context
+import androidx.work.Data
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -47,11 +48,18 @@ fun reconcileScheduledRefresh(
         manager.cancelUniqueWork(UNIQUE_SCHEDULED_REFRESH)
         return
     }
-    val next = nextRefreshInstant(config.times, now, ZoneId.systemDefault())
+    val (plan, next) = nextScheduledPlan(config.plans, now, ZoneId.systemDefault())
     val request = PeriodicWorkRequestBuilder<ScheduledRefreshWorker>(24, TimeUnit.HOURS)
+        .setInputData(Data.Builder().putString("planId", plan.id).build())
         .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
         // override 明确指定下一次执行时间；UPDATE 保留正在运行的刷新，不因编辑配置中断它。
         .setNextScheduleTimeOverride(next.toEpochMilli())
         .build()
     manager.enqueueUniquePeriodicWork(UNIQUE_SCHEDULED_REFRESH, ExistingPeriodicWorkPolicy.UPDATE, request)
+}
+
+/** 同时返回原计划与执行时刻，夏令时缺口平移后不能用时钟分钟反查计划。 */
+internal fun nextScheduledPlan(plans: List<ScheduledRefreshPlan>, now: Instant, zone: ZoneId): Pair<ScheduledRefreshPlan, Instant> {
+    require(validateRefreshPlans(plans))
+    return plans.map { it to nextRefreshInstant(listOf(it.minuteOfDay), now, zone) }.minBy { it.second }
 }

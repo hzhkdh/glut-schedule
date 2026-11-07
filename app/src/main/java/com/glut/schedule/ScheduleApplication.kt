@@ -80,10 +80,8 @@ class ScheduleApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         appContainer = AppContainer(this, applicationScope)
-        // 已连接用户启动时补建周期任务；UPDATE 不会因页面重建不断推迟执行时间。
-        if (com.glut.schedule.service.chaoxing.HomeworkStore(this).connected) {
-            com.glut.schedule.service.chaoxing.scheduleHomeworkSync(this)
-        }
+        // 所有安装启动时撤销旧六小时任务，统一由用户的每日计划管理。
+        com.glut.schedule.service.chaoxing.scheduleHomeworkSync(this)
         applicationScope.launch {
             val migrationFlags = getSharedPreferences("schedule_migration_flags", MODE_PRIVATE)
             try {
@@ -125,7 +123,7 @@ class ScheduleApplication : Application() {
         val store = com.glut.schedule.service.refresh.ScheduledRefreshStore(this)
         applicationScope.launch {
             combine(
-                store.config.map { it.enabled to it.times }.distinctUntilChanged(),
+                store.config.map { it.enabled to it.plans }.distinctUntilChanged(),
                 appContainer.settingsStore.campusType,
                 appContainer.academicSessionStore.profileSession.map { it.studentNo to it.base }.distinctUntilChanged()
             ) { config, campus, identity -> Triple(config, campus, identity) }
@@ -133,7 +131,7 @@ class ScheduleApplication : Application() {
                     store.bindOwner(identity.first + "|" + identity.second)
                     val session = appContainer.academicSessionStore.profileSession.first()
                     com.glut.schedule.service.refresh.reconcileScheduledRefresh(this@ScheduleApplication,
-                        store.config.first(), com.glut.schedule.service.refresh.supportsScheduledRefresh(campus, session))
+                        store.config.first(), true)
                 }
         }
     }

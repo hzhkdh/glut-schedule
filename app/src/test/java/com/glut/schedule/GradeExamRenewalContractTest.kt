@@ -18,6 +18,9 @@ class GradeExamRenewalContractTest {
         assertFalse(source.contains("if (allExams.isEmpty())"))
         assertTrue(source.contains("GradeExamFetchResult.SessionExpired ->"))
         // HTTP 未授权或实际登录页才允许走验证码续期。
-        assertTrue(source.contains("looksLikeAcademicLoginPage(html)"))
+        assertTrue(source.contains("AcademicRefreshQueries.gradeExams"))
+        val root = if (module.exists()) "src/main/java/" else "app/src/main/java/"
+        val shared = File(root + "com/glut/schedule/service/refresh/AcademicRefreshQueries.kt").readText()
+        assertTrue(shared.contains("looksLikeAcademicLoginPage(html)"))
     }
 }

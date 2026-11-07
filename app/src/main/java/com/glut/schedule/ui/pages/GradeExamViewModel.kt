@@ -130,51 +130,15 @@ class GradeExamViewModel(
         }
     }
 
-    private suspend fun fetchGradeExamResult(cookie: String, campusBaseUrl: String): GradeExamFetchResult {
-        val client = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .build()
-
-        val url = "$campusBaseUrl/academic/student/skilltest/skilltest.jsdo?moduleId=2090"
-
-        val request = Request.Builder()
-            .url(url)
-            .header("Cookie", cookie)
-            .header("User-Agent", UA)
-            .get()
-            .build()
-
-        val (statusCode, body, contentType) = withContext(Dispatchers.IO) {
-            client.newCall(request).execute().use { response ->
-                val rawBytes = response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES)
-                    ?: ByteArray(0)
-                val ct = response.header("Content-Type") ?: ""
-                Triple(response.code, rawBytes, ct)
-            }
-        }
-
-        Log.d(TAG, "Grade exam response: bodyLen=${body.size}, contentType=$contentType")
-
-        val charset = if (contentType.contains("charset=", ignoreCase = true)) {
-            try {
-                Charset.forName(contentType.substringAfter("charset=").trim().removePrefix("\"").removeSuffix("\""))
-            } catch (_: Exception) {
-                Charsets.UTF_8
-            }
-        } else {
-            try { Charset.forName("GBK") } catch (_: Exception) { Charsets.UTF_8 }
-        }
-        val html = String(body, charset)
-
-        if (statusCode == 401 || statusCode == 403 || looksLikeAcademicLoginPage(html)) {
-            return GradeExamFetchResult.SessionExpired
-        }
-        if (statusCode !in 200..299) {
-            return GradeExamFetchResult.Failure("教务系统返回 HTTP $statusCode")
-        }
-        return GradeExamFetchResult.Success(gradeExamParser.parse(html))
+    /** 页面与后台共用解析和结构校验，登录失效仍交回现有验证码续期流程。 */
+    private suspend fun fetchGradeExamResult(cookie: String, campusBaseUrl: String): GradeExamFetchResult = try {
+        GradeExamFetchResult.Success(com.glut.schedule.service.refresh.AcademicRefreshQueries.gradeExams(cookie, campusBaseUrl))
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (_: com.glut.schedule.service.refresh.ScheduledRefreshLoginRequiredException) {
+        GradeExamFetchResult.SessionExpired
+    } catch (_: Exception) {
+        GradeExamFetchResult.Failure("获取考级成绩失败，请稍后重试")
     }
 
     companion object {

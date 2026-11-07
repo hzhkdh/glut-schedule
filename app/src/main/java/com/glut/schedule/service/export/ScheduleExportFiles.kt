@@ -26,12 +26,13 @@ fun sanitizeExportName(raw: String, fallback: String): String {
 fun scheduleImageFileName(
     semesterName: String,
     weekNumber: Int,
-    weekMonday: LocalDate
+    weekMonday: LocalDate?
 ): String {
     val semester = sanitizeExportName(semesterName, "本学期")
     val week = weekNumber.toString().padStart(2, '0')
-    val date = weekMonday.format(DateTimeFormatter.BASIC_ISO_DATE)
-    return "桂工课表_${semester}_第${week}周_$date.png"
+    // 无权威校历时文件名同样不包含估算日期。
+    val date = weekMonday?.format(DateTimeFormatter.BASIC_ISO_DATE)?.let { "_$it" }.orEmpty()
+    return "桂工课表_${semester}_第${week}周$date.png"
 }
 
 /** 例如 `桂工课表_2026-2027学年第一学期.ics`。 */
@@ -56,3 +57,6 @@ fun schedulePdfFileName(
     }
     return "桂工课表_${semester}_$suffix.pdf"
 }
+
+/** PDF 左下角只展示品牌与实际导出日期，不使用学期或课程日期。 */
+fun pdfExportFooter(date: LocalDate = LocalDate.now()): String = "由「桂系一站式」导出·${date.format(DateTimeFormatter.ISO_LOCAL_DATE)}"

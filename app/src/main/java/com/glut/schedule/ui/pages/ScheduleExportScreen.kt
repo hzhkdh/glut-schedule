@@ -2,10 +2,12 @@ package com.glut.schedule.ui.pages
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,10 +27,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.SaveAlt
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -45,6 +50,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,6 +65,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -65,6 +75,7 @@ import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -83,7 +94,12 @@ import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.settings.CampusCapabilities
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.data.settings.capabilitiesFor
+import com.glut.schedule.service.export.csvPreviewRows
+import com.glut.schedule.service.export.calendarPreviewEvents
 import com.glut.schedule.service.export.ExportSolidBackground
+import com.glut.schedule.service.export.openSavedExport
+import com.glut.schedule.service.export.openSavedExportLocation
+import com.glut.schedule.service.export.PdfWeekPage
 import com.glut.schedule.service.export.ScheduleBinaryExporter
 import com.glut.schedule.service.export.ScheduleCsvResult
 import com.glut.schedule.service.export.ScheduleExportSaveResult
@@ -100,6 +116,7 @@ import com.glut.schedule.service.export.scheduleIcsFileName
 import com.glut.schedule.service.export.renderScheduleWeekImage
 import com.glut.schedule.service.export.scheduleImageFileName
 import com.glut.schedule.service.export.schedulePdfFileName
+import com.glut.schedule.service.export.pdfExportFooter
 import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.shouldUseCustomBackground
 import java.time.format.DateTimeFormatter
@@ -131,6 +148,8 @@ fun ScheduleExportScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    var savedReceipt by remember { mutableStateOf<ScheduleExportSaveResult.Saved?>(null) }
+    var receiptActionError by remember { mutableStateOf("") }
 
     if (!uiState.isInitialized) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -175,9 +194,9 @@ fun ScheduleExportScreen(
     }
     // 自定义背景可能是私人照片：默认导出纯色底，用户主动打开才把背景烤进图片。
     var useCurrentBackground by remember(uiState.viewedSemester?.id, hasCustomBackground) {
-        mutableStateOf(!hasCustomBackground)
+        mutableStateOf(false)
     }
-    var solidBackground by remember { mutableStateOf(ExportSolidBackground.DEFAULT) }
+    var solidBackground by remember { mutableStateOf(ExportSolidBackground.WHITE) }
     var showTeacher by remember { mutableStateOf(true) }
     var showRoom by remember { mutableStateOf(true) }
 
@@ -378,7 +397,7 @@ fun ScheduleExportScreen(
                 )
             ) {
                 is ScheduleExportSaveResult.Saved ->
-                    snackbarHostState.showSnackbar("已保存到下载目录")
+                    run { receiptActionError = ""; savedReceipt = result }
                 ScheduleExportSaveResult.PermissionRequired -> {
                     pendingPermissionKind = PERMISSION_CALENDAR
                     permissionTrigger++
@@ -441,7 +460,7 @@ fun ScheduleExportScreen(
                 )
             ) {
                 is ScheduleExportSaveResult.Saved ->
-                    snackbarHostState.showSnackbar("已保存到下载目录")
+                    run { receiptActionError = ""; savedReceipt = result }
                 ScheduleExportSaveResult.PermissionRequired -> {
                     pendingPermissionKind = PERMISSION_CSV
                     permissionTrigger++
@@ -553,7 +572,7 @@ fun ScheduleExportScreen(
                     )
                 ) {
                     is ScheduleExportSaveResult.Saved ->
-                        snackbarHostState.showSnackbar("已保存到下载目录")
+                        run { receiptActionError = ""; savedReceipt = result }
                     ScheduleExportSaveResult.PermissionRequired -> {
                         pendingPermissionKind = PERMISSION_PDF
                         permissionTrigger++
@@ -587,6 +606,38 @@ fun ScheduleExportScreen(
         if (calendarSaveRetry > 0) saveCalendar()
     }
 
+    savedReceipt?.let { receipt ->
+        AlertDialog(
+            onDismissRequest = { savedReceipt = null },
+            containerColor = Color(0xFFFFFEFB),
+            titleContentColor = Color(0xFF141821),
+            textContentColor = Color(0xFF667085),
+            title = { Text("文件已保存", fontSize = 19.sp, color = Color(0xFF141821)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Text(receipt.displayName, fontWeight = FontWeight.SemiBold, color = Color(0xFF141821))
+                    Text("位置：" + receipt.location, color = Color(0xFF667085))
+                    Text("大小：" + ((receipt.byteCount + 1023) / 1024) + " KB", color = Color(0xFF667085))
+                    if (receiptActionError.isNotBlank()) Text(receiptActionError, color = Color(0xFFB3261E), fontSize = 12.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF3268D7)), onClick = { scope.launch {
+                            if (!openSavedExport(context, receipt)) receiptActionError = "没有可打开此格式的应用，请使用分享"
+                        } }) { Text("打开文件") }
+                        TextButton(colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF3268D7)), onClick = {
+                            if (!openSavedExportLocation(context, receipt)) scope.launch {
+                                receiptActionError = "无法打开文件管理器，请按保存位置查找"
+                            }
+                        }) { Text("查看位置") }
+                    }
+                }
+            },
+            confirmButton = { Button(colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3F7DF6), contentColor = Color.White), onClick = { savedReceipt = null }) { Text("完成", color = Color.White) } },
+            dismissButton = { TextButton(colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF3268D7)), onClick = { scope.launch {
+                if (!openSavedExport(context, receipt, share = true)) receiptActionError = "无法分享文件，请稍后重试"
+            } }) { Text("分享") } }
+        )
+    }
+
     Box(modifier.fillMaxSize()) {
         Column(modifier.fillMaxSize()) {
             PrimaryTabRow(
@@ -602,6 +653,7 @@ fun ScheduleExportScreen(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
                     0 -> ImageExportTab(
+                        previewPage = imagePage,
                         uiState = uiState,
                         semesterSelection = semesterSelection,
                         capabilities = capabilities,
@@ -626,6 +678,9 @@ fun ScheduleExportScreen(
                         onShare = { scope.launch { shareImage() } }
                     )
                     1 -> PdfExportTab(
+                        uiState = uiState,
+                        previewPage = imagePage,
+                        customBackgroundBitmap = customBackgroundBitmap,
                         semesterSelection = semesterSelection,
                         selectedWeek = selectedWeek,
                         wholeSemester = pdfWholeSemester,
@@ -708,6 +763,7 @@ private const val PERMISSION_PDF = 4
 
 @Composable
 private fun ImageExportTab(
+    previewPage: PdfWeekPage,
     uiState: ScheduleUiState,
     semesterSelection: SemesterSelectionState,
     capabilities: CampusCapabilities,
@@ -731,80 +787,21 @@ private fun ImageExportTab(
     onSave: () -> Unit,
     onShare: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 12.dp)
-        ) {
-            SemesterSelectionCard(semesterSelection)
-
-            WeekSelectionCard(
-                selectedWeek = selectedWeek,
-                currentWeekNumber = uiState.currentWeekNumber,
-                maxAcademicWeek = uiState.maxAcademicWeek,
-                weekMonday = week.monday,
-                onSelectWeek = onSelectWeek
-            )
-
-            BackgroundChoiceCard(
-                useCurrentBackground = useCurrentBackground,
-                onUseCurrentBackgroundChange = onUseCurrentBackgroundChange,
-                hasCustomBackground = hasCustomBackground,
-                solidBackground = solidBackground,
-                onSolidBackgroundChange = onSolidBackgroundChange
-            )
-
-            ContentTogglesCard(
-                showTeacher = showTeacher,
-                onShowTeacherChange = onShowTeacherChange,
-                showRoom = showRoom,
-                onShowRoomChange = onShowRoomChange
-            )
-
-            SectionCard {
-                Text(
-                    text = "预览",
-                    color = Color(0xFF141821),
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp
-                )
-                Spacer(Modifier.height(8.dp))
-                ScheduleCaptureBox(graphicsLayer) {
-                    ExportSheet(
-                        uiState = uiState,
-                        capabilities = capabilities,
-                        week = week,
-                        blocks = blocks,
-                        adjustments = adjustments,
-                        useCurrentBackground = useCurrentBackground,
-                        solidBackground = solidBackground,
-                        customBackgroundBitmap = customBackgroundBitmap,
-                        showTeacher = showTeacher,
-                        showRoom = showRoom
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "预览使用与导出版式相同的网格数据，字体渲染可能与图片略有差异。冲突课仅显示当前这张，右下角数字表示冲突门数。",
-                    color = Color(0xFF7A8291),
-                    fontSize = 11.sp
-                )
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+            ExportContextCard(semesterSelection, selectedWeek, uiState.currentWeekNumber, uiState.maxAcademicWeek, onSelectWeek)
+            ExportBitmapPreview(uiState, previewPage, useCurrentBackground, solidBackground, customBackgroundBitmap)
+            CollapsibleExportSection("外观与内容", (if (useCurrentBackground) "当前背景" else solidBackground.label) + " · " + contentSummary(showTeacher, showRoom)) {
+                BackgroundChoiceCard(useCurrentBackground, onUseCurrentBackgroundChange, hasCustomBackground, solidBackground, onSolidBackgroundChange)
+                Spacer(Modifier.height(12.dp))
+                ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange)
             }
-
-        Spacer(Modifier.height(12.dp))
+            CollapsibleExportSection("导出说明", "第 $selectedWeek 周 · 点击预览可放大") {
+                Text("保存完整课表图片。冲突课显示第一门，并标注冲突数量；隐藏的中午或周末不包含在图片中。", color = Color(0xFF667085), fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(8.dp))
         }
-        ExportActionBar {
-            ExportActionButtons(
-                saveLabel = "保存到相册",
-                shareLabel = "分享",
-                isBusy = isBusy,
-                onSave = onSave,
-                onShare = onShare
-            )
-        }
+        ExportActionBar { ExportActionButtons("保存图片", "分享", isBusy, onSave = onSave, onShare = onShare) }
     }
 }
 
@@ -910,75 +907,46 @@ private fun CalendarExportTab(
     onSave: () -> Unit,
     onShare: () -> Unit
 ) {
-    val eventCount = (result as? ScheduleIcsResult.Success)?.eventCount
-    val enabled = result is ScheduleIcsResult.Success && !isBusy
-    Column(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 12.dp)
-        ) {
-            SemesterSelectionCard(semesterSelection)
-
+    val success = result as? ScheduleIcsResult.Success
+    val events = remember(success?.content) { calendarPreviewEvents(success?.content.orEmpty()) }
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+            ExportContextCard(semesterSelection)
             SectionCard {
-                Text(
-                    text = "$courseCount 门课 · ${eventCount?.toString() ?: "—"} 个事件",
-                    color = Color(0xFF141821),
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 20.sp
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "第 1 – ${uiState.maxAcademicWeek} 周 · " +
-                        "${uiState.semesterStartMonday} → ${uiState.semesterEndDate}",
-                    color = Color(0xFF566072),
-                    fontSize = 12.sp
-                )
+                Text("日历预览", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(10.dp))
+                events.forEach { event ->
+                    Column(Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
+                        Text(event.title, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text(event.time, color = Color(0xFF667085), fontSize = 12.sp)
+                        if (event.location.isNotBlank()) Text(event.location, color = Color(0xFF667085), fontSize = 11.sp)
+                    }
+                    HorizontalDivider(color = Color(0xFFE8EBF0))
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("$courseCount 门课 · " + (success?.eventCount ?: 0) + " 个事件", fontSize = 13.sp, color = Color(0xFF667085))
+                if (success == null) Text(when(result) {
+                    ScheduleIcsResult.MissingCalendar -> "缺少可靠校历，请先刷新或重新导入课表。"
+                    ScheduleIcsResult.MissingClassTimes -> if (isGraduate) "研究生请先在设置中补全 12 节上课时间。" else "请先在设置中补全上课时间。"
+                    else -> "当前学期没有可写入日历的课次。"
+                }, fontSize = 12.sp, color = Color(0xFF925B20))
             }
-
-            ContentTogglesCard(
-                showTeacher = showTeacher,
-                onShowTeacherChange = onShowTeacherChange,
-                showRoom = showRoom,
-                onShowRoomChange = onShowRoomChange
-            )
-
-            SectionCard {
-                Text(
-                    text = when (result) {
-                        is ScheduleIcsResult.MissingClassTimes -> if (isGraduate) {
-                            "研究生课表没有上课时间\n\n门户只下发节次，不下发钟点，导出日历会得到错误的时间。如果你在设置里补全了 12 节的时间，这里会自动可用。"
-                        } else {
-                            "当前作息没有可用的上课时间，无法生成日历。请到设置里检查上课时间。"
-                        }
-                        is ScheduleIcsResult.MissingCalendar -> "当前学期缺少可靠校历，无法确定上课日期，暂不支持导出日历。请先刷新或重新导入课表。"
-                        is ScheduleIcsResult.NoEvents -> "当前学期没有可写入日历的课次"
-                        else -> "· 停课的周次不会生成事件\n· 调课、补课按实际周次写入\n· 节假日不单独生成事件\n· 研究生门户不提供上课时间，无法生成日历"
-                    },
-                    color = if (result is ScheduleIcsResult.Success) Color(0xFF566072) else Color(0xFF8A6D3B),
-                    fontSize = 12.sp
-                )
+            CollapsibleExportSection("显示内容", contentSummary(showTeacher, showRoom)) {
+                ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange)
             }
-
-        Spacer(Modifier.height(12.dp))
+            CollapsibleExportSection("导出说明", "整学期 · 导入系统日历使用") {
+                Text("停课课次不生成事件；调课、补课按实际周次生成。文件导入后不会随课表自动同步，请由日历应用管理提醒和重复导入。", fontSize = 12.sp, color = Color(0xFF667085))
+            }
         }
-        ExportActionBar {
-            ExportActionButtons(
-                saveLabel = "保存 .ics 文件",
-                shareLabel = "分享 .ics",
-                isBusy = isBusy,
-                enabled = enabled,
-                onSave = onSave,
-                onShare = onShare
-            )
-        }
+        ExportActionBar { ExportActionButtons("保存 ICS", "分享", isBusy, enabled = success != null, onSave = onSave, onShare = onShare) }
     }
 }
 
 @Composable
 private fun PdfExportTab(
+    uiState: ScheduleUiState,
+    previewPage: PdfWeekPage,
+    customBackgroundBitmap: ImageBitmap?,
     semesterSelection: SemesterSelectionState,
     selectedWeek: Int,
     wholeSemester: Boolean,
@@ -1001,87 +969,27 @@ private fun PdfExportTab(
     onSave: () -> Unit,
     onShare: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 12.dp)
-        ) {
-            SemesterSelectionCard(semesterSelection)
-
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+            ExportContextCard(semesterSelection, if (wholeSemester) null else selectedWeek, currentWeekNumber, maxAcademicWeek, onSelectWeek)
             SectionCard {
-                SectionTitle("范围")
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ExportChip(
-                        selected = !wholeSemester,
-                        onClick = { onWholeSemesterChange(false) },
-                        label = "当前周"
-                    )
-                    ExportChip(
-                        selected = wholeSemester,
-                        onClick = { onWholeSemesterChange(true) },
-                        label = "整学期"
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    ExportChip(!wholeSemester, { onWholeSemesterChange(false) }, "当前周")
+                    ExportChip(wholeSemester, { onWholeSemesterChange(true) }, "整学期")
+                    Text(if (wholeSemester) "$pageCount 页" else "单页", fontSize = 12.sp, color = Color(0xFF667085))
                 }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = if (wholeSemester) {
-                        "共 $pageCount 页，每周一页"
-                    } else {
-                        "第 $selectedWeek 周，单页"
-                    },
-                    color = Color(0xFF566072),
-                    fontSize = 13.sp
-                )
             }
-
-            if (!wholeSemester) {
-                WeekSelectionCard(
-                    selectedWeek = selectedWeek,
-                    currentWeekNumber = currentWeekNumber,
-                    maxAcademicWeek = maxAcademicWeek,
-                    weekMonday = weekMonday,
-                    onSelectWeek = onSelectWeek
-                )
+            ExportBitmapPreview(uiState, previewPage.copy(footer = pdfExportFooter()), useCurrentBackground, solidBackground, customBackgroundBitmap)
+            CollapsibleExportSection("外观与内容", (if (useCurrentBackground) "当前背景" else solidBackground.label) + " · " + contentSummary(showTeacher, showRoom)) {
+                BackgroundChoiceCard(useCurrentBackground, onUseCurrentBackgroundChange, hasCustomBackground, solidBackground, onSolidBackgroundChange)
+                Spacer(Modifier.height(12.dp))
+                ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange)
             }
-
-            BackgroundChoiceCard(
-                useCurrentBackground = useCurrentBackground,
-                onUseCurrentBackgroundChange = onUseCurrentBackgroundChange,
-                hasCustomBackground = hasCustomBackground,
-                solidBackground = solidBackground,
-                onSolidBackgroundChange = onSolidBackgroundChange
-            )
-
-            ContentTogglesCard(
-                showTeacher = showTeacher,
-                onShowTeacherChange = onShowTeacherChange,
-                showRoom = showRoom,
-                onShowRoomChange = onShowRoomChange
-            )
-
-            SectionCard {
-                SectionTitle("版式")
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "A4 纵向，背景与图片页同一套选择；每周一页。冲突课显示第一张，并在右下角标注冲突门数。",
-                    color = Color(0xFF566072),
-                    fontSize = 12.sp
-                )
+            CollapsibleExportSection("导出说明", if (wholeSemester) "整学期 · 每周一页" else "第 $selectedWeek 周 · 单页") {
+                Text("A4 纵向。上方预览为第 $selectedWeek 周；整学期导出包含全部周次。冲突课显示第一门并标注数量。隐藏的中午或周末不包含在 PDF 中。", color = Color(0xFF667085), fontSize = 12.sp)
             }
         }
-        ExportActionBar {
-            ExportActionButtons(
-                saveLabel = "保存 PDF",
-                shareLabel = "分享 PDF",
-                isBusy = isBusy,
-                onSave = onSave,
-                onShare = onShare
-            )
-        }
+        ExportActionBar { ExportActionButtons("保存 PDF", "分享", isBusy, onSave = onSave, onShare = onShare) }
     }
 }
 
@@ -1097,67 +1005,179 @@ private fun CsvExportTab(
     onSave: () -> Unit,
     onShare: () -> Unit
 ) {
-    val rowCount = (result as? ScheduleCsvResult.Success)?.rowCount ?: 0
-    Column(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 12.dp)
-        ) {
-            SemesterSelectionCard(semesterSelection)
-
+    val success = result as? ScheduleCsvResult.Success
+    val rows = remember(success?.content) { csvPreviewRows(success?.content.orEmpty(), limit = 4) }
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+            ExportContextCard(semesterSelection)
             SectionCard {
-                SectionTitle("表格")
+                Text("表格预览", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(10.dp))
+                // 课程列固定且较宽，其余列横向滚动；首屏仅展示三条课次。
+                Row(Modifier.fillMaxWidth()) {
+                    Column(Modifier.width(132.dp)) {
+                        rows.forEachIndexed { index, cells -> CsvPreviewCell(cells.firstOrNull().orEmpty(), index == 0, 132) }
+                    }
+                    Column(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                        rows.forEachIndexed { index, cells ->
+                            Row { cells.drop(1).forEach { CsvPreviewCell(it, index == 0, 90) } }
+                        }
+                    }
+                }
+                Text("左右滑动查看完整列", color = Color(0xFF7A8291), fontSize = 10.sp, modifier = Modifier.padding(top = 6.dp))
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "$rowCount 行 · 可用 Excel / WPS 打开",
-                    color = Color(0xFF141821),
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 20.sp
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "UTF-8（含 BOM），一行一条课次，周次保留教务原文；节次写成「第3-4节」，避免 Excel 把它识别成日期。",
-                    color = Color(0xFF566072),
-                    fontSize = 12.sp
-                )
+                Text("共 " + (success?.rowCount ?: 0) + " 行 · Excel / WPS 可打开", color = Color(0xFF667085), fontSize = 12.sp)
             }
-
-            ContentTogglesCard(
-                showTeacher = showTeacher,
-                onShowTeacherChange = onShowTeacherChange,
-                showRoom = showRoom,
-                onShowRoomChange = onShowRoomChange
-            )
-
-            SectionCard {
-                SectionTitle("列")
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = buildList {
-                        add("课程")
-                        add("星期")
-                        add("节次")
-                        add("周次")
-                        if (showRoom) add("教室")
-                        if (showTeacher) add("教师")
-                    }.joinToString("、"),
-                    color = Color(0xFF566072),
-                    fontSize = 13.sp
-                )
+            CollapsibleExportSection("显示内容", contentSummary(showTeacher, showRoom)) {
+                ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange)
+            }
+            CollapsibleExportSection("导出说明", "整学期 · 按课次去重") {
+                Text("一行一条课次，保留原始周次；UTF-8（含 BOM）。节次写为“第3-4节”，避免表格软件识别成日期。", fontSize = 12.sp, color = Color(0xFF667085))
             }
         }
-        ExportActionBar {
-            ExportActionButtons(
-                saveLabel = "保存 CSV",
-                shareLabel = "分享 CSV",
-                isBusy = isBusy,
-                enabled = rowCount > 0,
-                onSave = onSave,
-                onShare = onShare
-            )
+        ExportActionBar { ExportActionButtons("保存 CSV", "分享", isBusy, enabled = success != null, onSave = onSave, onShare = onShare) }
+    }
+}
+
+
+/** 上下文集中在同一条工具栏，避免学期与周次分别占据一张大卡片。 */
+@Composable
+private fun ExportContextCard(
+    state: SemesterSelectionState,
+    selectedWeek: Int? = null,
+    currentWeek: Int = 1,
+    maxWeek: Int = 1,
+    onSelectWeek: (Int) -> Unit = {}
+) {
+    var semesterMenu by remember { mutableStateOf(false) }
+    var weekMenu by remember { mutableStateOf(false) }
+    val semesterOptions = state.semesters.filter { it.isCurrent || it.cacheStatus == SemesterCacheStatus.CACHED }
+    val semesterScroll = rememberScrollState()
+    val weekScroll = rememberScrollState()
+    val rowPixels = with(LocalDensity.current) { 48.dp.roundToPx() }
+    // 打开时定位当前项，菜单只显示有限行数，不再从第一周开始铺满屏幕。
+    LaunchedEffect(weekMenu, selectedWeek) {
+        if (weekMenu) weekScroll.scrollTo(((selectedWeek ?: 1) - 3).coerceAtLeast(0) * rowPixels)
+    }
+    LaunchedEffect(semesterMenu, state.viewed?.id) {
+        if (semesterMenu) semesterScroll.scrollTo((semesterOptions.indexOfFirst { it.id == state.viewed?.id } - 2).coerceAtLeast(0) * rowPixels)
+    }
+    SectionCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { semesterMenu = true }, verticalAlignment = Alignment.CenterVertically) {
+                    Text(state.viewed?.displayName ?: "选择学期", fontSize = 13.sp, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    Icon(Icons.Outlined.KeyboardArrowDown, "切换学期", Modifier.size(18.dp), tint = Color(0xFF3F7DF6))
+                }
+                DropdownMenu(expanded = semesterMenu, onDismissRequest = { semesterMenu = false },
+                    modifier = Modifier.width(248.dp).heightIn(max = 320.dp), scrollState = semesterScroll,
+                    containerColor = Color(0xFFFFFEFB)) {
+                    semesterOptions.forEach { semester ->
+                        val selected = semester.id == state.viewed?.id
+                        DropdownMenuItem(text = { Text(semester.displayName, color = if (selected) Color(0xFF3268D7) else Color(0xFF141821), fontSize = 13.sp) },
+                            trailingIcon = { if (selected) Icon(Icons.Outlined.Check, "已选择", tint = Color(0xFF3268D7), modifier = Modifier.size(18.dp)) },
+                            modifier = Modifier.background(if (selected) Color(0xFFEDF3FF) else Color.Transparent).heightIn(min = 48.dp),
+                            onClick = { semesterMenu = false; state.onSelect(semester.id) })
+                    }
+                    HorizontalDivider(color = Color(0xFFEDE8DE))
+                    DropdownMenuItem(text = { Text("管理与下载其他学期", color = Color(0xFF3268D7), fontSize = 13.sp) }, onClick = { semesterMenu = false; state.onManage() })
+                }
+            }
+            Spacer(Modifier.width(15.dp))
+            Box {
+                Text(if (selectedWeek == null) "整学期" else "第 $selectedWeek 周 ⌄", color = Color(0xFF3268D7), fontSize = 13.sp,
+                    modifier = Modifier.clickable(enabled = selectedWeek != null) { weekMenu = true }.padding(vertical = 9.dp))
+                DropdownMenu(expanded = weekMenu, onDismissRequest = { weekMenu = false },
+                    modifier = Modifier.width(180.dp).heightIn(max = 320.dp), scrollState = weekScroll,
+                    containerColor = Color(0xFFFFFEFB)) {
+                    (1..maxWeek).forEach { week ->
+                        val selected = week == selectedWeek
+                        DropdownMenuItem(text = { Text("第 $week 周" + if (week == currentWeek) "（本周）" else "", color = if (selected) Color(0xFF3268D7) else Color(0xFF141821), fontSize = 13.sp) },
+                            trailingIcon = { if (selected) Icon(Icons.Outlined.Check, "已选择", tint = Color(0xFF3268D7), modifier = Modifier.size(18.dp)) },
+                            modifier = Modifier.background(if (selected) Color(0xFFEDF3FF) else Color.Transparent).heightIn(min = 48.dp),
+                            onClick = { weekMenu = false; onSelectWeek(week) })
+                    }
+                }
+            }
+        }
+        if (state.isHistorical) Text("历史学期只读快照", color = Color(0xFF8A6D3B), fontSize = 10.sp)
+    }
+}
+
+private fun contentSummary(teacher: Boolean, room: Boolean): String = buildList {
+    if (teacher) add("教师")
+    if (room) add("教室")
+}.joinToString(" / ").ifBlank { "不含教师、教室" }
+
+/** 降低首屏信息密度，选项仍然可发现并可直接编辑，按钮操作区域不少于 48dp。 */
+@Composable
+private fun CollapsibleExportSection(title: String, summary: String, content: @Composable () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    SectionCard {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+            Text(summary, fontSize = 11.sp, color = Color(0xFF667085), maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1.2f))
+            Icon(Icons.Outlined.KeyboardArrowDown, if (expanded) "收起$title" else "展开$title", Modifier.size(18.dp), tint = Color(0xFF667085))
+        }
+        if (expanded) { Spacer(Modifier.height(10.dp)); content() }
+    }
+}
+
+/** 用实际导出渲染器生成可缩放预览，课程内容与保存文件共用同一份页面模型。 */
+@Composable
+private fun ExportBitmapPreview(
+    uiState: ScheduleUiState,
+    page: PdfWeekPage,
+    useCurrentBackground: Boolean,
+    solid: ExportSolidBackground,
+    custom: ImageBitmap?
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var expanded by remember { mutableStateOf(false) }
+    var previewFailed by remember { mutableStateOf(false) }
+    val bitmap by produceState<android.graphics.Bitmap?>(null, page, useCurrentBackground, solid, custom, uiState.backgroundDimAmount, uiState.customBackgroundUri) {
+        previewFailed = false
+        value = null
+        value = withContext(Dispatchers.Default) {
+            var owned: android.graphics.Bitmap? = null
+            try {
+                val background = when {
+                    !useCurrentBackground -> PdfBackground.Solid(solid.topColor, solid.bottomColor)
+                    custom != null -> PdfBackground.Image(custom.asAndroidBitmap())
+                    !shouldUseCustomBackground(uiState.customBackgroundUri) -> {
+                        owned = android.graphics.BitmapFactory.decodeResource(context.resources, R.drawable.builtin_flower_background)
+                        owned?.let { PdfBackground.Image(it) } ?: PdfBackground.Solid(solid.topColor, solid.bottomColor)
+                    }
+                    else -> PdfBackground.Solid(solid.topColor, solid.bottomColor)
+                }
+                renderScheduleWeekImage(page, background, uiState.backgroundDimAmount)
+            } catch (_: Exception) { null }
+            finally { owned?.recycle() }
+        }
+        previewFailed = value == null
+    }
+    DisposableEffect(bitmap) { val current = bitmap; onDispose { current?.recycle() } }
+    SectionCard {
+        Box(Modifier.fillMaxWidth().height(238.dp).clip(RoundedCornerShape(8.dp)).clickable(enabled = bitmap != null) { expanded = true }, contentAlignment = Alignment.Center) {
+            bitmap?.let { image ->
+                // 按宽度显示上段局部，纵向滚动查看后续节次，避免整张长图缩成细条。
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    Image(image.asImageBitmap(), "课表导出预览",
+                        Modifier.fillMaxWidth().aspectRatio(image.width.toFloat() / image.height), contentScale = ContentScale.FillWidth)
+                }
+            }
+                ?: Text(if (previewFailed) "预览暂不可用，可尝试重新选择背景" else "正在生成预览…", color = Color(0xFF667085), fontSize = 12.sp)
+        }
+        Text("可上下滚动 · 点击放大全图", color = Color(0xFF7A8291), fontSize = 10.sp, modifier = Modifier.align(Alignment.End))
+    }
+    if (expanded && bitmap != null) {
+        Dialog({ expanded = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Column(Modifier.fillMaxSize().background(Color(0xFF17202D)).padding(16.dp)) {
+                Image(bitmap!!.asImageBitmap(), "完整课表预览", Modifier.weight(1f).fillMaxWidth(), contentScale = ContentScale.Fit)
+                TextButton(colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF3268D7)), onClick = { expanded = false }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("关闭预览", color = Color.White) }
+            }
         }
     }
 }
@@ -1338,47 +1358,6 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun WeekSelectionCard(
-    selectedWeek: Int,
-    currentWeekNumber: Int,
-    maxAcademicWeek: Int,
-    weekMonday: java.time.LocalDate,
-    onSelectWeek: (Int) -> Unit
-) {
-    SectionCard {
-        SectionTitle("周次")
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = "第 $selectedWeek 周 · " +
-                "${weekMonday.format(exportDateFormatter)} – " +
-                "${weekMonday.plusDays(6).format(exportDateFormatter)}",
-            color = Color(0xFF566072),
-            fontSize = 13.sp
-        )
-        Spacer(Modifier.height(8.dp))
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(end = 4.dp)
-        ) {
-            item {
-                ExportChip(
-                    selected = selectedWeek == currentWeekNumber,
-                    onClick = { onSelectWeek(currentWeekNumber) },
-                    label = "本周"
-                )
-            }
-            items((1..maxAcademicWeek).toList()) { number ->
-                ExportChip(
-                    selected = selectedWeek == number,
-                    onClick = { onSelectWeek(number) },
-                    label = "$number"
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun BackgroundChoiceCard(
     useCurrentBackground: Boolean,
     onUseCurrentBackgroundChange: (Boolean) -> Unit,
@@ -1386,61 +1365,17 @@ private fun BackgroundChoiceCard(
     solidBackground: ExportSolidBackground,
     onSolidBackgroundChange: (ExportSolidBackground) -> Unit
 ) {
-    SectionCard {
+    Column {
         SectionTitle("背景")
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ExportChip(
-                selected = useCurrentBackground,
-                onClick = { onUseCurrentBackgroundChange(true) },
-                label = "当前背景"
-            )
-            ExportChip(
-                selected = !useCurrentBackground,
-                onClick = { onUseCurrentBackgroundChange(false) },
-                label = "简洁纯色"
-            )
+            ExportChip(selected = !useCurrentBackground, onClick = {
+                onSolidBackgroundChange(ExportSolidBackground.WHITE)
+                onUseCurrentBackgroundChange(false)
+            }, label = "纯白")
+            ExportChip(selected = useCurrentBackground, onClick = { onUseCurrentBackgroundChange(true) }, label = "当前背景")
         }
-        if (!useCurrentBackground) {
-            Spacer(Modifier.height(10.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(ExportSolidBackground.entries.toList()) { option ->
-                    val selected = option == solidBackground
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.verticalGradient(
-                                        listOf(Color(option.topColor), Color(option.bottomColor))
-                                    )
-                                )
-                                .border(
-                                    width = if (selected) 2.dp else 1.dp,
-                                    color = if (selected) Color(0xFF3F7DF6) else Color(0x33000000),
-                                    shape = CircleShape
-                                )
-                                .clickable { onSolidBackgroundChange(option) }
-                        )
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = option.label,
-                            color = if (selected) Color(0xFF3F7DF6) else Color(0xFF566072),
-                            fontSize = 10.sp
-                        )
-                    }
-                }
-            }
-        }
-        if (hasCustomBackground) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "自定义背景可能包含私人照片，默认不导出",
-                color = Color(0xFF8A6D3B),
-                fontSize = 12.sp
-            )
-        }
+        if (hasCustomBackground) Text("选择当前背景后，导出将包含你的自定义图片。", color = Color(0xFF667085), fontSize = 11.sp)
     }
 }
 
@@ -1451,7 +1386,7 @@ private fun ContentTogglesCard(
     showRoom: Boolean,
     onShowRoomChange: (Boolean) -> Unit
 ) {
-    SectionCard {
+    Column {
         SectionTitle("内容")
         Spacer(Modifier.height(4.dp))
         SwitchRow("显示教师", showTeacher, onShowTeacherChange)
@@ -1468,56 +1403,22 @@ private fun ExportActionButtons(
     onSave: () -> Unit,
     onShare: () -> Unit
 ) {
-    Button(
-        onClick = onSave,
-        enabled = enabled && !isBusy,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(46.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color(0xFF3F7DF6),
-            contentColor = Color.White,
-            disabledContainerColor = Color(0xFFB8C6E6),
-            disabledContentColor = Color.White
-        )
-    ) {
-        Icon(
-            Icons.Outlined.SaveAlt,
-            contentDescription = null,
-            modifier = Modifier.size(18.dp)
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = if (isBusy) "正在生成…" else saveLabel,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 15.sp
-        )
-    }
-    Spacer(Modifier.height(8.dp))
-    Button(
-        onClick = onShare,
-        enabled = enabled && !isBusy,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(46.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color(0xFFE8F0FE),
-            contentColor = Color(0xFF1B5FE0),
-            disabledContainerColor = Color(0xFFEFF2F7),
-            disabledContentColor = Color(0xFF9AA3B2)
-        )
-    ) {
-        Icon(
-            Icons.Outlined.IosShare,
-            contentDescription = null,
-            modifier = Modifier.size(18.dp)
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = shareLabel,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 15.sp
-        )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(onClick = onSave, enabled = enabled && !isBusy,
+            modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3F7DF6), contentColor = Color.White)) {
+            Icon(Icons.Outlined.SaveAlt, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(7.dp))
+            Text(if (isBusy) "正在生成…" else saveLabel, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Button(onClick = onShare, enabled = enabled && !isBusy,
+            modifier = Modifier.height(48.dp).width(76.dp), shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE8F0FE), contentColor = Color(0xFF1B5FE0))) {
+            Icon(Icons.Outlined.IosShare, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("分享", fontSize = 12.sp)
+        }
     }
 }
 
@@ -1525,7 +1426,7 @@ private fun ExportActionButtons(
 private fun ExportActionBar(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     Surface(
         color = Color(0xFFF6F4EF),
-        shadowElevation = 8.dp,
+        shadowElevation = 0.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -1547,7 +1448,7 @@ private fun SectionCard(content: @Composable androidx.compose.foundation.layout.
         color = Color.White,
         tonalElevation = 0.dp
     ) {
-        Column(modifier = Modifier.padding(14.dp), content = content)
+        Column(modifier = Modifier.padding(12.dp), content = content)
     }
 }
 
@@ -1579,5 +1480,17 @@ private fun ExportEmptyState(onImportClick: () -> Unit, modifier: Modifier = Mod
             Spacer(Modifier.height(16.dp))
             Button(onClick = onImportClick) { Text("去导入") }
         }
+    }
+}
+
+/** 表头和内容使用固定行高，让固定课程列与横向滚动区域始终对齐。 */
+@Composable
+private fun CsvPreviewCell(value: String, header: Boolean, width: Int) {
+    Column(Modifier.width(width.dp).height(if (header) 36.dp else 48.dp).background(if (header) Color(0xFFF0F3F8) else Color.Transparent)) {
+        Text(value, Modifier.weight(1f).fillMaxWidth().padding(horizontal = 7.dp, vertical = 7.dp),
+            color = if (header) Color(0xFF566072) else Color(0xFF141821),
+            fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal)
+        HorizontalDivider(color = Color(0xFFE8EBF0))
     }
 }

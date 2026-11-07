@@ -63,6 +63,12 @@ class HomeworkStore(context: Context) {
             .putString("failureSummary", result.failureReasons.entries.joinToString("；") { "${it.key}：${it.value} 门" })
             .putString("lastError", "").apply()
     }
+    /** 同步与退出共用代次检查，旧账号的列表响应不能在退出后重新填入。 */
+    fun mergeIfGeneration(result: HomeworkSyncResult, expected: Long): Boolean = synchronized(detailLock) {
+        if (generation != expected) return@synchronized false
+        merge(result)
+        true
+    }
     // clear 与详情写回共用进程锁和持久代次，阻止退出后的旧请求重新生成缓存。
     fun clear() = synchronized(detailLock) {
         val next = generation + 1L

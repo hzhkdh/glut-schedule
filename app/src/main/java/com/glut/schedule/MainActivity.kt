@@ -746,7 +746,7 @@ class MainActivity : ComponentActivity() {
                                             modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 4.dp)
                                         )
                                     }
-items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import, DrawerItem.Export)) { item ->
+items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerItem.SemesterOverview, DrawerItem.Import)) { item ->
                                         DrawerMenuItem(
                                             item = item,
                                             isSelected = selectedItem == item,
@@ -1649,13 +1649,12 @@ private fun ScheduleSettingsDestination(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val campusCapabilities = capabilitiesFor(uiState.campusType)
-    // 来源切换后同步收起不适用的子页，避免验证码来源仍可操作定时任务。
+    // 统一刷新入口按任务限制来源，作息子页仍按当前校区能力收起。
     val effectiveSubPage = if (
-        (subPage == SettingsSubPage.CLASS_PERIODS && !campusCapabilities.supportsClassPeriodSettings) ||
-        (subPage == SettingsSubPage.SCHEDULED_REFRESH && uiState.campusType != CampusType.GUILIN)
+        subPage == SettingsSubPage.CLASS_PERIODS && !campusCapabilities.supportsClassPeriodSettings
     ) SettingsSubPage.ROOT else subPage
     when (effectiveSubPage) {
-        SettingsSubPage.SCHEDULED_REFRESH -> ScheduledRefreshScreen()
+        SettingsSubPage.SCHEDULED_REFRESH -> ScheduledRefreshScreen(campus = uiState.campusType)
         SettingsSubPage.COURSE_COLORS -> CourseColorsPage(
             // 用完整课表：隐藏掉的卡片也要能在这里改色。
             courses = uiState.allCourses,
@@ -1717,7 +1716,7 @@ private fun ScheduleSettingsDestination(
             classPeriodsEnabled = campusCapabilities.supportsClassPeriodSettings,
             onClassPeriods = { onSubPageChange(SettingsSubPage.CLASS_PERIODS) },
             onHolidayAdjustments = { onSubPageChange(SettingsSubPage.HOLIDAY_ADJUSTMENTS) },
-            scheduledRefreshEnabled = uiState.campusType == CampusType.GUILIN,
+            scheduledRefreshEnabled = true,
             onScheduledRefresh = { onSubPageChange(SettingsSubPage.SCHEDULED_REFRESH) },
             onReset = onReset
         )
@@ -2049,12 +2048,12 @@ private fun SettingsPage(
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 不支持的来源整行禁用，并直接说明验证码限制，无需用户点进后才发现。
+                    // 所有来源均可管理计划，教务验证码限制由任务目录逐项说明。
                     val rowColor = if (scheduledRefreshEnabled) settingsPrimary else settingsSecondary.copy(alpha = 0.45f)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("定时刷新", color = rowColor, fontSize = 15.sp)
                         Text(
-                            if (scheduledRefreshEnabled) "每天按设定时间更新教务数据" else "南宁和研究生教务需要验证码，暂不支持定时刷新",
+                            "按每日计划更新所选内容",
                             color = if (scheduledRefreshEnabled) settingsSecondary else rowColor,
                             fontSize = 12.sp
                         )

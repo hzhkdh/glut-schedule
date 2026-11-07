@@ -29,6 +29,8 @@ private const val DAY_HEADER_HEIGHT = 28f
 class SchedulePdfWriter(
     private val style: PdfPageStyle = PdfPageStyle()
 ) : Closeable {
+    // 同一文件所有页面使用同一天的导出日期，即使跨过午夜也不混用。
+    private val exportedOn = java.time.LocalDate.now()
     private val document = PdfDocument()
     private var pageIndex = 0
 
@@ -37,7 +39,7 @@ class SchedulePdfWriter(
         val pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageIndex).create()
         val pdfPage = document.startPage(pageInfo)
         try {
-            drawPage(pdfPage.canvas, page, style)
+            drawPage(pdfPage.canvas, page.copy(footer = pdfExportFooter(exportedOn)), style)
         } finally {
             document.finishPage(pdfPage)
         }

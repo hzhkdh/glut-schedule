@@ -29,7 +29,7 @@ class ScheduledRefreshTimeReceiver : BroadcastReceiver() {
                     val config = ScheduledRefreshStore(application).config.first()
                     val campus = container.settingsStore.campusType.first()
                     val session = container.academicSessionStore.profileSession.first()
-                    reconcileScheduledRefresh(application, config, supportsScheduledRefresh(campus, session))
+                    reconcileScheduledRefresh(application, config, true)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
