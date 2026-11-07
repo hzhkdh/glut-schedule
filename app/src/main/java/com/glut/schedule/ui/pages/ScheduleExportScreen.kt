@@ -853,12 +853,13 @@ private fun ImageExportTab(
             ExportBitmapPreview(uiState, previewPage, useCurrentBackground, solidBackground, customBackgroundBitmap)
             CollapsibleExportSection("外观与内容", (if (useCurrentBackground) "当前背景" else solidBackground.label) + " · " + contentSummary(showTeacher, showRoom)) {
                 BackgroundChoiceCard(useCurrentBackground, onUseCurrentBackgroundChange, hasCustomBackground, solidBackground, onSolidBackgroundChange)
-                ExportDisplayToggles(showNoon, showWeekend, capabilities.hasNoonSections, onShowNoonChange, onShowWeekendChange)
                 Spacer(Modifier.height(12.dp))
-                ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange)
+                ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange) {
+                    ExportDisplayToggles(showNoon, showWeekend, capabilities.hasNoonSections, onShowNoonChange, onShowWeekendChange)
+                }
             }
             CollapsibleExportSection("导出说明", "第 $selectedWeek 周 · 点击预览可放大") {
-                Text("保存完整课表图片。冲突课显示第一门，并标注冲突数量；隐藏的中午或周末不包含在图片中。", color = Color(0xFF667085), fontSize = 12.sp)
+                Text("导出所选学期、第 $selectedWeek 周的完整图片，预览可上下滚动或点击放大。“内容”分组中的中午、周末开关仅用于图片和 PDF，与主课表、情侣课表的设置独立；关闭后不导出对应行或列。背景、教师和教室按所选内容导出。冲突课显示第一门，并标注数量。页脚注明实际导出日期。", color = Color(0xFF667085), fontSize = 12.sp)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -996,7 +997,7 @@ private fun CalendarExportTab(
                 ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange)
             }
             CollapsibleExportSection("导出说明", "整学期 · 导入系统日历使用") {
-                Text("停课课次不生成事件；调课、补课按实际周次生成。文件导入后不会随课表自动同步，请由日历应用管理提醒和重复导入。", fontSize = 12.sp, color = Color(0xFF667085))
+                Text("导出所选学期的 ICS 文件，包含中午和周末课程，不受图片、PDF 的显示开关影响；教师和教室按“显示内容”选择生成。停课课次不生成事件，调课、补课按实际日期生成。需要可靠校历和完整上课时间。保存后可打开文件交给日历应用导入；导入后不会自动随课表更新，提醒与重复导入由日历应用管理。", fontSize = 12.sp, color = Color(0xFF667085))
             }
         }
         ExportActionBar { ExportActionButtons("保存 ICS", "分享", isBusy, enabled = success != null, onSave = onSave, onShare = onShare) }
@@ -1048,12 +1049,13 @@ private fun PdfExportTab(
             ExportBitmapPreview(uiState, previewPage.copy(footer = pdfExportFooter()), useCurrentBackground, solidBackground, customBackgroundBitmap)
             CollapsibleExportSection("外观与内容", (if (useCurrentBackground) "当前背景" else solidBackground.label) + " · " + contentSummary(showTeacher, showRoom)) {
                 BackgroundChoiceCard(useCurrentBackground, onUseCurrentBackgroundChange, hasCustomBackground, solidBackground, onSolidBackgroundChange)
-                ExportDisplayToggles(showNoon, showWeekend, hasNoonSections, onShowNoonChange, onShowWeekendChange)
                 Spacer(Modifier.height(12.dp))
-                ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange)
+                ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange) {
+                    ExportDisplayToggles(showNoon, showWeekend, hasNoonSections, onShowNoonChange, onShowWeekendChange)
+                }
             }
             CollapsibleExportSection("导出说明", if (wholeSemester) "整学期 · 每周一页" else "第 $selectedWeek 周 · 单页") {
-                Text("A4 纵向。上方预览为第 $selectedWeek 周；整学期导出包含全部周次。冲突课显示第一门并标注数量。隐藏的中午或周末不包含在 PDF 中。", color = Color(0xFF667085), fontSize = 12.sp)
+                Text("A4 纵向。上方预览为第 $selectedWeek 周；单周导出所选周，整学期按每周一页导出。“内容”分组中的中午、周末开关与图片共用，独立于主课表和情侣课表；关闭后不导出对应行或列。背景、教师和教室按所选内容导出。冲突课显示第一门并标注数量，页脚注明实际导出日期。", color = Color(0xFF667085), fontSize = 12.sp)
             }
         }
         ExportActionBar { ExportActionButtons("保存 PDF", "分享", isBusy, onSave = onSave, onShare = onShare) }
@@ -1099,7 +1101,7 @@ private fun CsvExportTab(
                 ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange)
             }
             CollapsibleExportSection("导出说明", "整学期 · 按课次去重") {
-                Text("一行一条课次，保留原始周次；UTF-8（含 BOM）。节次写为“第3-4节”，避免表格软件识别成日期。", fontSize = 12.sp, color = Color(0xFF667085))
+                Text("导出所选学期的 CSV 表格，一行一条课次，去重并保留原始周次。包含中午和周末课程，不受图片、PDF 的显示开关影响；教师和教室按“显示内容”选择导出。使用 UTF-8（含 BOM），可用 Excel 或 WPS 打开；节次写为“第3-4节”，避免被识别成日期。", fontSize = 12.sp, color = Color(0xFF667085))
             }
         }
         ExportActionBar { ExportActionButtons("保存 CSV", "分享", isBusy, enabled = success != null, onSave = onSave, onShare = onShare) }
@@ -1190,6 +1192,7 @@ private fun ExportDisplayToggles(
     onShowNoonChange: (Boolean) -> Unit,
     onShowWeekendChange: (Boolean) -> Unit
 ) {
+    // 显示范围归入“内容”，与教师、教室开关连续排列。
     if (hasNoonSections) SwitchRow("显示中午", showNoon, onShowNoonChange)
     SwitchRow("显示周末", showWeekend, onShowWeekendChange)
 }
@@ -1472,11 +1475,14 @@ private fun ContentTogglesCard(
     showTeacher: Boolean,
     onShowTeacherChange: (Boolean) -> Unit,
     showRoom: Boolean,
-    onShowRoomChange: (Boolean) -> Unit
+    onShowRoomChange: (Boolean) -> Unit,
+    displayOptions: @Composable () -> Unit = {}
 ) {
     Column {
         SectionTitle("内容")
         Spacer(Modifier.height(4.dp))
+        // 图片和 PDF 注入显示范围；表格、日历只保留原有内容开关。
+        displayOptions()
         SwitchRow("显示教师", showTeacher, onShowTeacherChange)
         SwitchRow("显示教室", showRoom, onShowRoomChange)
     }
