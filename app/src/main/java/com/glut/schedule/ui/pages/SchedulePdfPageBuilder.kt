@@ -11,6 +11,7 @@ import com.glut.schedule.service.export.PdfCourseSlot
 import com.glut.schedule.service.export.PdfDayHeader
 import com.glut.schedule.service.export.PdfPeriodRow
 import com.glut.schedule.service.export.PdfWeekPage
+import com.glut.schedule.service.export.pdfExportFooter
 import com.glut.schedule.ui.components.overlappingCourseBlockGroups
 import com.glut.schedule.ui.components.scheduleCalendarDays
 import com.glut.schedule.ui.components.scheduleDayMarker
@@ -97,7 +98,7 @@ internal fun buildPdfWeekPage(
             label = displaySectionLabel(period.section, hasNoonSections),
             timeText = listOf(period.startsAt, period.endsAt)
                 .filter { it.isNotBlank() }
-                .joinToString("–")
+                .joinToString("\n")
         )
     }
 
@@ -111,7 +112,7 @@ internal fun buildPdfWeekPage(
         days = days,
         rows = rowsData,
         slots = slots,
-        footer = "由「桂工课表」导出 · 第 ${week.number} 周",
+        footer = pdfExportFooter(),
         monthText = if (showCalendarDates) "${week.monday.monthValue}月" else "",
         pageNumber = pageNumber,
         pageCount = pageCount

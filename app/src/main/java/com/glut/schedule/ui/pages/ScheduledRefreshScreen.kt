@@ -43,7 +43,7 @@ private val RefreshLine = Color(0xFFEDE8DE)
 
 /** 页面只保存每日计划；统一由应用层观察配置并登记系统任务。 */
 @Composable
-fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN) {
+fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN, onLoginRequired: ((RefreshTaskId) -> Unit)? = null) {
     val context = LocalContext.current
     val store = remember(context) { ScheduledRefreshStore(context) }
     val config by store.config.collectAsStateWithLifecycle(initialValue = ScheduledRefreshConfig())
@@ -58,6 +58,9 @@ fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN) {
     var now by remember { mutableStateOf(Instant.now()) }
     val zone = ZoneId.systemDefault()
     val formatter = remember { DateTimeFormatter.ofPattern("MM月dd日 HH:mm", Locale.CHINA) }
+    // 摘要和详情始终读取同一份记录，旧版的独立状态文字不再覆盖实际运行结果。
+    val runs = config.runs.sortedByDescending { it.startedAt }.take(20)
+    val latestRun = runs.firstOrNull()
     fun timestamp(value: Long) = if (value > 0) formatter.format(Instant.ofEpochMilli(value).atZone(zone)) else "尚无记录"
     LaunchedEffect(Unit) { while (true) { now = Instant.now(); delay(30_000) } }
     fun persist(action: suspend () -> Unit) {
@@ -84,30 +87,7 @@ fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN) {
                     editing = null
                 } }
             )
-            showRuns -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("运行记录", color = RefreshText, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    RefreshAction("返回", onClick = { showRuns = false })
-                }
-                if (config.runs.isEmpty()) RefreshGroup { Text("还没有运行记录，计划执行后会显示各项结果。", color = RefreshSecondary, modifier = Modifier.padding(16.dp), fontSize = 13.sp) }
-                config.runs.take(20).forEach { run ->
-                    RefreshGroup {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(timestamp(run.startedAt), color = RefreshText, fontWeight = FontWeight.Medium)
-                            run.results.forEach { result ->
-                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text(result.taskId.title, modifier = Modifier.weight(1f), color = RefreshText, fontSize = 14.sp)
-                                        Text(result.status.label(), color = if (result.status == RefreshTaskStatus.SUCCESS) Color(0xFF32815D) else RefreshSecondary, fontSize = 12.sp)
-                                    }
-                                    if (result.message.isNotBlank()) Text(result.message, color = RefreshSecondary, fontSize = 12.sp)
-                                }
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(16.dp))
-            }
+            showRuns -> RefreshRunsPage(runs, config.lastAttempt, now, onBack = { showRuns = false }, onLoginRequired = onLoginRequired)
             else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 RefreshGroup {
                     Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -134,6 +114,11 @@ fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN) {
                         RefreshAction("知道了", enabled = !saving, onClick = { persist { store.dismissLearningMigration() } })
                     }
                 }
+                // 测试版旧配置可能超出新目录或数量限制，明确说明恢复方式，避免开关看似无响应。
+                if (config.status == "计划配置不可用，请重新编辑保存") {
+                    Text("原计划不符合当前规则，定时刷新已暂停。请编辑下方计划并保存，再开启刷新。",
+                        color = Color(0xFFB4483D), fontSize = 12.sp, lineHeight = 19.sp)
+                }
                 Text("每日计划", color = RefreshSecondary, fontSize = 13.sp)
                 RefreshGroup {
                     Column {
@@ -142,20 +127,30 @@ fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN) {
                             RefreshPlanSummary(plan, !saving) { editing = plan }
                         }
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = RefreshLine)
-                        TextButton(enabled = !saving && config.plans.size < 8,
+                        TextButton(enabled = !saving && config.plans.size < MAX_SCHEDULED_REFRESH_PLANS,
                             onClick = { editing = ScheduledRefreshPlan(UUID.randomUUID().toString(), 420, emptySet()) },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), colors = ButtonDefaults.textButtonColors(contentColor = RefreshBlue)) {
-                            Text(if (config.plans.size < 8) "＋ 添加计划" else "已达到8个计划上限")
+                            Text(if (config.plans.size < MAX_SCHEDULED_REFRESH_PLANS) "＋ 添加计划" else "已达到3个计划上限")
                         }
                     }
                 }
                 RefreshGroup {
                     Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(config.status, modifier = Modifier.weight(1f), color = RefreshText, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(latestRun?.let { scheduledRefreshRunSummary(it).title } ?: if (config.lastAttempt > 0) "旧版运行记录" else "尚未执行",
+                                modifier = Modifier.weight(1f), color = latestRun?.let { refreshRunColor(scheduledRefreshRunSummary(it).status) } ?: RefreshText,
+                                fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             RefreshAction("查看详情 ›", onClick = { showRuns = true })
                         }
-                        Text("最近运行　${timestamp(config.lastAttempt)}", color = RefreshSecondary, fontSize = 12.sp)
+                        if (latestRun != null) {
+                            val summary = scheduledRefreshRunSummary(latestRun)
+                            Text("实际开始　${timestamp(latestRun.startedAt)}", color = RefreshSecondary, fontSize = 12.sp)
+                            Text("计划时间　${latestRun.minuteOfDay?.let(::refreshMinuteText) ?: "旧版未记录"}",
+                                color = RefreshSecondary, fontSize = 12.sp)
+                            Text(refreshRunCounts(latestRun, summary), color = RefreshSecondary, fontSize = 12.sp)
+                        } else if (config.lastAttempt > 0) {
+                            Text("${timestamp(config.lastAttempt)} · 旧版记录无逐项详情", color = RefreshSecondary, fontSize = 12.sp)
+                        } else Text("计划执行后显示实际开始时间和结果", color = RefreshSecondary, fontSize = 12.sp)
                         // 以系统登记记录为准，不能把尚未执行的计划自行跳到下一时刻。
                         val work = workInfos.firstOrNull { !it.state.isFinished }
                         val plannedAt = work?.nextScheduleTimeMillis?.takeIf { it in 1 until Long.MAX_VALUE }
@@ -179,6 +174,125 @@ fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN) {
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
     }
+}
+
+/** 只展示最近二十次，按实际开始日期归组；默认展开最近一次，避免长记录挤满屏幕。 */
+@Composable
+private fun RefreshRunsPage(
+    runs: List<ScheduledRefreshRun>, legacyAttempt: Long, now: Instant,
+    onBack: () -> Unit, onLoginRequired: ((RefreshTaskId) -> Unit)?
+) {
+    var expanded by remember(runs.firstOrNull()?.id) { mutableStateOf(setOfNotNull(runs.firstOrNull()?.id)) }
+    val zone = ZoneId.systemDefault()
+    val dateFormatter = remember { DateTimeFormatter.ofPattern("yyyy年MM月dd日", Locale.CHINA) }
+    val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm:ss", Locale.CHINA) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("运行记录", color = RefreshText, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text("最近20次 · 点击展开逐项结果", color = RefreshSecondary, fontSize = 12.sp)
+            }
+            RefreshAction("返回", onClick = onBack)
+        }
+        if (runs.isEmpty()) RefreshGroup {
+            Text(if (legacyAttempt > 0) "旧版运行记录无逐项详情，新计划执行后将在这里显示。" else "还没有运行记录，计划执行后会显示各项结果。",
+                color = RefreshSecondary, modifier = Modifier.padding(16.dp), fontSize = 13.sp, lineHeight = 20.sp)
+        }
+        runs.groupBy { Instant.ofEpochMilli(it.startedAt).atZone(zone).toLocalDate() }.forEach { (date, dayRuns) ->
+            Text(dateFormatter.format(date), color = RefreshSecondary, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            dayRuns.forEach { run ->
+                val summary = scheduledRefreshRunSummary(run)
+                val isExpanded = run.id in expanded
+                RefreshGroup {
+                    Column {
+                        Column(Modifier.fillMaxWidth().clickable {
+                            expanded = if (isExpanded) expanded - run.id else expanded + run.id
+                        }.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(timeFormatter.format(Instant.ofEpochMilli(run.startedAt).atZone(zone)), modifier = Modifier.weight(1f),
+                                    color = RefreshText, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                Text(summary.title, color = refreshRunColor(summary.status), fontSize = 12.sp)
+                                Text(if (isExpanded) "  ⌃" else "  ›", color = RefreshSecondary, fontSize = 15.sp)
+                            }
+                            Text("计划 ${run.minuteOfDay?.let(::refreshMinuteText) ?: "旧版未记录"}　·　${refreshRunDuration(run, now)}",
+                                color = RefreshSecondary, fontSize = 12.sp)
+                            Text(refreshRunCounts(run, summary),
+                                color = RefreshSecondary, fontSize = 12.sp)
+                        }
+                        if (isExpanded) {
+                            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = RefreshLine)
+                            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                val tasks = (run.taskIds + run.results.map { it.taskId }).sortedBy { it.ordinal }
+                                if (tasks.isEmpty()) Text("旧版记录无逐项详情", color = RefreshSecondary, fontSize = 12.sp)
+                                tasks.forEach { task ->
+                                    val result = run.results.lastOrNull { it.taskId == task }
+                                    val label = result?.status?.label() ?: when {
+                                        run.state == ScheduledRefreshRunState.INTERRUPTED -> "已中断"
+                                        run.activeTask == task -> "正在刷新"
+                                        run.state == ScheduledRefreshRunState.RUNNING -> "等待刷新"
+                                        else -> "无结果"
+                                    }
+                                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                            Text(task.title, modifier = Modifier.weight(1f), color = RefreshText, fontSize = 14.sp)
+                                            Text(label, color = if (result?.status == RefreshTaskStatus.SUCCESS) Color(0xFF32815D) else RefreshSecondary, fontSize = 12.sp)
+                                        }
+                                        // 失败原因采用简短说明，避免直接渲染接口响应、登录信息或堆栈。
+                                        if (result != null && result.status != RefreshTaskStatus.SUCCESS) {
+                                            Text(refreshFailureReason(result), color = RefreshSecondary, fontSize = 12.sp, lineHeight = 18.sp)
+                                            if (result.status == RefreshTaskStatus.LOGIN_REQUIRED && onLoginRequired != null) {
+                                                RefreshAction(if (task == RefreshTaskId.CHAOXING) "前往学习通登录 ›" else "前往教务登录 ›",
+                                                    onClick = { onLoginRequired(task) })
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+private fun refreshRunColor(status: ScheduledRefreshRunStatus) = when (status) {
+    ScheduledRefreshRunStatus.RUNNING -> RefreshBlue
+    ScheduledRefreshRunStatus.FULL_SUCCESS -> Color(0xFF32815D)
+    ScheduledRefreshRunStatus.PARTIAL_SUCCESS, ScheduledRefreshRunStatus.LOGIN_REQUIRED -> Color(0xFF9B6D24)
+    ScheduledRefreshRunStatus.FAILED -> Color(0xFFB4483D)
+    ScheduledRefreshRunStatus.INTERRUPTED -> RefreshSecondary
+}
+
+/** 登录失效单独计数，避免把跳过登录验证的项目误报为普通刷新失败。 */
+private fun refreshRunCounts(run: ScheduledRefreshRun, summary: ScheduledRefreshRunSummary): String {
+    val failed = run.results.count { it.status == RefreshTaskStatus.FAILED }
+    val login = run.results.count { it.status == RefreshTaskStatus.LOGIN_REQUIRED }
+    val unsupported = run.results.count { it.status == RefreshTaskStatus.UNSUPPORTED }
+    return "成功 ${summary.successCount}/${summary.totalCount}　失败 $failed" +
+        (if (login > 0) "　需登录 $login" else "") + (if (unsupported > 0) "　不支持 $unsupported" else "")
+}
+
+private fun refreshRunDuration(run: ScheduledRefreshRun, now: Instant): String {
+    val running = run.state == ScheduledRefreshRunState.RUNNING
+    val end = if (running) now.toEpochMilli() else run.finishedAt
+    if (end <= 0) return "结束时间未记录"
+    val seconds = ((end - run.startedAt).coerceAtLeast(0) / 1_000)
+    val elapsed = if (seconds < 60) "${seconds}秒" else "${seconds / 60}分${seconds % 60}秒"
+    return if (running) "已运行$elapsed" else "耗时$elapsed"
+}
+
+private fun refreshFailureReason(result: ScheduledRefreshTaskResult): String = when (result.status) {
+    RefreshTaskStatus.LOGIN_REQUIRED -> if (result.taskId == RefreshTaskId.CHAOXING) "登录已失效，请前往学习通页面重新登录" else "需要重新登录或完成验证，请前往教务导入页面处理"
+    RefreshTaskStatus.UNSUPPORTED -> "当前来源暂不支持此项后台刷新"
+    RefreshTaskStatus.CANCELLED -> "运行已中断，可等待下次计划"
+    RefreshTaskStatus.FAILED -> when {
+        result.message.contains("网络") || result.message.contains("连接") || result.message.contains("超时") -> "网络连接失败或超时，下次计划将重试"
+        result.message.contains("解析") || result.message.contains("格式") -> "返回内容暂时无法识别，请稍后到对应页面重试"
+        else -> "刷新未完成，请稍后到对应页面重试"
+    }
+    RefreshTaskStatus.SUCCESS -> ""
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -205,7 +319,8 @@ private fun RefreshPlanEditor(plan: ScheduledRefreshPlan, otherPlans: List<Sched
     saving: Boolean, canDelete: Boolean, onCancel: () -> Unit, onDelete: () -> Unit, onSave: (ScheduledRefreshPlan) -> Unit) {
     val context = LocalContext.current
     var minute by remember(plan.id) { mutableStateOf(plan.minuteOfDay) }
-    var selected by remember(plan.id) { mutableStateOf(plan.taskIds) }
+    // 财务、体测和公共数据不再参与定时计划，编辑旧计划时同步移除这些项目。
+    var selected by remember(plan.id) { mutableStateOf(plan.taskIds.filter { it.schedulable }.toSet()) }
     var validation by remember(plan.id) { mutableStateOf("") }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -224,13 +339,13 @@ private fun RefreshPlanEditor(plan: ScheduledRefreshPlan, otherPlans: List<Sched
                 }
             }
             Text("刷新内容 · ${selected.size}项已选", color = RefreshSecondary, fontSize = 13.sp)
-            RefreshTaskId.entries.groupBy { it.group }.forEach { (group, tasks) ->
+            RefreshTaskId.entries.filter { it.schedulable }.groupBy { it.group }.forEach { (group, tasks) ->
                 val groupUnsupported = tasks.none { refreshTaskSupported(it, campus) }
                 Text(group, color = RefreshSecondary, fontSize = 12.sp)
                 // 独立登录的说明放在组头，避免每个项目重复一遍撑长列表。
-                if (groupUnsupported || group == "财务" || group == "体测") {
+                if (groupUnsupported) {
                     Text(
-                        if (groupUnsupported) "当前来源暂不支持此组后台刷新" else "成绩或账务查询使用独立登录状态，失效后跳过",
+                        "当前来源暂不支持教务后台刷新，仍可选择学习通",
                         color = RefreshSecondary, fontSize = 11.sp, lineHeight = 17.sp
                     )
                 }
@@ -272,7 +387,7 @@ private fun RefreshPlanEditor(plan: ScheduledRefreshPlan, otherPlans: List<Sched
             Button(onClick = {
                 validation = when {
                     selected.isEmpty() -> "请至少选择一个刷新项目"
-                    !validateRefreshTimes(otherPlans.map { it.minuteOfDay } + minute) -> "最多8个计划，相邻时刻至少间隔15分钟（含跨午夜），时间不能重复"
+                    !validateRefreshTimes(otherPlans.map { it.minuteOfDay } + minute) -> "最多3个计划，相邻时刻至少间隔15分钟（含跨午夜），时间不能重复"
                     else -> ""
                 }
                 if (validation.isEmpty()) onSave(plan.copy(minuteOfDay = minute, taskIds = selected))

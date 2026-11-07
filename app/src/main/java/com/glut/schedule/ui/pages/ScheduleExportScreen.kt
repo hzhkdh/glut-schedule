@@ -3,6 +3,13 @@ package com.glut.schedule.ui.pages
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -55,6 +62,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +71,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.window.Dialog
@@ -93,6 +102,7 @@ import com.glut.schedule.data.model.countDistinctCourseTitles
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.settings.CampusCapabilities
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.data.settings.ScheduleSettingsStore
 import com.glut.schedule.data.settings.capabilitiesFor
 import com.glut.schedule.service.export.csvPreviewRows
 import com.glut.schedule.service.export.calendarPreviewEvents
@@ -117,6 +127,9 @@ import com.glut.schedule.service.export.renderScheduleWeekImage
 import com.glut.schedule.service.export.scheduleImageFileName
 import com.glut.schedule.service.export.schedulePdfFileName
 import com.glut.schedule.service.export.pdfExportFooter
+import com.glut.schedule.service.export.ExportDisplayOptions
+import com.glut.schedule.service.export.resolveExportDisplayOptions
+import com.glut.schedule.service.export.initialExportWeek
 import com.glut.schedule.ui.components.ScheduleGrid
 import com.glut.schedule.ui.components.shouldUseCustomBackground
 import java.time.format.DateTimeFormatter
@@ -176,6 +189,20 @@ fun ScheduleExportScreen(
             rules = uiState.manualDayCopies
         )
     }
+    // 默认显示范围和历史首周必须检查完整学期，不能受用户隐藏课程的渲染设置影响。
+    val fullBlocksForDefaults = remember(
+        uiState.allCourses,
+        uiState.maxAcademicWeek,
+        uiState.semesterStartMonday,
+        uiState.manualDayCopies
+    ) {
+        courseBlocksByWeek(
+            courses = uiState.allCourses,
+            maxWeek = uiState.maxAcademicWeek,
+            semesterStartMonday = uiState.semesterStartMonday,
+            rules = uiState.manualDayCopies
+        )
+    }
     val semesterName = uiState.viewedSemester?.displayName.orEmpty()
     val semesterSelection = SemesterSelectionState(
         semesters = uiState.semesters,
@@ -186,8 +213,28 @@ fun ScheduleExportScreen(
     )
 
     var tab by remember { mutableIntStateOf(0) }
+    val defaultWeek = initialExportWeek(
+        uiState.isHistoricalSemester, uiState.currentWeekNumber, uiState.maxAcademicWeek, fullBlocksForDefaults
+    )
     var selectedWeek by remember(uiState.viewedSemester?.id) {
-        mutableIntStateOf(uiState.week.number)
+        mutableIntStateOf(defaultWeek)
+    }
+    var weekManuallySelected by remember(uiState.viewedSemester?.id) { mutableStateOf(false) }
+    LaunchedEffect(uiState.viewedSemester?.id, defaultWeek) {
+        // 校历、当前周或历史课程异步到达时校正默认周；用户已经手选则保留选择。
+        if (!weekManuallySelected) selectedWeek = defaultWeek
+    }
+    val exportSettings = remember(context) { ScheduleSettingsStore(context.applicationContext) }
+    val savedDisplay by exportSettings.exportDisplayOptions.collectAsState(initial = ExportDisplayOptions())
+    val exportDisplay = remember(savedDisplay, fullBlocksForDefaults, capabilities.hasNoonSections) {
+        resolveExportDisplayOptions(savedDisplay, fullBlocksForDefaults, capabilities.hasNoonSections)
+    }
+    val exportShowNoon = exportDisplay.showNoon == true
+    val exportShowWeekend = exportDisplay.showWeekend == true
+    LaunchedEffect(exportSettings, fullBlocksForDefaults, capabilities.hasNoonSections) {
+        exportSettings.initializeExportDisplayOptions(
+            resolveExportDisplayOptions(ExportDisplayOptions(), fullBlocksForDefaults, capabilities.hasNoonSections)
+        )
     }
     val hasCustomBackground = remember(uiState.customBackgroundUri) {
         shouldUseCustomBackground(uiState.customBackgroundUri)
@@ -254,8 +301,8 @@ fun ScheduleExportScreen(
         selectedWeek,
         blocksByWeek,
         uiState.classPeriods,
-        uiState.showNoon,
-        uiState.showWeekend,
+        exportShowNoon,
+        exportShowWeekend,
         uiState.hasAuthoritativeCalendar,
         uiState.holidayDates,
         uiState.manualDayCopies,
@@ -270,9 +317,9 @@ fun ScheduleExportScreen(
             week = week,
             blocks = blocksByWeek[selectedWeek].orEmpty(),
             periods = uiState.classPeriods,
-            showNoon = uiState.showNoon,
+            showNoon = exportShowNoon,
             hasNoonSections = capabilities.hasNoonSections,
-            showWeekend = uiState.showWeekend,
+            showWeekend = exportShowWeekend,
             showCalendarDates = uiState.hasAuthoritativeCalendar,
             holidayDates = uiState.holidayDates,
             manualAdjustmentDates = uiState.manualDayCopies.mapTo(mutableSetOf()) { it.targetDate },
@@ -538,9 +585,9 @@ fun ScheduleExportScreen(
                         week = weekInfo,
                         blocks = blocksByWeek[weekNumber].orEmpty(),
                         periods = uiState.classPeriods,
-                        showNoon = uiState.showNoon,
+                        showNoon = exportShowNoon,
                         hasNoonSections = capabilities.hasNoonSections,
-                        showWeekend = uiState.showWeekend,
+                        showWeekend = exportShowWeekend,
                         showCalendarDates = uiState.hasAuthoritativeCalendar,
                         holidayDates = uiState.holidayDates,
                         manualAdjustmentDates = uiState.manualDayCopies
@@ -653,13 +700,17 @@ fun ScheduleExportScreen(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
                     0 -> ImageExportTab(
+                        showNoon = exportShowNoon,
+                        showWeekend = exportShowWeekend,
+                        onShowNoonChange = { scope.launch { exportSettings.setExportShowNoon(it) } },
+                        onShowWeekendChange = { scope.launch { exportSettings.setExportShowWeekend(it) } },
                         previewPage = imagePage,
                         uiState = uiState,
                         semesterSelection = semesterSelection,
                         capabilities = capabilities,
                         week = week,
                         selectedWeek = selectedWeek,
-                        onSelectWeek = { selectedWeek = it },
+                        onSelectWeek = { weekManuallySelected = true; selectedWeek = it },
                         blocks = blocksByWeek[selectedWeek].orEmpty(),
                         adjustments = adjustments,
                         useCurrentBackground = useCurrentBackground,
@@ -678,6 +729,11 @@ fun ScheduleExportScreen(
                         onShare = { scope.launch { shareImage() } }
                     )
                     1 -> PdfExportTab(
+                        showNoon = exportShowNoon,
+                        showWeekend = exportShowWeekend,
+                        hasNoonSections = capabilities.hasNoonSections,
+                        onShowNoonChange = { scope.launch { exportSettings.setExportShowNoon(it) } },
+                        onShowWeekendChange = { scope.launch { exportSettings.setExportShowWeekend(it) } },
                         uiState = uiState,
                         previewPage = imagePage,
                         customBackgroundBitmap = customBackgroundBitmap,
@@ -688,7 +744,7 @@ fun ScheduleExportScreen(
                         currentWeekNumber = uiState.currentWeekNumber,
                         maxAcademicWeek = uiState.maxAcademicWeek,
                         weekMonday = week.monday,
-                        onSelectWeek = { selectedWeek = it },
+                        onSelectWeek = { weekManuallySelected = true; selectedWeek = it },
                         useCurrentBackground = useCurrentBackground,
                         onUseCurrentBackgroundChange = { useCurrentBackground = it },
                         hasCustomBackground = hasCustomBackground,
@@ -763,6 +819,10 @@ private const val PERMISSION_PDF = 4
 
 @Composable
 private fun ImageExportTab(
+    showNoon: Boolean,
+    showWeekend: Boolean,
+    onShowNoonChange: (Boolean) -> Unit,
+    onShowWeekendChange: (Boolean) -> Unit,
     previewPage: PdfWeekPage,
     uiState: ScheduleUiState,
     semesterSelection: SemesterSelectionState,
@@ -793,6 +853,7 @@ private fun ImageExportTab(
             ExportBitmapPreview(uiState, previewPage, useCurrentBackground, solidBackground, customBackgroundBitmap)
             CollapsibleExportSection("外观与内容", (if (useCurrentBackground) "当前背景" else solidBackground.label) + " · " + contentSummary(showTeacher, showRoom)) {
                 BackgroundChoiceCard(useCurrentBackground, onUseCurrentBackgroundChange, hasCustomBackground, solidBackground, onSolidBackgroundChange)
+                ExportDisplayToggles(showNoon, showWeekend, capabilities.hasNoonSections, onShowNoonChange, onShowWeekendChange)
                 Spacer(Modifier.height(12.dp))
                 ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange)
             }
@@ -876,7 +937,7 @@ private fun ExportSheet(
                 lightContent = lightContent
             )
             Text(
-                text = "${uiState.viewedSemester?.displayName?.takeIf { it.isNotBlank() } ?: "当前学期"} · 第 ${week.number} 周 · 由「桂工课表」导出",
+                text = pdfExportFooter(),
                 color = if (lightContent) {
                     Color(0xFF566072)
                 } else {
@@ -944,6 +1005,11 @@ private fun CalendarExportTab(
 
 @Composable
 private fun PdfExportTab(
+    showNoon: Boolean,
+    showWeekend: Boolean,
+    hasNoonSections: Boolean,
+    onShowNoonChange: (Boolean) -> Unit,
+    onShowWeekendChange: (Boolean) -> Unit,
     uiState: ScheduleUiState,
     previewPage: PdfWeekPage,
     customBackgroundBitmap: ImageBitmap?,
@@ -982,6 +1048,7 @@ private fun PdfExportTab(
             ExportBitmapPreview(uiState, previewPage.copy(footer = pdfExportFooter()), useCurrentBackground, solidBackground, customBackgroundBitmap)
             CollapsibleExportSection("外观与内容", (if (useCurrentBackground) "当前背景" else solidBackground.label) + " · " + contentSummary(showTeacher, showRoom)) {
                 BackgroundChoiceCard(useCurrentBackground, onUseCurrentBackgroundChange, hasCustomBackground, solidBackground, onSolidBackgroundChange)
+                ExportDisplayToggles(showNoon, showWeekend, hasNoonSections, onShowNoonChange, onShowWeekendChange)
                 Spacer(Modifier.height(12.dp))
                 ContentTogglesCard(showTeacher, onShowTeacherChange, showRoom, onShowRoomChange)
             }
@@ -1051,6 +1118,8 @@ private fun ExportContextCard(
 ) {
     var semesterMenu by remember { mutableStateOf(false) }
     var weekMenu by remember { mutableStateOf(false) }
+    val semesterRotation by animateFloatAsState(if (semesterMenu) 180f else 0f, tween(180), label = "导出学期箭头")
+    val weekRotation by animateFloatAsState(if (weekMenu) 180f else 0f, tween(180), label = "导出周次箭头")
     val semesterOptions = state.semesters.filter { it.isCurrent || it.cacheStatus == SemesterCacheStatus.CACHED }
     val semesterScroll = rememberScrollState()
     val weekScroll = rememberScrollState()
@@ -1068,7 +1137,7 @@ private fun ExportContextCard(
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { semesterMenu = true }, verticalAlignment = Alignment.CenterVertically) {
                     Text(state.viewed?.displayName ?: "选择学期", fontSize = 13.sp, maxLines = 1,
                         overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    Icon(Icons.Outlined.KeyboardArrowDown, "切换学期", Modifier.size(18.dp), tint = Color(0xFF3F7DF6))
+                    Icon(Icons.Outlined.KeyboardArrowDown, "切换学期", Modifier.size(18.dp).rotate(semesterRotation), tint = Color(0xFF3F7DF6))
                 }
                 DropdownMenu(expanded = semesterMenu, onDismissRequest = { semesterMenu = false },
                     modifier = Modifier.width(248.dp).heightIn(max = 320.dp), scrollState = semesterScroll,
@@ -1086,8 +1155,10 @@ private fun ExportContextCard(
             }
             Spacer(Modifier.width(15.dp))
             Box {
-                Text(if (selectedWeek == null) "整学期" else "第 $selectedWeek 周 ⌄", color = Color(0xFF3268D7), fontSize = 13.sp,
-                    modifier = Modifier.clickable(enabled = selectedWeek != null) { weekMenu = true }.padding(vertical = 9.dp))
+                Row(Modifier.heightIn(min = 48.dp).clickable(enabled = selectedWeek != null) { weekMenu = true }, verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (selectedWeek == null) "整学期" else "第 $selectedWeek 周", color = Color(0xFF3268D7), fontSize = 13.sp)
+                    if (selectedWeek != null) Icon(Icons.Outlined.KeyboardArrowDown, "切换周次", Modifier.size(18.dp).rotate(weekRotation), tint = Color(0xFF3268D7))
+                }
                 DropdownMenu(expanded = weekMenu, onDismissRequest = { weekMenu = false },
                     modifier = Modifier.width(180.dp).heightIn(max = 320.dp), scrollState = weekScroll,
                     containerColor = Color(0xFFFFFEFB)) {
@@ -1110,18 +1181,35 @@ private fun contentSummary(teacher: Boolean, room: Boolean): String = buildList 
     if (room) add("教室")
 }.joinToString(" / ").ifBlank { "不含教师、教室" }
 
+/** 图片与 PDF 共享导出专属偏好，直排节次校区不展示中午开关。 */
+@Composable
+private fun ExportDisplayToggles(
+    showNoon: Boolean,
+    showWeekend: Boolean,
+    hasNoonSections: Boolean,
+    onShowNoonChange: (Boolean) -> Unit,
+    onShowWeekendChange: (Boolean) -> Unit
+) {
+    if (hasNoonSections) SwitchRow("显示中午", showNoon, onShowNoonChange)
+    SwitchRow("显示周末", showWeekend, onShowWeekendChange)
+}
+
 /** 降低首屏信息密度，选项仍然可发现并可直接编辑，按钮操作区域不少于 48dp。 */
 @Composable
 private fun CollapsibleExportSection(title: String, summary: String, content: @Composable () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
+    val rotation by animateFloatAsState(if (expanded) 180f else 0f, tween(180), label = "导出折叠箭头")
     SectionCard {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
             Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
             Text(summary, fontSize = 11.sp, color = Color(0xFF667085), maxLines = 1,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1.2f))
-            Icon(Icons.Outlined.KeyboardArrowDown, if (expanded) "收起$title" else "展开$title", Modifier.size(18.dp), tint = Color(0xFF667085))
+            Icon(Icons.Outlined.KeyboardArrowDown, if (expanded) "收起$title" else "展开$title", Modifier.size(18.dp).rotate(rotation), tint = Color(0xFF667085))
         }
-        if (expanded) { Spacer(Modifier.height(10.dp)); content() }
+        // 内容高度和箭头同步过渡，让展开、收起都有连续反馈。
+        AnimatedVisibility(expanded, enter = expandVertically(tween(180)) + fadeIn(tween(180)), exit = shrinkVertically(tween(180)) + fadeOut(tween(180))) {
+            Column { Spacer(Modifier.height(10.dp)); content() }
+        }
     }
 }
 

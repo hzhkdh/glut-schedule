@@ -32,7 +32,7 @@ class UnifiedRefreshPlanTest {
         for (campus in listOf(CampusType.NANNING, CampusType.GRADUATE)) {
             assertFalse(refreshTaskSupported(RefreshTaskId.SCORES, campus))
             assertTrue(refreshTaskSupported(RefreshTaskId.CHAOXING, campus))
-            assertTrue(refreshTaskSupported(RefreshTaskId.NOTICES, campus))
+            assertFalse(refreshTaskSupported(RefreshTaskId.NOTICES, campus))
         }
     }
     @Test fun legacyTimesKeepOnlyTheirOriginalTaskSelection() {
@@ -48,7 +48,7 @@ class UnifiedRefreshPlanTest {
         assertEquals(plans, decodePlans(encodePlans(plans)))
     }
     @Test fun dstGapKeepsOriginalPlanIdentity() {
-        val plan = ScheduledRefreshPlan("gap", 150, setOf(RefreshTaskId.NOTICES))
+        val plan = ScheduledRefreshPlan("gap", 150, setOf(RefreshTaskId.CHAOXING))
         val next = nextScheduledPlan(listOf(plan), Instant.parse("2026-03-08T06:00:00Z"), ZoneId.of("America/New_York"))
         assertEquals(plan, next.first)
         assertEquals(Instant.parse("2026-03-08T07:30:00Z"), next.second)
@@ -58,5 +58,49 @@ class UnifiedRefreshPlanTest {
             ScheduledRefreshTaskResult(RefreshTaskId.CHAOXING, RefreshTaskStatus.SUCCESS, "已更新"),
             ScheduledRefreshTaskResult(RefreshTaskId.SCORES, RefreshTaskStatus.LOGIN_REQUIRED, "需登录")))
         assertEquals(listOf(run), decodeRuns(encodeRuns(listOf(run))))
+    }
+
+    @Test fun plansRejectFourthSlotAndRemovedSources() {
+        val plans = (0..3).map { ScheduledRefreshPlan("p$it", it * 60, setOf(RefreshTaskId.CHAOXING)) }
+        assertTrue(validateRefreshPlans(plans.take(3)))
+        assertFalse(validateRefreshPlans(plans))
+        assertFalse(validateRefreshPlans(listOf(plans.first().copy(taskIds = setOf(RefreshTaskId.FINANCE_OVERVIEW)))))
+        assertEquals(10, RefreshTaskId.entries.count { it.schedulable })
+    }
+
+    @Test fun runningSnapshotAndInterruptionKeepOnlyActualResults() {
+        val run = ScheduledRefreshRun("r", "p", 1, 0,
+            listOf(ScheduledRefreshTaskResult(RefreshTaskId.SCORES, RefreshTaskStatus.SUCCESS, "已更新")),
+            minuteOfDay = 420, taskIds = setOf(RefreshTaskId.SCORES, RefreshTaskId.CHAOXING),
+            state = ScheduledRefreshRunState.RUNNING, workId = "work", activeTask = RefreshTaskId.CHAOXING)
+        assertEquals(listOf(run), decodeRuns(encodeRuns(listOf(run))))
+        assertEquals(ScheduledRefreshRunStatus.RUNNING, scheduledRefreshRunSummary(run).status)
+        val interrupted = run.copy(state = ScheduledRefreshRunState.INTERRUPTED, activeTask = null)
+        assertEquals(ScheduledRefreshRunStatus.INTERRUPTED, scheduledRefreshRunSummary(interrupted).status)
+        assertEquals(1, interrupted.results.size)
+        assertEquals(2, scheduledRefreshRunSummary(interrupted).totalCount)
+    }
+
+    @Test fun legacyRecordsRemainReadableWithoutInventedSnapshot() {
+        val raw = """[{"id":"r","plan":"p","start":1,"end":2,"results":[{"task":"NOTICES","status":"SUCCESS","message":"已更新"}]}]"""
+        val run = decodeRuns(raw).single()
+        assertNull(run.minuteOfDay)
+        assertNull(run.workId)
+        assertEquals(setOf(RefreshTaskId.NOTICES), run.taskIds)
+        assertEquals(ScheduledRefreshRunStatus.FULL_SUCCESS, scheduledRefreshRunSummary(run).status)
+    }
+
+    @Test fun sharedSummarySeparatesPartialLoginFailureAndFullSuccess() {
+        fun result(task: RefreshTaskId, status: RefreshTaskStatus) = ScheduledRefreshTaskResult(task, status, "结果")
+        val base = ScheduledRefreshRun("r", "p", 1, 2,
+            listOf(result(RefreshTaskId.SCORES, RefreshTaskStatus.LOGIN_REQUIRED)))
+        assertEquals(ScheduledRefreshRunStatus.LOGIN_REQUIRED, scheduledRefreshRunSummary(base).status)
+        assertEquals(ScheduledRefreshRunStatus.FAILED, scheduledRefreshRunSummary(base.copy(
+            results = listOf(result(RefreshTaskId.SCORES, RefreshTaskStatus.FAILED)))).status)
+        val both = base.copy(taskIds = setOf(RefreshTaskId.SCORES, RefreshTaskId.CHAOXING),
+            results = base.results + result(RefreshTaskId.CHAOXING, RefreshTaskStatus.SUCCESS))
+        assertEquals(ScheduledRefreshRunStatus.PARTIAL_SUCCESS, scheduledRefreshRunSummary(both).status)
+        assertEquals(ScheduledRefreshRunStatus.FULL_SUCCESS, scheduledRefreshRunSummary(base.copy(
+            results = listOf(result(RefreshTaskId.SCORES, RefreshTaskStatus.SUCCESS)))).status)
     }
 }

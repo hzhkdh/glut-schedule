@@ -40,6 +40,7 @@ import com.glut.schedule.data.model.clampAcademicWeek
 import com.glut.schedule.data.model.normalizeSemesterStartMonday
 import com.glut.schedule.data.model.validateClassPeriods
 import com.glut.schedule.service.greeting.GreetingTemplateCache
+import com.glut.schedule.service.export.ExportDisplayOptions
 import com.glut.schedule.service.greeting.GreetingTemplateCacheSnapshot
 import com.glut.schedule.service.holiday.encodeHolidayYearCache
 import com.glut.schedule.service.holiday.holidayYearCache
@@ -113,6 +114,29 @@ class ScheduleSettingsStore(
     private val currentWeekKey = intPreferencesKey("current_week")
     private val showWeekendKey = booleanPreferencesKey("show_weekend")
     private val showNoonKey = booleanPreferencesKey("show_noon")
+    // 导出偏好独立存储，绝不覆盖主页及搭子课表的显示开关。
+    private val exportShowNoonKey = booleanPreferencesKey("export_show_noon")
+    private val exportShowWeekendKey = booleanPreferencesKey("export_show_weekend")
+
+    val exportDisplayOptions: Flow<ExportDisplayOptions> = context.scheduleSettings.data.map {
+        ExportDisplayOptions(it[exportShowNoonKey], it[exportShowWeekendKey])
+    }
+
+    /** 首次进入按整学期播种，之后只认导出页的选择；原子检查避免覆盖并发手动操作。 */
+    suspend fun initializeExportDisplayOptions(options: ExportDisplayOptions) {
+        context.scheduleSettings.edit {
+            if (it[exportShowNoonKey] == null) it[exportShowNoonKey] = options.showNoon == true
+            if (it[exportShowWeekendKey] == null) it[exportShowWeekendKey] = options.showWeekend == true
+        }
+    }
+
+    suspend fun setExportShowNoon(value: Boolean) {
+        context.scheduleSettings.edit { it[exportShowNoonKey] = value }
+    }
+
+    suspend fun setExportShowWeekend(value: Boolean) {
+        context.scheduleSettings.edit { it[exportShowWeekendKey] = value }
+    }
     /**
      * 上次播种自动显示时课表内容的签名（校区 + 星期/节次集合）。
      *

@@ -88,7 +88,10 @@ fun renderScheduleWeekImage(
             periodPaint
         )
         if (row.timeText.isNotBlank()) {
-            canvas.drawText(row.timeText, 6f * scale, top + 36f * scale, timePaint)
+            // 起止时间各占一行，窄时间列也不会挤进课程区域。
+            row.timeText.lines().forEachIndexed { line, time ->
+                canvas.drawText(time, 6f * scale, top + (36f + line * 12f) * scale, timePaint)
+            }
         }
     }
 
@@ -100,7 +103,7 @@ fun renderScheduleWeekImage(
     }
     for (index in 0..rowCount) {
         val y = gridTop + rowHeight * index
-        canvas.drawLine(periodColumnWidth, y, widthPx.toFloat(), y, linePaint)
+        canvas.drawLine(0f, y, widthPx.toFloat(), y, linePaint)
     }
     for (index in 0..dayCount) {
         val x = periodColumnWidth + dayWidth * index
@@ -116,7 +119,7 @@ fun renderScheduleWeekImage(
     val footer = paint(10f * scale, if (light) Color.rgb(86, 96, 114) else Color.argb(140, 255, 255, 255))
     drawCentered(
         canvas,
-        page.footer,
+        pdfExportFooter(),
         widthPx / 2f,
         heightPx - footerHeight / 2f + 4f * scale,
         footer

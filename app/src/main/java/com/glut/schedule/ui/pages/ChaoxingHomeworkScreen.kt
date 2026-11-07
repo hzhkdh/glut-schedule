@@ -45,6 +45,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
+import com.glut.schedule.service.refresh.ScheduledRefreshStore
+import com.glut.schedule.service.refresh.ScheduledRefreshRunState
+import com.glut.schedule.service.refresh.RefreshTaskId
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import java.text.SimpleDateFormat
@@ -67,6 +71,7 @@ fun ChaoxingHomeworkScreen() {
 private fun ChaoxingHomeworkContent() {
     val context = LocalContext.current
     val store = remember { HomeworkStore(context) }
+    val scheduledStore = remember { ScheduledRefreshStore(context) }
     var login by remember { mutableStateOf(false) }
     var rows by remember { mutableStateOf(store.read()) }
     var updated by remember { mutableLongStateOf(store.updatedAt) }
@@ -93,17 +98,7 @@ private fun ChaoxingHomeworkContent() {
     LaunchedEffect(login) { if (login) completedLogin = false }
     val scope = rememberCoroutineScope()
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    // 每次进入或恢复菜单时补检查；持久化时间戳使重建页面不会反复全量刷新。
-    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-        scope.launch {
-            if (store.connected) {
-                scheduleHomeworkSync(context)
-                if (homeworkRefreshDue(System.currentTimeMillis(), store.successAt, store.attemptAt)) {
-                    refreshHomework(context)
-                }
-            }
-        }
-    }
+    // 进入和恢复页面只读取缓存；整表同步仅由每日计划、手动操作或首次登录触发。
     LaunchedEffect(Unit) {
         while (true) {
             now = System.currentTimeMillis()
@@ -111,9 +106,13 @@ private fun ChaoxingHomeworkContent() {
             rows = store.read(); updated = store.updatedAt; failures = store.failureCount; error = store.lastError
             failureSummary = store.failureSummary
             syncing = withContext(Dispatchers.IO) {
-                listOf("chaoxing_manual", "chaoxing_sync").any { name ->
+                val manualRunning = listOf("chaoxing_manual", "chaoxing_sync").any { name ->
                     runCatching { WorkManager.getInstance(context).getWorkInfosForUniqueWork(name).get()
                         .any { it.state == WorkInfo.State.RUNNING } }.getOrDefault(false)
+                }
+                // 统一计划可能只刷新教务，只有实际执行学习通项目时才显示列表同步状态。
+                manualRunning || scheduledStore.config.first().runs.any {
+                    it.state == ScheduledRefreshRunState.RUNNING && it.activeTask == RefreshTaskId.CHAOXING
                 }
             }
             delay(2000)

@@ -37,30 +37,40 @@ class ScheduledRefreshWorker(context: Context, params: WorkerParameters) : Corou
             ?: return@withContext Result.success().also { reconcileScheduledRefresh(applicationContext, config, true) }
         val started = System.currentTimeMillis()
         val results = mutableListOf<ScheduledRefreshTaskResult>()
+        // 开始前固化计划快照；进程被系统杀死后仍能知道实际执行到了哪一步。
+        var run = ScheduledRefreshRun(UUID.randomUUID().toString(), plan.id, started, 0, emptyList(),
+            minuteOfDay = plan.minuteOfDay, taskIds = plan.taskIds.toSet(),
+            state = ScheduledRefreshRunState.RUNNING, workId = id.toString())
         val executor = UnifiedRefreshExecutor(applicationContext,
             (applicationContext as ScheduleApplication).appContainer) {
             store.config.first().let { it.enabled && plan in it.plans }
         }
         try {
-            store.recordAttempt(started)
+            store.recordRun(run)
             withTimeout(8 * 60_000L) {
-                for (task in plan.taskIds.sortedBy { it.ordinal }) results += executor.execute(task)
+                for (task in plan.taskIds.sortedBy { it.ordinal }) {
+                    run = run.copy(activeTask = task)
+                    store.recordRun(run)
+                    results += executor.execute(task)
+                    run = run.copy(results = results.toList(), activeTask = null)
+                    store.recordRun(run)
+                }
                 executor.finish()
             }
+            run = run.copy(state = ScheduledRefreshRunState.FINISHED)
             Result.success()
         } catch (_: TimeoutCancellationException) {
-            // 单轮留出系统十分钟限制前的收尾时间，未执行项目在 finally 标记取消。
+            // 超时属于本轮中断；未执行项目保持空缺，不伪造分项结果。
             Result.success()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } finally {
-            // 取消也保留分项结果，未执行项目标记取消；按照最新配置继续排程。
+            // 取消也保留已经持久化的真实分项结果；按照最新配置继续排程。
             withContext(NonCancellable) {
-                plan.taskIds.filter { task -> results.none { it.taskId == task } }.forEach {
-                    results += ScheduledRefreshTaskResult(it, RefreshTaskStatus.CANCELLED, "任务已取消")
-                }
-                store.recordRun(ScheduledRefreshRun(UUID.randomUUID().toString(), plan.id, started,
-                    System.currentTimeMillis(), results))
+                run = run.copy(finishedAt = System.currentTimeMillis(), results = results.toList(),
+                    activeTask = null, state = if (run.state == ScheduledRefreshRunState.FINISHED)
+                        ScheduledRefreshRunState.FINISHED else ScheduledRefreshRunState.INTERRUPTED)
+                store.recordRun(run)
                 reconcileScheduledRefresh(applicationContext, store.config.first(), true)
             }
         }

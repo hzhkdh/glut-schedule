@@ -13,10 +13,11 @@ import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 
 const val UNIQUE_SCHEDULED_REFRESH = "academic_scheduled_refresh"
+const val MAX_SCHEDULED_REFRESH_PLANS = 3
 
 /** 包括午夜两侧在内，每两个相邻时刻至少相隔 WorkManager 要求的 15 分钟。 */
 fun validateRefreshTimes(times: List<Int>): Boolean {
-    if (times.size !in 1..8 || times.any { it !in 0..1439 } || times.distinct().size != times.size) return false
+    if (times.size !in 1..MAX_SCHEDULED_REFRESH_PLANS || times.any { it !in 0..1439 } || times.distinct().size != times.size) return false
     val sorted = times.sorted()
     if (sorted.zipWithNext().any { (first, second) -> second - first < 15 }) return false
     return sorted.first() + 1440 - sorted.last() >= 15

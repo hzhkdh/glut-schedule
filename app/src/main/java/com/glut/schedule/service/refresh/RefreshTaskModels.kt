@@ -17,21 +17,56 @@ enum class RefreshTaskId(val title: String, val group: String, val academic: Boo
     FITNESS_LATEST("最新体测成绩", "体测"), FITNESS_HISTORY("历年体测成绩", "体测"),
     FITNESS_STANDARD("体测评分标准", "体测"), CAMPUS_INFO("校园信息", "公共数据"),
     NOTICES("通知公告", "公共数据"), BACKGROUND_GALLERY("背景画廊", "公共数据"),
-    UPDATE_CHECK("版本检查", "公共数据")
+    UPDATE_CHECK("版本检查", "公共数据");
+
+    // 旧枚举仅用于读取历史记录，定时执行入口只开放教务九项与学习通。
+    val schedulable: Boolean get() = academic || this == CHAOXING
 }
 
 fun refreshTaskSupported(task: RefreshTaskId, campus: CampusType): Boolean = when {
+    !task.schedulable -> false
     task.academic -> campus == CampusType.GUILIN
-    task.group == "财务" -> campus == CampusType.GUILIN
-    task.group == "体测" -> com.glut.schedule.data.settings.capabilitiesFor(campus).supportsFitnessScore
     else -> true
 }
 
 data class ScheduledRefreshPlan(val id: String, val minuteOfDay: Int, val taskIds: Set<RefreshTaskId>)
 enum class RefreshTaskStatus { SUCCESS, FAILED, LOGIN_REQUIRED, UNSUPPORTED, CANCELLED }
 data class ScheduledRefreshTaskResult(val taskId: RefreshTaskId, val status: RefreshTaskStatus, val message: String)
+enum class ScheduledRefreshRunState { RUNNING, FINISHED, INTERRUPTED }
 data class ScheduledRefreshRun(val id: String, val planId: String, val startedAt: Long, val finishedAt: Long,
-    val results: List<ScheduledRefreshTaskResult>)
+    val results: List<ScheduledRefreshTaskResult>,
+    val minuteOfDay: Int? = null,
+    val taskIds: Set<RefreshTaskId> = results.map { it.taskId }.toSet(),
+    val state: ScheduledRefreshRunState = ScheduledRefreshRunState.FINISHED,
+    val workId: String? = null,
+    val activeTask: RefreshTaskId? = null)
+
+enum class ScheduledRefreshRunStatus { RUNNING, FULL_SUCCESS, PARTIAL_SUCCESS, LOGIN_REQUIRED, FAILED, INTERRUPTED }
+data class ScheduledRefreshRunSummary(val status: ScheduledRefreshRunStatus, val title: String,
+    val successCount: Int, val totalCount: Int)
+
+/** 首页和记录页共用同一结论；未实际执行的项目不生成虚假的失败结果。 */
+fun scheduledRefreshRunSummary(run: ScheduledRefreshRun): ScheduledRefreshRunSummary {
+    val count = run.results.count { it.status == RefreshTaskStatus.SUCCESS }
+    val total = run.taskIds.size
+    val status = when {
+        run.state == ScheduledRefreshRunState.RUNNING -> ScheduledRefreshRunStatus.RUNNING
+        run.state == ScheduledRefreshRunState.INTERRUPTED -> ScheduledRefreshRunStatus.INTERRUPTED
+        total > 0 && count == total -> ScheduledRefreshRunStatus.FULL_SUCCESS
+        count > 0 -> ScheduledRefreshRunStatus.PARTIAL_SUCCESS
+        run.results.any { it.status == RefreshTaskStatus.LOGIN_REQUIRED } -> ScheduledRefreshRunStatus.LOGIN_REQUIRED
+        else -> ScheduledRefreshRunStatus.FAILED
+    }
+    val title = when (status) {
+        ScheduledRefreshRunStatus.RUNNING -> "正在刷新"
+        ScheduledRefreshRunStatus.FULL_SUCCESS -> "全部成功"
+        ScheduledRefreshRunStatus.PARTIAL_SUCCESS -> "部分成功"
+        ScheduledRefreshRunStatus.LOGIN_REQUIRED -> "需要登录"
+        ScheduledRefreshRunStatus.FAILED -> "刷新失败"
+        ScheduledRefreshRunStatus.INTERRUPTED -> "刷新中断"
+    }
+    return ScheduledRefreshRunSummary(status, title, count, total)
+}
 
 /** 数据依赖只执行一次；用户选中的是页面，后台执行的是其真正的数据来源。 */
 fun refreshTaskDependencies(task: RefreshTaskId): Set<RefreshTaskId> = when (task) {
@@ -43,4 +78,5 @@ fun refreshTaskDependencies(task: RefreshTaskId): Set<RefreshTaskId> = when (tas
 
 fun validateRefreshPlans(plans: List<ScheduledRefreshPlan>): Boolean =
     plans.isNotEmpty() && plans.map { it.id }.distinct().size == plans.size &&
-        plans.all { it.id.isNotBlank() && it.taskIds.isNotEmpty() } && validateRefreshTimes(plans.map { it.minuteOfDay })
+        plans.all { it.id.isNotBlank() && it.taskIds.isNotEmpty() && it.taskIds.all { task -> task.schedulable } } &&
+        validateRefreshTimes(plans.map { it.minuteOfDay })

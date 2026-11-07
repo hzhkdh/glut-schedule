@@ -7,6 +7,10 @@ import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.scheduleWeekForNumber
 import com.glut.schedule.data.model.yanshanClassPeriods
 import com.glut.schedule.ui.pages.buildPdfWeekPage
+import com.glut.schedule.service.export.ExportDisplayOptions
+import com.glut.schedule.service.export.resolveExportDisplayOptions
+import com.glut.schedule.service.export.initialExportWeek
+import com.glut.schedule.service.export.pdfExportFooter
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -89,6 +93,34 @@ class SchedulePdfPageBuilderTest {
         assertEquals("1", page.rows.first().label)
         assertEquals(listOf("一", "二", "三", "四", "五"), page.days.map { it.weekday })
         assertEquals(listOf("2", "3", "4", "5", "6"), page.days.map { it.dateText })
+    }
+
+    /** PNG 与 PDF 共用双行时间和真实导出日期，不混入课程所属周的日期。 */
+    @Test
+    fun exportTimeAndFooterAreShared() {
+        val page = page(emptyList())
+        assertEquals("08:30\n09:15", page.rows.first().timeText)
+        assertEquals(pdfExportFooter(), page.footer)
+    }
+
+    /** 第一周没有中午或周末课时，其他周的课次仍应参与首次推断。 */
+    @Test
+    fun exportDisplayUsesWholeSemesterAndRespectsRememberedChoices() {
+        val weeks = mapOf(1 to emptyList(), 12 to listOf(block(day = 6, start = 5, end = 6)))
+        assertEquals(ExportDisplayOptions(true, true), resolveExportDisplayOptions(ExportDisplayOptions(), weeks, true))
+        assertEquals(ExportDisplayOptions(false, false), resolveExportDisplayOptions(ExportDisplayOptions(false, false), weeks, true))
+        assertEquals(ExportDisplayOptions(false, true), resolveExportDisplayOptions(ExportDisplayOptions(), weeks, false))
+        assertEquals(ExportDisplayOptions(false, false), resolveExportDisplayOptions(ExportDisplayOptions(), emptyMap(), true))
+    }
+
+    /** 当前学期使用本周；历史学期定位第一门课，空学期仍安全落到第一周。 */
+    @Test
+    fun initialWeekDependsOnSemesterContext() {
+        val weeks = mapOf(1 to emptyList(), 5 to listOf(block()), 9 to listOf(block()))
+        assertEquals(8, initialExportWeek(false, 8, 20, weeks))
+        assertEquals(5, initialExportWeek(true, 8, 20, weeks))
+        assertEquals(1, initialExportWeek(true, 8, 20, emptyMap()))
+        assertEquals(20, initialExportWeek(false, 30, 20, weeks))
     }
 
     @Test

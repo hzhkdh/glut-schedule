@@ -122,6 +122,8 @@ class ScheduleApplication : Application() {
     private fun observeScheduledRefresh() {
         val store = com.glut.schedule.service.refresh.ScheduledRefreshStore(this)
         applicationScope.launch {
+            // 系统终止进程后，先收尾未结束的记录，再登记下一轮计划。
+            com.glut.schedule.service.refresh.recoverInterruptedScheduledRefreshRuns(this@ScheduleApplication)
             combine(
                 store.config.map { it.enabled to it.plans }.distinctUntilChanged(),
                 appContainer.settingsStore.campusType,

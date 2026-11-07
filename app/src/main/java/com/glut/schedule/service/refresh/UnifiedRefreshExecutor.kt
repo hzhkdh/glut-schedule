@@ -2,13 +2,10 @@ package com.glut.schedule.service.refresh
 
 import android.content.Context
 import com.glut.schedule.AppContainer
-import com.glut.schedule.BuildConfig
-import com.glut.schedule.data.model.*
 import com.glut.schedule.data.settings.CampusType
 import com.glut.schedule.service.academic.*
-import com.glut.schedule.service.campus.CampusImageType
 import com.glut.schedule.service.chaoxing.refreshHomeworkForUnified
-import com.glut.schedule.service.finance.FinanceFailure
+import com.glut.schedule.service.chaoxing.ChaoxingLoginRequiredException
 import com.glut.schedule.service.holiday.refreshMakeupTable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -29,9 +26,6 @@ internal class UnifiedRefreshExecutor(private val context: Context, private val 
     private var academicInitial: AcademicProfileSession? = null
     private var academicCookie = ""
     private var renewed = false
-    // 一轮内分别固定来源身份，后续子项不能切换到中途新登录的账号。
-    private var financeInitial: Pair<String, String>? = null
-    private var fitnessInitial: Pair<String, String>? = null
 
     suspend fun execute(task: RefreshTaskId): ScheduledRefreshTaskResult = dependencyCache.execute(task)
 
@@ -44,9 +38,7 @@ internal class UnifiedRefreshExecutor(private val context: Context, private val 
                 when {
                     task.academic -> academicRefreshMutex.withLock { academic(task) }
                     task == RefreshTaskId.CHAOXING -> if (!refreshHomeworkForUnified(context)) error("学习通部分更新失败")
-                    task.group == "财务" -> finance(task)
-                    task.group == "体测" -> fitness(task)
-                    else -> publicData(task)
+                    else -> error("该历史任务已不支持定时刷新")
                 }
             }
             ScheduledRefreshTaskResult(task, RefreshTaskStatus.SUCCESS, "已更新")
@@ -56,6 +48,8 @@ internal class UnifiedRefreshExecutor(private val context: Context, private val 
     } catch (cancelled: CancellationException) { throw cancelled
     } catch (_: ScheduledRefreshLoginRequiredException) {
         ScheduledRefreshTaskResult(task, RefreshTaskStatus.LOGIN_REQUIRED, "请先在对应页面登录")
+    } catch (_: ChaoxingLoginRequiredException) {
+        ScheduledRefreshTaskResult(task, RefreshTaskStatus.LOGIN_REQUIRED, "请先在学习通页面重新登录")
     } catch (_: StaleRefreshSession) {
         ScheduledRefreshTaskResult(task, RefreshTaskStatus.CANCELLED, "账号或设置已变化")
     } catch (unavailable: AcademicDataUnavailableException) {
@@ -168,74 +162,4 @@ internal class UnifiedRefreshExecutor(private val context: Context, private val 
         if (currentAcademic()) c.academicSessionStore.saveProfileCookieIfCurrent(initial.cookie, initial.studentNo, initial.base, academicCookie)
     }
 
-    private suspend fun finance(task: RefreshTaskId) {
-        val store = c.financeStore
-        val cookie = store.sessionCookie(); val owner = store.credentials().username
-        val initial = financeInitial ?: (owner to cookie).also { financeInitial = it }
-        if (initial != (owner to cookie)) throw StaleRefreshSession()
-        if (cookie.isBlank()) throw ScheduledRefreshLoginRequiredException()
-        val module = FinanceModule.valueOf(task.name.removePrefix("FINANCE_"))
-        val response = try { c.financeApiService.fetch(module, cookie, 1, 20) }
-            catch (error: FinanceFailure.SessionExpired) { throw ScheduledRefreshLoginRequiredException() }
-        currentCoroutineContext().ensureActive()
-        val payload = response.payload ?: throw IOException("财务数据不可用")
-        if (!stillEnabled()) throw StaleRefreshSession()
-        if (!store.commitIfCurrent(owner, cookie) {
-                store.saveModule(module, CachedFinancePayload(payload, System.currentTimeMillis()))
-                if (response.cookie.isNotBlank()) store.saveSessionCookie(response.cookie)
-            }) throw StaleRefreshSession()
-        financeInitial = owner to response.cookie.ifBlank { cookie }
-    }
-
-    private suspend fun fitness(task: RefreshTaskId) {
-        val store = c.fitnessStore
-        val owner = store.getUsername(); var cookie = store.getSession()
-        val initial = fitnessInitial ?: (owner to cookie).also { fitnessInitial = it }
-        if (initial != (owner to cookie)) throw StaleRefreshSession()
-        if (cookie.isBlank()) throw ScheduledRefreshLoginRequiredException()
-        val response = if (task == RefreshTaskId.FITNESS_STANDARD) c.fitnessApiService.getStandard(cookie) else c.fitnessApiService.refresh(cookie)
-        currentCoroutineContext().ensureActive()
-        if (!response.success) {
-            if (response.code.contains("SESSION") || response.code.contains("LOGIN")) throw ScheduledRefreshLoginRequiredException()
-            throw IOException("体测数据不可用")
-        }
-        if (!stillEnabled()) throw StaleRefreshSession()
-        val saved = store.commitIfCurrent(owner, cookie) {
-            if (task == RefreshTaskId.FITNESS_STANDARD) store.saveStandard(response.standardHtml)
-            else store.saveSnapshot(response.currentHtml, response.historyHtml)
-            if (response.fitnessCookie.isNotBlank()) store.saveSession(response.fitnessCookie)
-        }
-        if (!saved) throw StaleRefreshSession()
-        cookie = response.fitnessCookie.ifBlank { cookie }
-        if (task == RefreshTaskId.FITNESS_HISTORY) {
-            for (record in c.fitnessParser.parseHistory(response.historyHtml)) {
-                val request = record.detailRequest ?: continue
-                val detail = c.fitnessApiService.getHistoryDetail(cookie, request)
-                currentCoroutineContext().ensureActive()
-                if (!detail.success) throw IOException("历年体测部分失败")
-                if (!stillEnabled() || !store.commitIfCurrent(owner, cookie) {
-                        store.saveHistoryDetail(record.year, record.term, detail.detailHtml)
-                        if (detail.fitnessCookie.isNotBlank()) store.saveSession(detail.fitnessCookie)
-                    }) throw StaleRefreshSession()
-                cookie = detail.fitnessCookie.ifBlank { cookie }
-            }
-        }
-        fitnessInitial = owner to cookie
-    }
-
-    private suspend fun publicData(task: RefreshTaskId) {
-        when (task) {
-            RefreshTaskId.CAMPUS_INFO -> CampusImageType.entries.filter { it.isRemote }.forEach {
-                if (c.campusImageService.fetch(it, true).fromCache) throw IOException("校园信息未刷新")
-            }
-            RefreshTaskId.NOTICES -> c.noticeChecker.check()?.let { c.settingsStore.setCachedNoticesJson(it.rawJson) } ?: throw IOException("通知不可用")
-            RefreshTaskId.BACKGROUND_GALLERY -> c.remoteBackgroundRepository.loadCatalogResult(true).let {
-                if (it.source.name == "CACHE_FALLBACK") throw IOException("画廊未刷新")
-            }
-            RefreshTaskId.UPDATE_CHECK -> c.updateChecker.check(BuildConfig.VERSION_NAME)?.let {
-                c.settingsStore.setUpdateAvailable(if (it.isNewer) it.latestVersion else "")
-            } ?: throw IOException("版本信息不可用")
-            else -> error("未知任务")
-        }
-    }
 }

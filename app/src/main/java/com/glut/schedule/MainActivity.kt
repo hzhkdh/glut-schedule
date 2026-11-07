@@ -1122,7 +1122,12 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                         )
                                     },
                                     onSubPageChange = { settingsSubPage = it },
-                                    onReset = { showResetConfirm = true }
+                                    onReset = { showResetConfirm = true },
+                                    onRefreshLogin = { task ->
+                                        // 从失败项目直达对应来源，定时刷新本身不启动交互登录。
+                                        selectedItem = if (task == com.glut.schedule.service.refresh.RefreshTaskId.CHAOXING)
+                                            DrawerItem.ChaoxingHomework else DrawerItem.Import
+                                    }
                                 )
                                 DrawerItem.Notice -> NoticeScreen(
                                     state = noticeLoadState,
@@ -1645,7 +1650,8 @@ private fun ScheduleSettingsDestination(
     onClearBackground: () -> Unit,
     onUseRemoteBackground: (com.glut.schedule.service.background.DownloadedRemoteBackground) -> Unit,
     onSubPageChange: (SettingsSubPage) -> Unit,
-    onReset: () -> Unit
+    onReset: () -> Unit,
+    onRefreshLogin: (com.glut.schedule.service.refresh.RefreshTaskId) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val campusCapabilities = capabilitiesFor(uiState.campusType)
@@ -1654,7 +1660,7 @@ private fun ScheduleSettingsDestination(
         subPage == SettingsSubPage.CLASS_PERIODS && !campusCapabilities.supportsClassPeriodSettings
     ) SettingsSubPage.ROOT else subPage
     when (effectiveSubPage) {
-        SettingsSubPage.SCHEDULED_REFRESH -> ScheduledRefreshScreen(campus = uiState.campusType)
+        SettingsSubPage.SCHEDULED_REFRESH -> ScheduledRefreshScreen(campus = uiState.campusType, onLoginRequired = onRefreshLogin)
         SettingsSubPage.COURSE_COLORS -> CourseColorsPage(
             // 用完整课表：隐藏掉的卡片也要能在这里改色。
             courses = uiState.allCourses,

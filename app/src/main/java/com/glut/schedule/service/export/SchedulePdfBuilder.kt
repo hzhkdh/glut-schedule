@@ -144,9 +144,12 @@ private fun drawPage(canvas: Canvas, page: PdfWeekPage, style: PdfPageStyle) {
     // 节次列
     page.rows.forEachIndexed { index, row ->
         val top = GRID_TOP + DAY_HEADER_HEIGHT + index * rowHeight
-        drawCentered(canvas, row.label, gridLeft + PERIOD_COLUMN_WIDTH / 2, top + rowHeight / 2 - 1f, periodPaint)
+        drawCentered(canvas, row.label, gridLeft + PERIOD_COLUMN_WIDTH / 2, top + rowHeight / 2 - 7f, periodPaint)
         if (row.timeText.isNotBlank()) {
-            drawCentered(canvas, row.timeText, gridLeft + PERIOD_COLUMN_WIDTH / 2, top + rowHeight / 2 + 7f, timePaint)
+            // 与图片共用双行时间模型，避免完整时间段超出节次列。
+            row.timeText.lines().forEachIndexed { line, time ->
+                drawCentered(canvas, time, gridLeft + PERIOD_COLUMN_WIDTH / 2, top + rowHeight / 2 + 2f + line * 8f, timePaint)
+            }
         }
     }
 

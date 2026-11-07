@@ -72,7 +72,7 @@ class ScheduledRefreshStore(context: Context) {
         dataStore.edit { preferences ->
             if (preferences[ownerKey] != digest) {
                 preferences[ownerKey] = digest
-                // 统一入口跨来源使用：换教务账号仅清理记录，不关闭仍可用的学习通及公共任务。
+                // 统一入口跨来源使用：换教务账号仅清理摘要，不关闭学习通计划。
                 preferences.remove(lastAttemptKey)
                 preferences.remove(lastSuccessKey)
                 preferences.remove(statusKey)
@@ -97,18 +97,33 @@ class ScheduledRefreshStore(context: Context) {
 
     suspend fun recordRun(run: ScheduledRefreshRun) {
         dataStore.edit { prefs ->
-            val history = (listOf(run) + decodeRuns(prefs[runsKey].orEmpty())).take(20)
+            // 使用稳定运行标识原位替换，执行中和完成后的记录始终属于同一轮。
+            val history = (listOf(run) + decodeRuns(prefs[runsKey].orEmpty()).filterNot { it.id == run.id }).take(20)
             prefs[runsKey] = encodeRuns(history)
             prefs[lastAttemptKey] = run.startedAt
-            val count = run.results.count { it.status == RefreshTaskStatus.SUCCESS }
-            prefs[statusKey] = "${run.results.size} 项任务，$count 项成功"
-            if (count == run.results.size && count > 0) prefs[lastSuccessKey] = run.finishedAt
+            val summary = scheduledRefreshRunSummary(run)
+            prefs[statusKey] = "${summary.title}，${summary.successCount}/${summary.totalCount} 项成功"
+            if (summary.status == ScheduledRefreshRunStatus.FULL_SUCCESS) prefs[lastSuccessKey] = run.finishedAt
+        }
+    }
+
+    /** 查询 WorkManager 期间若任务已写入新进度，不覆盖较新的生命周期。 */
+    suspend fun markInterruptedIfUnchanged(run: ScheduledRefreshRun) {
+        dataStore.edit { prefs ->
+            val history = decodeRuns(prefs[runsKey].orEmpty())
+            if (history.firstOrNull { it.id == run.id } != run) return@edit
+            val interrupted = run.copy(state = ScheduledRefreshRunState.INTERRUPTED, activeTask = null)
+            prefs[runsKey] = encodeRuns(history.map { if (it.id == run.id) interrupted else it })
+            if (history.firstOrNull()?.id == run.id) {
+                val summary = scheduledRefreshRunSummary(interrupted)
+                prefs[statusKey] = "${summary.title}，${summary.successCount}/${summary.totalCount} 项成功"
+            }
         }
     }
 
     suspend fun setTimes(times: List<Int>) {
         val sorted = times.sorted()
-        require(validateRefreshTimes(sorted)) { "请选择 1 至 8 个不重复且间隔至少 15 分钟的有效时刻" }
+        require(validateRefreshTimes(sorted)) { "请选择 1 至 3 个不重复且间隔至少 15 分钟的有效时刻" }
         val old = config.first()
         setPlans(sorted.map { time -> old.plans.firstOrNull { it.minuteOfDay == time }
             ?: ScheduledRefreshPlan(java.util.UUID.randomUUID().toString(), time, setOf(RefreshTaskId.SCHEDULE, RefreshTaskId.EXAMS)) })
@@ -146,16 +161,28 @@ internal fun decodePlans(raw: String): List<ScheduledRefreshPlan> = runCatching 
 }.getOrDefault(emptyList())
 internal fun encodeRuns(runs: List<ScheduledRefreshRun>): String = JSONArray().apply {
     runs.forEach { run -> put(JSONObject().put("id", run.id).put("plan", run.planId).put("start", run.startedAt)
-        .put("end", run.finishedAt).put("results", JSONArray().apply { run.results.forEach { r ->
+        .put("end", run.finishedAt).put("minute", run.minuteOfDay).put("state", run.state.name)
+        .put("tasks", JSONArray(run.taskIds.map { it.name })).put("work", run.workId)
+        .put("active", run.activeTask?.name).put("results", JSONArray().apply { run.results.forEach { r ->
             put(JSONObject().put("task", r.taskId.name).put("status", r.status.name).put("message", r.message)) } })) }
 }.toString()
 internal fun decodeRuns(raw: String): List<ScheduledRefreshRun> = runCatching {
     val array = JSONArray(raw)
-    (0 until array.length()).take(20).map { i -> val r = array.getJSONObject(i); val results = r.getJSONArray("results")
-        ScheduledRefreshRun(r.getString("id"), r.getString("plan"), r.getLong("start"), r.getLong("end"),
-            (0 until results.length()).map { n -> val item = results.getJSONObject(n)
+    (0 until array.length()).take(20).mapNotNull { i -> runCatching {
+        val r = array.getJSONObject(i); val results = r.getJSONArray("results")
+        val decodedResults = (0 until results.length()).map { n -> val item = results.getJSONObject(n)
                 ScheduledRefreshTaskResult(RefreshTaskId.valueOf(item.getString("task")),
-                    RefreshTaskStatus.valueOf(item.getString("status")), item.getString("message")) }) }
+                    RefreshTaskStatus.valueOf(item.getString("status")), item.getString("message")) }
+        val tasks = r.optJSONArray("tasks")
+        ScheduledRefreshRun(r.getString("id"), r.getString("plan"), r.getLong("start"), r.getLong("end"),
+            decodedResults, minuteOfDay = if (r.has("minute") && !r.isNull("minute")) r.getInt("minute") else null,
+            taskIds = tasks?.let { values -> (0 until values.length()).mapNotNull { n ->
+                RefreshTaskId.entries.firstOrNull { it.name == values.getString(n) } }.toSet()
+            } ?: decodedResults.map { it.taskId }.toSet(),
+            state = ScheduledRefreshRunState.valueOf(r.optString("state", ScheduledRefreshRunState.FINISHED.name)),
+            workId = if (r.isNull("work")) null else r.optString("work").takeIf { it.isNotBlank() },
+            activeTask = RefreshTaskId.entries.firstOrNull { it.name == r.optString("active") })
+    }.getOrNull() }
 }.getOrDefault(emptyList())
 
 /** 旧计划只继承已启用的教务内容，不自动为用户勾选新来源。 */

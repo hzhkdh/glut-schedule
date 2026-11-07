@@ -18,6 +18,23 @@ data class CourseHomework(val course: ChaoxingCourse, val homework: List<Homewor
 data class FailedCourseTask(val course: ChaoxingCourse, val kind: String)
 data class HomeworkSyncResult(val courses: List<CourseHomework>, val failed: List<ChaoxingCourse>, val failureReasons: Map<String, Int> = emptyMap(), val failedTasks: List<FailedCourseTask> = failed.map { FailedCourseTask(it, "homework") })
 
+/** 只表示已确认回到认证入口；普通结构变化和网络故障仍使用原有失败路径。 */
+class ChaoxingLoginRequiredException : java.io.IOException("学习通登录已失效")
+
+internal fun isChaoxingLoginPage(url: HttpUrl, html: String): Boolean {
+    fun loginUrl(candidate: HttpUrl): Boolean = candidate.host == "passport2.chaoxing.com" &&
+        candidate.encodedPath.lowercase() in setOf("/login", "/fanyalogin", "/mlogin", "/sso/tologin")
+    if (loginUrl(url)) return true
+    val document = Jsoup.parse(html)
+    // 密码框本身不足以判定失效：必须同时存在官方认证表单或学习通固定账号表单。
+    return document.select("form").any { form ->
+        form.selectFirst("input[type=password]") != null &&
+            (url.resolve(form.attr("action"))?.let(::loginUrl) == true ||
+                (form.id() in setOf("loginFrom", "loginForm") &&
+                    form.selectFirst("input#phone, input[name=uname]") != null))
+    }
+}
+
 /** CookieManager 按请求域匹配 Cookie，避免把登录域的会话误发到课程域。 */
 class ChaoxingClient(
     private val transport: ((HttpUrl, String?) -> Pair<HttpUrl, String>)? = null
@@ -96,8 +113,9 @@ class ChaoxingClient(
 
     fun sync(): HomeworkSyncResult {
         val url = "https://mooc1-api.chaoxing.com/mycourse/backclazzdata?view=json&rss=1".toHttpUrl()
-        val raw = fetch(url, "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/interaction").second
-        val json = runCatching { JSONObject(raw) }.getOrElse { error("学习通登录已失效或课程列表格式发生变化") }
+        val (responseUrl, raw) = fetch(url, "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/interaction")
+        if (isChaoxingLoginPage(responseUrl, raw)) throw ChaoxingLoginRequiredException()
+        val json = runCatching { JSONObject(raw) }.getOrElse { error("学习通课程列表格式发生变化") }
         val channels = json.optJSONArray("channelList") ?: error("学习通课程列表格式发生变化")
         val courses = (0 until channels.length()).mapNotNull { i ->
             val channel = channels.optJSONObject(i) ?: return@mapNotNull null
