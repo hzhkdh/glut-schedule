@@ -1,7 +1,7 @@
 {
-  "version": "v0.26.0",
-  "versionCode": 43,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.26.0",
-  "releaseNotes": "- 本科生新增【免密登入】功能\r\n- 新增自动调课功能\r\n- 专科、研究生会话过期后刷新各菜单原地弹出验证码输入框，不再需要去到导入页重新登入\r\n- 新增研究生调课记录查看\r\n- 自动判断是否开启显示中午、显示周末",
-  "publishedAt": "2026-10-16T09:40:34Z"
+  "version": "v0.27.0",
+  "versionCode": 44,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.27.0",
+  "releaseNotes": "## feature\r\n- 新增学习通任务统一查看，支持查看作业、考试（待定）、讨论的集中查看；支持跳转学习通app提交作业（需要登入的账号一致）\r\n- 新增定时刷新\r\n-  新增课表多文件格式导出（png、pdf、csv、ics）\r\n \r\n## fix\r\n- 修复调课一览点击刷新后会导致记录列表消失问题\r\n\r\n## style\r\n- 改动了一些UI：主要改动侧边栏 UI，增加个人档案中心；优化课表网格线，贯穿左侧�,
+  "publishedAt": "2026-11-08T05:58:38Z"
 }
