@@ -9,22 +9,18 @@ import android.graphics.Rect
 import android.os.Build
 import android.util.LruCache
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.IntSize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -66,11 +62,18 @@ internal fun calculateBuiltInBackgroundDecodePlan(
  * 淘汰只移除强引用，仍在 Compose 或导出任务中使用的图由 GC 在最后一个引用释放后回收。
  */
 object BuiltInBackgroundLoader {
-    private const val CACHE_BYTES = 16 * 1024 * 1024
+    private const val CACHE_BYTES = 24 * 1024 * 1024
     private val mutex = Mutex()
     private val cache = object : LruCache<String, Bitmap>(CACHE_BYTES) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
+
+    // 使用布局像素作为键，首帧查询只访问内存，不必先开文件读取原图尺寸。
+    private fun cacheKey(background: BuiltInScheduleBackground, width: Int, height: Int): String =
+        "${background.drawableRes}|$width|$height"
+
+    internal fun getCached(background: BuiltInScheduleBackground, width: Int, height: Int): Bitmap? =
+        cache.get(cacheKey(background, width, height))
 
     suspend fun borrow(
         context: Context,
@@ -80,13 +83,19 @@ object BuiltInBackgroundLoader {
     ): Bitmap? = withContext(Dispatchers.IO) {
         mutex.withLock {
             val resources = context.applicationContext.resources
+            // 1440×3168 的背景约 17.4 MiB，旧 16 MiB 缓存会在 put 后立即将其淘汰。
+            // 至少容纳一张设备全屏图，并给设置缩略图留出余量；更大屏幕按实际像素扩容。
+            val metrics = resources.displayMetrics
+            val screenBudget = (metrics.widthPixels.toLong() * metrics.heightPixels * 4 + 4 * 1024 * 1024)
+                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            val budget = max(CACHE_BYTES, screenBudget)
+            if (cache.maxSize() != budget) cache.resize(budget)
+            val key = cacheKey(background, targetWidth, targetHeight)
+            cache.get(key)?.let { return@withLock it }
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true; inScaled = false }
             resources.openRawResource(background.drawableRes).use { BitmapFactory.decodeStream(it, null, bounds) }
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withLock null
             val plan = calculateBuiltInBackgroundDecodePlan(bounds.outWidth, bounds.outHeight, targetWidth, targetHeight)
-            // 同一裁剪比例也可能来自不同像素尺寸的预览，键必须包含最终输出尺寸。
-            val key = "${background.drawableRes}|$plan"
-            cache.get(key)?.let { return@withLock it }
             // 内置原始 JPEG 支持区域解码，禁止退回整图解码，以免重新引入约 70MiB 的分配。
             val bitmap = runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -132,16 +141,21 @@ fun BuiltInBackgroundImage(
     onLoadFinished: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    var size by remember { mutableStateOf(IntSize.Zero) }
     val latestOnLoadFinished by rememberUpdatedState(onLoadFinished)
-    val bitmap by produceState<Bitmap?>(null, background, size) {
-        value = if (size.width > 0 && size.height > 0) {
-            BuiltInBackgroundLoader.borrow(context, background, size.width, size.height)
-        } else null
-        // 成功后放行真实画面；确定解码失败也须结束启动等待，避免启动窗口永久停留。
-        if (size.width > 0 && size.height > 0) latestOnLoadFinished()
-    }
-    Box(modifier.onSizeChanged { size = it }) {
+    BoxWithConstraints(modifier) {
+        // 在子内容首次组合时就取得真实布局尺寸，避免 onSizeChanged 后才启动加载而先画空帧。
+        val width = constraints.maxWidth
+        val height = constraints.maxHeight
+        val cached = remember(background, width, height) {
+            BuiltInBackgroundLoader.getCached(background, width, height)
+        }
+        val bitmap by produceState<Bitmap?>(cached, background, width, height) {
+            value = cached ?: if (width > 0 && height > 0) {
+                BuiltInBackgroundLoader.borrow(context, background, width, height)
+            } else null
+            // 成功或确定失败都结束启动等待；命中缓存时首帧直接绘图，不依赖协程调度。
+            if (width > 0 && height > 0) latestOnLoadFinished()
+        }
         bitmap?.let {
             Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), alignment = Alignment.Center,
                 contentScale = ContentScale.Crop)
