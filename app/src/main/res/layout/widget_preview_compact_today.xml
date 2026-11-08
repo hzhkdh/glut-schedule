@@ -47,7 +47,8 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <View
+        <!-- 预览由桌面通过 RemoteViews 加载，色条必须使用其支持的 ImageView。 -->
+        <ImageView
             android:layout_width="5dp"
             android:layout_height="34dp"
             android:background="@drawable/widget_preview_pink_bar" />
@@ -88,7 +89,7 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <View
+        <ImageView
             android:layout_width="5dp"
             android:layout_height="34dp"
             android:background="@drawable/widget_preview_blue_bar" />

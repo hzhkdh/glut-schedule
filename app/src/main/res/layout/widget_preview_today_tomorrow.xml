@@ -76,7 +76,8 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <View
+        <!-- RemoteViews 不支持普通 View，使用 ImageView 保持分隔线的尺寸和背景。 -->
+        <ImageView
             android:layout_width="1dp"
             android:layout_height="match_parent"
             android:layout_marginHorizontal="10dp"
