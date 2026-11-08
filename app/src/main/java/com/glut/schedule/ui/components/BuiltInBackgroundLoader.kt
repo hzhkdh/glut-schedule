@@ -87,7 +87,7 @@ object BuiltInBackgroundLoader {
             // 同一裁剪比例也可能来自不同像素尺寸的预览，键必须包含最终输出尺寸。
             val key = "${background.drawableRes}|$plan"
             cache.get(key)?.let { return@withLock it }
-            // PNG 支持区域解码，禁止退回完整原图解码，以免重新引入约 70MiB 的分配。
+            // 内置原始 JPEG 支持区域解码，禁止退回整图解码，以免重新引入约 70MiB 的分配。
             val bitmap = runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     // 新平台直接输出目标像素的中央区域，避免持有采样档位之间的大中间图。

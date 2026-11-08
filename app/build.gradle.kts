@@ -55,7 +55,7 @@ android {
     }
 
     buildTypes {
-        // 内置背景保留原始 PNG，不让构建工具重处理图片；nodpi 避免设备密度缩放。
+        // 内置图片不经过 PNG 重处理；原始 JPEG 直接打包，nodpi 避免设备密度缩放。
         getByName("debug") { isCrunchPngs = false }
         debug {
             // Debug 包保留 Workers.dev 联调入口，正式包使用自定义域名。
