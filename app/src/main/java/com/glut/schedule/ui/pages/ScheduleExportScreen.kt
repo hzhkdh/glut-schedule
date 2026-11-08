@@ -86,14 +86,13 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.glut.schedule.R
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.SemesterCacheStatus
 import com.glut.schedule.data.model.CourseBlock
@@ -124,6 +123,9 @@ import com.glut.schedule.service.export.buildScheduleIcs
 import com.glut.schedule.service.export.scheduleCsvFileName
 import com.glut.schedule.service.export.scheduleIcsFileName
 import com.glut.schedule.service.export.renderScheduleWeekImage
+import com.glut.schedule.service.export.scheduleWeekImageHeight
+import com.glut.schedule.ui.components.BuiltInBackgroundImage
+import com.glut.schedule.ui.components.BuiltInBackgroundLoader
 import com.glut.schedule.service.export.scheduleImageFileName
 import com.glut.schedule.service.export.schedulePdfFileName
 import com.glut.schedule.service.export.pdfExportFooter
@@ -339,12 +341,11 @@ fun ScheduleExportScreen(
                 ?.asAndroidBitmap()
                 ?.let { PdfBackground.Image(it) }
                 ?: PdfBackground.Solid(solidBackground.topColor, solidBackground.bottomColor)
-            else -> runCatching {
-                android.graphics.BitmapFactory.decodeResource(
-                    context.resources,
-                    R.drawable.builtin_flower_background
-                )
-            }.getOrNull()?.let { PdfBackground.Image(it) }
+            // 返回的是共享缓存的借用位图，导出完成时不得回收。
+            else -> BuiltInBackgroundLoader.borrow(
+                context, targetWidth = 1080,
+                targetHeight = scheduleWeekImageHeight(imagePage)
+            )?.let { PdfBackground.Image(it) }
                 ?: PdfBackground.Solid(solidBackground.topColor, solidBackground.bottomColor)
         }
     }
@@ -353,11 +354,8 @@ fun ScheduleExportScreen(
         if (imageBusy) return
         imageBusy = true
         var rendered: android.graphics.Bitmap? = null
-        var ownedBackground: android.graphics.Bitmap? = null
         try {
             val background = loadImageExportBackground()
-            ownedBackground = (background as? PdfBackground.Image)?.bitmap
-                ?.takeIf { useCurrentBackground && !hasCustomBackground }
             rendered = withContext(Dispatchers.Default) {
                 renderScheduleWeekImage(imagePage, background, uiState.backgroundDimAmount)
             }
@@ -375,7 +373,6 @@ fun ScheduleExportScreen(
             snackbarHostState.showSnackbar("生成图片失败，请重试")
         } finally {
             rendered?.recycle()
-            ownedBackground?.recycle()
             imageBusy = false
         }
     }
@@ -384,11 +381,8 @@ fun ScheduleExportScreen(
         if (imageBusy) return
         imageBusy = true
         var rendered: android.graphics.Bitmap? = null
-        var ownedBackground: android.graphics.Bitmap? = null
         try {
             val background = loadImageExportBackground()
-            ownedBackground = (background as? PdfBackground.Image)?.bitmap
-                ?.takeIf { useCurrentBackground && !hasCustomBackground }
             rendered = withContext(Dispatchers.Default) {
                 renderScheduleWeekImage(imagePage, background, uiState.backgroundDimAmount)
             }
@@ -398,7 +392,6 @@ fun ScheduleExportScreen(
             snackbarHostState.showSnackbar("生成图片失败，请重试")
         } finally {
             rendered?.recycle()
-            ownedBackground?.recycle()
             imageBusy = false
         }
     }
@@ -547,7 +540,7 @@ fun ScheduleExportScreen(
         pdfBusy = true
         pdfPageIndex = 0
         pdfPageTotal = weeks.size
-        // 背景与「图片」页保持一致：自定义图用已解码的位图，内置背景现解一张。
+        // PDF 画布为 595×842 points；背景保留 2 倍像素供放大/打印，避免退回 72dpi。
         val background = withContext(Dispatchers.IO) {
             when {
                 !useCurrentBackground -> PdfBackground.Solid(
@@ -558,17 +551,12 @@ fun ScheduleExportScreen(
                     ?.asAndroidBitmap()
                     ?.let { PdfBackground.Image(it) }
                     ?: PdfBackground.Solid(solidBackground.topColor, solidBackground.bottomColor)
-                else -> runCatching {
-                    android.graphics.BitmapFactory.decodeResource(
-                        context.resources,
-                        R.drawable.builtin_flower_background
-                    )
-                }.getOrNull()?.let { PdfBackground.Image(it) }
+                else -> BuiltInBackgroundLoader.borrow(
+                    context, targetWidth = 1190, targetHeight = 1684
+                )?.let { PdfBackground.Image(it) }
                     ?: PdfBackground.Solid(solidBackground.topColor, solidBackground.bottomColor)
             }
         }
-        val decodedBuiltin = useCurrentBackground && !hasCustomBackground &&
-            background is PdfBackground.Image
         val writer = SchedulePdfWriter(
             PdfPageStyle(background = background, dimAmount = uiState.backgroundDimAmount)
         )
@@ -633,9 +621,7 @@ fun ScheduleExportScreen(
             snackbarHostState.showSnackbar("生成 PDF 失败：${error.message ?: error.javaClass.simpleName}")
         } finally {
             writer.close()
-            if (decodedBuiltin) {
-                (background as? PdfBackground.Image)?.bitmap?.recycle()
-            }
+            // 背景来自共享缓存或页面状态；此处只关闭拥有的 PDF writer。
             pdfBusy = false
         }
     }
@@ -884,11 +870,8 @@ private fun ExportSheet(
     val lightContent = !useCurrentBackground && solidBackground.isLight
     Box(Modifier.fillMaxWidth()) {
         when {
-            useCurrentBackground && !hasCustom -> Image(
-                painter = painterResource(R.drawable.builtin_flower_background),
-                contentDescription = null,
-                modifier = Modifier.matchParentSize(),
-                contentScale = ContentScale.Crop
+            useCurrentBackground && !hasCustom -> BuiltInBackgroundImage(
+                modifier = Modifier.matchParentSize()
             )
             useCurrentBackground && customBackgroundBitmap != null -> Image(
                 bitmap = customBackgroundBitmap,
@@ -1228,30 +1211,43 @@ private fun ExportBitmapPreview(
     val context = androidx.compose.ui.platform.LocalContext.current
     var expanded by remember { mutableStateOf(false) }
     var previewFailed by remember { mutableStateOf(false) }
-    val bitmap by produceState<android.graphics.Bitmap?>(null, page, useCurrentBackground, solid, custom, uiState.backgroundDimAmount, uiState.customBackgroundUri) {
+    var previewWidth by remember { mutableIntStateOf(0) }
+    var expandedWidth by remember { mutableIntStateOf(0) }
+    // 常规预览按实际宽度绘制；放大窗口测量后可补足分辨率，不重复生成固定 1080px 长图。
+    val renderWidth = maxOf(previewWidth, if (expanded) expandedWidth else 0)
+    val bitmap by produceState<android.graphics.Bitmap?>(null, page, useCurrentBackground, solid, custom, uiState.backgroundDimAmount, uiState.customBackgroundUri, renderWidth) {
+        if (renderWidth <= 0) return@produceState
         previewFailed = false
-        value = null
-        value = withContext(Dispatchers.Default) {
-            var owned: android.graphics.Bitmap? = null
+        var ownedPreview: android.graphics.Bitmap? = null
+        try {
+            withContext(Dispatchers.Default) {
             try {
                 val background = when {
                     !useCurrentBackground -> PdfBackground.Solid(solid.topColor, solid.bottomColor)
                     custom != null -> PdfBackground.Image(custom.asAndroidBitmap())
                     !shouldUseCustomBackground(uiState.customBackgroundUri) -> {
-                        owned = android.graphics.BitmapFactory.decodeResource(context.resources, R.drawable.builtin_flower_background)
-                        owned?.let { PdfBackground.Image(it) } ?: PdfBackground.Solid(solid.topColor, solid.bottomColor)
+                        // 内置背景为借用；只有下方最终渲染出的预览位图由本组件拥有。
+                        BuiltInBackgroundLoader.borrow(context, targetWidth = renderWidth,
+                            targetHeight = scheduleWeekImageHeight(page, renderWidth))
+                            ?.let { PdfBackground.Image(it) } ?: PdfBackground.Solid(solid.topColor, solid.bottomColor)
                     }
                     else -> PdfBackground.Solid(solid.topColor, solid.bottomColor)
                 }
-                renderScheduleWeekImage(page, background, uiState.backgroundDimAmount)
-            } catch (_: Exception) { null }
-            finally { owned?.recycle() }
+                ownedPreview = renderScheduleWeekImage(page, background, uiState.backgroundDimAmount, widthPx = renderWidth)
+            } catch (_: Exception) { /* 失败时保留空结果，由页面展示重试提示。 */ }
+            }
+            value = ownedPreview
+            // 已交给 Compose，后续由 DisposableEffect 负责释放，不再由本协程持有所有权。
+            ownedPreview = null
+        } finally {
+            // 快速切换尺寸/背景而取消预览时，也要释放已生成但尚未交付的私有位图。
+            ownedPreview?.recycle()
         }
         previewFailed = value == null
     }
     DisposableEffect(bitmap) { val current = bitmap; onDispose { current?.recycle() } }
     SectionCard {
-        Box(Modifier.fillMaxWidth().height(238.dp).clip(RoundedCornerShape(8.dp)).clickable(enabled = bitmap != null) { expanded = true }, contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth().height(238.dp).onSizeChanged { previewWidth = it.width }.clip(RoundedCornerShape(8.dp)).clickable(enabled = bitmap != null) { expanded = true }, contentAlignment = Alignment.Center) {
             bitmap?.let { image ->
                 // 按宽度显示上段局部，纵向滚动查看后续节次，避免整张长图缩成细条。
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -1266,7 +1262,12 @@ private fun ExportBitmapPreview(
     if (expanded && bitmap != null) {
         Dialog({ expanded = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Column(Modifier.fillMaxSize().background(Color(0xFF17202D)).padding(16.dp)) {
-                Image(bitmap!!.asImageBitmap(), "完整课表预览", Modifier.weight(1f).fillMaxWidth(), contentScale = ContentScale.Fit)
+                Image(bitmap!!.asImageBitmap(), "完整课表预览", Modifier.weight(1f).fillMaxWidth()
+                    .onSizeChanged { size ->
+                        // Fit 后真正绘制的宽度可能受窗口高度限制，不按整窗尺寸过度解码。
+                        val ratio = 360f / (90f + 74f * page.rows.size.coerceAtLeast(1))
+                        expandedWidth = minOf(size.width, (size.height * ratio).roundToInt()).coerceAtLeast(1)
+                    }, contentScale = ContentScale.Fit)
                 TextButton(colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF3268D7)), onClick = { expanded = false }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("关闭预览", color = Color.White) }
             }
         }

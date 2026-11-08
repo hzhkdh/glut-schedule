@@ -1484,6 +1484,8 @@ private fun ScheduleDestination(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     val metrics = context.resources.displayMetrics
+    // 首帧只等待实际布局使用的那一次内置背景解码，避免按 metrics 额外预取另一张位图。
+    var builtInBackgroundReady by remember(uiState.customBackgroundUri) { mutableStateOf(false) }
     var backgroundCacheRevision by remember(uiState.customBackgroundUri, uiState.customBackgroundCrop) { mutableIntStateOf(0) }
     LaunchedEffect(uiState.customBackgroundUri, uiState.customBackgroundCrop) {
         val uri = uiState.customBackgroundUri
@@ -1510,11 +1512,12 @@ private fun ScheduleDestination(
             null
         }
     }
-    LaunchedEffect(uiState.isInitialized, uiState.customBackgroundUri, backgroundBitmap) {
+    LaunchedEffect(uiState.isInitialized, uiState.customBackgroundUri, backgroundBitmap, builtInBackgroundReady) {
         if (scheduleFirstFrameReady(
                 isInitialized = uiState.isInitialized,
                 backgroundUri = uiState.customBackgroundUri,
-                customBitmapAvailable = backgroundBitmap != null
+                customBitmapAvailable = backgroundBitmap != null,
+                builtInReady = builtInBackgroundReady
             )
         ) {
             onFirstFrameReady()
@@ -1528,7 +1531,8 @@ private fun ScheduleDestination(
         onClearBackground = onClearBackground,
         onImportClick = onImportClick,
         onExamClick = onExamClick,
-        onDrawerOpen = onDrawerOpen
+        onDrawerOpen = onDrawerOpen,
+        onBuiltInBackgroundReady = { builtInBackgroundReady = true }
     )
 }
 

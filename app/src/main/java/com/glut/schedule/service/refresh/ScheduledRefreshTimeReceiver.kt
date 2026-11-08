@@ -25,11 +25,8 @@ class ScheduledRefreshTimeReceiver : BroadcastReceiver() {
             try {
                 // 广播有执行时限；本地配置读取异常或协程取消都必须及时归还 PendingResult。
                 withTimeout(8_000) {
-                    val container = application.appContainer
                     val config = ScheduledRefreshStore(application).config.first()
-                    val campus = container.settingsStore.campusType.first()
-                    val session = container.academicSessionStore.profileSession.first()
-                    reconcileScheduledRefresh(application, config, true)
+                    reconcileScheduledRefresh(application, config, true, recalibrateClock = true)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled

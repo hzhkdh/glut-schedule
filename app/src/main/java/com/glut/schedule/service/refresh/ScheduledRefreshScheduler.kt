@@ -8,11 +8,14 @@ import androidx.work.BackoffPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.WorkInfo
+import com.google.common.util.concurrent.ListenableFuture
 import com.glut.schedule.ScheduleApplication
 import com.glut.schedule.service.chaoxing.HomeworkStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Instant
@@ -53,24 +56,33 @@ suspend fun reconcileScheduledRefresh(
     context: Context,
     config: ScheduledRefreshConfig,
     supported: Boolean,
-    now: Instant = Instant.now()
+    now: Instant = Instant.now(),
+    recalibrateClock: Boolean = false
 ) = schedulingMutex.withLock {
     // 等待排程锁时可能发生配置编辑，按锁内最新值撤销旧任务。
     val current = ScheduledRefreshStore(context).config.first()
     val manager = WorkManager.getInstance(context)
-    val legacy = manager.getWorkInfosForUniqueWork(UNIQUE_SCHEDULED_REFRESH).get()
+    val legacy = manager.getWorkInfosForUniqueWork(UNIQUE_SCHEDULED_REFRESH).awaitScheduling()
         .firstOrNull { !it.state.isFinished }
     // 旧周期任务只在迁移时取消；其已到期时间仍用于安排同轮，不丢弃待执行的今天。
-    if (legacy != null) manager.cancelUniqueWork(UNIQUE_SCHEDULED_REFRESH).result.get()
-    val active = manager.getWorkInfosByTag(SCHEDULED_REFRESH_TAG).get().filter { !it.state.isFinished }
+    if (legacy != null) manager.cancelUniqueWork(UNIQUE_SCHEDULED_REFRESH).result.awaitScheduling()
+    val allWorks = manager.getWorkInfosByTag(SCHEDULED_REFRESH_TAG).awaitScheduling()
+    val active = allWorks.filter { !it.state.isFinished }.toMutableList()
     if (!current.enabled || !supported) {
-        active.forEach { manager.cancelWorkById(it.id).result.get() }
+        active.forEach { manager.cancelWorkById(it.id).result.awaitScheduling() }
         return@withLock
     }
     val source = scheduledRefreshSourceKey(context)
     val keys = current.plans.associateWith { scheduledRefreshConfigurationKey(current, it, source) }
-    active.filter { work -> keys.values.none { "configuration:$it" in work.tags } }
-        .forEach { manager.cancelWorkById(it.id).result.get() }
+    val obsolete = active.filter { work -> keys.values.none { "configuration:$it" in work.tags } ||
+        (recalibrateClock && keys.any { (plan, key) ->
+            "configuration:$key" in work.tags && shouldRecalibrateScheduledOccurrence(
+                scheduledAtFromTags(work.tags, key), now, plan, ZoneId.systemDefault(),
+                work.state == WorkInfo.State.RUNNING || work.runAttemptCount > 0 ||
+                    current.runs.any { it.workId == work.id.toString() })
+        }) }
+    obsolete.forEach { manager.cancelWorkById(it.id).result.awaitScheduling() }
+    active.removeAll(obsolete.toSet())
     val legacyDue = legacy?.nextScheduleTimeMillis?.takeIf { it > 0 && it <= now.toEpochMilli() &&
         now.toEpochMilli() - it <= SCHEDULED_REFRESH_RECOVERY_WINDOW &&
         // 已开始的旧轮次缺少配置身份，宁可明确中断，也不重复其已成功的数据写回。
@@ -81,7 +93,10 @@ suspend fun reconcileScheduledRefresh(
         val resume = current.runs.firstOrNull { canResumeScheduledRun(it, plan, key, now.toEpochMilli()) }
         val due = resume?.scheduledAt ?: legacyDue?.takeIf {
             latestScheduledPlan(current.plans, Instant.ofEpochMilli(it), ZoneId.systemDefault()).first.id == plan.id
-        } ?: nextRefreshInstant(listOf(plan.minuteOfDay), now, ZoneId.systemDefault()).toEpochMilli()
+        } ?: nextUnrecordedRefreshInstant(plan, now, ZoneId.systemDefault(),
+            current.runs.filter { it.configurationKey == key }.map { it.scheduledAt }.toSet() +
+                allWorks.filter { it.state.isFinished && it.state != WorkInfo.State.CANCELLED }
+                    .mapNotNull { scheduledAtFromTags(it.tags, key) }).toEpochMilli()
         enqueueScheduledOccurrence(context, plan, key, due, resume?.id, resumeAttempt = resume?.attempt ?: 0)
     }
 }
@@ -111,9 +126,10 @@ internal fun scheduledRefreshLearningIdentity(context: Context) = callbackFlow {
     awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
 }
 
+/** 时区只影响未来触发点，不改变账号/配置身份，已到期任务在切换时区后仍有效。 */
 internal fun scheduledRefreshConfigurationKey(config: ScheduledRefreshConfig, plan: ScheduledRefreshPlan,
     source: String): String = refreshIdentityDigest("${config.revision}|${plan.id}|${plan.minuteOfDay}|" +
-    "${plan.taskIds.sortedBy { it.ordinal }}|$source|${ZoneId.systemDefault()}")
+    "${plan.taskIds.sortedBy { it.ordinal }}|$source")
 
 internal fun scheduledRefreshWorkName(planId: String): String = "$SCHEDULED_REFRESH_TAG-${refreshIdentityDigest(planId)}"
 
@@ -123,11 +139,12 @@ internal suspend fun enqueueScheduledOccurrence(context: Context, plan: Schedule
     val manager = WorkManager.getInstance(context)
     val occurrence = scheduledOccurrenceTag(key, scheduledAt)
     val requestTag = "$occurrence:request:${runId ?: "initial"}:$resumeAttempt"
-    val existing = manager.getWorkInfosByTag(occurrence).get()
+    val existing = manager.getWorkInfosByTag(occurrence).awaitScheduling()
     val recorded = ScheduledRefreshStore(context).config.first().runs.any {
         it.configurationKey == key && it.scheduledAt == scheduledAt }
     if (!shouldEnqueueScheduledOccurrence(runId != null, recorded,
-            existing.map { ScheduledOccurrenceWorkSnapshot(it.tags, it.state.isFinished) }, requestTag)) return
+            existing.map { ScheduledOccurrenceWorkSnapshot(it.tags, it.state.isFinished,
+                it.state == WorkInfo.State.CANCELLED) }, requestTag)) return
     val request = OneTimeWorkRequestBuilder<ScheduledRefreshWorker>()
         .setInputData(Data.Builder().putString("planId", plan.id).putString("configurationKey", key)
             .putLong("scheduledAt", scheduledAt).putString("resumeRunId", runId).build())
@@ -139,17 +156,40 @@ internal suspend fun enqueueScheduledOccurrence(context: Context, plan: Schedule
         .setBackoffCriteria(BackoffPolicy.LINEAR, 5, TimeUnit.MINUTES)
         .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
     manager.enqueueUniqueWork(scheduledRefreshWorkName(plan.id),
-        if (append) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP, request).result.get()
+        if (append) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP, request).result.awaitScheduling()
 }
 
 internal fun scheduledOccurrenceTag(key: String, scheduledAt: Long): String = "occurrence:$key:$scheduledAt"
 
-internal data class ScheduledOccurrenceWorkSnapshot(val tags: Set<String>, val finished: Boolean)
+/** 广播超时取消时中断本地 Future 等待，避免阻塞到超过 PendingResult 的时限。 */
+private suspend fun <T> ListenableFuture<T>.awaitScheduling(): T = runInterruptible { get() }
+
+internal fun scheduledAtFromTags(tags: Set<String>, key: String): Long? = tags.firstNotNullOfOrNull {
+    it.takeIf { tag -> tag.startsWith("occurrence:$key:") }?.removePrefix("occurrence:$key:")?.toLongOrNull()
+}
+
+/** 只校准尚未开始的未来轮次；已到期离线任务和运行/重试检查点仍保留原身份。 */
+internal fun shouldRecalibrateScheduledOccurrence(scheduledAt: Long?, now: Instant,
+    plan: ScheduledRefreshPlan, zone: ZoneId, hasStarted: Boolean): Boolean {
+    if (hasStarted || scheduledAt == null || scheduledAt <= now.toEpochMilli()) return false
+    return scheduledAt != nextRefreshInstant(listOf(plan.minuteOfDay), now, zone).toEpochMilli()
+}
+
+/** 回拨后跳过已执行的同一时刻；取消的纯未来任务不计入历史，可以重新排队。 */
+internal fun nextUnrecordedRefreshInstant(plan: ScheduledRefreshPlan, now: Instant,
+    zone: ZoneId, completed: Set<Long>): Instant {
+    var next = nextRefreshInstant(listOf(plan.minuteOfDay), now, zone)
+    while (next.toEpochMilli() in completed) next = nextRefreshInstant(listOf(plan.minuteOfDay), next, zone)
+    return next
+}
+
+internal data class ScheduledOccurrenceWorkSnapshot(val tags: Set<String>, val finished: Boolean,
+    val cancelled: Boolean = false)
 
 /** 普通后继按到期轮次幂等；恢复只允许原任务终止后登记一个指定代次的恢复请求。 */
 internal fun shouldEnqueueScheduledOccurrence(recovery: Boolean, recorded: Boolean,
     works: List<ScheduledOccurrenceWorkSnapshot>, requestTag: String): Boolean =
-    if (!recovery) !recorded && works.isEmpty()
+    if (!recovery) !recorded && works.all { it.cancelled }
     else works.none { !it.finished || requestTag in it.tags }
 
 /** 长时间离线后只接续最新两小时内的当前时段，不展开全天历史补跑。 */
@@ -158,7 +198,7 @@ internal fun nextScheduledOccurrenceAfterRun(plan: ScheduledRefreshPlan, now: In
     val latest = latestScheduledPlan(listOf(plan), now, zone).second.toEpochMilli()
     return if (latest > previousScheduledAt && latest !in knownOccurrences &&
         now.toEpochMilli() - latest <= SCHEDULED_REFRESH_RECOVERY_WINDOW) latest
-    else nextRefreshInstant(listOf(plan.minuteOfDay), now, zone).toEpochMilli()
+    else nextUnrecordedRefreshInstant(plan, now, zone, knownOccurrences).toEpochMilli()
 }
 
 /** 仅迁移旧任务时向前定位原到期计划，不把一次启动展开成全天补跑。 */

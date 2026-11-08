@@ -16,12 +16,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.annotation.DrawableRes
 import androidx.exifinterface.media.ExifInterface
 import com.glut.schedule.data.model.DEFAULT_BACKGROUND_DIM_AMOUNT
@@ -411,7 +409,8 @@ fun ScheduleBackgroundImage(
     modifier: Modifier = Modifier,
     customBackgroundUri: String = "",
     customBackgroundBitmap: ImageBitmap? = null,
-    dimAmount: Float = DEFAULT_BACKGROUND_DIM_AMOUNT
+    dimAmount: Float = DEFAULT_BACKGROUND_DIM_AMOUNT,
+    onBuiltInBackgroundReady: () -> Unit = {}
 ) {
     if (shouldUseCustomBackground(customBackgroundUri)) {
         val bitmap = customBackgroundBitmap ?: return
@@ -430,7 +429,8 @@ fun ScheduleBackgroundImage(
             background = BuiltInScheduleBackground.fromStorageValue(customBackgroundUri)
                 ?: BuiltInScheduleBackground.FLOWER,
             modifier = modifier,
-            dimAmount = dimAmount
+            dimAmount = dimAmount,
+            onLoadFinished = onBuiltInBackgroundReady
         )
     }
 }
@@ -439,16 +439,11 @@ fun ScheduleBackgroundImage(
 private fun BuiltInScheduleBackgroundImage(
     background: BuiltInScheduleBackground,
     modifier: Modifier = Modifier,
-    dimAmount: Float
+    dimAmount: Float,
+    onLoadFinished: () -> Unit
 ) {
-    Image(
-        painter = painterResource(background.drawableRes),
-        contentDescription = null,
-        modifier = modifier.fillMaxSize(),
-        // nodpi 原图不按设备密度重采样；等比填满屏幕，多余区域从中心裁掉，不拉伸。
-        contentScale = ContentScale.Crop,
-        alignment = Alignment.Center
-    )
+    // 按布局像素异步读取原图中央可见区域，保持 Crop/Center 画面与原始资源品质。
+    BuiltInBackgroundImage(background, modifier.fillMaxSize(), onLoadFinished)
     // 与外部自定义背景统一：按用户设置叠加黑色蒙层保障文字对比度。
     Canvas(modifier = modifier.fillMaxSize()) {
         drawRect(Color.Black.copy(alpha = dimAmount.coerceIn(0f, 0.8f)))
@@ -463,9 +458,10 @@ fun shouldUseCustomBackground(uri: String): Boolean {
 fun scheduleFirstFrameReady(
     isInitialized: Boolean,
     backgroundUri: String,
-    customBitmapAvailable: Boolean
+    customBitmapAvailable: Boolean,
+    builtInReady: Boolean = true
 ): Boolean = isInitialized && (
-    !shouldUseCustomBackground(backgroundUri) || customBitmapAvailable
+    if (shouldUseCustomBackground(backgroundUri)) customBitmapAvailable else builtInReady
 )
 
 enum class BackgroundSwitchResult {

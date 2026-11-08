@@ -11,6 +11,10 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import com.glut.schedule.data.model.readableMarkerColor
 
+/** 背景解码与最终画布共用尺寸计算，防止预览尺寸和导出长图比例不一致。 */
+fun scheduleWeekImageHeight(page: PdfWeekPage, widthPx: Int = 1080): Int =
+    ((60f + 74f * page.rows.size.coerceAtLeast(1) + 30f) * (widthPx / 360f)).toInt()
+
 /**
  * 课表图片渲染器。
  *
@@ -32,7 +36,7 @@ fun renderScheduleWeekImage(
     val footerHeight = 30f * scale
     val dayCount = page.days.size.coerceAtLeast(1)
     val rowCount = page.rows.size.coerceAtLeast(1)
-    val heightPx = (headerHeight + rowHeight * rowCount + footerHeight).toInt()
+    val heightPx = scheduleWeekImageHeight(page, widthPx)
 
     val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)

@@ -98,6 +98,7 @@ fun ScheduleScreen(
     onImportClick: () -> Unit,
     onExamClick: () -> Unit = {},
     onDrawerOpen: () -> Unit = {},
+    onBuiltInBackgroundReady: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
@@ -180,7 +181,8 @@ fun ScheduleScreen(
         ScheduleBackgroundImage(
             customBackgroundUri = uiState.customBackgroundUri,
             customBackgroundBitmap = customBackgroundBitmap,
-            dimAmount = uiState.backgroundDimAmount
+            dimAmount = uiState.backgroundDimAmount,
+            onBuiltInBackgroundReady = onBuiltInBackgroundReady
         )
         Column(
             modifier = Modifier

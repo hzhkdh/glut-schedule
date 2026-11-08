@@ -31,6 +31,18 @@ import java.io.File
 
 class ScheduleBackgroundTest {
     @Test
+    fun builtInBackgroundWaitsForActualLayoutDecodeBeforeFirstFrame() {
+        for (uri in listOf("", BuiltInScheduleBackground.FLOWER.storageValue)) {
+            assertFalse(scheduleFirstFrameReady(true, uri, false, builtInReady = false))
+            assertTrue(scheduleFirstFrameReady(true, uri, false, builtInReady = true))
+            assertFalse(scheduleFirstFrameReady(false, uri, false, builtInReady = true))
+        }
+        // 自定义图仍只依赖自己的实际位图，不受未运行的内置加载器影响。
+        assertTrue(scheduleFirstFrameReady(true, "content://gallery/artwork", true, builtInReady = false))
+        assertFalse(scheduleFirstFrameReady(true, "content://gallery/artwork", false, builtInReady = true))
+    }
+
+    @Test
     fun customBackgroundKeepsLaunchWindowUntilTargetBitmapIsReady() {
         assertFalse(
             scheduleFirstFrameReady(

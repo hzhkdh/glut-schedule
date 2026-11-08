@@ -41,7 +41,7 @@ class ScheduledRefreshWorker(context: Context, params: WorkerParameters) : Corou
         val elapsedStart = android.os.SystemClock.elapsedRealtime()
         val source = scheduledRefreshSourceKey(applicationContext)
         val key = scheduledRefreshConfigurationKey(config, plan, source)
-        // 配置、账号或时区发生变化时，旧排队任务不再启动新的请求。
+        // 配置或账号发生变化时旧任务失效；时钟、时区校准由排程层保留已到期任务。
         val inputKey = inputData.getString("configurationKey")
         if (inputKey != null && inputKey != key) return@withContext Result.success()
         val scheduledAt = inputData.getLong("scheduledAt", 0).takeIf { it > 0 }
@@ -148,7 +148,8 @@ class ScheduledRefreshWorker(context: Context, params: WorkerParameters) : Corou
             scheduledRefreshConfigurationKey(current, plan, scheduledRefreshSourceKey(applicationContext)) != key) return@withScheduledRefreshSchedulingLock
         val works = androidx.work.WorkManager.getInstance(applicationContext).getWorkInfosByTag("configuration:$key").get()
         val known = current.runs.filter { it.configurationKey == key }.map { it.scheduledAt }.toSet() +
-            works.flatMap { work -> work.tags.mapNotNull { tag ->
+            // 校准取消的未来请求并未执行，不能阻挡同一时段重新登记。
+            works.filter { it.state != androidx.work.WorkInfo.State.CANCELLED }.flatMap { work -> work.tags.mapNotNull { tag ->
                 tag.removePrefix("occurrence:$key:").takeIf { tag.startsWith("occurrence:$key:") }?.toLongOrNull() } }
         val next = nextScheduledOccurrenceAfterRun(plan, Instant.now(), ZoneId.systemDefault(), previousScheduledAt, known)
         enqueueScheduledOccurrence(applicationContext, plan, key, next, append = true)
