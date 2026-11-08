@@ -8,6 +8,11 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- 仅用于确认 vivo 后台耗电设置页是否可用，不读取厂商开关状态。 -->
+    <queries>
+        <package android:name="com.iqoo.powersaving" />
+    </queries>
+
     <application
         android:name=".ScheduleApplication"
         android:allowBackup="false"

@@ -3,6 +3,9 @@ package com.glut.schedule.service.academic
 import android.util.Log
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readStringLimited
+import com.glut.schedule.service.network.awaitResponse
+import com.glut.schedule.service.parser.GlutExamParser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
@@ -23,6 +26,8 @@ class ApiProbeService(
     private val baseClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        // 总时限同时覆盖重定向和持续缓慢返回的响应体。
+        .callTimeout(20, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -67,7 +72,7 @@ class ApiProbeService(
                     } else get()
                 }
                 .build()
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).awaitResponse { response ->
                 val body = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
                 ProbeResult(
                     url = normalizedUrl, method = method, httpCode = response.code,
@@ -80,7 +85,7 @@ class ApiProbeService(
                     serverDate = parseServerDate(response.header("Date"))
                 )
             }
-            }.getOrNull()
+            }.getOrElse { if (it is CancellationException) throw it else null }
         }
     }
 
@@ -104,7 +109,7 @@ class ApiProbeService(
                 .header("Referer", normalizedReferer)
                 .post(body.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
                 .build()
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).awaitResponse { response ->
                 val responseBody = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES).orEmpty()
                 ProbeResult(
                     url = normalizedUrl,
@@ -119,7 +124,7 @@ class ApiProbeService(
                     serverDate = parseServerDate(response.header("Date"))
                 )
             }
-            }.getOrNull()
+            }.getOrElse { if (it is CancellationException) throw it else null }
         }
     }
 
@@ -130,10 +135,15 @@ class ApiProbeService(
         baseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL
     ): List<ProbeResult> {
         val results = mutableListOf<ProbeResult>()
+        var sessionCookie = cookie
 
         suspend fun addProbe(url: String, method: String = "GET") {
             if (url.isBlank() || results.any { it.url == url && it.method.equals(method, ignoreCase = true) }) return
-            probeUrl(cookie, url, method)?.let(results::add)
+            probeUrl(sessionCookie, url, method)?.let {
+                // 课表探测同样可能轮换会话，后续端点必须接续本次响应的 Cookie。
+                sessionCookie = it.updatedCookie.ifBlank { sessionCookie }
+                results += it
+            }
         }
 
         val timetableUrls = buildProbeUrls(capturedTimetableUrls + storedTimetableUrl)
@@ -156,14 +166,17 @@ class ApiProbeService(
         baseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL
     ): List<ProbeResult> {
         val results = mutableListOf<ProbeResult>()
-
-        suspend fun addProbe(url: String, method: String = "GET") {
-            if (url.isBlank() || results.any { it.url == url && it.method.equals(method, ignoreCase = true) }) return
-            probeUrl(cookie, url, method)?.let(results::add)
-        }
-
-        buildExamProbeRequests(storedExamApiUrl, baseUrl).forEach { (url, method) ->
-            addProbe(url, method)
+        var sessionCookie = cookie
+        val selector = AcademicExamService(GlutExamParser(), this)
+        // 有效缓存地址返回后立即结束；失败候选只在总预算内串行兜底。
+        withTimeoutOrNull(30_000L) {
+            for ((url, method) in buildExamProbeRequests(storedExamApiUrl, baseUrl)) {
+                val result = probeUrl(sessionCookie, url, method) ?: continue
+                sessionCookie = result.updatedCookie.ifBlank { sessionCookie }
+                results += result
+                if (selector.selectExamDataFromProbeResults(listOf(result)) != null) break
+                if (result.httpCode == 401 || looksLikeAcademicLoginPage(result.body)) break
+            }
         }
 
         return results
@@ -494,10 +507,10 @@ class ApiProbeService(
 
     fun findExamJsonResult(results: List<ProbeResult>): ProbeResult? {
         return results
-            .filter { it.httpCode == 200 && it.body.length > 100 }
+            .filter { it.httpCode == 200 && it.body.isNotBlank() }
             .firstOrNull { r -> looksLikeExamJson(r.body) && hasExamUrl(r) }
             ?: results
-                .filter { it.httpCode == 200 && it.body.length > 100 }
+                .filter { it.httpCode == 200 && it.body.isNotBlank() }
                 .firstOrNull { r -> looksLikeExamJson(r.body) }
     }
 

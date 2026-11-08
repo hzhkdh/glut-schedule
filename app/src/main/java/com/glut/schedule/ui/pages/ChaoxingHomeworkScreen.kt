@@ -255,6 +255,11 @@ private fun ChaoxingHomeworkContent() {
             if (visibleRows.isEmpty()) Text(if(rows.isEmpty()) "暂无已同步的任务" else "没有符合条件的任务，请调整筛选")
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
                 items(visibleRows.sortedWith(compareBy<CachedHomework> { homeworkState(it.status) != HomeworkState.TODO }.thenBy { it.deadline ?: Long.MAX_VALUE }), key = { it.taskKey() }) { row ->
+                    // 仅未完成作业提供外部入口；跳转状态按任务保存，不触发同步或改变筛选。
+                    val canOpenHomework = row.kind == "homework" && homeworkState(row.status) == HomeworkState.TODO
+                    var openingHomework by remember(row.taskKey()) { mutableStateOf(false) }
+                    var attemptedOpen by remember(row.taskKey()) { mutableStateOf(false) }
+                    var jumpError by remember(row.taskKey()) { mutableStateOf<String?>(null) }
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFEFB)),
                         shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Color(0xFFE4E2DD))) {
                         Column(Modifier.padding(16.dp)) {
@@ -283,7 +288,36 @@ private fun ChaoxingHomeworkContent() {
                                     Text(countdown.text, color = fg, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
-                            HomeworkDetailContent(row, store, detailRevision)
+                            HomeworkDetailContent(row, store, detailRevision, trailingAction = {
+                                if (canOpenHomework) {
+                                    TextButton(enabled = !openingHomework, onClick = {
+                                        openingHomework = true
+                                        attemptedOpen = true
+                                        jumpError = null
+                                        val sessionGeneration = store.generation
+                                        scope.launch {
+                                            try {
+                                                jumpError = openChaoxingHomework(context, row, store, sessionGeneration)
+                                            } finally {
+                                                openingHomework = false
+                                            }
+                                        }
+                                    }) { Text(if (openingHomework) "正在打开…" else "去学习通完成 ↗") }
+                                }
+                            })
+                            if (canOpenHomework) {
+                                Text("使用学习通当前登录账号打开", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                jumpError?.let {
+                                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                }
+                                if (attemptedOpen && !openingHomework) {
+                                    // 系统受理 Intent 无法确认最终页面，保留明确的列表备用入口。
+                                    TextButton(onClick = { jumpError = openChaoxingHomeworkList(context) }) {
+                                        Text(if (jumpError == null) "未能打开？前往作业列表" else "打开学习通作业列表 ↗")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -337,7 +371,12 @@ private fun HomeworkDropdown(title: String, label: String, options: List<Pair<St
 
 /** 详情仅按需下载；失败时保留缓存，所有网络和解析工作移出主线程。 */
 @Composable
-private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore, revision: Long) {
+private fun HomeworkDetailContent(
+    row: CachedHomework,
+    store: HomeworkStore,
+    revision: Long,
+    trailingAction: (@Composable () -> Unit)? = null
+) {
     var expanded by remember(row.taskKey()) { mutableStateOf(false) }
     var html by remember(row.taskKey()) { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
@@ -365,7 +404,11 @@ private fun HomeworkDetailContent(row: CachedHomework, store: HomeworkStore, rev
             error = if (html.isBlank()) reason else "$reason（显示缓存详情）"
         } finally { loading = false }
     }
-    TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起详情" else "展开详情") }
+    // 详情与外部操作共用一行动作区，避免重复入口并保持详情内容统一向下展开。
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起详情" else "展开详情") }
+        trailingAction?.invoke()
+    }
     if (expanded) {
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (error.isNotBlank()) {

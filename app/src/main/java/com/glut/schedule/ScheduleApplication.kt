@@ -125,13 +125,16 @@ class ScheduleApplication : Application() {
             // 系统终止进程后，先收尾未结束的记录，再登记下一轮计划。
             com.glut.schedule.service.refresh.recoverInterruptedScheduledRefreshRuns(this@ScheduleApplication)
             combine(
-                store.config.map { it.enabled to it.plans }.distinctUntilChanged(),
+                store.config.map { Triple(it.enabled, it.plans, it.revision) }.distinctUntilChanged(),
                 appContainer.settingsStore.campusType,
-                appContainer.academicSessionStore.profileSession.map { it.studentNo to it.base }.distinctUntilChanged()
-            ) { config, campus, identity -> Triple(config, campus, identity) }
+                combine(appContainer.academicSessionStore.profileSession,
+                    appContainer.academicSessionStore.sessionAuthMethod) { session, method ->
+                    "${session.studentNo}|${session.base}|$method"
+                }.distinctUntilChanged(),
+                com.glut.schedule.service.refresh.scheduledRefreshLearningIdentity(this@ScheduleApplication).distinctUntilChanged()
+            ) { config, campus, identity, learning -> Triple(config, campus, "$identity|$learning") }
                 .distinctUntilChanged().collect { (_, campus, identity) ->
-                    store.bindOwner(identity.first + "|" + identity.second)
-                    val session = appContainer.academicSessionStore.profileSession.first()
+                    store.bindOwner("$campus|$identity")
                     com.glut.schedule.service.refresh.reconcileScheduledRefresh(this@ScheduleApplication,
                         store.config.first(), true)
                 }

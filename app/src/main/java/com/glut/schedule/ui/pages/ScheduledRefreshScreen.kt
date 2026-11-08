@@ -21,6 +21,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.glut.schedule.data.settings.CampusType
@@ -42,12 +45,13 @@ private val RefreshBlue = Color(0xFF3F7DF6)
 private val RefreshLine = Color(0xFFEDE8DE)
 
 /** 页面只保存每日计划；统一由应用层观察配置并登记系统任务。 */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN, onLoginRequired: ((RefreshTaskId) -> Unit)? = null) {
     val context = LocalContext.current
     val store = remember(context) { ScheduledRefreshStore(context) }
     val config by store.config.collectAsStateWithLifecycle(initialValue = ScheduledRefreshConfig())
-    val workFlow = remember(context) { WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(UNIQUE_SCHEDULED_REFRESH) }
+    val workFlow = remember(context) { WorkManager.getInstance(context).getWorkInfosByTagFlow(SCHEDULED_REFRESH_TAG) }
     val workInfos by workFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -56,6 +60,16 @@ fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN, onLoginRequir
     var showRuns by remember { mutableStateOf(false) }
     var showHelp by remember { mutableStateOf(false) }
     var now by remember { mutableStateOf(Instant.now()) }
+    var batteryOptimizationIgnored by remember(context) { mutableStateOf(androidBatteryOptimizationIgnored(context)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // 设置页返回时重新读取标准状态；厂商后台耗电、自启动状态始终留给用户在设置中确认。
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) batteryOptimizationIgnored = androidBatteryOptimizationIgnored(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val zone = ZoneId.systemDefault()
     val formatter = remember { DateTimeFormatter.ofPattern("MM月dd日 HH:mm", Locale.CHINA) }
     // 摘要和详情始终读取同一份记录，旧版的独立状态文字不再覆盖实际运行结果。
@@ -134,25 +148,32 @@ fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN, onLoginRequir
                         }
                     }
                 }
+                Text("运行情况", color = RefreshSecondary, fontSize = 13.sp)
                 RefreshGroup {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(latestRun?.let { scheduledRefreshRunSummary(it).title } ?: if (config.lastAttempt > 0) "旧版运行记录" else "尚未执行",
-                                modifier = Modifier.weight(1f), color = latestRun?.let { refreshRunColor(scheduledRefreshRunSummary(it).status) } ?: RefreshText,
-                                fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            RefreshAction("查看详情 ›", onClick = { showRuns = true })
+                            Text("上次刷新", modifier = Modifier.weight(1f), color = RefreshText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            val state = latestRun?.let { scheduledRefreshRunSummary(it) }
+                            Text(state?.title ?: if (config.lastAttempt > 0) "旧版记录" else "尚未执行",
+                                color = state?.let { refreshRunColor(it.status) } ?: RefreshSecondary, fontSize = 12.sp,
+                                modifier = Modifier.background(Color(0xFFF1F3F6), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp))
                         }
                         if (latestRun != null) {
-                            val summary = scheduledRefreshRunSummary(latestRun)
-                            Text("实际开始　${timestamp(latestRun.startedAt)}", color = RefreshSecondary, fontSize = 12.sp)
-                            Text("计划时间　${latestRun.minuteOfDay?.let(::refreshMinuteText) ?: "旧版未记录"}",
-                                color = RefreshSecondary, fontSize = 12.sp)
-                            Text(refreshRunCounts(latestRun, summary), color = RefreshSecondary, fontSize = 12.sp)
+                            Text(refreshRunCounts(latestRun, scheduledRefreshRunSummary(latestRun)), color = RefreshSecondary, fontSize = 12.sp)
+                            RefreshSummaryRow("实际开始", timestamp(latestRun.startedAt))
+                            RefreshSummaryRow("计划时刻", when {
+                                latestRun.scheduledAt > 0 -> timestamp(latestRun.scheduledAt)
+                                latestRun.minuteOfDay != null -> refreshMinuteText(latestRun.minuteOfDay)
+                                else -> "旧版未记录"
+                            })
+                            if (latestRun.attempt > 1) RefreshSummaryRow("执行次数", "第 ${latestRun.attempt} 次")
                         } else if (config.lastAttempt > 0) {
-                            Text("${timestamp(config.lastAttempt)} · 旧版记录无逐项详情", color = RefreshSecondary, fontSize = 12.sp)
-                        } else Text("计划执行后显示实际开始时间和结果", color = RefreshSecondary, fontSize = 12.sp)
-                        // 以系统登记记录为准，不能把尚未执行的计划自行跳到下一时刻。
-                        val work = workInfos.firstOrNull { !it.state.isFinished }
+                            RefreshSummaryRow("实际开始", timestamp(config.lastAttempt))
+                        } else Text("计划执行后显示结果", color = RefreshSecondary, fontSize = 12.sp)
+                        val pendingWorks = workInfos.filter { !it.state.isFinished }
+                        val work = pendingWorks.firstOrNull { it.state == WorkInfo.State.RUNNING }
+                            ?: pendingWorks.filter { it.nextScheduleTimeMillis in 1 until Long.MAX_VALUE }
+                                .minByOrNull { it.nextScheduleTimeMillis }
                         val plannedAt = work?.nextScheduleTimeMillis?.takeIf { it in 1 until Long.MAX_VALUE }
                         val next = when {
                             !config.enabled -> "未开启"
@@ -161,14 +182,40 @@ fun ScheduledRefreshScreen(campus: CampusType = CampusType.GUILIN, onLoginRequir
                             plannedAt <= now.toEpochMilli() -> "等待系统执行"
                             else -> timestamp(plannedAt)
                         }
-                        Text("下次计划　$next", color = RefreshSecondary, fontSize = 12.sp)
+                        HorizontalDivider(color = RefreshLine)
+                        RefreshSummaryRow("下次计划", next, emphasize = true)
+                        HorizontalDivider(color = RefreshLine)
+                        RefreshSettingRow("查看运行记录", null) { showRuns = true }
+                    }
+                }
+                Text("后台运行", color = RefreshSecondary, fontSize = 13.sp)
+                RefreshGroup {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        RefreshSettingRow("后台耗电管理", "待确认") {
+                            val opened = BackgroundRunSettings.openBatterySettings(context)
+                            scope.launch { snackbar.showSnackbar(if (opened) "请找到本应用，检查后台耗电选项" else "无法打开设置，请手动检查电池选项") }
+                        }
+                        HorizontalDivider(color = RefreshLine)
+                        RefreshSettingRow("自启动", "待确认") {
+                            val opened = BackgroundRunSettings.openAppDetails(context)
+                            scope.launch { snackbar.showSnackbar(if (opened) "请在本应用权限或系统设置中查找自启动" else "无法打开设置，请手动查找自启动") }
+                        }
+                        HorizontalDivider(color = RefreshLine)
+                        Text("Android 电池优化：${when (batteryOptimizationIgnored) {
+                            true -> "已豁免"
+                            false -> "受限"
+                            null -> "暂无法读取"
+                        }}", color = RefreshSecondary, fontSize = 11.sp, modifier = Modifier.padding(vertical = 12.dp))
                     }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("系统可能因省电或网络延迟执行。", color = RefreshSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                    RefreshAction(if (showHelp) "收起说明" else "运行说明 ›", onClick = { showHelp = !showHelp })
+                    Text("系统可能延后执行", color = RefreshSecondary, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    RefreshAction(if (showHelp) "收起说明" else "运行说明 ⓘ", onClick = { showHelp = !showHelp })
                 }
-                if (showHelp) Text("关闭后保留全部计划。每个时刻可独立选择内容，相邻时刻至少间隔15分钟。需要验证码或重新登录时跳过对应项目，其他项目继续执行。强行停止应用后，请重新打开应用恢复调度。", color = RefreshSecondary, fontSize = 12.sp, lineHeight = 20.sp)
+                if (showHelp) RefreshGroup {
+                    Text("允许后台耗电、自启动可能减少部分后台限制，开关需在系统设置中自行确认。Android 电池优化状态不代表厂商开关状态。\n\n关闭定时刷新会保留计划。中断后在原到期时间两小时内最多恢复两次，保留成功项目；需要重新登录时不反复认证。网络、省电或系统资源仍可能延后执行；强行停止应用后，请重新打开以恢复调度。",
+                        color = RefreshSecondary, fontSize = 12.sp, lineHeight = 20.sp, modifier = Modifier.padding(16.dp))
+                }
                 Spacer(Modifier.height(12.dp))
             }
         }
@@ -186,6 +233,7 @@ private fun RefreshRunsPage(
     val zone = ZoneId.systemDefault()
     val dateFormatter = remember { DateTimeFormatter.ofPattern("yyyy年MM月dd日", Locale.CHINA) }
     val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm:ss", Locale.CHINA) }
+    val plannedFormatter = remember { DateTimeFormatter.ofPattern("MM月dd日 HH:mm", Locale.CHINA) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -214,14 +262,21 @@ private fun RefreshRunsPage(
                                 Text(summary.title, color = refreshRunColor(summary.status), fontSize = 12.sp)
                                 Text(if (isExpanded) "  ⌃" else "  ›", color = RefreshSecondary, fontSize = 15.sp)
                             }
-                            Text("计划 ${run.minuteOfDay?.let(::refreshMinuteText) ?: "旧版未记录"}　·　${refreshRunDuration(run, now)}",
+                            Text("计划 ${if (run.scheduledAt > 0) plannedFormatter.format(Instant.ofEpochMilli(run.scheduledAt).atZone(zone)) else "旧版未记录"}${refreshAttemptText(run)}",
                                 color = RefreshSecondary, fontSize = 12.sp)
+                            Text(refreshRunDuration(run, now),
+                                color = RefreshSecondary, fontSize = 12.sp)
+                            if (run.reason.isNotBlank()) Text(run.reason, color = RefreshSecondary, fontSize = 12.sp, lineHeight = 18.sp)
                             Text(refreshRunCounts(run, summary),
                                 color = RefreshSecondary, fontSize = 12.sp)
                         }
                         if (isExpanded) {
                             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = RefreshLine)
                             Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                // 原始代码只保存在诊断记录中；页面仅显示已知原因，未知值不猜测。
+                                run.stopReason?.let(::refreshStopReasonLabel)?.let {
+                                    Text("停止原因：$it", color = RefreshSecondary, fontSize = 12.sp)
+                                }
                                 val tasks = (run.taskIds + run.results.map { it.taskId }).sortedBy { it.ordinal }
                                 if (tasks.isEmpty()) Text("旧版记录无逐项详情", color = RefreshSecondary, fontSize = 12.sp)
                                 tasks.forEach { task ->
@@ -270,17 +325,50 @@ private fun refreshRunCounts(run: ScheduledRefreshRun, summary: ScheduledRefresh
     val failed = run.results.count { it.status == RefreshTaskStatus.FAILED }
     val login = run.results.count { it.status == RefreshTaskStatus.LOGIN_REQUIRED }
     val unsupported = run.results.count { it.status == RefreshTaskStatus.UNSUPPORTED }
-    return "成功 ${summary.successCount}/${summary.totalCount}　失败 $failed" +
-        (if (login > 0) "　需登录 $login" else "") + (if (unsupported > 0) "　不支持 $unsupported" else "")
+    val unfinished = (summary.totalCount - summary.successCount).coerceAtLeast(0)
+    return "${summary.successCount} 项已更新" +
+        (if (unfinished > 0) " · $unfinished 项未完成" else "") +
+        (if (failed > 0) " · $failed 项失败" else "") +
+        (if (login > 0) " · $login 项需登录" else "") +
+        (if (unsupported > 0) " · $unsupported 项不支持" else "")
 }
 
 private fun refreshRunDuration(run: ScheduledRefreshRun, now: Instant): String {
     val running = run.state == ScheduledRefreshRunState.RUNNING
+    // 新记录只使用各次有效执行的累计快照，避免把退避、等待恢复的时间计入执行耗时。
+    if (run.scheduledAt > 0 || run.durationMillis > 0) {
+        val seconds = run.durationMillis.coerceAtLeast(0) / 1_000
+        val elapsed = if (seconds < 60) "${seconds}秒" else "${seconds / 60}分${seconds % 60}秒"
+        return "累计执行$elapsed${if (running) " · 结束后更新" else ""}"
+    }
     val end = if (running) now.toEpochMilli() else run.finishedAt
     if (end <= 0) return "结束时间未记录"
     val seconds = ((end - run.startedAt).coerceAtLeast(0) / 1_000)
     val elapsed = if (seconds < 60) "${seconds}秒" else "${seconds / 60}分${seconds % 60}秒"
     return if (running) "已运行$elapsed" else "耗时$elapsed"
+}
+
+/** 首次执行保持简洁，仅恢复轮次显示次数；旧记录的默认值不会被误标成恢复。 */
+private fun refreshAttemptText(run: ScheduledRefreshRun): String =
+    if (run.attempt > 1) " · 第${run.attempt}次执行" else ""
+
+/** 依据 WorkManager 常量解释停止原因，明确区分用户停止与应用自行取消。 */
+private fun refreshStopReasonLabel(reason: Int): String? = when (reason) {
+    WorkInfo.STOP_REASON_NOT_STOPPED -> null
+    WorkInfo.STOP_REASON_TIMEOUT, WorkInfo.STOP_REASON_FOREGROUND_SERVICE_TIMEOUT -> "系统超时"
+    WorkInfo.STOP_REASON_QUOTA -> "后台配额限制"
+    WorkInfo.STOP_REASON_BACKGROUND_RESTRICTION, WorkInfo.STOP_REASON_APP_STANDBY -> "省电或待机限制"
+    WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY -> "网络条件改变"
+    WorkInfo.STOP_REASON_USER -> "用户停止"
+    WorkInfo.STOP_REASON_CANCELLED_BY_APP -> "应用取消"
+    WorkInfo.STOP_REASON_PREEMPT -> "系统资源限制"
+    WorkInfo.STOP_REASON_DEVICE_STATE -> "系统设备状态限制"
+    WorkInfo.STOP_REASON_CONSTRAINT_BATTERY_NOT_LOW -> "电量条件改变"
+    WorkInfo.STOP_REASON_CONSTRAINT_CHARGING -> "充电条件改变"
+    WorkInfo.STOP_REASON_CONSTRAINT_DEVICE_IDLE -> "待机条件改变"
+    WorkInfo.STOP_REASON_CONSTRAINT_STORAGE_NOT_LOW -> "存储空间条件改变"
+    WorkInfo.STOP_REASON_SYSTEM_PROCESSING -> "系统处理需要"
+    else -> "未知系统原因"
 }
 
 private fun refreshFailureReason(result: ScheduledRefreshTaskResult): String = when (result.status) {
@@ -403,6 +491,29 @@ private fun RefreshPlanEditor(plan: ScheduledRefreshPlan, otherPlans: List<Sched
 @Composable
 private fun RefreshGroup(content: @Composable () -> Unit) {
     Surface(Modifier.fillMaxWidth(), color = RefreshCard, shape = RoundedCornerShape(14.dp), content = content)
+}
+
+/** 标签和值保持两侧对齐，长日期和大字体自然换行，不用空格模拟列宽。 */
+@Composable
+private fun RefreshSummaryRow(label: String, value: String, emphasize: Boolean = false) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, color = RefreshSecondary, fontSize = 12.sp, modifier = Modifier.weight(0.8f))
+        Text(value, color = if (emphasize) RefreshText else RefreshSecondary, fontSize = 12.sp,
+            fontWeight = if (emphasize) FontWeight.Medium else FontWeight.Normal,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1.5f))
+    }
+}
+
+/** 设置和记录入口使用同一整行触摸区域，右侧状态与箭头统一对齐。 */
+@Composable
+private fun RefreshSettingRow(label: String, status: String?, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, color = if (status == null) RefreshBlue else RefreshText, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        if (status != null) Text(status, color = RefreshSecondary, fontSize = 12.sp)
+        Text("›", color = RefreshSecondary, fontSize = 18.sp)
+    }
 }
 
 @Composable

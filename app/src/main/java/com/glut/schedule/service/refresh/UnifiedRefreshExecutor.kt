@@ -19,6 +19,12 @@ import java.time.LocalDate
 class ScheduledRefreshLoginRequiredException : IOException("需要重新登录")
 private class StaleRefreshSession : IOException("会话已变化")
 
+/** 父级整轮超时必须继续取消，只有当前分项自己的超时才转换为可恢复失败。 */
+internal suspend fun scheduledRefreshTimeoutResult(task: RefreshTaskId): ScheduledRefreshTaskResult {
+    currentCoroutineContext().ensureActive()
+    return ScheduledRefreshTaskResult(task, RefreshTaskStatus.FAILED, "请求超时，保留原有数据", retryable = true)
+}
+
 /** 每一轮各来源保持独立身份快照；失败只影响当前项，数据依赖结果在本轮内复用。 */
 internal class UnifiedRefreshExecutor(private val context: Context, private val c: AppContainer,
     private val stillEnabled: suspend () -> Boolean) {
@@ -26,27 +32,36 @@ internal class UnifiedRefreshExecutor(private val context: Context, private val 
     private var academicInitial: AcademicProfileSession? = null
     private var academicCookie = ""
     private var renewed = false
+    private var academicLoginRequired = false
+
+    fun seedSuccess(results: List<ScheduledRefreshTaskResult>) = dependencyCache.seedSuccess(results)
+    fun successfulDependencies(): List<ScheduledRefreshTaskResult> = dependencyCache.successfulResults()
+    fun checkpointWith(save: suspend (List<ScheduledRefreshTaskResult>) -> Unit) {
+        dependencyCache.onSuccessfulDependency = save
+    }
 
     suspend fun execute(task: RefreshTaskId): ScheduledRefreshTaskResult = dependencyCache.execute(task)
 
     private suspend fun executeSingle(task: RefreshTaskId): ScheduledRefreshTaskResult = try {
         if (!stillEnabled()) throw StaleRefreshSession()
+        if (task.academic && academicLoginRequired) throw ScheduledRefreshLoginRequiredException()
         if (!refreshTaskSupported(task, c.settingsStore.campusType.first())) {
             ScheduledRefreshTaskResult(task, RefreshTaskStatus.UNSUPPORTED, "当前来源不支持后台刷新")
         } else {
             withTimeout(90_000L) {
                 when {
                     task.academic -> academicRefreshMutex.withLock { academic(task) }
-                    task == RefreshTaskId.CHAOXING -> if (!refreshHomeworkForUnified(context)) error("学习通部分更新失败")
+                    task == RefreshTaskId.CHAOXING -> if (!refreshHomeworkForUnified(context)) throw IOException("学习通部分更新失败")
                     else -> error("该历史任务已不支持定时刷新")
                 }
             }
             ScheduledRefreshTaskResult(task, RefreshTaskStatus.SUCCESS, "已更新")
         }
     } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
-        ScheduledRefreshTaskResult(task, RefreshTaskStatus.FAILED, "请求超时，保留原有数据")
+        scheduledRefreshTimeoutResult(task)
     } catch (cancelled: CancellationException) { throw cancelled
     } catch (_: ScheduledRefreshLoginRequiredException) {
+        if (task.academic) academicLoginRequired = true
         ScheduledRefreshTaskResult(task, RefreshTaskStatus.LOGIN_REQUIRED, "请先在对应页面登录")
     } catch (_: ChaoxingLoginRequiredException) {
         ScheduledRefreshTaskResult(task, RefreshTaskStatus.LOGIN_REQUIRED, "请先在学习通页面重新登录")
@@ -54,9 +69,9 @@ internal class UnifiedRefreshExecutor(private val context: Context, private val 
         ScheduledRefreshTaskResult(task, RefreshTaskStatus.CANCELLED, "账号或设置已变化")
     } catch (unavailable: AcademicDataUnavailableException) {
         ScheduledRefreshTaskResult(task, RefreshTaskStatus.FAILED, unavailable.message ?: "教务数据暂不可查看")
-    } catch (_: Exception) {
+    } catch (failure: Exception) {
         // 不将远端正文、异常中的签名 URL 或会话数据写入运行记录。
-        ScheduledRefreshTaskResult(task, RefreshTaskStatus.FAILED, "更新未完成，保留原有数据")
+        ScheduledRefreshTaskResult(task, RefreshTaskStatus.FAILED, "更新未完成，保留原有数据", retryable = failure is IOException)
     }
 
     private suspend fun currentAcademic(): Boolean {
@@ -130,7 +145,12 @@ internal class UnifiedRefreshExecutor(private val context: Context, private val 
             }
             RefreshTaskId.EXAMS -> {
                 val result = c.academicExamService.fetchExamData(academicCookie, c.academicSessionStore.examApiUrl.first(), initial.base)
-                val data = result.getOrElse { throw ScheduledRefreshLoginRequiredException() }
+                // 网络失败不等于认证失效；响应换发的 Cookie 无论解析成功与否都接续使用。
+                academicCookie = c.academicExamService.lastUpdatedCookie.ifBlank { academicCookie }
+                val data = result.getOrElse {
+                    if (it is AcademicExamSessionExpiredException) throw ScheduledRefreshLoginRequiredException()
+                    throw it
+                }
                 commitAcademic { c.scheduleRepository.replaceExams(data) }
             }
             RefreshTaskId.SCORES -> {

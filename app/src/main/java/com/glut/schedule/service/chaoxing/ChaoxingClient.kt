@@ -7,9 +7,14 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Call
+import okhttp3.Response
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import com.glut.schedule.service.network.readStringLimited
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 
@@ -39,12 +44,41 @@ internal fun isChaoxingLoginPage(url: HttpUrl, html: String): Boolean {
 class ChaoxingClient(
     private val transport: ((HttpUrl, String?) -> Pair<HttpUrl, String>)? = null
 ) {
+    private val cancelled = AtomicBoolean(false)
+    private val activeCalls = ConcurrentHashMap.newKeySet<Call>()
+
+    /** 仅取消本次同步实例；不会中断手动页或其他账号持有的客户端。 */
+    fun cancel() {
+        cancelled.set(true)
+        activeCalls.forEach { it.cancel() }
+    }
+
+    private fun ensureNotCancelled() {
+        if (cancelled.get()) throw CancellationException("学习通同步已取消")
+    }
+
+    /** 注册与取消之间再次检查标记，消除“刚取消便发出下一请求”的竞态。 */
+    private inline fun <T> executeCancellable(http: OkHttpClient, request: Request, read: (Response) -> T): T {
+        ensureNotCancelled()
+        val call = http.newCall(request)
+        activeCalls += call
+        try {
+            ensureNotCancelled()
+            return call.execute().use(read)
+        } catch (error: java.io.IOException) {
+            ensureNotCancelled()
+            throw error
+        } finally {
+            activeCalls -= call
+        }
+    }
+
     // 签名链接仅保留在进程内，绝不进入 SharedPreferences 或日志。
     private val accesses = if (transport == null) homeworkAccesses else HomeworkAccesses()
     private val coursePages = mutableMapOf<Pair<String, String>, Pair<HttpUrl, String>>()
     private val cookies by lazy { CookieManager.getInstance() }
     private val client by lazy { OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS).cookieJar(ChaoxingCookieJar(
+        .readTimeout(25, TimeUnit.SECONDS).callTimeout(30, TimeUnit.SECONDS).cookieJar(ChaoxingCookieJar(
             read = { url -> cookies.getCookie(url.toString()).orEmpty().split(';')
                 .mapNotNull { Cookie.parse(url, it.trim()) } },
             write = { url, values ->
@@ -56,12 +90,13 @@ class ChaoxingClient(
     private val taskClient by lazy { client.newBuilder().followRedirects(false).followSslRedirects(false).build() }
 
     private fun fetch(url: HttpUrl, referer: String? = null): Pair<HttpUrl, String> {
-        transport?.let { return it(url, referer) }
+        ensureNotCancelled()
+        transport?.let { return it(url, referer).also { ensureNotCancelled() } }
         val builder = Request.Builder().url(url)
             // 与网页登录使用同一桌面入口，避免服务器按默认 okhttp UA 返回简化页。
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36")
         if (referer != null) builder.header("Referer", referer)
-        client.newCall(builder.build()).execute().use { response ->
+        executeCancellable(client, builder.build()) { response ->
             // 诊断仅记录主机、固定路径与状态码，绝不输出查询参数、Cookie 或正文。
             android.util.Log.i("ChaoxingHTTP", "${url.host}${url.encodedPath} -> ${response.request.url.host}${response.request.url.encodedPath} status=${response.code}")
             check(response.isSuccessful) { "学习通请求失败（${response.code}）" }
@@ -79,15 +114,16 @@ class ChaoxingClient(
 
     /** 任务请求手动跟随重定向，每一跳都先校验再发出；最多六跳。 */
     private fun fetchTask(url: HttpUrl, referer: String? = null): Pair<HttpUrl, String> {
+        ensureNotCancelled()
         check(validTaskUrl(url)) { "学习通任务入口不在只读白名单" }
-        transport?.let { return it(url, referer) }
+        transport?.let { return it(url, referer).also { ensureNotCancelled() } }
         var current = url
         var ref = referer
         repeat(6) {
             val builder = Request.Builder().url(current)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36")
             if (ref != null) builder.header("Referer", ref)
-            taskClient.newCall(builder.build()).execute().use { response ->
+            executeCancellable(taskClient, builder.build()) { response ->
                 android.util.Log.i("ChaoxingTaskHTTP", "${current.host}${current.encodedPath} -> status=${response.code}")
                 if (response.code in 301..308) {
                     val location = response.header("Location") ?: error("学习通任务跳转异常")
@@ -131,6 +167,7 @@ class ChaoxingClient(
         val reasons = mutableMapOf<String, Int>()
         val failedTasks = mutableListOf<FailedCourseTask>()
         for (course in courses) {
+            ensureNotCancelled()
             var stage = "课程页面请求失败"
             try {
                 val (workFinalUrl, html) = workPage(course)
@@ -144,7 +181,9 @@ class ChaoxingClient(
                 check(hasRecognizableHomeworkList(html)) { "作业列表结构无法识别" }
                 rememberAccesses(course, workFinalUrl, html)
                 success.add(CourseHomework(course, parseHomeworkList(html, System.currentTimeMillis())))
+            } catch (cancelled: CancellationException) { throw cancelled
             } catch (exception: Exception) {
+                ensureNotCancelled()
                 failed.add(course)
                 failedTasks.add(FailedCourseTask(course, "homework"))
                 // 只持久化预定义的失败阶段，不写异常原文、请求地址和登录票据。
@@ -165,6 +204,7 @@ class ChaoxingClient(
                 val reason = if (kind == "discussion") "讨论列表结构暂不支持" else "考试列表结构暂不支持"
                 reasons[reason] = (reasons[reason] ?: 0) + 1
             } catch (_: Exception) {
+                ensureNotCancelled()
                 failedTasks.add(FailedCourseTask(course, kind))
                 if (course !in failed) failed.add(course)
                 val reason = if (kind == "discussion") "讨论查询未完成" else "考试列表无法确认"
@@ -300,6 +340,20 @@ class ChaoxingClient(
         val target = accesses.get(row.courseId, row.classId, row.workId)
             ?: throw HomeworkDetailException("未找到这份作业，请刷新列表后重试")
         return readDetail(target.first, target.second)
+    }
+
+    /** 外部跳转只返回本次会话取得的只读入口，不打开或开始作答。 */
+    fun homeworkAppEntry(row: CachedHomework): String {
+        check(row.workId.isNotBlank() && row.cpi.isNotBlank())
+        val course = ChaoxingCourse(row.courseId, row.classId, row.cpi, row.courseName)
+        val (url, html) = workPage(course)
+        // 只接受这次列表实际返回的作业，不能复用已经撤回或移除的旧入口缓存。
+        val target = Jsoup.parse(html).select("li[data]").asSequence()
+            .mapNotNull { url.resolve(it.attr("data")) }
+            .firstOrNull { validDetailLink(it) && it.queryParameter("workId") == row.workId }
+            ?: throw HomeworkDetailException("未找到作业入口")
+        check(validDetailLink(target) && target.queryParameter("workId") == row.workId)
+        return target.toString()
     }
 
     private fun validDetailLink(url: HttpUrl): Boolean = url.scheme == "https" &&

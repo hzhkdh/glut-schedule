@@ -16,6 +16,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -444,7 +445,9 @@ private fun BuiltInScheduleBackgroundImage(
         painter = painterResource(background.drawableRes),
         contentDescription = null,
         modifier = modifier.fillMaxSize(),
-        contentScale = ContentScale.Crop
+        // nodpi 原图不按设备密度重采样；等比填满屏幕，多余区域从中心裁掉，不拉伸。
+        contentScale = ContentScale.Crop,
+        alignment = Alignment.Center
     )
     // 与外部自定义背景统一：按用户设置叠加黑色蒙层保障文字对比度。
     Canvas(modifier = modifier.fillMaxSize()) {

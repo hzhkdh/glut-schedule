@@ -7,6 +7,14 @@ import java.io.IOException
 
 /** 使用合成 HTML 验证失败关闭，错误页不得以空记录覆盖缓存。 */
 class AcademicRefreshQueriesTest {
+    @Test fun genericForbiddenResponseDoesNotTriggerLoginRenewal() {
+        try {
+            AcademicRefreshQueries.validateAcademicResponse(403, "gateway forbidden")
+            throw AssertionError("403 必须保留失败语义")
+        } catch (error: IOException) {
+            org.junit.Assert.assertFalse(error is ScheduledRefreshLoginRequiredException)
+        }
+    }
     @Test(expected = ScheduledRefreshLoginRequiredException::class)
     fun expiredSessionIsDistinctFromEmptyData() {
         AcademicRefreshQueries.validateAcademicResponse(200, "<html>统一身份认证</html>")

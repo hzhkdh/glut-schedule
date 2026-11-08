@@ -31,7 +31,8 @@ fun refreshTaskSupported(task: RefreshTaskId, campus: CampusType): Boolean = whe
 
 data class ScheduledRefreshPlan(val id: String, val minuteOfDay: Int, val taskIds: Set<RefreshTaskId>)
 enum class RefreshTaskStatus { SUCCESS, FAILED, LOGIN_REQUIRED, UNSUPPORTED, CANCELLED }
-data class ScheduledRefreshTaskResult(val taskId: RefreshTaskId, val status: RefreshTaskStatus, val message: String)
+data class ScheduledRefreshTaskResult(val taskId: RefreshTaskId, val status: RefreshTaskStatus, val message: String,
+    val retryable: Boolean = false)
 enum class ScheduledRefreshRunState { RUNNING, FINISHED, INTERRUPTED }
 data class ScheduledRefreshRun(val id: String, val planId: String, val startedAt: Long, val finishedAt: Long,
     val results: List<ScheduledRefreshTaskResult>,
@@ -39,7 +40,15 @@ data class ScheduledRefreshRun(val id: String, val planId: String, val startedAt
     val taskIds: Set<RefreshTaskId> = results.map { it.taskId }.toSet(),
     val state: ScheduledRefreshRunState = ScheduledRefreshRunState.FINISHED,
     val workId: String? = null,
-    val activeTask: RefreshTaskId? = null)
+    val activeTask: RefreshTaskId? = null,
+    // 到期时间是本轮身份的一部分；恢复仍属于原轮次，不伪装成下一次每日刷新。
+    val scheduledAt: Long = 0,
+    val attempt: Int = 1,
+    val durationMillis: Long = 0,
+    val reason: String = "",
+    val stopReason: Int? = null,
+    val configurationKey: String = "",
+    val dependencyResults: List<ScheduledRefreshTaskResult> = emptyList())
 
 enum class ScheduledRefreshRunStatus { RUNNING, FULL_SUCCESS, PARTIAL_SUCCESS, LOGIN_REQUIRED, FAILED, INTERRUPTED }
 data class ScheduledRefreshRunSummary(val status: ScheduledRefreshRunStatus, val title: String,

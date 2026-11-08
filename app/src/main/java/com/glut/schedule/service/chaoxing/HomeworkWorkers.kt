@@ -21,6 +21,12 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
@@ -59,7 +65,18 @@ suspend fun refreshHomeworkForUnified(context: Context): Boolean = sessionGate.s
     val store = HomeworkStore(context)
     if (!store.connected) throw com.glut.schedule.service.refresh.ScheduledRefreshLoginRequiredException()
     val generation = store.generation
-    val result = withContext(Dispatchers.IO) { ChaoxingClient().sync() }
+    val result = coroutineScope {
+        val client = ChaoxingClient()
+        // 同步方法在 IO 线程阻塞时，由独立子协程把后台超时传递给在途 OkHttp Call。
+        val cancellationWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
+            try { awaitCancellation() } finally { client.cancel() }
+        }
+        try {
+            withContext(Dispatchers.IO) { client.sync() }
+        } finally {
+            withContext(NonCancellable) { cancellationWatcher.cancelAndJoin() }
+        }
+    }
     if (!store.mergeIfGeneration(result, generation)) return@sync false
     if (store.generation == generation) scheduleHomeworkReminders(context, store.read())
     result.failed.isEmpty()
@@ -130,4 +147,12 @@ class HomeworkReminderWorker(context: Context, params: WorkerParameters) : Corou
 suspend fun fetchHomeworkDetail(row: CachedHomework, store: HomeworkStore, generation: Long): String = sessionGate.withSession {
     check(store.generation == generation) { "学习通账号已变化，请重新打开详情" }
     withContext(Dispatchers.IO) { ChaoxingClient().detail(row) }
+}
+
+/** 与同步、详情串行解析，避免课程签名和账号会话在跳转准备时互相覆盖。 */
+suspend fun resolveHomeworkAppEntry(row: CachedHomework, store: HomeworkStore, generation: Long): String = sessionGate.withSession {
+    check(store.generation == generation)
+    withContext(Dispatchers.IO) { ChaoxingClient().homeworkAppEntry(row) }.also {
+        check(store.generation == generation)
+    }
 }

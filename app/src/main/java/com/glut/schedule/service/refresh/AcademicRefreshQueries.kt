@@ -5,6 +5,7 @@ import com.glut.schedule.service.academic.looksLikeAcademicLoginPage
 import com.glut.schedule.service.academic.scorePageUnavailableReason
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
 import com.glut.schedule.service.network.readBytesLimited
+import com.glut.schedule.service.network.awaitResponse
 import com.glut.schedule.service.parser.GradeExamParser
 import com.glut.schedule.service.parser.ScoreParser
 import com.glut.schedule.service.parser.StudyPlanParser
@@ -25,11 +26,12 @@ internal class AcademicDataUnavailableException(message: String) : IOException(m
 /** 与手动页面使用同一门户协议及解析器；只取数，不触发界面、续期或写库。 */
 object AcademicRefreshQueries {
     private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS).build()
+        .readTimeout(15, TimeUnit.SECONDS).callTimeout(20, TimeUnit.SECONDS).build()
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
 
     internal fun validateAcademicResponse(code: Int, html: String) {
-        if (code == 401 || code == 403 || looksLikeAcademicLoginPage(html)) {
+        // 403 也可能是权限或网关拦截，只有明确认证失败才触发续期。
+        if (code == 401 || looksLikeAcademicLoginPage(html)) {
             throw ScheduledRefreshLoginRequiredException()
         }
         if (code !in 200..299) throw IOException("教务服务暂不可用")
@@ -39,17 +41,18 @@ object AcademicRefreshQueries {
 
     private suspend fun html(cookie: String, base: String, path: String,
                              post: FormBody? = null, fallback: String = "UTF-8"): String = withContext(Dispatchers.IO) {
-        currentCoroutineContext().ensureActive()
+        val requestContext = currentCoroutineContext()
+        requestContext.ensureActive()
         val request = Request.Builder().url(base.trimEnd('/') + path)
             .header("Cookie", cookie).header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
             .apply { if (post != null) post(post) }.build()
-        client.newCall(request).execute().use { response ->
+        client.newCall(request).awaitResponse { response ->
             val bytes = response.body?.readBytesLimited(MAX_HTML_RESPONSE_BYTES) ?: throw IOException("教务返回空响应")
             val declared = Regex("charset=([^;\\s]+)", RegexOption.IGNORE_CASE)
                 .find(response.header("Content-Type").orEmpty())?.groupValues?.get(1)?.trim('"', '\'')
             val charset = runCatching { Charset.forName(declared ?: fallback) }.getOrElse { Charset.forName(fallback) }
             val text = String(bytes, charset)
-            currentCoroutineContext().ensureActive()
+            requestContext.ensureActive()
             validateAcademicResponse(response.code, text)
             text
         }
