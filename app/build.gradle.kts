@@ -1,6 +1,5 @@
 import com.android.build.gradle.internal.api.BaseVariantOutputImpl
 import java.io.ByteArrayOutputStream
-import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -18,9 +17,9 @@ android {
         applicationId = "com.glut.schedule"
         minSdk = 26
         targetSdk = 36
-        // 启动修复以更高内部版本覆盖问题包，用户可见名称按要求仍保持0.27.0。
-        versionCode = 130
-        versionName = "0.27.0"
+        // 修复版本同时递增名称与内部版本，让旧客户端能够发现更新并通过安装校验。
+        versionCode = 131
+        versionName = "0.27.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 调休补课对照表：与 update.json / notices.json 同域同流水线（Cloudflare Pages）。
@@ -195,17 +194,6 @@ tasks.register("publishUpdate") {
             throw GradleException("app-update-host 工作区存在未提交修改，拒绝覆盖或推送")
         }
 
-        val digest = MessageDigest.getInstance("SHA-256")
-        apkFile.inputStream().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                digest.update(buffer, 0, read)
-            }
-        }
-        val apkSha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
-
         // ── 1. Create GitHub Release ──
         exec {
             workingDir = rootDir
@@ -223,7 +211,7 @@ tasks.register("publishUpdate") {
         val existingUpdate = if (updateJson.isFile) {
             (groovy.json.JsonSlurper().parse(updateJson) as? Map<*, *>) ?: emptyMap<Any, Any>()
         } else emptyMap<Any, Any>()
-        // 发布任务只刷新可由构建确定的元数据；维护者填写的文案与弹窗策略必须保留。
+        // 发布任务只刷新版本与下载地址，不再生成客户端未使用的哈希和大小字段；保留文案与弹窗策略。
         val updateDesc = existingUpdate["updateDesc"]?.toString().orEmpty()
         val forceUpdate = existingUpdate["forceUpdate"] as? Boolean ?: false
         val popup = existingUpdate["popup"] as? Boolean ?: true
@@ -231,8 +219,6 @@ tasks.register("publishUpdate") {
             "versionCode" to versionCode,
             "versionName" to versionName,
             "downloadUrl" to "https://update.999314.xyz/$apkName",
-            "apkSha256" to apkSha256,
-            "apkSize" to apkFile.length(),
             "updateDesc" to updateDesc,
             "forceUpdate" to forceUpdate,
             "popup" to popup
