@@ -1,0 +1,13 @@
+<resources>
+    <style name="Theme.GlutSchedule" parent="@style/BaseThemeGlutSchedule">
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <!--
+            Android 12+ 的系统启动窗口底色。部分厂商在未显式指定时会回落到白色，
+            导致冷启动先闪一下白屏；这里锁定与应用一致的深色。
+        -->
+        <item name="android:windowSplashScreenBackground">#FFFFFF</item>
+        <!-- 不显示系统默认的启动图标，冷启动只留纯色底，直接进入课表主页。 -->
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+    </style>
+</resources>

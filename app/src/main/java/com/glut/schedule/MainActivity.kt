@@ -260,9 +260,19 @@ private data class CommittableBackgroundSource(
 class MainActivity : ComponentActivity() {
     private val firstFrameReady = AtomicBoolean(false)
     private var firstFramePreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
+    // 使用 View 的主线程队列兜底，不依赖可能正被首帧屏障阻塞的 Compose 副作用。
+    private val firstFrameTimeout = Runnable {
+        android.util.Log.w("ScheduleStartup", "背景或本地状态恢复超时，放行可操作页面")
+        releaseFirstFrame()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 启动耗时诊断：以进程启动时刻为 0 点，记录 Activity 创建与首帧放行的时间。
+        android.util.Log.i(
+            "ScheduleStartup",
+            "onCreate at +${android.os.SystemClock.uptimeMillis() - android.os.Process.getStartUptimeMillis()}ms"
+        )
         // Android 15 会默认启用 edge-to-edge，旧系统需要显式关闭 decor fitting，
         // 才能让自定义背景铺到透明状态栏；各页面已有的系统栏 inset 继续保护交互控件。
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -1430,15 +1440,23 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
         val listener = ViewTreeObserver.OnPreDrawListener { firstFrameReady.get() }
         firstFramePreDrawListener = listener
         decorView.viewTreeObserver.addOnPreDrawListener(listener)
+        // 背景只是装饰，加载失败或厂商绘制时序异常不能让用户永久停留在启动窗口。
+        // 内置背景已不参与门控，这里只兜底自定义背景的首次解码，1.5s 足够。
+        decorView.postDelayed(firstFrameTimeout, 1_500L)
     }
 
     private fun releaseFirstFrame() {
         if (!firstFrameReady.compareAndSet(false, true)) return
+        android.util.Log.i(
+            "ScheduleStartup",
+            "releaseFirstFrame at +${android.os.SystemClock.uptimeMillis() - android.os.Process.getStartUptimeMillis()}ms"
+        )
         removeFirstFramePreDrawListener()
         window.decorView.postInvalidateOnAnimation()
     }
 
     private fun removeFirstFramePreDrawListener() {
+        window.decorView.removeCallbacks(firstFrameTimeout)
         val listener = firstFramePreDrawListener ?: return
         val observer = window.decorView.viewTreeObserver
         if (observer.isAlive) observer.removeOnPreDrawListener(listener)
@@ -1484,8 +1502,6 @@ private fun ScheduleDestination(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     val metrics = context.resources.displayMetrics
-    // 首帧只等待实际布局使用的那一次内置背景解码，避免按 metrics 额外预取另一张位图。
-    var builtInBackgroundReady by remember(uiState.customBackgroundUri) { mutableStateOf(false) }
     var backgroundCacheRevision by remember(uiState.customBackgroundUri, uiState.customBackgroundCrop) { mutableIntStateOf(0) }
     LaunchedEffect(uiState.customBackgroundUri, uiState.customBackgroundCrop) {
         val uri = uiState.customBackgroundUri
@@ -1512,12 +1528,18 @@ private fun ScheduleDestination(
             null
         }
     }
-    LaunchedEffect(uiState.isInitialized, uiState.customBackgroundUri, backgroundBitmap, builtInBackgroundReady) {
+    LaunchedEffect(uiState.isInitialized, uiState.customBackgroundUri, backgroundBitmap) {
+        // 启动耗时诊断：观察本地数据恢复与自定义背景就绪的完成时刻。
+        android.util.Log.i(
+            "ScheduleStartup",
+            "gate state initialized=${uiState.isInitialized} custom=${backgroundBitmap != null} at +" +
+                "${android.os.SystemClock.uptimeMillis() - android.os.Process.getStartUptimeMillis()}ms"
+        )
+        // 内置背景不再参与门控：它已有同步缩略图，高分图在首帧之后慢慢替换即可。
         if (scheduleFirstFrameReady(
                 isInitialized = uiState.isInitialized,
                 backgroundUri = uiState.customBackgroundUri,
-                customBitmapAvailable = backgroundBitmap != null,
-                builtInReady = builtInBackgroundReady
+                customBitmapAvailable = backgroundBitmap != null
             )
         ) {
             onFirstFrameReady()
@@ -1531,8 +1553,7 @@ private fun ScheduleDestination(
         onClearBackground = onClearBackground,
         onImportClick = onImportClick,
         onExamClick = onExamClick,
-        onDrawerOpen = onDrawerOpen,
-        onBuiltInBackgroundReady = { builtInBackgroundReady = true }
+        onDrawerOpen = onDrawerOpen
     )
 }
 

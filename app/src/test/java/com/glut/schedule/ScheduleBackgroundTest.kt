@@ -31,15 +31,23 @@ import java.io.File
 
 class ScheduleBackgroundTest {
     @Test
-    fun builtInBackgroundWaitsForActualLayoutDecodeBeforeFirstFrame() {
+    fun highResolutionCustomBackgroundFitsCacheInsteadOfEvictingItself() {
+        // 3200×2000 的旧输出约24.4MiB，超过24MiB缓存后会成功加载却立即丢失。
+        val (width, height) = calculateDecodeTargetSize(3200, 2000, 3200, 2000)
+        assertTrue("单张派生图须留在24MiB缓存内，并给缩略图预留空间", width.toLong() * height <= 6_000_000L)
+        assertEquals(1.6, width.toDouble() / height, 0.002)
+    }
+
+    @Test
+    fun builtInBackgroundDoesNotBlockFirstFrameOnHighResolutionDecode() {
         for (uri in listOf("", BuiltInScheduleBackground.FLOWER.storageValue)) {
-            assertFalse(scheduleFirstFrameReady(true, uri, false, builtInReady = false))
-            assertTrue(scheduleFirstFrameReady(true, uri, false, builtInReady = true))
-            assertFalse(scheduleFirstFrameReady(false, uri, false, builtInReady = true))
+            // 内置画作有同步缩略图兜底：本地数据一恢复就放行首帧，高分图在首帧后替换。
+            assertTrue(scheduleFirstFrameReady(true, uri, false))
+            assertFalse(scheduleFirstFrameReady(false, uri, false))
         }
-        // 自定义图仍只依赖自己的实际位图，不受未运行的内置加载器影响。
-        assertTrue(scheduleFirstFrameReady(true, "content://gallery/artwork", true, builtInReady = false))
-        assertFalse(scheduleFirstFrameReady(true, "content://gallery/artwork", false, builtInReady = true))
+        // 自定义图仍只依赖自己的实际位图，避免先闪默认画作再切换。
+        assertTrue(scheduleFirstFrameReady(true, "content://gallery/artwork", true))
+        assertFalse(scheduleFirstFrameReady(true, "content://gallery/artwork", false))
     }
 
     @Test

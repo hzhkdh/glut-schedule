@@ -18,7 +18,8 @@ android {
         applicationId = "com.glut.schedule"
         minSdk = 26
         targetSdk = 36
-        versionCode = 129
+        // 启动修复以更高内部版本覆盖问题包，用户可见名称按要求仍保持0.27.0。
+        versionCode = 130
         versionName = "0.27.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

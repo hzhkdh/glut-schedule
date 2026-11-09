@@ -6,27 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MultiSemesterUiContractTest {
-    @Test
-    fun scheduleLoadingPlaceholderDoesNotDrawDefaultBackgroundBeforeSettingsRestore() {
-        val screen = page("ScheduleScreen.kt")
-        val loadingBranch = screen
-            .substringAfter("if (!uiState.isInitialized) {")
-            .substringBefore("val blocksByWeek")
-
-        assertTrue(loadingBranch.contains("Box(modifier = modifier.fillMaxSize())"))
-        assertFalse(loadingBranch.contains("ScheduleBackgroundImage("))
-    }
-
-    @Test
-    fun customBackgroundLoadingDoesNotDrawBuiltInArtworkFallback() {
-        val screen = page("ScheduleScreen.kt")
-        val loadingBranch = screen
-            .substringAfter("customBackgroundBitmap == null")
-            .substringBefore("val pagerState")
-
-        assertTrue(loadingBranch.contains("Box(modifier = modifier.fillMaxSize())"))
-        assertFalse(loadingBranch.contains("ScheduleBackgroundImage("))
-    }
+    // 启动占位和背景缺失的行为由真机ScheduleStartupFallbackTest验证，不再锁定旧空Box源码。
 
     /**
      * 卡片只暴露「长按管理卡片」这一个新手势。

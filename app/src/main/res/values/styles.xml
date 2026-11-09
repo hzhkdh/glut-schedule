@@ -2,8 +2,10 @@
     <style name="BaseThemeGlutSchedule" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
-        <item name="android:windowBackground">#07111F</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <!-- 冷启动窗口用白底（对齐微信/支付宝），首帧绘制后由课表内容覆盖。 -->
+        <item name="android:windowBackground">#FFFFFF</item>
+        <!-- 白底上必须用深色状态栏图标；进入课表后 MainActivity 会按页面重新切回浅色。 -->
+        <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">#111827</item>
         <item name="android:statusBarColor">#00000000</item>
     </style>

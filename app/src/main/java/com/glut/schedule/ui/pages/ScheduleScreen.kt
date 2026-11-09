@@ -120,7 +120,8 @@ fun ScheduleScreen(
     if (!uiState.isInitialized) {
         // 背景设置尚未恢复时只显示中性占位，避免把临时空值误绘制成默认《花》。
         // DataStore 与 Room 都完成首轮恢复后再创建 Pager，避免错误背景和默认周次短暂闪现。
-        Box(modifier = modifier.fillMaxSize())
+        // 启动等待超时后仍提供入口，避免本地恢复迟缓时只剩不可操作的黑色空页。
+        ScheduleLoadingPlaceholder(modifier, onDrawerOpen)
         return
     }
     val blocksByWeek = remember(
@@ -141,13 +142,7 @@ fun ScheduleScreen(
     val adjustmentDates = remember(uiState.manualDayCopies) {
         uiState.manualDayCopies.mapTo(mutableSetOf()) { it.targetDate }
     }
-    if (com.glut.schedule.ui.components.shouldUseCustomBackground(uiState.customBackgroundUri) &&
-        customBackgroundBitmap == null
-    ) {
-        // Activity 会继续保留系统启动窗口；这里绝不能绘制另一张内置画作，否则冷启动会闪切背景。
-        Box(modifier = modifier.fillMaxSize())
-        return
-    }
+    // 自定义背景暂不可用时照常构建课表；正常首帧仍由 Activity 等待，超时后可操作纯色页面。
     val pagerState = key(uiState.viewedSemester?.id) {
         rememberPagerState(
             initialPage = pagerPageForWeekNumber(uiState.week.number, uiState.maxAcademicWeek),
@@ -420,6 +415,21 @@ fun ScheduleScreen(
                 TextButton(onClick = viewModel::dismissRefreshConfirm) { Text("取消") }
             }
         )
+    }
+}
+
+/** 首帧超时放行后仍可打开菜单，避免本地数据恢复迟缓时留下一张纯色空页。 */
+@Composable
+internal fun ScheduleLoadingPlaceholder(modifier: Modifier = Modifier, onDrawerOpen: () -> Unit) {
+    // 启动窗口已改为白底；这个兜底占位必须自带深色底，否则白色提示文字会看不见。
+    Box(
+        modifier = modifier.fillMaxSize().background(Color(0xFF07111F)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("正在恢复课表…", color = Color.White)
+            TextButton(onClick = onDrawerOpen) { Text("打开菜单") }
+        }
     }
 }
 

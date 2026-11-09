@@ -46,6 +46,7 @@ import com.glut.schedule.service.holiday.TimorHolidayClient
 import com.glut.schedule.partner.PartnerScheduleApiService
 import com.glut.schedule.partner.PartnerScheduleStore
 import com.glut.schedule.ui.components.ScheduleBackgroundStore
+import com.glut.schedule.ui.components.trimBackgroundCaches
 import com.glut.schedule.widget.ScheduleWidgetUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -116,6 +117,12 @@ class ScheduleApplication : Application() {
         }
         observeScheduledRefresh()
         observeWidgetDataChanges()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // 背景是纯装饰，随时可以重新解码；内存紧张时主动让出，降低进程被杀后再次慢冷启动的概率。
+        trimBackgroundCaches(level)
     }
 
     /** 全局观察配置与身份，不依赖 Activity；换来源立即撤销旧任务。 */

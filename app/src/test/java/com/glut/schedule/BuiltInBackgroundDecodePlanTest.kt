@@ -6,6 +6,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BuiltInBackgroundDecodePlanTest {
+    @Test fun veryLargeScreenStillUsesBoundedBackgroundMemory() {
+        val plan = calculateBuiltInBackgroundDecodePlan(3840, 4770, 2160, 4800)
+        assertTrue("极高分屏也不能为装饰性背景分配近乎原图的70MiB", plan.byteSize <= 24_000_000L)
+        assertEquals(0.45, plan.decodedWidth.toDouble() / plan.decodedHeight, 0.002)
+    }
+
     @Test fun tallScreenKeepsEnoughPixelsAndAvoidsFullOriginal() {
         val plan = calculateBuiltInBackgroundDecodePlan(3840, 4770, 1080, 2400)
         assertTrue(plan.decodedWidth >= 1080)

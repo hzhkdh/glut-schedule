@@ -4,13 +4,13 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
+import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.util.Log
-import android.util.LruCache
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,12 +31,14 @@ import java.security.MessageDigest
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 private const val RecomposeTag = "Recompose"
 
@@ -44,9 +46,16 @@ private const val RecomposeTag = "Recompose"
 enum class BuiltInScheduleBackground(
     val storageValue: String,
     @param:DrawableRes val drawableRes: Int,
+    // 同一幅画的极小缩略图：高分图解码完成前先画它，避免冷启动出现黑屏/空窗。
+    @param:DrawableRes val placeholderRes: Int,
     val displayName: String
 ) {
-    FLOWER("builtin://flower", R.drawable.builtin_flower_background, "花")
+    FLOWER(
+        "builtin://flower",
+        R.drawable.builtin_flower_background,
+        R.drawable.builtin_flower_background_thumb,
+        "花"
+    )
     ;
 
     companion object {
@@ -65,13 +74,14 @@ class ScheduleBackgroundStore(
 ) {
     private val preloadMutex = Mutex()
     private val diskCacheDirectory = context.cacheDir.resolve(BACKGROUND_DISK_CACHE_DIRECTORY)
-    private val cache = object : LruCache<String, ImageBitmap>(MAX_BACKGROUND_CACHE_BYTES) {
-        override fun sizeOf(key: String, value: ImageBitmap): Int =
-            backgroundBitmapByteSize(value.width, value.height)
-    }
+
+    // 与内置背景共用同一个字节级 LRU，用 `custom|` 前缀区分来源；
+    // 磁盘键保持原样，避免升级后所有自定义背景派生图失效、被迫重新解码。
+    private fun memoryCacheKey(uri: String, crop: NormalizedCropRect?, targetWidth: Int, targetHeight: Int): String =
+        "custom|${backgroundCacheKey(uri, crop, targetWidth, targetHeight)}"
 
     fun get(uri: String, crop: NormalizedCropRect?, targetWidth: Int, targetHeight: Int): ImageBitmap? =
-        cache.get(backgroundCacheKey(uri, crop, targetWidth, targetHeight))
+        BackgroundBitmapCache.get(memoryCacheKey(uri, crop, targetWidth, targetHeight))?.asImageBitmap()
 
     suspend fun preload(
         uri: String,
@@ -80,34 +90,50 @@ class ScheduleBackgroundStore(
         targetHeight: Int
     ): Boolean = withContext(Dispatchers.IO) {
         if (!shouldUseCustomBackground(uri)) return@withContext true
-        preloadMutex.withLock {
-            val cacheKey = backgroundCacheKey(uri, crop, targetWidth, targetHeight)
-            if (cache.get(cacheKey) != null) {
-                Log.d(RecomposeTag, "background memory cache hit")
-                return@withLock true
-            }
+        try {
+            preloadMutex.withLock {
+                val diskKey = backgroundCacheKey(uri, crop, targetWidth, targetHeight)
+                val memoryKey = "custom|$diskKey"
+                if (BackgroundBitmapCache.get(memoryKey) != null) {
+                    Log.d(RecomposeTag, "background memory cache hit")
+                    return@withLock true
+                }
 
-            readDiskCache(uri, cacheKey, targetWidth, targetHeight)?.let { bitmap ->
-                cache.put(cacheKey, bitmap.asImageBitmap())
-                Log.d(RecomposeTag, "background disk cache hit")
-                return@withLock true
-            }
+                readDiskCache(uri, diskKey, targetWidth, targetHeight)?.let { bitmap ->
+                    BackgroundBitmapCache.put(memoryKey, bitmap)
+                    Log.d(RecomposeTag, "background disk cache hit")
+                    return@withLock BackgroundBitmapCache.get(memoryKey) != null
+                }
 
-            Log.d(RecomposeTag, "background source decode start")
-            val decoded = runCatching {
-                decodeSampledBitmap(uri, crop, targetWidth, targetHeight)
-            }.getOrNull()
-            if (decoded != null) {
-                // 用户确认裁剪时先生成屏幕尺寸派生图，后续冷启动只需解码这张小图。
-                writeDiskCache(uri, cacheKey, decoded)
-                cache.put(cacheKey, decoded.asImageBitmap())
-                trimBackgroundDiskCache(diskCacheDirectory, MAX_BACKGROUND_DISK_CACHE_BYTES)
-                Log.d(RecomposeTag, "background source decode success")
-                true
-            } else {
-                Log.d(RecomposeTag, "background source decode failed")
-                false
+                Log.d(RecomposeTag, "background source decode start")
+                val sourceBitmap = decodeSampledBitmap(uri, crop, targetWidth, targetHeight)
+                // sRGB只规定色域，高位深PNG仍可能是F16；缓存前明确规范化为4字节像素。
+                val decoded = if (sourceBitmap != null && sourceBitmap.config != Bitmap.Config.ARGB_8888) {
+                    try { sourceBitmap.copy(Bitmap.Config.ARGB_8888, false) }
+                    finally { sourceBitmap.recycle() }
+                } else sourceBitmap
+                if (decoded != null) {
+                    // 用户确认裁剪时先生成屏幕尺寸派生图，后续冷启动只需解码这张小图。
+                    writeDiskCache(uri, diskKey, decoded)
+                    BackgroundBitmapCache.put(memoryKey, decoded)
+                    trimBackgroundDiskCache(diskCacheDirectory, MAX_BACKGROUND_DISK_CACHE_BYTES)
+                    Log.d(RecomposeTag, "background source decode success")
+                    // 不得把“解码成功但被容量限制立即淘汰”当成可用于首帧的成功。
+                    BackgroundBitmapCache.get(memoryKey) != null
+                } else {
+                    Log.d(RecomposeTag, "background source decode failed")
+                    false
+                }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            // 缓存目录不可写、文件损坏或权限失效均退回可用界面；不记录用户图片URI。
+            Log.w(RecomposeTag, "background preload failed: ${error.javaClass.simpleName}")
+            false
+        } catch (error: OutOfMemoryError) {
+            Log.w(RecomposeTag, "background preload memory exhausted")
+            false
         }
     }
 
@@ -119,10 +145,8 @@ class ScheduleBackgroundStore(
     suspend fun evictSource(uri: String) = withContext(Dispatchers.IO) {
         preloadMutex.withLock {
             // 与 preload 串行，避免清理完成后旧 URI 的并发解码又把派生图写回缓存。
-            val keys = mutableListOf<String>()
-            val snapshot = cache.snapshot()
-            snapshot.keys.filterTo(keys) { key -> key.startsWith("$uri|") }
-            keys.forEach(cache::remove)
+            BackgroundBitmapCache.keysMatching { key -> key.startsWith("custom|$uri|") }
+                .forEach(BackgroundBitmapCache::remove)
             val sourcePrefix = "${sha256Hex(uri)}_"
             diskCacheDirectory.listFiles()
                 ?.filter { file -> file.name.startsWith(sourcePrefix) }
@@ -138,6 +162,13 @@ class ScheduleBackgroundStore(
     ): Bitmap? {
         val file = backgroundDiskCacheFile(diskCacheDirectory, uri, cacheKey)
         if (!file.isFile) return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        // 旧版本可能留下超预算派生图，先看尺寸再解码，避免为丢弃它先分配大位图。
+        if (bounds.outWidth.toLong() * bounds.outHeight > MAX_BACKGROUND_RENDER_PIXELS) {
+            file.delete()
+            return null
+        }
         val bitmap = runCatching {
             BitmapFactory.decodeFile(
                 file.absolutePath,
@@ -198,6 +229,8 @@ class ScheduleBackgroundStore(
             ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
                 // 派生图需要压缩落盘，不能使用不可压缩的硬件位图。
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                // 使用sRGB与界面一致；缓存前还会单独规范化像素格式。
+                decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
                 val plan = calculateBackgroundDecodePlan(
                     sourceWidth = info.size.width,
                     sourceHeight = info.size.height,
@@ -370,7 +403,8 @@ private fun exifOrientationMatrix(orientation: BackgroundImageOrientation): Matr
 private fun newBitmapRegionDecoder(input: InputStream): BitmapRegionDecoder? =
     BitmapRegionDecoder.newInstance(input, false)
 
-private const val MAX_BACKGROUND_CACHE_BYTES = 24 * 1024 * 1024
+// 约22.9MiB，留出缩略图余量；超高分屏轻微缩放，普通手机仍按原生像素绘制。
+internal const val MAX_BACKGROUND_RENDER_PIXELS = 6_000_000L
 private const val MAX_BACKGROUND_DISK_CACHE_BYTES = 32L * 1024 * 1024
 private const val BACKGROUND_DISK_CACHE_DIRECTORY = "schedule_background_renders"
 
@@ -454,14 +488,18 @@ fun shouldUseCustomBackground(uri: String): Boolean {
     return uri.isNotBlank() && BuiltInScheduleBackground.fromStorageValue(uri) == null
 }
 
-/** 首个应用帧只能在真实目标背景可绘制时放行，避免默认画作与画廊画作连续闪切。 */
+/**
+ * 首个应用帧的放行条件。
+ *
+ * 内置画作有同步缩略图兜底，高分图解码再慢也只影响清晰度，不该把用户按在启动窗口上；
+ * 自定义背景仍要等真实位图，否则会先闪默认画作再切换，这是另一类可见的抖动。
+ */
 fun scheduleFirstFrameReady(
     isInitialized: Boolean,
     backgroundUri: String,
-    customBitmapAvailable: Boolean,
-    builtInReady: Boolean = true
+    customBitmapAvailable: Boolean
 ): Boolean = isInitialized && (
-    if (shouldUseCustomBackground(backgroundUri)) customBitmapAvailable else builtInReady
+    if (shouldUseCustomBackground(backgroundUri)) customBitmapAvailable else true
 )
 
 enum class BackgroundSwitchResult {
@@ -574,13 +612,15 @@ fun calculateDecodeTargetSize(
     if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
         return max(1, sourceWidth) to max(1, sourceHeight)
     }
-    if (sourceWidth <= targetWidth && sourceHeight <= targetHeight) {
-        return sourceWidth to sourceHeight
-    }
-
     val scale = min(targetWidth.toFloat() / sourceWidth, targetHeight.toFloat() / sourceHeight)
         .coerceAtMost(1f)
-    return max(1, (sourceWidth * scale).roundToInt()) to max(1, (sourceHeight * scale).roundToInt())
+    val width = max(1, (sourceWidth * scale).roundToInt())
+    val height = max(1, (sourceHeight * scale).roundToInt())
+    val pixels = width.toLong() * height
+    if (pixels <= MAX_BACKGROUND_RENDER_PIXELS) return width to height
+    // 向下取整确保乘积始终在预算内，按同一比例缩放以保持画面构图。
+    val memoryScale = sqrt(MAX_BACKGROUND_RENDER_PIXELS.toDouble() / pixels)
+    return max(1, (width * memoryScale).toInt()) to max(1, (height * memoryScale).toInt())
 }
 
 fun calculateBitmapSampleSize(

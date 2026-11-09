@@ -2,15 +2,15 @@ package com.glut.schedule
 
 import java.io.File
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ReleaseVersionTest {
     @Test
-    fun releaseVersionIs0270WithVersionCode129() {
-        val module = File("build.gradle.kts")
-        val source = (if (module.exists()) module else File("app/build.gradle.kts")).readText()
-        assertTrue(source.contains("versionCode = 129"))
-        assertTrue(source.contains("versionName = \"0.27.0\""))
+    fun releaseVersionIs0270WithVersionCode130() {
+        // 验证实际编译常量，保证同名修复包具有可覆盖旧包的更高内部版本。
+        assertEquals(130, BuildConfig.VERSION_CODE)
+        assertEquals("0.27.0", BuildConfig.VERSION_NAME)
     }
 
     @Test
