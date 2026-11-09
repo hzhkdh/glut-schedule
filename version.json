@@ -1,7 +1,7 @@
 {
-  "version": "v0.27.0",
-  "versionCode": 44,
-  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.27.0",
+  "version": "v0.27.1",
+  "versionCode": 45,
+  "downloadUrl": "https://github.com/hzhkdh/glut-schedule/releases/tag/v0.27.1",
   "releaseNotes": "## feature\r\n- 新增学习通任务统一查看，支持查看作业、考试（待定）、讨论的集中查看；支持跳转学习通app提交作业（需要登入的账号一致）\r\n- 新增定时刷新\r\n-  新增课表多文件格式导出（png、pdf、csv、ics）\r\n \r\n## fix\r\n- 修复调课一览点击刷新后会导致记录列表消失问题\r\n\r\n## style\r\n- 改动了一些UI：主要改动侧边栏 UI，增加个人档案中心；优化课表网格线，贯穿左侧�,
-  "publishedAt": "2026-11-08T05:58:38Z"
+  "publishedAt": "2026-11-09T03:40:56Z"
 }
