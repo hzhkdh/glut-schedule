@@ -2,7 +2,6 @@ package com.glut.schedule
 
 import com.glut.schedule.ui.components.BackgroundSwitchResult
 import com.glut.schedule.ui.components.BackgroundImageOrientation
-import com.glut.schedule.ui.components.BuiltInScheduleBackground
 import com.glut.schedule.ui.components.ImageCropRegion
 import com.glut.schedule.data.model.NormalizedCropRect
 import com.glut.schedule.data.model.snapBackgroundDimAmount
@@ -31,6 +30,18 @@ import java.io.File
 
 class ScheduleBackgroundTest {
     @Test
+    fun monetDefaultAndLegacyMarkerNeverUseExternalDecoderOrBlockFirstFrame() {
+        // 新默认标识、旧版“花”与恢复默认的空值均不应进入自定义图片解码流程。
+        for (uri in listOf("", "builtin://flower", "builtin://monet-woman-with-a-parasol")) {
+            assertFalse(shouldUseCustomBackground(uri))
+            assertTrue(scheduleFirstFrameReady(true, uri, false))
+            assertFalse(scheduleFirstFrameReady(false, uri, false))
+        }
+        assertTrue(shouldUseCustomBackground("content://gallery/personal"))
+        assertTrue(shouldUseCustomBackground("file:///downloaded-artwork.jpg"))
+    }
+
+    @Test
     fun highResolutionCustomBackgroundFitsCacheInsteadOfEvictingItself() {
         // 3200×2000 的旧输出约24.4MiB，超过24MiB缓存后会成功加载却立即丢失。
         val (width, height) = calculateDecodeTargetSize(3200, 2000, 3200, 2000)
@@ -40,8 +51,8 @@ class ScheduleBackgroundTest {
 
     @Test
     fun builtInBackgroundDoesNotBlockFirstFrameOnHighResolutionDecode() {
-        for (uri in listOf("", BuiltInScheduleBackground.FLOWER.storageValue)) {
-            // 内置画作有同步缩略图兜底：本地数据一恢复就放行首帧，高分图在首帧后替换。
+        for (uri in listOf("", "builtin://flower")) {
+            // 空背景与旧标识映射到莫奈作品；缩略图兜底，不等待高清解码即可放行首帧。
             assertTrue(scheduleFirstFrameReady(true, uri, false))
             assertFalse(scheduleFirstFrameReady(false, uri, false))
         }
@@ -76,7 +87,7 @@ class ScheduleBackgroundTest {
         assertTrue(
             scheduleFirstFrameReady(
                 isInitialized = true,
-                backgroundUri = BuiltInScheduleBackground.FLOWER.storageValue,
+                backgroundUri = "builtin://flower",
                 customBitmapAvailable = false
             )
         )
@@ -235,16 +246,8 @@ class ScheduleBackgroundTest {
 
     @Test
     fun builtInBackgroundMarkersDoNotUseExternalImageDecoder() {
-        assertFalse(shouldUseCustomBackground(BuiltInScheduleBackground.FLOWER.storageValue))
-        assertEquals(
-            BuiltInScheduleBackground.FLOWER,
-            BuiltInScheduleBackground.fromStorageValue("")
-        )
-        assertEquals(
-            BuiltInScheduleBackground.FLOWER,
-            BuiltInScheduleBackground.fromStorageValue("builtin://flower")
-        )
-        assertEquals(null, BuiltInScheduleBackground.fromStorageValue("content://images/background"))
+        assertFalse(shouldUseCustomBackground("builtin://flower"))
+        assertTrue(shouldUseCustomBackground("content://images/background"))
     }
 
     @Test

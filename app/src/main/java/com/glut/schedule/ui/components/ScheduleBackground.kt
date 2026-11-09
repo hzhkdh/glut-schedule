@@ -50,18 +50,18 @@ enum class BuiltInScheduleBackground(
     @param:DrawableRes val placeholderRes: Int,
     val displayName: String
 ) {
-    FLOWER(
-        "builtin://flower",
-        R.drawable.builtin_flower_background,
-        R.drawable.builtin_flower_background_thumb,
-        "花"
+    WOMAN_WITH_A_PARASOL(
+        "builtin://monet-woman-with-a-parasol",
+        R.drawable.builtin_monet_woman_with_a_parasol,
+        R.drawable.builtin_monet_woman_with_a_parasol_thumb,
+        "莫奈《撑阳伞的女人》"
     )
     ;
 
     companion object {
         fun fromStorageValue(value: String): BuiltInScheduleBackground? {
-            // 旧版以空值代表默认星空；星空下线后让同一空值自然迁移为默认《花》。
-            if (value.isBlank()) return FLOWER
+            // 空值表示恢复默认；旧版“花”标识也映射到莫奈作品，避免走外部 URI 解码。
+            if (value.isBlank() || value == "builtin://flower") return WOMAN_WITH_A_PARASOL
             return entries.firstOrNull { background ->
                 background.storageValue.isNotBlank() && background.storageValue == value
             }
@@ -458,10 +458,10 @@ fun ScheduleBackgroundImage(
             drawRect(Color.Black.copy(alpha = dimAmount.coerceIn(0f, 0.8f)))
         }
     } else {
-        // 空值和内置标识都使用默认《花》，不走外部图片解码流程。
+        // 空值和内置标识都使用默认《撑阳伞的女人》，不走外部图片解码流程。
         BuiltInScheduleBackgroundImage(
             background = BuiltInScheduleBackground.fromStorageValue(customBackgroundUri)
-                ?: BuiltInScheduleBackground.FLOWER,
+                ?: BuiltInScheduleBackground.WOMAN_WITH_A_PARASOL,
             modifier = modifier,
             dimAmount = dimAmount,
             onLoadFinished = onBuiltInBackgroundReady

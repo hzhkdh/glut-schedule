@@ -50,21 +50,21 @@ class BuiltInBackgroundLoaderTest {
 
     @Test fun placeholderIsSmallAndAvailableBeforeHighResolutionDecode() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val placeholder = BuiltInBackgroundLoader.placeholder(context, BuiltInScheduleBackground.FLOWER)
+        val placeholder = BuiltInBackgroundLoader.placeholder(context, BuiltInScheduleBackground.WOMAN_WITH_A_PARASOL)
         assertNotNull("首帧占位图必须能同步解码，否则启动会退回空底色", placeholder)
         // 缩略图只为首帧兜底，必须足够小，避免又把启动内存拖回原图规模。
         assertTrue(placeholder!!.width <= 512 && placeholder.height <= 640)
         assertSame(
             "占位图应复用同一实例，避免每次组合重复解码",
             placeholder,
-            BuiltInBackgroundLoader.placeholder(context, BuiltInScheduleBackground.FLOWER)
+            BuiltInBackgroundLoader.placeholder(context, BuiltInScheduleBackground.WOMAN_WITH_A_PARASOL)
         )
     }
 
     @Test fun bundledBackgroundAssetStaysWithinScreenScaleBudget() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.resources.openRawResource(R.drawable.builtin_flower_background).use { input ->
+        context.resources.openRawResource(R.drawable.builtin_monet_woman_with_a_parasol).use { input ->
             BitmapFactory.decodeStream(input, null, bounds)
         }
         // 原图只需覆盖最大常见屏幕再留一点余量；再大就是白白增加 APK 与首次解码成本。

@@ -75,7 +75,7 @@ internal fun calculateBuiltInBackgroundDecodePlan(
  */
 object BuiltInBackgroundLoader {
     // 内置原图内容变更时递增，旧的内存键与磁盘派生图随之失效。
-    private const val ASSET_REVISION = 2
+    private const val ASSET_REVISION = 3
     private const val RENDER_CACHE_DIRECTORY = "builtin_background_renders"
     private const val RENDER_CACHE_LIMIT_BYTES = 32L * 1024 * 1024
     private const val RENDER_QUALITY = 92
@@ -210,7 +210,7 @@ object BuiltInBackgroundLoader {
 
     suspend fun borrow(
         context: Context,
-        background: BuiltInScheduleBackground = BuiltInScheduleBackground.FLOWER,
+        background: BuiltInScheduleBackground = BuiltInScheduleBackground.WOMAN_WITH_A_PARASOL,
         targetWidth: Int,
         targetHeight: Int
     ): Bitmap? = withContext(Dispatchers.IO) {
@@ -290,7 +290,7 @@ object BuiltInBackgroundLoader {
 /** 真实布局尺寸确定后在 IO 线程解码，主课表、搭子页及设置缩略图共用同一缓存。 */
 @Composable
 fun BuiltInBackgroundImage(
-    background: BuiltInScheduleBackground = BuiltInScheduleBackground.FLOWER,
+    background: BuiltInScheduleBackground = BuiltInScheduleBackground.WOMAN_WITH_A_PARASOL,
     modifier: Modifier = Modifier,
     onLoadFinished: () -> Unit = {}
 ) {

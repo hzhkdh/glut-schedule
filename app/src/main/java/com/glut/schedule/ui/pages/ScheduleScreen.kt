@@ -118,7 +118,7 @@ fun ScheduleScreen(
     val semesterAdjustments by viewModel.semesterAdjustments.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
     if (!uiState.isInitialized) {
-        // 背景设置尚未恢复时只显示中性占位，避免把临时空值误绘制成默认《花》。
+        // 背景设置尚未恢复时只显示中性占位，避免把临时空值误绘制成默认莫奈作品。
         // DataStore 与 Room 都完成首轮恢复后再创建 Pager，避免错误背景和默认周次短暂闪现。
         // 启动等待超时后仍提供入口，避免本地恢复迟缓时只剩不可操作的黑色空页。
         ScheduleLoadingPlaceholder(modifier, onDrawerOpen)
