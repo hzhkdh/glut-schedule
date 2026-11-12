@@ -39,6 +39,7 @@ class ChaoxingHomeworkTest {
         val rows = parseHomeworkList("""<ul><li aria-label="章节;练习;未交"><div class="time">已截止</div></li><li aria-label="其他;已互评"></li></ul>""", 1000L)
         assertEquals("章节;练习", rows[0].title)
         assertEquals(null, rows[0].deadlineMillis)
-        assertEquals(HomeworkState.UNKNOWN, homeworkState(rows[1].status))
+        // 官方新版已明确“已互评”为完成状态，旧页面也使用同一归类。
+        assertEquals(HomeworkState.DONE, homeworkState(rows[1].status))
     }
 }

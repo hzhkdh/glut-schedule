@@ -107,7 +107,7 @@ class ChaoxingClient(
     private fun validTaskUrl(url: HttpUrl): Boolean = url.scheme == "https" && when (url.host) {
         "groupweb.chaoxing.com" -> url.encodedPath in setOf("/course/topic/topicList", "/pc/invitation/subject")
         "mooc1.chaoxing.com", "mooc2-ans.chaoxing.com" -> url.encodedPath in setOf(
-            "/visit/stucoursemiddle", "/mooc2-ans/mycourse/stu", "/mycourse/studentcourse",
+            "/mooc2-ans/coursemanagev3/stu-base-info", "/mooc2-ans-vue/fanyav3/stu", "/mooc-ans/work/api/task", "/mooc-ans/mooc2/exam/task", "/visit/stucoursemiddle", "/mooc2-ans/mycourse/stu", "/mycourse/studentcourse",
             "/mooc2-ans/exam/exam-list", "/exam-ans/mooc2/exam/exam-list")
         else -> false
     }
@@ -168,9 +168,21 @@ class ChaoxingClient(
         val failedTasks = mutableListOf<FailedCourseTask>()
         for (course in courses) {
             ensureNotCancelled()
+            // 新版课程由 JSON 提供任务，不再强求旧版 workEnc 隐藏字段。
+            val entrance = try { coursePage(course) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+            if (entrance?.first?.encodedPath == "/mooc2-ans-vue/fanyav3/stu") {
+                for (kind in listOf("homework", "exam", "discussion")) try {
+                    success.add(CourseHomework(course, if (kind == "discussion") modernDiscussion(course) else modernTasks(course, kind), kind))
+                } catch (e: CancellationException) { throw e } catch (_: Exception) {
+                    failedTasks.add(FailedCourseTask(course, kind))
+                    if (course !in failed) failed.add(course)
+                    reasons["新版任务查询失败"] = (reasons["新版任务查询失败"] ?: 0) + 1
+                }
+                continue
+            }
             var stage = "课程页面请求失败"
             try {
-                val (workFinalUrl, html) = workPage(course)
+                val (workFinalUrl, html) = workPage(course, entrance)
                 stage = "作业页面发生跳转"
                 check(workFinalUrl.host == "mooc1.chaoxing.com" && workFinalUrl.encodedPath.contains("/work/list")) {
                     "学习通作业页面发生跳转"
@@ -216,6 +228,7 @@ class ChaoxingClient(
     /** 有效课程页不能是登录页或错误页；讨论/考试不依赖作业入口存在。 */
     private fun validCoursePage(url: HttpUrl, html: String): Boolean {
         if (url.host !in setOf("mooc1.chaoxing.com", "mooc2-ans.chaoxing.com")) return false
+        if (url.encodedPath == "/mooc2-ans-vue/fanyav3/stu") return true
         val document = Jsoup.parse(html)
         // 登录页会带密码框或登录域脚本，绝不能当成“没有讨论/考试”的空课程页。
         if (document.selectFirst("input[type=password]") != null) return false
@@ -247,8 +260,8 @@ class ChaoxingClient(
     }
 
     /** 课程入口和详情共用最新签名；签名只在本次调用内使用，不进入缓存。 */
-    private fun workPage(course: ChaoxingCourse): Pair<HttpUrl, String> {
-        val (url, html) = coursePage(course)
+    private fun workPage(course: ChaoxingCourse, entrance: Pair<HttpUrl, String>? = null): Pair<HttpUrl, String> {
+        val (url, html) = entrance ?: coursePage(course)
         val enc = Jsoup.parse(html).selectFirst("#workEnc")?.attr("value").orEmpty()
         val studentEnc = url.queryParameter("enc").orEmpty().ifBlank {
             Jsoup.parse(html).selectFirst("input#enc")?.attr("value").orEmpty()
@@ -261,6 +274,67 @@ class ChaoxingClient(
             .addQueryParameter("cpi", course.cpi).addQueryParameter("ut", "s")
             .addQueryParameter("stuenc", studentEnc).addQueryParameter("enc", enc).build()
         return fetch(work, url.toString())
+    }
+
+    /** 从官方嵌套导航取得讨论入口，不猜测 bbsid 或签名。 */
+    private fun modernDiscussion(course: ChaoxingCourse): List<HomeworkEntry> {
+        val infoUrl = "https://mooc2-ans.chaoxing.com/mooc2-ans/coursemanagev3/stu-base-info".toHttpUrl().newBuilder()
+            .addQueryParameter("courseId", course.id).addQueryParameter("clazzId", course.classId).addQueryParameter("cpi", course.cpi).build()
+        val info = JSONObject(fetchTask(infoUrl).second)
+        check(info.optBoolean("status")) { "新版讨论导航查询失败" }
+        val navigation = info.optJSONArray("navigationList") ?: error("新版讨论导航无法识别")
+        fun find(list: org.json.JSONArray): HttpUrl? {
+            for (i in 0 until list.length()) {
+                val item = list.getJSONObject(i)
+                val link = infoUrl.resolve(item.optString("linkUrl"))
+                if (link?.scheme == "https" && link.host == "groupweb.chaoxing.com" && link.encodedPath == "/course/topic/topicList") return link
+                item.optJSONArray("children")?.let { find(it) }?.let { return it }
+            }
+            return null
+        }
+        val target = find(navigation) ?: return emptyList()
+        val (_, html) = fetchTask(target)
+        val parsed = parseDiscussionTopicList(html, "")
+        if (parsed.isEmpty()) return emptyList()
+        val bbsId = Jsoup.parse(html).selectFirst("input#bbsid,input[name=bbsid]")?.attr("value").orEmpty().ifBlank { target.queryParameter("bbsid").orEmpty() }
+        check(bbsId.matches(Regex("[a-zA-Z0-9_-]+"))) { "讨论入口无法识别" }
+        return parsed.map { it.copy(bbsId = bbsId) }.distinctBy { it.taskId }
+    }
+
+    /** 官方新版列表分页读取；仅缓存列表实际提供的只读作业入口。 */
+    private fun modernTasks(course: ChaoxingCourse, kind: String): List<HomeworkEntry> {
+        val entries = mutableListOf<HomeworkEntry>()
+        for (page in 1..300) {
+            val path = if (kind == "homework") "/mooc-ans/work/api/task" else "/mooc-ans/mooc2/exam/task"
+            val url = ("https://mooc1.chaoxing.com" + path).toHttpUrl().newBuilder()
+                .addQueryParameter("courseId", course.id).addQueryParameter("classId", course.classId)
+                .addQueryParameter("pageNum", page.toString()).addQueryParameter("pageSize", "50").build()
+            val json = JSONObject(fetchTask(url).second)
+            check(json.optBoolean("status")) { "新版任务查询被拒绝" }
+            val rows = json.optJSONArray("data") ?: error("新版任务列表无法识别")
+            for (i in 0 until rows.length()) {
+                val item = rows.getJSONObject(i)
+                val id = if (kind == "homework") item.optString("workId") else item.optString("examId").ifBlank { item.optString("id") }
+                check(id.isNotBlank()) { "新版任务身份缺失" }
+                var status = if (kind == "homework") when (item.optInt("stuStatus", -1)) {
+                    0, 1, 2 -> "未交"; 3 -> "待批阅"; 4 -> "已完成"; 5 -> "被打回"; else -> "状态待确认"
+                } else when (item.optInt("stuStatus", -1)) {
+                    0, 1, 2 -> "未交"; 3 -> "已完成"; 4 -> "待批阅"; 5 -> "待重做"; else -> "状态待确认"
+                }
+                // 官方互评状态独立于普通提交状态；未发布的任务不能推断为待交。
+                if (item.optInt("evaluation") > 0) status = when (item.optInt("stuStatus", -1)) {
+                    0 -> "待互评"; (if (kind == "exam") 3 else 4) -> "已互评"; else -> "状态待确认"
+                }
+                if (status == "未交" && item.has("taskStatus") && item.optInt("taskStatus") != 2) status = "状态待确认"
+                entries.add(HomeworkEntry(item.optString("title"), status, item.optLong("endTime").takeIf { it > 0 }, if (kind == "homework") id else "", id))
+                if (kind == "homework") url.resolve(item.optString("taskUrl"))?.takeIf(::validDetailLink)?.let {
+                    accesses.put(course.id, course.classId, id, it, url.toString())
+                }
+            }
+            if (kind == "exam" || (json.has("total") && entries.size >= json.getInt("total")) || (!json.has("total") && rows.length() < 50)) return entries
+            check(rows.length() > 0) { "新版任务分页未完成" }
+        }
+        error("新版任务分页超限")
     }
 
     private fun rememberAccesses(course: ChaoxingCourse, url: HttpUrl, html: String) {
@@ -335,7 +409,13 @@ class ChaoxingClient(
             }
         }
         val course = ChaoxingCourse(row.courseId, row.classId, row.cpi, row.courseName)
-        val (url, html) = detailStep("无法获取作业列表，请刷新列表后重试") { workPage(course) }
+        val entrance = detailStep("无法获取作业列表，请刷新列表后重试") { coursePage(course) }
+        if (entrance.first.encodedPath == "/mooc2-ans-vue/fanyav3/stu") {
+            modernTasks(course, "homework")
+            val access = accesses.get(row.courseId, row.classId, row.workId) ?: throw HomeworkDetailException("未找到作业入口")
+            return readDetail(access.first, access.second)
+        }
+        val (url, html) = detailStep("无法获取作业列表，请刷新列表后重试") { workPage(course, entrance) }
         rememberAccesses(course, url, html)
         val target = accesses.get(row.courseId, row.classId, row.workId)
             ?: throw HomeworkDetailException("未找到这份作业，请刷新列表后重试")
@@ -346,7 +426,15 @@ class ChaoxingClient(
     fun homeworkAppEntry(row: CachedHomework): String {
         check(row.workId.isNotBlank() && row.cpi.isNotBlank())
         val course = ChaoxingCourse(row.courseId, row.classId, row.cpi, row.courseName)
-        val (url, html) = workPage(course)
+        val entrance = coursePage(course)
+        if (entrance.first.encodedPath == "/mooc2-ans-vue/fanyav3/stu") {
+            // 先移除旧签名，只允许本次列表仍返回的作业入口。
+            accesses.remove(row.courseId, row.classId, row.workId)
+            modernTasks(course, "homework")
+            return accesses.get(row.courseId, row.classId, row.workId)?.first?.toString()
+                ?: throw HomeworkDetailException("未找到作业入口")
+        }
+        val (url, html) = workPage(course, entrance)
         // 只接受这次列表实际返回的作业，不能复用已经撤回或移除的旧入口缓存。
         val target = Jsoup.parse(html).select("li[data]").asSequence()
             .mapNotNull { url.resolve(it.attr("data")) }

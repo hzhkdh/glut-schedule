@@ -228,7 +228,7 @@ private fun ChaoxingHomeworkContent() {
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Filled.Error, contentDescription = null, tint = Color(0xFFE77C13), modifier = Modifier.size(22.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("有 $failures 门课程未能更新，保留已有缓存", color = Color(0xFF925311), style = MaterialTheme.typography.bodySmall)
+                        Text(if (rows.isEmpty()) "有 $failures 门课程未能更新，同步尚未完成" else "有 $failures 门课程未能更新，保留已有缓存", color = Color(0xFF925311), style = MaterialTheme.typography.bodySmall)
                         if (failureSummary.isNotBlank()) Text(failureSummary, color = Color(0xFF925311), style = MaterialTheme.typography.bodySmall)
                     }
                 }
