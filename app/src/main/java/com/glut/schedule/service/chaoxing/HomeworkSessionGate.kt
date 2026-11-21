@@ -19,5 +19,8 @@ internal class HomeworkSessionGate {
         }
     }
 
+    /** 用户改选后的补拉排在当前同步之后，不能被后台同步去重掉。 */
+    suspend fun <T> queuedSync(block: suspend () -> T): T = syncAdmission.withLock { withSession(block) }
+
     suspend fun <T> withSession(block: suspend () -> T): T = sessionMutex.withLock { block() }
 }

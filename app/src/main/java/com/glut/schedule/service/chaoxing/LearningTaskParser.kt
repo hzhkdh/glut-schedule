@@ -37,6 +37,32 @@ fun parseDiscussionTopicList(html: String, bbsId: String): List<HomeworkEntry> {
 }
 
 internal val discussionListPath = Regex("/course/topic/[\\w-]+/get(?:Top)?TopicList")
+internal val discussionDetailPath = Regex("/course/topic/[\\w-]+/getTopic")
+
+/** 已开始且有官方入口的作业，旧版会把这组状态显示为未交。 */
+internal fun isReleasedHomeworkVariant(item: JSONObject, validLink: Boolean, now: Long): Boolean =
+    validLink && item.optInt("stuStatus", -1) == 0 && item.optInt("taskStatus", -1) == 1 &&
+        item.optInt("action", -1) == 1 && item.optInt("style", -1) == 1 && item.optLong("startTime") in 1..now
+
+/** 核对讨论组和话题，详情仅展示官方返回的主题正文。 */
+internal fun parseLearningDiscussionDetail(data: JSONObject, taskId: String, bbsId: String): String {
+    val topic = data.optJSONObject("datas")
+    require(data.opt("status") == true && topic != null && topic.optString("uuid") == taskId && topic.optString("bbsid") == bbsId &&
+        (topic.opt("rtf_content") is String || topic.opt("text_content") is String)) {
+        "讨论详情与当前话题不一致"
+    }
+    val rich = topic.optString("rtf_content").takeUnless { topic.isNull("rtf_content") }.orEmpty()
+    if (rich.isNotBlank()) {
+        val cleaned = sanitizeLearningTaskDetail(rich)
+        val document = Jsoup.parseBodyFragment(cleaned)
+        if (document.text().isNotBlank() || document.selectFirst("img") != null)
+            return cleaned
+    }
+    val plain = topic.optString("text_content").takeUnless { topic.isNull("text_content") }.orEmpty()
+    return if (plain.isBlank()) "<p>该话题暂无正文</p>" else plain.lines().joinToString("") {
+        org.jsoup.nodes.Element("p").text(it).outerHtml()
+    }
+}
 
 /** 仅提取课程配置字面量，按官网的班级参数和分页游标读取讨论。 */
 internal fun loadLearningDiscussions(

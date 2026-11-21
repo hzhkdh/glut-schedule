@@ -35,31 +35,68 @@ class HomeworkStore(context: Context) {
     fun detailIsStale(row: CachedHomework) = preferences.getLong(detailKey(row) + ":revision", -1L) < detailRevision
     val generation: Long get() = preferences.getLong("generation", 0L)
     fun saveDetail(row: CachedHomework, html: String, expectedGeneration: Long, expectedRevision: Long = detailRevision): Boolean = synchronized(detailLock) {
-        if (generation != expectedGeneration || detailRevision != expectedRevision) return@synchronized false
+        if (generation != expectedGeneration || detailRevision != expectedRevision || !allows(row.subjectKey())) return@synchronized false
         preferences.edit().putString(detailKey(row), html).putLong(detailKey(row) + ":revision", expectedRevision).apply()
         true
     }
     val updatedAt: Long get() = preferences.getLong("updatedAt", 0L)
-    val failureCount: Int get() = preferences.getInt("failureCount", 0)
+    // null 表示始终全选，空集合表示明确不选任何科目。
+    val selectedCourseKeys: Set<String>? get() = preferences.getStringSet("selectedCourses", null)?.toSet()
+    fun selectCourses(keys: Set<String>?) = synchronized(detailLock) {
+        val editor = preferences.edit()
+        if (keys == null) editor.remove("selectedCourses") else editor.putStringSet("selectedCourses", keys.toSet())
+        editor.apply()
+    }
+    fun allows(key: String): Boolean = selectedCourseKeys?.contains(key) ?: true
+    fun catalog(): List<ChaoxingCourse> {
+        val raw = preferences.getString("catalog", null)
+        if (raw != null) runCatching {
+            val entries = JSONArray(raw)
+            return (0 until entries.length()).map { entries.getJSONObject(it).toCourse() }
+        }
+        return read().distinctBy { it.subjectKey() }.map { ChaoxingCourse(it.courseId, it.classId, it.cpi, it.courseName) }
+    }
+    private fun JSONObject.toCourse() = ChaoxingCourse(getString("id"), getString("classId"), "", getString("title"))
+    private fun ChaoxingCourse.toCatalogEntry() = JSONObject().put("id", id).put("classId", classId).put("title", title)
+    private fun allIssues(): List<FailedCourseTask> = runCatching {
+        val entries = JSONArray(preferences.getString("issues", "[]"))
+        (0 until entries.length()).map {
+            val entry = entries.getJSONObject(it)
+            FailedCourseTask(entry.toCourse(), entry.getString("kind"), entry.getString("reason"))
+        }
+    }.getOrDefault(emptyList())
+    fun issues(): List<FailedCourseTask> = allIssues().filter { allows(it.course.subjectKey()) }
+    val failureCount: Int get() = if (preferences.contains("issues")) issues().map { it.course.subjectKey() }.distinct().size
+        else if (selectedCourseKeys == null) preferences.getInt("failureCount", 0) else 0
     val failureSummary: String get() = preferences.getString("failureSummary", "").orEmpty()
     val lastError: String get() = preferences.getString("lastError", "").orEmpty()
     fun saveError(error: String) { preferences.edit().putString("lastError", error).apply() }
 
-    @Synchronized fun merge(result: HomeworkSyncResult) {
-        // 查询失败的课程沿用旧缓存；成功课程的结果整体替换。
-        val failed = result.failedTasks.map { Triple(it.course.id, it.course.classId, it.kind) }.toSet()
-        val merged = read().filter { Triple(it.courseId, it.classId, it.kind) in failed } + result.courses.flatMap { group ->
+    fun merge(result: HomeworkSyncResult) = synchronized(detailLock) {
+        val known = result.catalog?.map { it.subjectKey() }?.toSet()
+        val loaded = result.courses.filter { allows(it.course.subjectKey()) }
+        val replaced = loaded.map { it.course.subjectKey() to it.kind }.toSet()
+        // 未选或失败的任务保留缓存，只剔除权威目录已不存在的课程。
+        val merged = read().filter { row ->
+            (known == null || row.subjectKey() in known) && (row.subjectKey() to row.kind) !in replaced
+        } + loaded.flatMap { group ->
             group.homework.map { CachedHomework(group.course.id, group.course.classId, group.course.title, it.title, it.status, it.deadlineMillis, it.workId, group.course.cpi, group.kind, it.taskId, it.bbsId) }
         }
+        val issues = (allIssues().filter {
+            (known == null || it.course.subjectKey() in known) && (it.course.subjectKey() to it.kind) !in replaced
+        } + result.failedTasks.filter { allows(it.course.subjectKey()) }).associateBy { it.course.subjectKey() to it.kind }.values
+        val visibleIssues = issues.filter { allows(it.course.subjectKey()) }
         val array = JSONArray()
         merged.forEach { row -> array.put(JSONObject().put("courseId", row.courseId).put("classId", row.classId)
             .put("courseName", row.courseName).put("title", row.title).put("status", row.status)
             .put("workId", row.workId).put("cpi", row.cpi).put("kind", row.kind).put("taskId", row.taskId).put("bbsId", row.bbsId).put("deadline", row.deadline ?: JSONObject.NULL)) }
         preferences.edit().putString("items", array.toString()).apply {
-            if (result.courses.isNotEmpty() || result.failed.isEmpty()) putLong("updatedAt", System.currentTimeMillis())
-            if (result.failed.isEmpty()) putLong("successAt", System.currentTimeMillis())
+            result.catalog?.let { putString("catalog", JSONArray(it.map { course -> course.toCatalogEntry() }).toString()) }
+            if (loaded.isNotEmpty() || visibleIssues.isEmpty()) putLong("updatedAt", System.currentTimeMillis())
+            if (visibleIssues.isEmpty()) putLong("successAt", System.currentTimeMillis())
         }
-            .putInt("failureCount", result.failed.size)
+            .putString("issues", JSONArray(issues.map { it.course.toCatalogEntry().put("kind", it.kind).put("reason", it.reason) }).toString())
+            .putInt("failureCount", visibleIssues.map { it.course.subjectKey() }.distinct().size)
             .putString("failureSummary", result.failureReasons.entries.joinToString("；") { "${it.key}：${it.value} 门" })
             .putString("lastError", "").apply()
     }

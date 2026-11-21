@@ -9,7 +9,6 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceError
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
@@ -20,9 +19,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Event
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MenuBook
@@ -55,6 +56,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private const val DEFAULT_TASK_STATUS = "todo"
+private const val DEFAULT_TASK_KIND = "homework"
+
 @Composable
 fun ChaoxingHomeworkScreen() {
     // 当前 App 的全局主题是深色；学习通独立使用浅色方案，覆盖弹窗和菜单的默认颜色。
@@ -67,7 +71,7 @@ fun ChaoxingHomeworkScreen() {
 }
 
 @Composable
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 private fun ChaoxingHomeworkContent() {
     val context = LocalContext.current
     val store = remember { HomeworkStore(context) }
@@ -77,26 +81,36 @@ private fun ChaoxingHomeworkContent() {
     var updated by remember { mutableLongStateOf(store.updatedAt) }
     var failures by remember { mutableIntStateOf(store.failureCount) }
     var failureSummary by remember { mutableStateOf(store.failureSummary) }
+    var issues by remember { mutableStateOf(store.issues()) }
+    var catalog by remember { mutableStateOf(store.catalog()) }
+    var selectedCourses by remember { mutableStateOf(store.selectedCourseKeys) }
+    var panel by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(store.lastError) }
     var syncing by remember { mutableStateOf(false) }
     var confirmDisconnect by remember { mutableStateOf(false) }
     var checking by remember { mutableStateOf(false) }
     var loginError by remember { mutableStateOf("") }
     var menuExpanded by remember { mutableStateOf(false) }
-    var selectedStatus by rememberSaveable { mutableStateOf("todo") }
-    var selectedSubject by rememberSaveable { mutableStateOf("") }
+    var selectedStatus by rememberSaveable { mutableStateOf(DEFAULT_TASK_STATUS) }
     var detailRevision by remember { mutableLongStateOf(store.detailRevision) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var completedLogin by remember { mutableStateOf(false) }
-    var selectedKind by rememberSaveable { mutableStateOf("") }
-    val visibleRows = filterHomework(rows, selectedStatus, selectedSubject, selectedKind)
-    LaunchedEffect(rows) {
-
-        if (selectedSubject.isNotEmpty() && rows.none { it.subjectKey() == selectedSubject }) selectedSubject = ""
-    }
+    var selectedKind by rememberSaveable { mutableStateOf(DEFAULT_TASK_KIND) }
+    val scopedRows = rows.filter { selectedCourses?.contains(it.subjectKey()) ?: true }
+    val visibleRows = filterHomework(scopedRows, selectedStatus, "", selectedKind)
     BackHandler(enabled = login) { login = false }
     LaunchedEffect(login) { if (login) completedLogin = false }
     val scope = rememberCoroutineScope()
+    val relogin: () -> Unit = {
+        menuExpanded = false
+        panel = ""
+        scope.launch {
+            disconnectChaoxing(context)
+            rows = emptyList(); catalog = emptyList(); selectedCourses = null
+            updated = 0; failures = 0; issues = emptyList(); error = ""
+            loginError = ""; login = true
+        }
+    }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     // 进入和恢复页面只读取缓存；整表同步仅由每日计划、手动操作或首次登录触发。
     LaunchedEffect(Unit) {
@@ -105,13 +119,19 @@ private fun ChaoxingHomeworkContent() {
             detailRevision = store.detailRevision
             rows = store.read(); updated = store.updatedAt; failures = store.failureCount; error = store.lastError
             failureSummary = store.failureSummary
+            issues = store.issues()
+            catalog = store.catalog()
+            selectedCourses = store.selectedCourseKeys
             syncing = withContext(Dispatchers.IO) {
+                val manager = WorkManager.getInstance(context)
                 val manualRunning = listOf("chaoxing_manual", "chaoxing_sync").any { name ->
-                    runCatching { WorkManager.getInstance(context).getWorkInfosForUniqueWork(name).get()
+                    runCatching { manager.getWorkInfosForUniqueWork(name).get()
                         .any { it.state == WorkInfo.State.RUNNING } }.getOrDefault(false)
                 }
+                val scopeRunning = runCatching { manager.getWorkInfosByTag(CHAOXING_SCOPE_SYNC_TAG).get()
+                    .any { it.state == WorkInfo.State.RUNNING } }.getOrDefault(false)
                 // 统一计划可能只刷新教务，只有实际执行学习通项目时才显示列表同步状态。
-                manualRunning || scheduledStore.config.first().runs.any {
+                manualRunning || scopeRunning || scheduledStore.config.first().runs.any {
                     it.state == ScheduledRefreshRunState.RUNNING && it.activeTask == RefreshTaskId.CHAOXING
                 }
             }
@@ -140,6 +160,8 @@ private fun ChaoxingHomeworkContent() {
                                 if (!login || completedLogin) return@launch
                                 if (valid) {
                                     completedLogin = true; login = false; loginError = ""; store.markConnected()
+                                    // 登录成功才重置当前筛选，取消登录时保留原选择。
+                                    selectedStatus = DEFAULT_TASK_STATUS; selectedKind = DEFAULT_TASK_KIND
                                     if (Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
                                     scheduleHomeworkSync(context); refreshHomework(context)
                                 } else loginError = "未能确认登录状态，请检查网络后重新登录"
@@ -186,73 +208,75 @@ private fun ChaoxingHomeworkContent() {
             }
         }
     } else {
-        Column(Modifier.fillMaxSize().padding(16.dp)) {
-            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFEFB)),
-                shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Color(0xFFE4E2DD))) {
-              Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.MenuBook, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(if (syncing) "正在同步任务…" else if (failures > 0) "学习通部分更新" else if (updated > 0L) "学习通已连接" else "等待同步", fontWeight = FontWeight.SemiBold)
-                    Text(if (updated == 0L) "尚未同步" else "更新于 ${SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(updated))}",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+            // 单行常驻工具栏，长文案在弹层内查看，列表不为告警让出多行空间。
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val density = LocalDensity.current
+                val measurer = rememberTextMeasurer()
+                val buttonStyle = MaterialTheme.typography.labelLarge
+                val countStyle = MaterialTheme.typography.labelSmall
+                fun textWidth(label: String, style: androidx.compose.ui.text.TextStyle) =
+                    with(density) { measurer.measure(label, style, maxLines = 1, softWrap = false).size.width.toDp() }
+                val filterLabel = when {
+                    selectedCourses != null -> selectedCourses.orEmpty().size.toString()+" 门"
+                    selectedKind.isNotBlank() -> chaoxingKindLabel(selectedKind)
+                    else -> chaoxingStatusLabel(selectedStatus)
                 }
-                IconButton(onClick = {
-                    if (Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    store.requestDetailRefresh()
-                    refreshHomework(context)
-                }, enabled = !syncing) {
-                    if (syncing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Outlined.Refresh, "刷新任务和详情", tint = MaterialTheme.colorScheme.primary)
+                val status = when {
+                    syncing -> "同步中"
+                    failures > 0 -> "$failures 门未更新"
+                    error.isNotBlank() -> "同步提示"
+                    updated > 0 -> "已更新"
+                    else -> "待同步"
                 }
-                Box {
-                    IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Outlined.MoreVert, "更多操作") }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        DropdownMenuItem(text = { Text("重新登录") }, onClick = {
-                            menuExpanded = false
-                            scope.launch {
-                                // 重登录前结束旧账号工作并清掉详情，避免跨账号泄漏缓存。
-                                disconnectChaoxing(context)
-                                rows = emptyList(); updated = 0; failures = 0; error = ""
-                                loginError = ""; login = true
-                            }
-                        })
-                        DropdownMenuItem(text = { Text("退出并清除任务") }, onClick = { menuExpanded = false; confirmDisconnect = true })
+                val statusColor = if (!syncing && (failures > 0 || error.isNotBlank())) Color(0xFF925311) else MaterialTheme.colorScheme.primary
+                val fullLabel = "筛选 · $filterLabel"
+                val count = visibleRows.size.toString()+" 项"
+                val countWidth = textWidth(count, countStyle) + 8.dp
+                val statusWidth = (textWidth(status, buttonStyle) + 8.dp).coerceAtLeast(48.dp)
+                // 先给刷新和更多保留触控区。大字体下同步状态可以改用带说明的图标。
+                val actionWidth = 48.dp
+                val filterMinWidth = (textWidth("筛选", buttonStyle) + 8.dp).coerceAtLeast(actionWidth)
+                val showStatusText = maxWidth >= actionWidth * 2 + countWidth + filterMinWidth + statusWidth
+                val filterWidth = maxWidth - actionWidth * 2 - countWidth - (if (showStatusText) statusWidth else actionWidth)
+                val filterText = if (textWidth(fullLabel, buttonStyle) + 8.dp <= filterWidth) fullLabel else "筛选"
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { panel = "filter" }, modifier = Modifier.weight(1f).semantics {
+                        contentDescription = fullLabel
+                    }, contentPadding = PaddingValues(horizontal = 2.dp)) {
+                        Text(filterText, maxLines = 1)
+                    }
+                    Text(count, style = countStyle, maxLines = 1, modifier = Modifier.padding(horizontal = 4.dp))
+                    if (showStatusText) TextButton(onClick = { panel = "status" }, modifier = Modifier.width(statusWidth),
+                        contentPadding = PaddingValues(horizontal = 2.dp)) {
+                        Text(status, maxLines = 1, color = statusColor)
+                    } else IconButton(onClick = { panel = "status" }, modifier = Modifier.width(actionWidth)) {
+                        Icon(Icons.Outlined.Info, "同步详情 · $status", tint = statusColor)
+                    }
+                    IconButton(onClick = {
+                        if (Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        store.requestDetailRefresh()
+                        refreshHomework(context)
+                    }, enabled = !syncing && selectedCourses?.isEmpty() != true) {
+                        if (syncing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Outlined.Refresh, "刷新任务和详情", tint = MaterialTheme.colorScheme.primary)
+                    }
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Outlined.MoreVert, "更多操作") }
+                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                            DropdownMenuItem(text = { Text("重新登录") }, onClick = relogin)
+                            DropdownMenuItem(text = { Text("退出并清除任务") }, onClick = { menuExpanded = false; confirmDisconnect = true })
+                        }
                     }
                 }
-              }
             }
-            if (failures > 0) {
-                Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth().background(Color(0xFFFFF1DD), RoundedCornerShape(12.dp)).padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Filled.Error, contentDescription = null, tint = Color(0xFFE77C13), modifier = Modifier.size(22.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(if (rows.isEmpty()) "有 $failures 门课程未能更新，同步尚未完成" else "有 $failures 门课程未能更新，保留已有缓存", color = Color(0xFF925311), style = MaterialTheme.typography.bodySmall)
-                        if (failureSummary.isNotBlank()) Text(failureSummary, color = Color(0xFF925311), style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-            if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
-            Row(Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("任务列表", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                Text("${visibleRows.size} / ${rows.size} 项", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            // 三个筛选框等宽且位置固定，长科目名只省略显示，不参与改变锚点宽度。
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HomeworkDropdown("状态", when(selectedStatus) { "todo" -> "未完成"; "done" -> "已完成"; else -> "全部状态" },
-                    listOf("" to "全部状态", "todo" to "未完成", "done" to "已完成"),
-                    selectedStatus, Modifier.weight(1f)) { selectedStatus = it }
-                val subjects = rows.distinctBy { it.subjectKey() }
-                HomeworkDropdown("科目", subjects.find { it.subjectKey() == selectedSubject }?.courseName ?: "全部科目",
-                    listOf("" to "全部科目") + subjects.map { it.subjectKey() to (it.courseName + if (subjects.count { s -> s.courseName == it.courseName } > 1) "（班级 ${it.classId}）" else "") },
-                    selectedSubject, Modifier.weight(1f)) { selectedSubject = it }
-                HomeworkDropdown("类型", when(selectedKind) { "homework" -> "作业"; "discussion" -> "讨论"; "exam" -> "考试"; else -> "全部类型" },
-                    listOf("" to "全部类型", "homework" to "作业", "discussion" to "讨论", "exam" to "考试"), selectedKind,
-                    Modifier.weight(1f)) { selectedKind = it }
-            }
-            Spacer(Modifier.height(12.dp))
-            if (visibleRows.isEmpty()) Text(if(rows.isEmpty()) "暂无已同步的任务" else "没有符合条件的任务，请调整筛选")
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            if (visibleRows.isEmpty()) Text(when {
+                selectedCourses?.isEmpty() == true -> "请选择要同步的科目"
+                scopedRows.isEmpty() -> "暂无已同步的任务"
+                else -> "没有符合条件的任务，请调整筛选"
+            }, modifier = Modifier.padding(12.dp))
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
                 items(visibleRows.sortedWith(compareBy<CachedHomework> { homeworkState(it.status) != HomeworkState.TODO }.thenBy { it.deadline ?: Long.MAX_VALUE }), key = { it.taskKey() }) { row ->
                     // 仅未完成作业提供外部入口；跳转状态按任务保存，不触发同步或改变筛选。
@@ -324,47 +348,119 @@ private fun ChaoxingHomeworkContent() {
             }
         }
     }
+    if (panel == "filter") HomeworkFilterSheet(
+        catalog, selectedCourses, selectedStatus, selectedKind, onDismiss = { panel = "" }
+    ) { courses, status, kind ->
+        val previous = selectedCourses
+        val added = catalog.map { it.subjectKey() }.filter { key ->
+            (courses == null || key in courses) && previous != null && key !in previous
+        }.toSet()
+        selectedCourses = courses; selectedStatus = status; selectedKind = kind; panel = ""
+        store.selectCourses(courses)
+        issues = store.issues(); failures = store.failureCount
+        if (added.isNotEmpty()) refreshSelectedHomework(context, courses = added)
+        if (previous != courses) scope.launch(Dispatchers.IO) { scheduleHomeworkReminders(context, store.read()) }
+    }
+    if (panel == "status") ModalBottomSheet(onDismissRequest = { panel = "" }) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("同步详情", style = MaterialTheme.typography.titleLarge)
+            val time = if (updated > 0) SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(updated)) else "尚未同步"
+            Text(if (syncing) "正在同步已选科目" else "最近更新 · $time", style = MaterialTheme.typography.bodySmall)
+            if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
+            if (issues.isNotEmpty()) LazyColumn(Modifier.heightIn(max = (LocalConfiguration.current.screenHeightDp * .48f).dp)) {
+                items(issues) { issue ->
+                    val hasCache = rows.any { it.subjectKey() == issue.course.subjectKey() && it.kind == issue.kind }
+                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        Text(issue.course.title + " · " + chaoxingKindLabel(issue.kind), fontWeight = FontWeight.Medium)
+                        Text(issue.reason + if (hasCache) " · 已保留缓存" else " · 暂无缓存", style = MaterialTheme.typography.bodySmall)
+                    }
+                    HorizontalDivider()
+                }
+            } else if (failures > 0 && failureSummary.isNotBlank()) Text(failureSummary)
+            when {
+                error.contains("登录已失效") -> TextButton(onClick = relogin) { Text("重新登录") }
+                issues.isNotEmpty() -> TextButton(onClick = { panel = ""; refreshSelectedHomework(context, failedOnly = true) }, enabled = !syncing) { Text("重试未更新项") }
+                failures > 0 || error.isNotBlank() -> TextButton(onClick = { panel = ""; refreshHomework(context) }, enabled = !syncing) { Text("重新同步") }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
     if (confirmDisconnect) AlertDialog(onDismissRequest = { confirmDisconnect = false },
         title = { Text("退出学习通？") }, text = { Text("将清除本地任务并停止同步和提醒。") },
         confirmButton = { TextButton(onClick = {
             confirmDisconnect = false
-            scope.launch { disconnectChaoxing(context); rows = emptyList(); updated = 0; failures = 0; error = ""; selectedStatus = "todo"; selectedSubject = "" }
+            scope.launch {
+                disconnectChaoxing(context); rows = emptyList(); catalog = emptyList(); selectedCourses = null
+                updated = 0; failures = 0; issues = emptyList(); error = ""; selectedStatus = DEFAULT_TASK_STATUS; selectedKind = DEFAULT_TASK_KIND
+            }
         }) { Text("退出") } }, dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text("取消") } })
 }
 
+private fun chaoxingStatusLabel(status: String) = when (status) {
+    "todo" -> "未完成"
+    "done" -> "已完成"
+    else -> "全部状态"
+}
+
+private fun chaoxingKindLabel(kind: String) = when (kind) {
+    "homework" -> "作业"
+    "discussion" -> "讨论"
+    "exam" -> "考试"
+    else -> "全部类型"
+}
+
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
-private fun HomeworkDropdown(title: String, label: String, options: List<Pair<String, String>>, selected: String,
-    modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    val scroll = rememberScrollState()
-    val density = LocalDensity.current
-    val menuWidth = minOf(if (title == "科目") 280 else 200, LocalConfiguration.current.screenWidthDp - 32).dp
-    LaunchedEffect(expanded) {
-        if (expanded) scroll.scrollTo(with(density) { (options.indexOfFirst { it.first == selected }.coerceAtLeast(0) * if (title == "科目") 64 else 48).dp.roundToPx() })
-    }
-    // 触发框保持三列等宽，菜单独立加宽，不让长科目被拆成窄列。
-    Box(modifier = modifier) {
-        Surface(modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.heightIn(min = 64.dp),
-            color = Color(0xFFFFFEFB), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFFE4E2DD))) {
-            // 三列共用一行，缩小内边距为长科目保留空间。
-            Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(4.dp))
-                    Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+private fun HomeworkFilterSheet(
+    catalog: List<ChaoxingCourse>, selected: Set<String>?, status: String, kind: String, onDismiss: () -> Unit,
+    onApply: (Set<String>?, String, String) -> Unit
+) {
+    var draft by remember { mutableStateOf(selected) }
+    var draftStatus by remember { mutableStateOf(status) }
+    var draftKind by remember { mutableStateOf(kind) }
+    var query by remember { mutableStateOf("") }
+    val keys = catalog.map { it.subjectKey() }.toSet()
+    val labels = catalog.groupingBy { it.title }.eachCount()
+    val filtered = catalog.filter { it.title.contains(query.trim(), ignoreCase = true) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+            Text("筛选任务", style = MaterialTheme.typography.titleLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (option in listOf("todo", "done", "")) {
+                    FilterChip(selected = draftStatus == option, onClick = { draftStatus = option }, label = { Text(chaoxingStatusLabel(option)) })
                 }
-                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             }
-        }
-        // 菜单限高并跟随当前项定位，长名称最多两行，不改变触发框尺寸。
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
-            modifier = Modifier.width(menuWidth).heightIn(max = 320.dp), scrollState = scroll, containerColor = Color(0xFFFFFEFB), tonalElevation = 0.dp) {
-            options.forEach { (key, text) -> DropdownMenuItem(
-                text = { Text(text, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF141821), maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                trailingIcon = { if (key == selected) Icon(Icons.Filled.Check, "已选中", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
-                modifier = Modifier.heightIn(min = if (title == "科目") 64.dp else 48.dp).background(if (key == selected) Color(0xFFEBF2FF) else Color.Transparent),
-                onClick = { expanded = false; onSelect(key) }) }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (option in listOf("", "homework", "discussion", "exam")) {
+                    FilterChip(selected = draftKind == option, onClick = { draftKind = option }, label = { Text(chaoxingKindLabel(option)) })
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("科目 · "+(draft?.intersect(keys)?.size ?: catalog.size)+" 门", modifier = Modifier.weight(1f))
+                TextButton(onClick = { draft = null }) { Text("全选") }
+                TextButton(onClick = { draft = emptySet() }) { Text("清空") }
+            }
+            OutlinedTextField(query, { query = it }, label = { Text("搜索科目") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            // 长名单在弹层中滚动，应用和取消保持可访问。
+            LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = (LocalConfiguration.current.screenHeightDp * .35f).dp)) {
+                items(filtered, key = { it.subjectKey() }) { course ->
+                    val key = course.subjectKey()
+                    val checked = draft?.contains(key) ?: true
+                    val label = course.title + if ((labels[course.title] ?: 0) > 1) "（班级 "+course.classId+"）" else ""
+                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable {
+                        val current = draft ?: keys
+                        draft = if (checked) current - key else current + key
+                    }, verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = checked, onCheckedChange = null, modifier = Modifier.padding(horizontal = 10.dp))
+                        Text(label)
+                    }
+                }
+                if (filtered.isEmpty()) item { Text(if (catalog.isEmpty()) "同步后可选择科目" else "未找到科目", modifier = Modifier.padding(12.dp)) }
+            }
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) { Text("取消") }
+                Button(onClick = { onApply(draft, draftStatus, draftKind) }) { Text("应用筛选") }
+            }
         }
     }
 }

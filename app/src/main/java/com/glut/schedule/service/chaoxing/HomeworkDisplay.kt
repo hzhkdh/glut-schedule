@@ -2,6 +2,7 @@ package com.glut.schedule.service.chaoxing
 
 // 使用课程与班级组合键区分同名课程，避免筛选串班。
 fun CachedHomework.subjectKey(): String = "$courseId:$classId"
+fun ChaoxingCourse.subjectKey(): String = "$id:$classId"
 // 同名任务和跨类型 ID 可能重合，详情及 Compose 均使用完整身份。
 fun CachedHomework.taskKey(): String = "$courseId:$classId:$kind:${taskId.ifBlank { workId.ifBlank { title } }}"
 fun CachedHomework.kindLabel(): String = when (kind) { "discussion" -> "讨论"; "exam" -> "考试"; else -> "作业" }
