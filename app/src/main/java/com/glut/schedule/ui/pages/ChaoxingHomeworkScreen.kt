@@ -20,6 +20,8 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -40,6 +42,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.glut.schedule.service.chaoxing.*
 import kotlinx.coroutines.delay
@@ -217,41 +220,47 @@ private fun ChaoxingHomeworkContent() {
                 val countStyle = MaterialTheme.typography.labelSmall
                 fun textWidth(label: String, style: androidx.compose.ui.text.TextStyle) =
                     with(density) { measurer.measure(label, style, maxLines = 1, softWrap = false).size.width.toDp() }
-                val filterLabel = when {
-                    selectedCourses != null -> selectedCourses.orEmpty().size.toString()+" 门"
-                    selectedKind.isNotBlank() -> chaoxingKindLabel(selectedKind)
-                    else -> chaoxingStatusLabel(selectedStatus)
-                }
+                val filterLabel = chaoxingStatusLabel(selectedStatus) + " · " + chaoxingKindLabel(selectedKind)
                 val status = when {
                     syncing -> "同步中"
-                    failures > 0 -> "$failures 门未更新"
+                    failures > 0 -> "部分更新"
                     error.isNotBlank() -> "同步提示"
                     updated > 0 -> "已更新"
                     else -> "待同步"
                 }
                 val statusColor = if (!syncing && (failures > 0 || error.isNotBlank())) Color(0xFF925311) else MaterialTheme.colorScheme.primary
-                val fullLabel = "筛选 · $filterLabel"
+                val fullLabel = "筛选，$filterLabel"
+                val statusDescription = if (failures > 0 && !syncing) "$failures 门未更新" else status
                 val count = visibleRows.size.toString()+" 项"
                 val countWidth = textWidth(count, countStyle) + 8.dp
                 val statusWidth = (textWidth(status, buttonStyle) + 8.dp).coerceAtLeast(48.dp)
                 // 先给刷新和更多保留触控区。大字体下同步状态可以改用带说明的图标。
                 val actionWidth = 48.dp
-                val filterMinWidth = (textWidth("筛选", buttonStyle) + 8.dp).coerceAtLeast(actionWidth)
+                val filterExtras = 32.dp
+                val filterMinWidth = (textWidth("筛选", buttonStyle) + filterExtras).coerceAtLeast(actionWidth)
                 val showStatusText = maxWidth >= actionWidth * 2 + countWidth + filterMinWidth + statusWidth
                 val filterWidth = maxWidth - actionWidth * 2 - countWidth - (if (showStatusText) statusWidth else actionWidth)
-                val filterText = if (textWidth(fullLabel, buttonStyle) + 8.dp <= filterWidth) fullLabel else "筛选"
+                val filterText = if (textWidth(filterLabel, buttonStyle) + filterExtras <= filterWidth) filterLabel else "筛选"
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { panel = "filter" }, modifier = Modifier.weight(1f).semantics {
+                    TextButton(onClick = { panel = "filter" }, modifier = Modifier
+                        .width((textWidth(filterText, buttonStyle) + filterExtras).coerceAtMost(filterWidth.coerceAtLeast(0.dp))).semantics {
                         contentDescription = fullLabel
-                    }, contentPadding = PaddingValues(horizontal = 2.dp)) {
+                    }, shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.textButtonColors(containerColor = Color(0xFFE8EDF8), contentColor = Color(0xFF284477)),
+                        contentPadding = PaddingValues(horizontal = 6.dp)) {
+                        Icon(Icons.Outlined.Tune, null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
                         Text(filterText, maxLines = 1)
                     }
-                    Text(count, style = countStyle, maxLines = 1, modifier = Modifier.padding(horizontal = 4.dp))
-                    if (showStatusText) TextButton(onClick = { panel = "status" }, modifier = Modifier.width(statusWidth),
+                    Text(count, style = countStyle, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, modifier = Modifier.padding(horizontal = 4.dp))
+                    Spacer(Modifier.weight(1f))
+                    if (showStatusText) TextButton(onClick = { panel = "status" }, modifier = Modifier.width(statusWidth).semantics {
+                        contentDescription = "同步详情 · $statusDescription"
+                    },
                         contentPadding = PaddingValues(horizontal = 2.dp)) {
                         Text(status, maxLines = 1, color = statusColor)
                     } else IconButton(onClick = { panel = "status" }, modifier = Modifier.width(actionWidth)) {
-                        Icon(Icons.Outlined.Info, "同步详情 · $status", tint = statusColor)
+                        Icon(Icons.Outlined.Info, "同步详情 · $statusDescription", tint = statusColor)
                     }
                     IconButton(onClick = {
                         if (Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -277,7 +286,7 @@ private fun ChaoxingHomeworkContent() {
                 scopedRows.isEmpty() -> "暂无已同步的任务"
                 else -> "没有符合条件的任务，请调整筛选"
             }, modifier = Modifier.padding(12.dp))
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
                 items(visibleRows.sortedWith(compareBy<CachedHomework> { homeworkState(it.status) != HomeworkState.TODO }.thenBy { it.deadline ?: Long.MAX_VALUE }), key = { it.taskKey() }) { row ->
                     // 仅未完成作业提供外部入口；跳转状态按任务保存，不触发同步或改变筛选。
                     val canOpenHomework = row.kind == "homework" && homeworkState(row.status) == HomeworkState.TODO
@@ -286,33 +295,36 @@ private fun ChaoxingHomeworkContent() {
                     var jumpError by remember(row.taskKey()) { mutableStateOf<String?>(null) }
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFEFB)),
                         shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Color(0xFFE4E2DD))) {
-                        Column(Modifier.padding(16.dp)) {
-                            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Text(row.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        Column(Modifier.padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 6.dp)) {
+                            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(row.title, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                                 // 状态色只承担提示作用，保留原始状态文字避免误解。
                                 val badgeBg = when(row.status) { "未交", "未讨论" -> Color(0xFFFFEAEA); "已完成", "已批阅", "已讨论" -> Color(0xFFE8F5E9); "待批阅" -> Color(0xFFEAF1FF); "待互评" -> Color(0xFFFFF1DD); else -> Color(0xFFF0F0ED) }
                                 val badgeFg = when(row.status) { "未交", "未讨论" -> Color(0xFFB3261E); "已完成", "已批阅", "已讨论" -> Color(0xFF26713A); "待批阅" -> Color(0xFF3264BB); "待互评" -> Color(0xFF99520A); else -> Color(0xFF667085) }
                                 Text(row.status.ifBlank { "待确认" }, style = MaterialTheme.typography.labelMedium, color = badgeFg,
-                                    modifier = Modifier.background(badgeBg, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 5.dp))
+                                    modifier = Modifier.background(badgeBg, RoundedCornerShape(8.dp)).padding(horizontal = 7.dp, vertical = 3.dp))
                             }
                             Spacer(Modifier.height(6.dp))
-                            Text("${row.kindLabel()} · ${row.courseName}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(12.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Icon(Icons.Outlined.Event, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(row.deadline?.let { "截止 ${SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(it))}" } ?: "暂无截止时间",
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            homeworkCountdown(row.deadline, row.status, now)?.let { countdown ->
-                                val fg = when(countdown.tone) { "urgent" -> Color(0xFFB3261E); "warning" -> Color(0xFF925311); else -> MaterialTheme.colorScheme.onSurfaceVariant }
-                                val bg = when(countdown.tone) { "urgent" -> Color(0xFFFDECEC); "warning" -> Color(0xFFFFF1DD); else -> Color.Transparent }
-                                FlowRow(Modifier.fillMaxWidth().padding(top = 8.dp).background(bg, RoundedCornerShape(8.dp)).padding(if(countdown.tone == "normal") 0.dp else 8.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween) {
-                                    if(countdown.label.isNotEmpty()) Text(countdown.label, color = fg, style = MaterialTheme.typography.bodySmall)
-                                    Text(countdown.text, color = fg, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                            Text("${row.kindLabel()} · ${row.courseName}", fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            // 截止时间和倒计时优先同排，放大系统字体后仍可按组换行。
+                            FlowRow(Modifier.fillMaxWidth().padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Icon(Icons.Outlined.Event, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(row.deadline?.let { "截止 ${SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(it))}" } ?: "暂无截止时间",
+                                        fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                homeworkCountdown(row.deadline, row.status, now)?.let { countdown ->
+                                    val fg = when (countdown.tone) {
+                                        "urgent" -> Color(0xFFB3261E)
+                                        "warning" -> Color(0xFF925311)
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                    val label = if (countdown.label.isNotEmpty()) "${countdown.label} · ${countdown.text}" else countdown.text
+                                    Text(label, color = fg, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, lineHeight = 18.sp)
                                 }
                             }
-                            HomeworkDetailContent(row, store, detailRevision, trailingAction = {
+                            HomeworkDetailContent(row, store, detailRevision) {
                                 if (canOpenHomework) {
                                     TextButton(enabled = !openingHomework, onClick = {
                                         openingHomework = true
@@ -327,18 +339,14 @@ private fun ChaoxingHomeworkContent() {
                                             }
                                         }
                                     }) { Text(if (openingHomework) "正在打开…" else "去学习通完成 ↗") }
-                                }
-                            })
-                            if (canOpenHomework) {
-                                Text("使用学习通当前登录账号打开", style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                jumpError?.let {
-                                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                                }
-                                if (attemptedOpen && !openingHomework) {
-                                    // 系统受理 Intent 无法确认最终页面，保留明确的列表备用入口。
-                                    TextButton(onClick = { jumpError = openChaoxingHomeworkList(context) }) {
-                                        Text(if (jumpError == null) "未能打开？前往作业列表" else "打开学习通作业列表 ↗")
+                                    if (attemptedOpen && !openingHomework) {
+                                        Text("使用学习通当前登录账号打开", style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        jumpError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                                        // 系统受理 Intent 无法确认最终页面，保留作业列表备用入口。
+                                        TextButton(onClick = { jumpError = openChaoxingHomeworkList(context) }) {
+                                            Text(if (jumpError == null) "未能打开？前往作业列表" else "打开学习通作业列表 ↗")
+                                        }
                                     }
                                 }
                             }
@@ -471,7 +479,7 @@ private fun HomeworkDetailContent(
     row: CachedHomework,
     store: HomeworkStore,
     revision: Long,
-    trailingAction: (@Composable () -> Unit)? = null
+    expandedActions: @Composable () -> Unit
 ) {
     var expanded by remember(row.taskKey()) { mutableStateOf(false) }
     var html by remember(row.taskKey()) { mutableStateOf("") }
@@ -500,12 +508,14 @@ private fun HomeworkDetailContent(
             error = if (html.isBlank()) reason else "$reason（显示缓存详情）"
         } finally { loading = false }
     }
-    // 详情与外部操作共用一行动作区，避免重复入口并保持详情内容统一向下展开。
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起详情" else "展开详情") }
-        trailingAction?.invoke()
+    TextButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(0.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(if (expanded) "收起详情" else "查看详情", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            if (!expanded) Icon(Icons.Outlined.ChevronRight, null, modifier = Modifier.size(16.dp))
+        }
     }
     if (expanded) {
+        expandedActions()
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (error.isNotBlank()) {
             Text(error, style = MaterialTheme.typography.bodySmall)
