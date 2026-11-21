@@ -1,6 +1,8 @@
 package com.glut.schedule.service.chaoxing
 
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 data class HomeworkEntry(val title: String, val status: String, val deadlineMillis: Long?, val workId: String = "", val taskId: String = workId, val bbsId: String = "")
 
@@ -43,7 +45,7 @@ fun homeworkRefreshDue(now: Long, successAt: Long, attemptAt: Long): Boolean =
 
 /** 优先显示独立说明；没有说明时只保留教师正文要求，剥掉题号、题型和空题。 */
 fun parseHomeworkDetail(html: String): String {
-    val document = Jsoup.parse(html)
+    val document = Jsoup.parse(html, "https://mooc1.chaoxing.com/")
     val descriptions = document.select(".borderBox .pcon").filter { element ->
         element.parents().none { it.hasClass("questionLi") }
     }
@@ -51,6 +53,26 @@ fun parseHomeworkDetail(html: String): String {
     require(recognized && document.selectFirst("input[type=password]") == null) {
         "无法识别作业详情，请重新登录后重试"
     }
+    val questionBodies = document.select(".questionLi .mark_name")
+    // 官网用专用 iframe 显示云盘附件。只取教师说明和题干中的文件名。
+    val embeddedNames = (descriptions + questionBodies).flatMap { source ->
+        source.select("iframe.attach-iframe[module=insertAttach]").mapNotNull { frame ->
+            if (frame.parents().any { it.hasClass("stem_answer") || it.hasClass("answerBg") }) return@mapNotNull null
+            val url = frame.absUrl("src").toHttpUrlOrNull() ?: return@mapNotNull null
+            if (url.scheme != "https" || url.host != "mooc1.chaoxing.com" || url.port != 443 ||
+                url.username.isNotEmpty() || url.password.isNotEmpty() ||
+                url.encodedPath != "/ananas/common-modules/attachment/insertCloud.html") return@mapNotNull null
+            frame.attr("filename").trim().takeIf { it.isNotEmpty() }
+        }
+    }.distinct()
+    val embeddedBlock = if (embeddedNames.isEmpty()) "" else {
+        val list = Element("ul")
+        embeddedNames.forEach { list.appendElement("li").text(it) }
+        "<p><strong>附件</strong>（在学习通打开）</p>" + list.outerHtml()
+    }
+    fun withAttachments(blocks: List<String>): String =
+        (blocks + embeddedBlock).filter { it.isNotEmpty() }.joinToString("\n")
+            .ifEmpty { "<p>本作业暂无可展示的要求</p>" }
     fun sanitize(element: org.jsoup.nodes.Element): String {
         val copy = element.clone()
         copy.select("script,style,textarea,input,button,iframe,form,.answerBg,.questionLi").remove()
@@ -68,7 +90,7 @@ fun parseHomeworkDetail(html: String): String {
         return body.text().isNotBlank() || body.selectFirst("img") != null
     }
     val primary = descriptions.map(::sanitize).filter(::meaningful)
-    if (primary.isNotEmpty()) return primary.joinToString("\n")
+    if (primary.isNotEmpty()) return withAttachments(primary)
 
     fun removeNumber(node: org.jsoup.nodes.Node): Boolean {
         if (node is org.jsoup.nodes.TextNode && node.wholeText.isNotBlank()) {
@@ -77,14 +99,14 @@ fun parseHomeworkDetail(html: String): String {
         }
         return node.childNodes().any(::removeNumber)
     }
-    val typeLabel = Regex("""^[（(][^（）()\n]{0,24}题[）)]$""")
-    val fallback = document.select(".questionLi .mark_name").map { source ->
+    val typeLabel = Regex("""^[（(](?:[^（）()\n]{0,24}题|其它|其他)[）)]$""")
+    val fallback = questionBodies.map { source ->
         val body = source.clone().tagName("div")
         body.select(".colorShallow").filter { typeLabel.matches(it.text().trim()) }.forEach { it.remove() }
         removeNumber(body)
         sanitize(body)
     }.filter(::meaningful)
-    return fallback.takeIf { it.isNotEmpty() }?.joinToString("\n") ?: "<p>本作业暂无可展示的要求</p>"
+    return withAttachments(fallback)
 }
 
 /** 固定窄屏排版，长链接、公式和预格式文本都不能撑破卡片。 */

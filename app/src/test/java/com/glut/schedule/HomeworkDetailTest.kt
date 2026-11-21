@@ -141,6 +141,28 @@ class HomeworkDetailTest {
         assertTrue(detail.contains("fixture.pdf"))
         assertFalse(detail.contains("暂无可展示"))
     }
+    @Test fun recognizesOfficialEmbeddedDocumentsInTeacherRequirements() {
+        val detail = parseHomeworkDetail("""
+            <div class="borderBox"><div class="pcon">示例文字说明</div></div>
+            <div class="questionLi"><h3 class="mark_name">1. <span class="colorShallow">(其它)</span>
+              <iframe class="attach-iframe" src="/ananas/common-modules/attachment/insertCloud.html"
+                module="insertAttach" objectid="example-doc" filename="示例 &amp; 说明.docx" filetype="docx"></iframe>
+              <iframe class="attach-iframe" src="/ananas/common-modules/attachment/insertCloud.html"
+                module="insertAttach" objectid="example-pdf" filename="示例.pdf" filetype="pdf"></iframe>
+              <iframe class="attach-iframe" src="https://example.test/ananas/common-modules/attachment/insertCloud.html"
+                module="insertAttach" filename="外站.pdf" filetype="pdf"></iframe>
+            </h3><div class="stem_answer"><iframe class="attach-iframe"
+                src="/ananas/common-modules/attachment/insertCloud.html" module="insertAttach"
+                filename="学生答案.pdf" filetype="pdf"></iframe></div></div>
+        """.trimIndent())
+        assertTrue(detail.contains("示例文字说明"))
+        assertTrue(detail.contains("示例 &amp; 说明.docx"))
+        assertTrue(detail.contains("示例.pdf"))
+        assertFalse(detail.contains("其它"))
+        assertFalse(detail.contains("外站.pdf"))
+        assertFalse(detail.contains("学生答案.pdf"))
+        assertFalse(detail.contains("<iframe"))
+    }
     @Test fun refreshHonorsFreshnessAndFailureBackoff() {
         val now = 10_000_000L
         assertFalse(homeworkRefreshDue(now, now - 1000, 0))
