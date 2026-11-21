@@ -66,7 +66,7 @@ class HomeworkDetailTest {
         assertTrue(result.courses.single { it.kind == "exam" }.homework.isEmpty())
         assertEquals(3, paths.size)
     }
-    @Test fun unsupportedExamDoesNotMarkWholeCourseFailed() {
+    @Test fun unsupportedExamMarksPartialSyncAndPreservesHomework() {
         val client = ChaoxingClient { url, _ ->
             when (url.encodedPath) {
                 "/mycourse/backclazzdata" -> url to """{"channelList":[{"cpi":"3","content":{"id":"2","course":{"data":[{"id":"1","name":"匿名课程"}]}}}]}"""
@@ -78,8 +78,8 @@ class HomeworkDetailTest {
             }
         }
         val result = client.sync()
-        // 考试结构未知只保留旧缓存，不能污染整门课的成功时间或失败数量。
-        assertTrue(result.failed.isEmpty())
+        // 考试保留旧缓存且计入部分更新，成功作业仍能入库。
+        assertEquals(listOf("1"), result.failed.map { it.id })
         assertEquals(listOf("exam"), result.failedTasks.map { it.kind })
         assertFalse(result.courses.any { it.kind == "exam" })
         assertEquals("7", result.courses.single { it.kind == "homework" }.homework.single().workId)
