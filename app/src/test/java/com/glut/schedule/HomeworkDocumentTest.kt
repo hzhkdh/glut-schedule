@@ -52,12 +52,14 @@ class HomeworkDocumentTest {
 
     @Test fun attachmentSourceCanFollowOnlyTheOfficialSameWorkRedirect() {
         val source = "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?workId=7".toHttpUrl()
-        val destination = "/mooc-ans/mooc2/work/dowork?workId=7"
-        assertEquals("https://mooc1.chaoxing.com$destination", homeworkDocumentSourceRedirect(source, destination, "7")?.toString())
-        assertNull(homeworkDocumentSourceRedirect(source, "$destination&workId=8", "7"))
-        assertNull(homeworkDocumentSourceRedirect(source, destination.replace("=7", "=8"), "7"))
-        assertNull(homeworkDocumentSourceRedirect(source, "https://example.test$destination", "7"))
-        assertNull(homeworkDocumentSourceRedirect(source, destination.replace("/work/", "/exam/"), "7"))
+        for (page in listOf("dowork", "preview")) {
+            val destination = "/mooc-ans/mooc2/work/$page?workId=7"
+            assertEquals("https://mooc1.chaoxing.com$destination", homeworkDocumentSourceRedirect(source, destination, "7")?.toString())
+            assertNull(homeworkDocumentSourceRedirect(source, "$destination&workId=7", "7"))
+            assertNull(homeworkDocumentSourceRedirect(source, destination.replace("=7", "=8"), "7"))
+            assertNull(homeworkDocumentSourceRedirect(source, "https://example.test$destination", "7"))
+            assertNull(homeworkDocumentSourceRedirect(source, destination.replace("/work/", "/exam/"), "7"))
+        }
     }
 
     @Test fun previewMustResolveToOfficialPdfForTheSameObject() {

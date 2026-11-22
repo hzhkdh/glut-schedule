@@ -49,12 +49,15 @@ internal fun isHomeworkDocumentPreview(document: Document, objectId: String): Bo
     documentId.matches(objectId) && document.select("iframe.insertdoc-online-pdf[objectid]")
         .any { it.attr("objectid") == objectId }
 
+// 官网作业入口可能跳转到答题页或只读预览页。
+private val homeworkDocumentSourcePaths = setOf("/mooc-ans/mooc2/work/dowork", "/mooc-ans/mooc2/work/preview")
+
 /** 仅接受官网同一作业的详情跳转，保持 GET 且校验作业 ID。 */
 internal fun homeworkDocumentSourceRedirect(source: HttpUrl, location: String, workId: String): HttpUrl? =
     source.resolve(location)?.takeIf { url ->
         url.scheme == "https" && url.host == "mooc1.chaoxing.com" && url.port == 443 &&
             url.username.isEmpty() && url.password.isEmpty() && url.fragment == null &&
-            url.encodedPath == "/mooc-ans/mooc2/work/dowork" && url.queryParameterValues("workId") == listOf(workId)
+            url.encodedPath in homeworkDocumentSourcePaths && url.queryParameterValues("workId") == listOf(workId)
     }
 
 /** 官网预览的 PDF 必须属于当前附件，兼容旧式预览文件名和当前的「对象 ID.pdf」。 */
