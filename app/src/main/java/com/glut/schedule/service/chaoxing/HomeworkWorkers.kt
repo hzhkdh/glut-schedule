@@ -28,6 +28,8 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import java.security.MessageDigest
+import java.io.File
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 private val sessionGate = HomeworkSessionGate()
@@ -123,6 +125,7 @@ suspend fun disconnectChaoxing(context: Context) = sessionGate.withSession {
         manager.cancelAllWorkByTag(REMINDER_TAG).result.get()
         homeworkAccesses.clear()
         HomeworkStore(context).clear()
+        File(context.cacheDir, HOMEWORK_DOCUMENT_CACHE).deleteRecursively()
         val cookieManager = android.webkit.CookieManager.getInstance()
         listOf("passport2.chaoxing.com", "i.mooc.chaoxing.com", "mooc1.chaoxing.com", "mooc1-api.chaoxing.com", "mooc2-ans.chaoxing.com", "groupweb.chaoxing.com").forEach { host ->
             val url = "https://$host/"
@@ -176,10 +179,43 @@ class HomeworkReminderWorker(context: Context, params: WorkerParameters) : Corou
 }
 
 /** 列表同步和详情会进入同一课程会话，必须串行，避免签名与 Cookie 轮换互相穿插。 */
-suspend fun fetchHomeworkDetail(row: CachedHomework, store: HomeworkStore, generation: Long): String = sessionGate.withSession {
+internal suspend fun fetchHomeworkDetail(row: CachedHomework, store: HomeworkStore, generation: Long): HomeworkDetails = sessionGate.withSession {
     check(store.generation == generation) { "学习通账号已变化，请重新打开详情" }
     check(store.allows(row.subjectKey())) { "该课程已移出同步范围" }
-    withContext(Dispatchers.IO) { ChaoxingClient().detail(row) }
+    withContext(Dispatchers.IO) { ChaoxingClient().detailContent(row) }
+}
+
+internal suspend fun fetchHomeworkDocument(
+    context: Context, row: CachedHomework, store: HomeworkStore, generation: Long, document: HomeworkDocument
+): File = sessionGate.withSession {
+    check(store.connected && store.generation == generation && store.allows(row.subjectKey()))
+    // 使用独立目录保护并发预览，过期文件在下次预览或退出账号时移除。
+    val cache = File(context.cacheDir, HOMEWORK_DOCUMENT_CACHE)
+    val folder = File(cache, UUID.randomUUID().toString())
+    val file = File(folder, "preview.pdf")
+    try {
+        coroutineScope {
+            val client = ChaoxingClient()
+            val cancellationWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
+                try { awaitCancellation() } finally { client.cancel() }
+            }
+            try {
+                withContext(Dispatchers.IO) {
+                    val expiredBefore = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1)
+                    cache.listFiles()?.filter { it.lastModified() < expiredBefore }?.forEach { it.deleteRecursively() }
+                    check(folder.mkdirs())
+                    client.downloadHomeworkDocument(row, document, file)
+                }
+            } finally {
+                withContext(NonCancellable) { cancellationWatcher.cancelAndJoin() }
+            }
+        }
+        check(store.connected && store.generation == generation && store.allows(row.subjectKey()))
+        file
+    } catch (error: Exception) {
+        withContext(NonCancellable + Dispatchers.IO) { folder.deleteRecursively() }
+        throw error
+    }
 }
 
 /** 与同步、详情串行解析，避免课程签名和账号会话在跳转准备时互相覆盖。 */

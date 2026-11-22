@@ -19,6 +19,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import com.glut.schedule.service.network.readStringLimited
 import com.glut.schedule.service.network.MAX_HTML_RESPONSE_BYTES
+import com.glut.schedule.service.network.MAX_JSON_RESPONSE_BYTES
+import java.io.File
 
 data class ChaoxingCourse(val id: String, val classId: String, val cpi: String, val title: String)
 data class CourseHomework(val course: ChaoxingCourse, val homework: List<HomeworkEntry>, val kind: String = "homework")
@@ -91,6 +93,9 @@ class ChaoxingClient(
         )).build() }
     // 任务链路逐跳校验白名单，关闭 OkHttp 自动跟随，避免先访问考试作答页再事后拒绝。
     private val taskClient by lazy { client.newBuilder().followRedirects(false).followSslRedirects(false).build() }
+    // 官网预览 CDN 不继承学习通账号 Cookie，也不跟随跳转。
+    private val documentCdn by lazy { taskClient.newBuilder().cookieJar(CookieJar.NO_COOKIES)
+        .callTimeout(2, TimeUnit.MINUTES).build() }
 
     private fun fetch(url: HttpUrl, referer: String? = null): Pair<HttpUrl, String> {
         ensureNotCancelled()
@@ -481,12 +486,23 @@ class ChaoxingClient(
     }
 
     /** 优先复用刚同步的官方入口，避免每次展开都重新进入课程并轮换会话。 */
-    fun detail(row: CachedHomework): String {
-        if (row.kind != "homework") return otherTaskDetail(row)
+    fun detail(row: CachedHomework): String = detailContent(row, includeDocumentNames = true).html
+
+    internal fun detailContent(row: CachedHomework, includeDocumentNames: Boolean = false): HomeworkDetails {
+        if (row.kind != "homework") return HomeworkDetails(otherTaskDetail(row))
+        return readHomework(row, includeDocumentNames).second
+    }
+
+    private fun readHomework(
+        row: CachedHomework, includeDocumentNames: Boolean = false, requireDocumentSource: Boolean = false
+    ): Pair<HttpUrl, HomeworkDetails> {
         check(row.workId.isNotBlank() && row.cpi.isNotBlank()) { "请先刷新作业列表，再查看详情" }
+        fun read(access: Pair<HttpUrl, String>) = readDetail(
+            access.first, access.second, includeDocumentNames, row.workId.takeIf { requireDocumentSource }
+        )
         val recent = accesses.get(row.courseId, row.classId, row.workId)
         if (recent != null) {
-            try { return readDetail(recent.first, recent.second) } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            try { return read(recent) } catch (e: CancellationException) { throw e
             } catch (_: HomeworkDetailException) {
                 accesses.remove(row.courseId, row.classId, row.workId)
             }
@@ -494,7 +510,7 @@ class ChaoxingClient(
         val course = ChaoxingCourse(row.courseId, row.classId, row.cpi, row.courseName)
         val entrance = detailStep("无法获取作业列表，请刷新列表后重试") { coursePage(course) }
         val access = freshHomeworkAccess(course, row, entrance)
-        return readDetail(access.first, access.second)
+        return read(access)
     }
 
     /** 外跳和详情共用相同入口恢复逻辑，只打开列表实际返回的只读作业地址。 */
@@ -522,11 +538,90 @@ class ChaoxingClient(
         url.host == "mooc1.chaoxing.com" &&
         url.encodedPath in setOf("/mooc-ans/mooc2/work/task", "/mooc2/work/task")
 
-    private fun readDetail(target: HttpUrl, referer: String): String {
-        val body = detailStep("详情请求失败，请检查网络后重试") {
-            fetch(target, referer).second
+    private fun readDetail(
+        target: HttpUrl, referer: String, includeDocumentNames: Boolean, documentWorkId: String?
+    ): Pair<HttpUrl, HomeworkDetails> {
+        val (url, body) = detailStep("详情请求失败，请检查网络后重试") {
+            if (documentWorkId == null) fetch(target, referer) else fetchDocumentSource(target, referer, documentWorkId)
         }
-        return detailStep("详情页面无法识别，请重新登录后重试") { parseHomeworkDetail(body) }
+        return url to detailStep("详情页面无法识别，请重新登录后重试") {
+            parseHomeworkDetailContent(body, includeDocumentNames)
+        }
+    }
+
+    private fun fetchDocumentSource(target: HttpUrl, referer: String, workId: String): Pair<HttpUrl, String> {
+        // 官网作业入口会跳转到详情。仅放行同一作业的一次 HTTPS 跳转。
+        check(validDetailLink(target) && target.port == 443 && target.username.isEmpty() && target.password.isEmpty() &&
+            target.queryParameterValues("workId") == listOf(workId))
+        var current = target
+        var source = referer
+        repeat(2) { hop ->
+            val request = Request.Builder().url(current).header("Referer", source)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36")
+                .build()
+            executeCancellable(taskClient, request) { response ->
+                if (hop == 0 && response.code in 301..303) {
+                    val next = response.header("Location")?.let { homeworkDocumentSourceRedirect(current, it, workId) }
+                        ?: error("学习通作业详情跳转异常")
+                    source = current.toString()
+                    current = next
+                    return@executeCancellable
+                }
+                check(response.isSuccessful)
+                return current to (response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES) ?: error("学习通返回空响应"))
+            }
+        }
+        error("学习通作业详情跳转异常")
+    }
+
+    internal fun downloadHomeworkDocument(row: CachedHomework, document: HomeworkDocument, destination: File) {
+        // 缓存只用于显示。点击后重新从作业实际页面核对身份与下载权限。
+        check(row.kind == "homework" && document.downloadAllowed)
+        val (source, current) = readHomework(row, requireDocumentSource = true)
+        if (document !in current.documents) throw HomeworkDetailException("附件或查看权限已变化，请刷新作业详情。")
+        val target = "https://mooc1.chaoxing.com/mooc-ans/ueditorupload/read".toHttpUrl().newBuilder()
+            .addQueryParameter("objectId", document.objectId)
+            .addQueryParameter("fileOriName", document.name)
+            .build()
+        val request = Request.Builder().url(target).header("Referer", source.toString())
+            .header("Origin", "https://mooc1.chaoxing.com").post(FormBody.Builder().build()).build()
+        detailStep("学习通附件预览页加载失败，请在学习通查看。") {
+            executeCancellable(taskClient, request) { response ->
+                check(response.code == 200)
+                val html = response.body?.readStringLimited(MAX_HTML_RESPONSE_BYTES) ?: error("附件预览未返回内容")
+                check(isHomeworkDocumentPreview(Jsoup.parse(html), document.objectId))
+            }
+        }
+        // PDF 与 DOCX 都使用官网查看器返回的 PDF 预览地址。
+        val status = target.newBuilder().encodedPath("/ananas/status/${document.objectId}")
+            .query(null).addQueryParameter("flag", "normal").build()
+        val statusRequest = Request.Builder().url(status).header("Referer", target.toString()).build()
+        val download = detailStep("学习通暂未提供可读取的 PDF 预览，请在学习通查看。") {
+            val statusJson = executeCancellable(taskClient, statusRequest) { response ->
+                check(response.code == 200)
+                response.body?.readStringLimited(MAX_JSON_RESPONSE_BYTES) ?: error("附件转换状态为空")
+            }
+            homeworkConvertedPdfUrl(statusJson, document.objectId) ?: error("附件预览入口无法识别")
+        }
+        executeCancellable(documentCdn, Request.Builder().url(download).build()) { response ->
+            check(response.code == 200)
+            val body = response.body ?: error("附件为空")
+            check(body.contentLength() <= MAX_HOMEWORK_DOCUMENT_BYTES)
+            body.byteStream().use { input ->
+                destination.outputStream().use { output ->
+                    val buffer = ByteArray(16 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        check(total <= MAX_HOMEWORK_DOCUMENT_BYTES)
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
+        }
+        check(destination.matchesHomeworkPdf()) { "文件格式与附件不符" }
     }
 
 }

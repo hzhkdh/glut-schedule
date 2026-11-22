@@ -44,7 +44,9 @@ fun homeworkRefreshDue(now: Long, successAt: Long, attemptAt: Long): Boolean =
         (attemptAt <= 0 || now - attemptAt >= 5 * 60_000L)
 
 /** 优先显示独立说明；没有说明时只保留教师正文要求，剥掉题号、题型和空题。 */
-fun parseHomeworkDetail(html: String): String {
+fun parseHomeworkDetail(html: String): String = parseHomeworkDetailContent(html, includeDocumentNames = true).html
+
+internal fun parseHomeworkDetailContent(html: String, includeDocumentNames: Boolean = false): HomeworkDetails {
     val document = Jsoup.parse(html, "https://mooc1.chaoxing.com/")
     val descriptions = document.select(".borderBox .pcon").filter { element ->
         element.parents().none { it.hasClass("questionLi") }
@@ -54,7 +56,9 @@ fun parseHomeworkDetail(html: String): String {
         "无法识别作业详情，请重新登录后重试"
     }
     val questionBodies = document.select(".questionLi .mark_name")
-    // 官网用专用 iframe 显示云盘附件。只取教师说明和题干中的文件名。
+    val downloadAllowed = homeworkDocumentDownloadAllowed(document)
+    val documents = mutableListOf<HomeworkDocument>()
+    // 支持预览的附件交给原生界面，其余附件保留原来的学习通提示。
     val embeddedNames = (descriptions + questionBodies).flatMap { source ->
         source.select("iframe.attach-iframe[module=insertAttach]").mapNotNull { frame ->
             if (frame.parents().any { it.hasClass("stem_answer") || it.hasClass("answerBg") }) return@mapNotNull null
@@ -62,7 +66,10 @@ fun parseHomeworkDetail(html: String): String {
             if (url.scheme != "https" || url.host != "mooc1.chaoxing.com" || url.port != 443 ||
                 url.username.isNotEmpty() || url.password.isNotEmpty() ||
                 url.encodedPath != "/ananas/common-modules/attachment/insertCloud.html") return@mapNotNull null
-            frame.attr("filename").trim().takeIf { it.isNotEmpty() }
+            val name = frame.attr("filename").trim().takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            val attachment = homeworkDocument(frame.attr("objectid"), name, frame.attr("filetype"), downloadAllowed)
+            if (attachment != null) documents += attachment
+            if (attachment == null || includeDocumentNames) name else null
         }
     }.distinct()
     val embeddedBlock = if (embeddedNames.isEmpty()) "" else {
@@ -70,9 +77,11 @@ fun parseHomeworkDetail(html: String): String {
         embeddedNames.forEach { list.appendElement("li").text(it) }
         "<p><strong>附件</strong>（在学习通打开）</p>" + list.outerHtml()
     }
-    fun withAttachments(blocks: List<String>): String =
-        (blocks + embeddedBlock).filter { it.isNotEmpty() }.joinToString("\n")
-            .ifEmpty { "<p>本作业暂无可展示的要求</p>" }
+    fun withAttachments(blocks: List<String>): HomeworkDetails {
+        val body = (blocks + embeddedBlock).filter { it.isNotEmpty() }.joinToString("\n")
+            .ifEmpty { if (documents.isEmpty()) "<p>本作业暂无可展示的要求</p>" else "" }
+        return HomeworkDetails(body, documents.distinct())
+    }
     fun sanitize(element: org.jsoup.nodes.Element): String {
         val copy = element.clone()
         copy.select("script,style,textarea,input,button,iframe,form,.answerBg,.questionLi").remove()

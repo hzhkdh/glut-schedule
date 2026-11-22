@@ -40,6 +40,11 @@ fun openChaoxingHomeworkList(context: Context): String? = launchHomework(context
 /** 只获取入口，不请求作答页面；跳转后身份与权限由学习通自己的登录状态决定。 */
 suspend fun openChaoxingHomework(context: Context, row: CachedHomework, store: HomeworkStore, generation: Long): String? {
     if (row.kind != "homework" || homeworkState(row.status) != HomeworkState.TODO) return "此项不是未完成作业"
+    return openChaoxingHomeworkSource(context, row, store, generation)
+}
+
+/** 已完成作业的教师附件也可以从同一个只读详情入口查看。 */
+internal suspend fun openChaoxingHomeworkSource(context: Context, row: CachedHomework, store: HomeworkStore, generation: Long): String? {
     return try {
         val target = resolveHomeworkAppEntry(row, store, generation)
         withContext(Dispatchers.Main) {

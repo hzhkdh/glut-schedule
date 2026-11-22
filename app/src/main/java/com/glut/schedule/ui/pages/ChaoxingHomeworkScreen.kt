@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.glut.schedule.service.chaoxing.*
+import com.glut.schedule.ui.requirements.HomeworkDocumentActions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -482,7 +483,7 @@ private fun HomeworkDetailContent(
     expandedActions: @Composable () -> Unit
 ) {
     var expanded by remember(row.taskKey()) { mutableStateOf(false) }
-    var html by remember(row.taskKey()) { mutableStateOf("") }
+    var detail by remember(row.taskKey()) { mutableStateOf(HomeworkDetails("")) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var generation by remember(row.taskKey()) { mutableIntStateOf(0) }
@@ -491,21 +492,21 @@ private fun HomeworkDetailContent(
         // 收起只是隐藏：同一次展示周期已成功加载的详情不因展开而重新请求。
         if (!expanded || completedGeneration == generation && !store.detailIsStale(row)) return@LaunchedEffect
         val sessionGeneration = store.generation
-        html = store.detail(row)
-        if (html.isNotBlank() && !store.detailIsStale(row) && generation == 0) {
+        detail = store.detail(row)
+        if (!store.detailIsStale(row) && generation == 0) {
             completedGeneration = generation
             return@LaunchedEffect
         }
         loading = true; error = ""
         try {
-            val detail = fetchHomeworkDetail(row, store, sessionGeneration)
-            if (!store.saveDetail(row, detail, sessionGeneration, revision)) return@LaunchedEffect
-            html = detail
+            val fetched = fetchHomeworkDetail(row, store, sessionGeneration)
+            if (!store.saveDetail(row, fetched, sessionGeneration, revision)) return@LaunchedEffect
+            detail = fetched
             completedGeneration = generation
         } catch (e: kotlinx.coroutines.CancellationException) { throw e
         } catch (e: Exception) {
             val reason = (e as? HomeworkDetailException)?.message ?: "详情加载失败，请刷新列表或重新登录后重试"
-            error = if (html.isBlank()) reason else "$reason（显示缓存详情）"
+            error = if (detail.html.isBlank() && detail.documents.isEmpty()) reason else "$reason（显示缓存详情）"
         } finally { loading = false }
     }
     TextButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(0.dp)) {
@@ -521,9 +522,12 @@ private fun HomeworkDetailContent(
             Text(error, style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { generation++ }) { Text("重试") }
         }
-        if (html.isNotBlank()) {
+        if (detail.html.isNotBlank()) {
             // 详情随内容展开，整张任务列表统一滚动。
-            com.glut.schedule.ui.requirements.HomeworkRequirementsView(html, Modifier.fillMaxWidth())
+            com.glut.schedule.ui.requirements.HomeworkRequirementsView(detail.html, Modifier.fillMaxWidth())
+        }
+        if (detail.documents.isNotEmpty()) {
+            HomeworkDocumentActions(row, store, detail.documents)
         }
     }
 }

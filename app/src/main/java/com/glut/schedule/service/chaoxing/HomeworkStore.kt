@@ -23,15 +23,26 @@ class HomeworkStore(context: Context) {
     val attemptAt: Long get() = preferences.getLong("attemptAt", 0L)
     val successAt: Long get() = preferences.getLong("successAt", if (failureCount > 0) 0L else updatedAt)
     fun markAttempt() { preferences.edit().putLong("attemptAt", System.currentTimeMillis()).apply() }
-    private fun detailKey(row: CachedHomework, homeworkVersion: Int = 3) =
+    private fun detailKey(row: CachedHomework, homeworkVersion: Int = 4) =
         if (row.kind == "homework") "detail-requirements-v$homeworkVersion:${row.courseId}:${row.classId}:${row.workId}" else "task-detail:${row.taskKey()}"
-    fun detail(row: CachedHomework): String {
-        preferences.getString(detailKey(row), null)?.let { return it }
-        if (row.kind != "homework") return ""
-        // 旧正文可离线显示，首次展开仍会重新请求以补识别嵌入附件。
+    internal fun detail(row: CachedHomework): HomeworkDetails {
+        val key = detailKey(row)
+        preferences.getString(key, null)?.let { html ->
+            val documents = runCatching {
+                val values = JSONArray(preferences.getString("$key:documents", "[]"))
+                (0 until values.length()).mapNotNull { index ->
+                    val item = values.getJSONObject(index)
+                    homeworkDocument(item.getString("id"), item.getString("name"), item.getString("type"), item.getBoolean("download"))
+                }
+            }.getOrDefault(emptyList())
+            return HomeworkDetails(html, documents)
+        }
+        if (row.kind != "homework") return HomeworkDetails("")
+        // 旧正文可离线显示，首次展开仍会重新请求以补上附件预览入口。
+        preferences.getString(detailKey(row, 3), null)?.let { return HomeworkDetails(it) }
         val previous = preferences.getString(detailKey(row, 2), "").orEmpty()
         val legacyTypeOnly = Regex("""^[（(](?:其它|其他)[）)]$""")
-        return previous.takeUnless { legacyTypeOnly.matches(org.jsoup.Jsoup.parseBodyFragment(it).text()) }.orEmpty()
+        return HomeworkDetails(previous.takeUnless { legacyTypeOnly.matches(org.jsoup.Jsoup.parseBodyFragment(it).text()) }.orEmpty())
     }
     // 手动刷新详情的批次与账号会话代次独立，避免自动同步重复拉取正文。
     val detailRevision: Long get() = preferences.getLong("detailRevision", 0L)
@@ -42,10 +53,19 @@ class HomeworkStore(context: Context) {
     }
     fun detailIsStale(row: CachedHomework) = preferences.getLong(detailKey(row) + ":revision", -1L) < detailRevision
     val generation: Long get() = preferences.getLong("generation", 0L)
-    fun saveDetail(row: CachedHomework, html: String, expectedGeneration: Long, expectedRevision: Long = detailRevision): Boolean = synchronized(detailLock) {
+    internal fun saveDetail(row: CachedHomework, detail: HomeworkDetails, expectedGeneration: Long, expectedRevision: Long = detailRevision): Boolean = synchronized(detailLock) {
         if (generation != expectedGeneration || detailRevision != expectedRevision || !allows(row.subjectKey())) return@synchronized false
-        preferences.edit().putString(detailKey(row), html).putLong(detailKey(row) + ":revision", expectedRevision).apply {
+        val key = detailKey(row)
+        preferences.edit().putString(key, detail.html).putLong("$key:revision", expectedRevision).apply {
             if (row.kind == "homework") {
+                // 仅保存教师附件描述；预览地址、签名及原文件不写入详情缓存。
+                val documents = detail.documents.map { item ->
+                    JSONObject().put("id", item.objectId).put("name", item.name)
+                        .put("type", item.format.extension).put("download", item.downloadAllowed)
+                }
+                putString("$key:documents", JSONArray(documents).toString())
+                remove(detailKey(row, 3))
+                remove(detailKey(row, 3) + ":revision")
                 remove(detailKey(row, 2))
                 remove(detailKey(row, 2) + ":revision")
             }
