@@ -7,6 +7,7 @@ internal enum class SchoolOverviewDestination(val topic: SchoolOverviewTopic?) {
     LEADERS(SchoolOverviewTopic.LEADERS),
     HISTORY(SchoolOverviewTopic.HISTORY),
     SPIRIT(SchoolOverviewTopic.SPIRIT),
+    SONG(SchoolOverviewTopic.SONG),
     CAMPUS_INFO(null);
 
     val label: String

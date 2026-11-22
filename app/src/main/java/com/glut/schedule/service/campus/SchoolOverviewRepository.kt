@@ -26,7 +26,8 @@ import java.util.concurrent.atomic.AtomicLong
 enum class SchoolOverviewTopic(val key: String, val title: String) {
     LEADERS("leaders", "领导班子"),
     HISTORY("history", "历史沿革"),
-    SPIRIT("spirit", "桂工精神")
+    SPIRIT("spirit", "桂工精神"),
+    SONG("song", "桂工之歌")
 }
 
 data class SchoolOverviewSource(val label: String, val url: String)
@@ -41,12 +42,25 @@ data class SchoolSpirit(
     val mottoDescription: String
 )
 
+data class SchoolSongNote(val term: String, val text: String)
+data class SchoolSongMottoSection(val title: String, val paragraphs: List<String>)
+data class SchoolSong(
+    val title: String,
+    val videoUrl: String,
+    val lyrics: List<String>,
+    val notes: List<SchoolSongNote>,
+    val meaning: List<String>,
+    val mottoSections: List<SchoolSongMottoSection>
+)
+
 data class SchoolOverviewDocument(
     val fetchedAt: Long,
     val sources: List<SchoolOverviewSource>,
     val people: List<SchoolLeader> = emptyList(),
     val periods: List<SchoolHistoryPeriod> = emptyList(),
-    val spirit: SchoolSpirit? = null
+    val spirit: SchoolSpirit? = null,
+    val diagramUrl: String? = null,
+    val song: SchoolSong? = null
 )
 
 class SchoolOverviewRepository(
@@ -87,7 +101,9 @@ class SchoolOverviewRepository(
             }
             hydrate(topic, cache)
             val existing = cache.document.value
-            if (!force && existing != null && now() - existing.fetchedAt in 0 until FRESH_FOR_MS) {
+            // 旧校史快照仍可阅读，首次进入时即请求补齐沿革图。
+            val needsDiagram = topic == SchoolOverviewTopic.HISTORY && existing?.diagramUrl == null
+            if (!force && !needsDiagram && existing != null && now() - existing.fetchedAt in 0 until FRESH_FOR_MS) {
                 return@withLock existing
             }
             val url = baseUrl.newBuilder().addPathSegments("school-overview/${topic.key}").apply {
@@ -186,11 +202,30 @@ class SchoolOverviewRepository(
                 SchoolHistoryPeriod(requiredText("id"), requiredText("title"), requiredText("range"), getJSONArray("events").objects {
                     SchoolHistoryEvent(getString("date"), requiredText("text"))
                 })
-            }.also { periods -> check(periods.size == 4 && periods.distinctBy { it.id }.size == periods.size) })
+            }.also { periods -> check(periods.size == 4 && periods.distinctBy { it.id }.size == periods.size) },
+                diagramUrl = data.optString("diagramUrl", "").takeIf { it.isNotBlank() }?.also {
+                    check(validatedPhotoUrl(it)?.pathSegments?.get(2) == topic.key)
+                })
             SchoolOverviewTopic.SPIRIT -> SchoolOverviewDocument(fetchedAt, sources, spirit = with(data) {
                 val phrases = getJSONArray("phrases").let { array -> List(array.length()) { array.getString(it) } }
                 check(phrases.size == 4 && phrases.all(String::isNotBlank))
                 SchoolSpirit(photoUrl(topic), phrases, requiredText("description"), requiredText("motto"), requiredText("mottoDescription"))
+            })
+            SchoolOverviewTopic.SONG -> SchoolOverviewDocument(fetchedAt, sources, song = with(data) {
+                val mediaUrl = requiredText("videoUrl")
+                check(sameOriginMediaUrl(mediaUrl)?.encodedPath == "/school-overview/media/song")
+                SchoolSong(
+                    title = requiredText("title"),
+                    videoUrl = mediaUrl,
+                    lyrics = getJSONArray("lyrics").lines(),
+                    notes = getJSONArray("notes").objects {
+                        SchoolSongNote(requiredText("term"), requiredText("text"))
+                    },
+                    meaning = getJSONArray("meaning").lines(),
+                    mottoSections = getJSONArray("mottoSections").objects {
+                        SchoolSongMottoSection(requiredText("title"), getJSONArray("paragraphs").lines())
+                    }
+                )
             })
         }
     } catch (failure: JSONException) {
@@ -205,16 +240,22 @@ class SchoolOverviewRepository(
         }
     }
 
-    private fun validatedPhotoUrl(url: String): HttpUrl? {
+    private fun validatedPhotoUrl(url: String): HttpUrl? =
+        sameOriginMediaUrl(url)?.takeIf { PHOTO_PATH.matches(it.encodedPath) }
+
+    // 图片和视频均使用 Worker 的固定同源路径，缓存中的外部地址不会交给播放器。
+    private fun sameOriginMediaUrl(url: String): HttpUrl? {
         val parsed = url.toHttpUrlOrNull() ?: return null
         return parsed.takeIf {
             it.scheme == baseUrl.scheme && it.host == baseUrl.host && it.port == baseUrl.port &&
-                it.username.isEmpty() && it.password.isEmpty() && it.query == null && it.fragment == null &&
-                PHOTO_PATH.matches(it.encodedPath)
+                it.username.isEmpty() && it.password.isEmpty() && it.query == null && it.fragment == null
         }
     }
 
     private fun JSONObject.requiredText(key: String): String = getString(key).also { check(it.isNotBlank()) }
+
+    private fun JSONArray.lines(): List<String> = List(length()) { getString(it) }
+        .also { entries -> check(entries.isNotEmpty() && entries.all(String::isNotBlank)) }
 
     private fun <T> JSONArray.objects(transform: JSONObject.() -> T): List<T> {
         check(length() > 0)
@@ -226,6 +267,6 @@ class SchoolOverviewRepository(
         const val MAX_IMAGE_BYTES = 10L * 1024 * 1024
         const val MAX_CACHED_IMAGES = 32
         const val FRESH_FOR_MS = 30L * 60 * 1000
-        val PHOTO_PATH = Regex("/school-overview/photo/(leaders|spirit)/[0-9a-f]{32}")
+        val PHOTO_PATH = Regex("/school-overview/photo/(leaders|history|spirit)/[0-9a-f]{32}")
     }
 }

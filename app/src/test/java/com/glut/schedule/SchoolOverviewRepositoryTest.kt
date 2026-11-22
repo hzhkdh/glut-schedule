@@ -7,6 +7,8 @@ import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okio.Buffer
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -72,6 +74,62 @@ class SchoolOverviewRepositoryTest {
             assertNull(repository.loadImage("https://example.org" + path))
             assertEquals(path, server.takeRequest().path)
             assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test fun freshLegacyHistoryStillRequestsTheNewDiagram() = runTest {
+        MockWebServer().use { server ->
+            val topic = SchoolOverviewTopic.HISTORY
+            val directory = temporary.newFolder()
+            val periods = JSONArray(List(4) { index ->
+                mapOf("id" to "period-$index", "title" to "时期", "range" to "1956—1978",
+                    "events" to listOf(mapOf("date" to "1958年8月", "text" to "更名")))
+            })
+            val data = JSONObject().put("periods", periods)
+            val document = JSONObject(snapshot).put("topic", topic.key).put("data", data)
+            directory.resolve("history.json").writeText(document.toString())
+            val repository = SchoolOverviewRepository(directory, server.url("/"), now = { 1000 })
+            repository.loadCached(topic)
+            assertNull(repository.observe(topic).value?.diagramUrl)
+            val path = "/school-overview/photo/history/" + "b".repeat(32)
+            val diagram = server.url(path).toString()
+            data.put("diagramUrl", diagram)
+            server.enqueue(MockResponse().setBody(document.toString()))
+            assertEquals(diagram, repository.refresh(topic).diagramUrl)
+            assertEquals("/school-overview/history", server.takeRequest().path)
+        }
+    }
+
+    @Test fun songStoresAllReadingSectionsAndRejectsForeignMedia() = runTest {
+        MockWebServer().use { server ->
+            val topic = SchoolOverviewTopic.SONG
+            val directory = temporary.newFolder()
+            val repository = SchoolOverviewRepository(directory, server.url("/"))
+            val video = server.url("/school-overview/media/song").toString()
+            val data = JSONObject()
+                .put("title", "测试校歌")
+                .put("videoUrl", video)
+                .put("lyrics", JSONArray(listOf("第一行", "第二行")))
+                .put("notes", JSONArray(listOf(mapOf("term" to "词语", "text" to "注释"))))
+                .put("meaning", JSONArray(listOf("第一段", "第二段", "第三段")))
+                .put("mottoSections", JSONArray(listOf(
+                    mapOf("title" to "涵义阐释", "paragraphs" to listOf("说明")),
+                    mapOf("title" to "出处、典故", "paragraphs" to listOf("来源"))
+                )))
+            val document = JSONObject(snapshot).put("topic", topic.key).put("data", data)
+            server.enqueue(MockResponse().setBody(document.toString()))
+            val song = requireNotNull(repository.refresh(topic).song)
+            assertEquals(video, song.videoUrl)
+            assertEquals(listOf("第一行", "第二行"), song.lyrics)
+            assertEquals("注释", song.notes.single().text)
+            assertEquals(3, song.meaning.size)
+            assertEquals("来源", song.mottoSections.last().paragraphs.single())
+            val restarted = SchoolOverviewRepository(directory, server.url("/"))
+            restarted.loadCached(topic)
+            data.put("videoUrl", "https://example.org/school-overview/media/song")
+            server.enqueue(MockResponse().setBody(document.toString()))
+            assertTrue(runCatching { restarted.refresh(topic, force = true) }.exceptionOrNull() is IOException)
+            assertEquals(song, restarted.observe(topic).value?.song)
         }
     }
 }

@@ -18,8 +18,8 @@ android {
         minSdk = 26
         targetSdk = 36
         // 修复版本同时递增名称与内部版本，让旧客户端能够发现更新并通过安装校验。
-        versionCode = 131
-        versionName = "0.27.1"
+        versionCode = 132
+        versionName = "0.27.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 调休补课对照表：与 update.json / notices.json 同域同流水线（Cloudflare Pages）。
@@ -122,6 +122,10 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
+    // 校歌视频在应用内按需加载，复用 Media3 的进度、播放和全屏控件。
+    val media3Version = "1.9.4"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
     implementation("androidx.datastore:datastore-preferences:1.2.1")

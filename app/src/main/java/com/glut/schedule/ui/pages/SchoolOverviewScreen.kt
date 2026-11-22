@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
@@ -43,7 +42,6 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -65,7 +63,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.glut.schedule.service.campus.SchoolHistoryPeriod
 import com.glut.schedule.service.campus.SchoolLeader
 import com.glut.schedule.service.campus.SchoolOverviewDocument
 import com.glut.schedule.service.campus.SchoolOverviewTopic
@@ -75,19 +72,17 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 internal val SchoolOverviewBackground = Color(0xFFFBF8F1)
 internal val SchoolOverviewNavy = Color(0xFF153D65)
-private val OverviewText = Color(0xFF232B33)
-private val OverviewSecondary = Color(0xFF566370)
-private val OverviewSurface = Color(0xFFFFFDF8)
-private val OverviewHighlight = Color(0xFFF0EBDE)
-private val OverviewDivider = Color(0xFFDED7CB)
+internal val OverviewText = Color(0xFF232B33)
+internal val OverviewSecondary = Color(0xFF566370)
+internal val OverviewSurface = Color(0xFFFFFDF8)
+internal val OverviewHighlight = Color(0xFFF0EBDE)
+internal val OverviewDivider = Color(0xFFDED7CB)
 private val OverviewSoftBlue = Color(0xFFE2EBF3)
 private val OverviewWarning = Color(0xFF854C20)
-private val FirstYear = Regex("\\d{4}")
 
 private val documentDestinations = SchoolOverviewDestination.entries.filter { it.topic != null }
 
@@ -184,7 +179,6 @@ internal fun SchoolOverviewTopicContent(
     }
 
     val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
     // 使用资料 ID 保存展开项和 LazyColumn 锚点，更新正文时保留阅读位置。
     var expandedLeaders by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     Column(Modifier.widthIn(max = 720.dp).fillMaxSize()) {
@@ -196,26 +190,17 @@ internal fun SchoolOverviewTopicContent(
                 TextButton(onClick = onRetry) { Text("重试", color = SchoolOverviewNavy) }
             }
         }
-        if (topic == SchoolOverviewTopic.HISTORY) {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().selectableGroup(),
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                itemsIndexed(document.periods, key = { _, period -> period.id }) { index, period ->
-                    val selected = listState.firstVisibleItemIndex.coerceAtMost(document.periods.lastIndex) == index
-                    val year = FirstYear.find(period.range)?.value ?: period.range
-                    OverviewGroupTab(year, selected, Modifier) {
-                        scope.launch { listState.animateScrollToItem(index) }
-                    }
-                }
-            }
+        if (topic == SchoolOverviewTopic.SONG && document.song != null) {
+            key(document.song.videoUrl) { SchoolSongContent(document.song, document, listState) }
+            return@Column
         }
+        val dateWidth = if (topic == SchoolOverviewTopic.HISTORY) historyDateWidth(document.periods) else 0.dp
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             state = listState,
             contentPadding = PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            // 历史节点的各段线需要首尾相接，段落留白由节点自身提供。
+            verticalArrangement = Arrangement.spacedBy(if (topic == SchoolOverviewTopic.HISTORY) 0.dp else 10.dp)
         ) {
             when (topic) {
                 SchoolOverviewTopic.LEADERS -> itemsIndexed(document.people, key = { _, person -> person.id }) { index, person ->
@@ -232,13 +217,17 @@ internal fun SchoolOverviewTopicContent(
                         }
                     )
                 }
-                SchoolOverviewTopic.HISTORY -> itemsIndexed(document.periods, key = { _, period -> period.id }) { _, period ->
-                    HistoryPeriod(period)
+                SchoolOverviewTopic.HISTORY -> {
+                    schoolHistoryTimeline(document.periods, dateWidth)
+                    document.diagramUrl?.let { url ->
+                        item(key = "history-diagram") { SchoolHistoryDiagram(url, document.fetchedAt, loadImage) }
+                    }
                 }
                 SchoolOverviewTopic.SPIRIT -> document.spirit?.let { spirit ->
                     item(key = "spirit") { SpiritEntry(spirit, document.fetchedAt, loadImage) }
                     item(key = "motto") { MottoEntry(spirit) }
                 }
+                SchoolOverviewTopic.SONG -> Unit
             }
             item(key = "school-overview-sources") { OverviewSources(document) }
         }
@@ -309,30 +298,6 @@ private fun LeaderEntry(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun HistoryPeriod(period: SchoolHistoryPeriod) {
-    Column(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp)) {
-        Text(period.range, color = SchoolOverviewNavy, style = MaterialTheme.typography.headlineSmall,
-            fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold)
-        Text(
-            period.title,
-            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp).semantics { heading() },
-            color = OverviewText,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
-        )
-        period.events.forEach { event ->
-            Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                if (event.date.isNotBlank()) Text(event.date, modifier = Modifier.weight(0.28f),
-                    color = SchoolOverviewNavy, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text(event.text, modifier = Modifier.weight(1f), color = OverviewText,
-                    style = MaterialTheme.typography.bodyMedium, lineHeight = 23.sp)
-            }
-        }
-        HorizontalDivider(color = OverviewDivider)
     }
 }
 
@@ -413,7 +378,7 @@ private fun OverviewPhoto(
 }
 
 @Composable
-private fun OverviewSources(document: SchoolOverviewDocument) {
+internal fun OverviewSources(document: SchoolOverviewDocument) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val updated = remember(document.fetchedAt) {
