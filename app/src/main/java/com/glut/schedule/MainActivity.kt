@@ -177,6 +177,16 @@ import com.glut.schedule.ui.pages.FinanceViewModelRegistry
 import com.glut.schedule.ui.pages.CampusImageScreen
 import com.glut.schedule.ui.pages.CampusImageViewModel
 import com.glut.schedule.ui.pages.CampusImageViewModelFactory
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import com.glut.schedule.ui.navigation.SchoolOverviewDestination
+import com.glut.schedule.ui.navigation.SchoolOverviewNavigation
+import com.glut.schedule.ui.pages.SchoolOverviewBackground
+import com.glut.schedule.ui.pages.SchoolOverviewLoadState
+import com.glut.schedule.ui.pages.SchoolOverviewScreen
+import com.glut.schedule.ui.pages.SchoolOverviewTopicContent
+import com.glut.schedule.ui.pages.SchoolOverviewViewModel
+import com.glut.schedule.ui.pages.SchoolOverviewViewModelFactory
 import com.glut.schedule.ui.pages.ScheduleExportScreen
 import com.glut.schedule.ui.pages.ScheduleScreen
 import com.glut.schedule.ui.pages.BackgroundCropScreen
@@ -291,6 +301,10 @@ class MainActivity : ComponentActivity() {
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
                 var selectedItem by remember { mutableStateOf(DrawerItem.Schedule) }
+                var schoolNavigation by rememberSaveable(stateSaver = SchoolOverviewNavigation.Saver) {
+                    mutableStateOf(SchoolOverviewNavigation())
+                }
+                val schoolPageStates = rememberSaveableStateHolder()
                 var showUpdateDialog by remember { mutableStateOf<UpdateDialogState?>(null) }
                 var autoPopupUpdateVersion by remember { mutableStateOf<String?>(null) }
                 var showNoticePopup by remember { mutableStateOf<NoticeInfo?>(null) }
@@ -519,13 +533,13 @@ class MainActivity : ComponentActivity() {
                     )
                 }
                 var greetingAnimationRunId by remember { mutableStateOf(0) }
-                val campusInfoViewModel: CampusImageViewModel? =
-                    if (selectedItem == DrawerItem.CampusInfo) {
-                        viewModel(
-                            key = "campus-info",
-                            factory = CampusImageViewModelFactory(container.campusImageService)
-                        )
-                    } else null
+                val campusInfoViewModel: CampusImageViewModel = viewModel(
+                    key = "campus-info",
+                    factory = CampusImageViewModelFactory(container.campusImageService)
+                )
+                val schoolOverviewViewModel: SchoolOverviewViewModel? = if (selectedItem == DrawerItem.CampusInfo) {
+                    viewModel(factory = SchoolOverviewViewModelFactory(container.schoolOverviewRepository))
+                } else null
                 val financeViewModels = remember { FinanceViewModelRegistry() }
                 val financeViewModel: FinanceViewModel? = if (selectedItem == DrawerItem.Finance) {
                     financeViewModels.register(viewModel<FinanceViewModel>(
@@ -814,6 +828,10 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                             enabled = item.isEnabledFor(campusType),
                                             unsupportedHint = item.unsupportedHintFor(campusType),
                                             onClick = {
+                                                // 从其他页面进入时显示首个资料栏目；重复点当前入口只关闭抽屉。
+                                                if (item == DrawerItem.CampusInfo && selectedItem != item) {
+                                                    schoolNavigation = schoolNavigation.open(SchoolOverviewDestination.LEADERS)
+                                                }
                                                 selectedItem = item
                                                 settingsSubPage = SettingsSubPage.ROOT
                                                 scope.launch { drawerState.close() }
@@ -863,7 +881,10 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                 TopAppBar(
                                     title = {
                                         Text(
-                                            if (selectedItem == DrawerItem.Settings) settingsSubPage.title else selectedItem.title,
+                                            when (selectedItem) {
+                                                DrawerItem.Settings -> settingsSubPage.title
+                                                else -> selectedItem.title
+                                            },
                                             color = Color(0xFF141821),
                                             fontWeight = FontWeight.SemiBold
                                         )
@@ -931,12 +952,24 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                     Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                                                 }
                                             }
-                                            DrawerItem.CampusInfo -> campusInfoViewModel?.let { viewModel ->
-                                                val campusImageState by viewModel.uiState.collectAsStateWithLifecycle()
-                                                if (campusImageState.selectedType.isRemote) {
+                                            DrawerItem.CampusInfo -> {
+                                                val topic = schoolNavigation.destination.topic
+                                                if (topic != null && schoolOverviewViewModel != null) {
+                                                    val loads by schoolOverviewViewModel.loadStates.collectAsStateWithLifecycle()
                                                     IconButton(
-                                                        onClick = viewModel::refreshCurrent,
-                                                        enabled = !campusImageState.isLoading
+                                                        onClick = { schoolOverviewViewModel.refresh(topic) },
+                                                        enabled = loads[topic] != SchoolOverviewLoadState.LOADING
+                                                    ) {
+                                                        if (loads[topic] == SchoolOverviewLoadState.LOADING) {
+                                                            androidx.compose.material3.CircularProgressIndicator(
+                                                                modifier = Modifier.size(20.dp), strokeWidth = 2.dp
+                                                            )
+                                                        } else Icon(Icons.Outlined.Refresh, contentDescription = "刷新${topic.title}")
+                                                    }
+                                                } else campusInfoViewModel.let { images ->
+                                                    val state by images.uiState.collectAsStateWithLifecycle()
+                                                    if (state.selectedType.isRemote) IconButton(
+                                                        onClick = images::refreshCurrent, enabled = !state.isLoading
                                                     ) {
                                                         Icon(Icons.Outlined.Refresh, contentDescription = "刷新校园信息")
                                                     }
@@ -1017,7 +1050,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                         }
                                     },
                                     colors = TopAppBarDefaults.topAppBarColors(
-                                        containerColor = Color(0xFFE8E4D6)
+                                        containerColor = if (selectedItem == DrawerItem.CampusInfo) SchoolOverviewBackground else Color(0xFFE8E4D6)
                                     )
                                 )
                             }
@@ -1067,11 +1100,28 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     viewModel = fitnessScoreViewModel,
                                     onTableGestureActive = { drawerGestureBlocked = it }
                                 )
-                                DrawerItem.CampusInfo -> campusInfoViewModel?.let {
-                                    CampusImageScreen(
-                                        viewModel = it,
-                                        onImageGestureActive = { active -> drawerGestureBlocked = active }
-                                    )
+                                DrawerItem.CampusInfo -> {
+                                    val destination = schoolNavigation.destination
+                                    SchoolOverviewScreen(
+                                        destination = destination,
+                                        onDestinationSelected = { schoolNavigation = schoolNavigation.open(it) },
+                                        onSchoolDocumentsSelected = { schoolNavigation = schoolNavigation.showDocuments() }
+                                    ) {
+                                        // 每个栏目使用独立保存槽，切换分组后仍能恢复滚动位置及展开状态。
+                                        schoolPageStates.SaveableStateProvider(destination.name) {
+                                            val topic = destination.topic
+                                            if (topic != null && schoolOverviewViewModel != null) {
+                                                val document by schoolOverviewViewModel.documents.getValue(topic).collectAsStateWithLifecycle()
+                                                val loads by schoolOverviewViewModel.loadStates.collectAsStateWithLifecycle()
+                                                LaunchedEffect(topic) { schoolOverviewViewModel.open(topic) }
+                                                SchoolOverviewTopicContent(topic, document, loads[topic] ?: SchoolOverviewLoadState.LOADING,
+                                                    onRetry = { schoolOverviewViewModel.refresh(topic) },
+                                                    loadImage = schoolOverviewViewModel::loadImage)
+                                            } else {
+                                                CampusImageScreen(campusInfoViewModel) { active -> drawerGestureBlocked = active }
+                                            }
+                                        }
+                                    }
                                 }
                                 DrawerItem.CourseTimeStats -> CourseTimeStatsScreen(
                                     viewModel = courseTimeStatsViewModel,

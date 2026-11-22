@@ -15,7 +15,7 @@ class CampusInfoUiContractTest {
         }
         assertTrue(screen.contains("PrimaryTabRow"))
         assertTrue(screen.contains("viewModel::selectType"))
-        assertTrue(screen.contains("Color(0xFFF6F4EF)"))
+        assertTrue(screen.contains("CampusPageBackground = SchoolOverviewBackground"))
         assertTrue(screen.contains("ContentScale.Fit"))
         assertTrue(screen.contains("contentAlignment = Alignment.Center"))
         assertTrue(screen.contains("clipToBounds()"))
@@ -29,11 +29,13 @@ class CampusInfoUiContractTest {
         val main = source("MainActivity.kt")
         val drawer = source("ui/navigation/DrawerItem.kt")
 
-        assertTrue(drawer.contains("CampusInfo(\"校园信息\""))
+        assertTrue(drawer.contains("CampusInfo(\"学校概况\""))
         assertFalse(drawer.contains("AcademicCalendar(\"校历\""))
         assertFalse(drawer.contains("ShuttleBus(\"校车路线\""))
         assertTrue(main.contains("DrawerItem.CampusInfo"))
-        assertTrue(main.contains("viewModel::refreshCurrent"))
+        assertTrue(main.contains("images::refreshCurrent"))
+        assertFalse(main.contains("SchoolOverviewDrawerGroup"))
+        assertTrue(main.contains("schoolPageStates.SaveableStateProvider"))
         assertTrue(main.contains("刷新校园信息"))
     }
 

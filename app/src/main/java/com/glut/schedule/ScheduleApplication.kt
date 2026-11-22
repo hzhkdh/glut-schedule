@@ -25,6 +25,7 @@ import com.glut.schedule.service.finance.FinanceParser
 import com.glut.schedule.service.finance.FinanceStore
 import com.glut.schedule.service.campus.CampusImageFileCache
 import com.glut.schedule.service.campus.CampusImageService
+import com.glut.schedule.service.campus.SchoolOverviewRepository
 import com.glut.schedule.service.background.RemoteBackgroundAssetStore
 import com.glut.schedule.service.background.RemoteBackgroundRepository
 import com.glut.schedule.service.background.AndroidRemoteArtworkSaver
@@ -311,6 +312,7 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
     val financeApiService by lazy { FinanceApiService(financeParser) }
     private val campusImageCache = CampusImageFileCache(application.filesDir.resolve("campus_images"))
     val campusImageService = CampusImageService(cache = campusImageCache)
+    val schoolOverviewRepository = SchoolOverviewRepository(application.filesDir.resolve("school_overview"))
     val academicLoginService = AcademicLoginService(academicSessionStore, credentialStore)
     val wechatSsoSessionResumer = WechatSsoSessionResumer(application)
     // 续期门卫：南宁/研究生会话过期时在菜单内原地弹验证码，而不是把用户赶去导入页。

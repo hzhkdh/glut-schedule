@@ -22,8 +22,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -61,17 +61,17 @@ internal fun calculateCampusImageSampleSize(
     }
 }
 
-private fun decodeCampusImage(bytes: ByteArray): Bitmap? {
+internal fun decodeCampusImage(bytes: ByteArray, maxPixels: Int = MAX_DECODED_IMAGE_PIXELS): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    val sampleSize = calculateCampusImageSampleSize(bounds.outWidth, bounds.outHeight) ?: return null
+    val sampleSize = calculateCampusImageSampleSize(bounds.outWidth, bounds.outHeight, maxPixels) ?: return null
     val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
     return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
 }
 
 private data class CampusBitmapState(val bitmap: Bitmap? = null, val isComplete: Boolean = false)
 
-private val CampusPageBackground = Color(0xFFF6F4EF)
+private val CampusPageBackground = SchoolOverviewBackground
 private val CampusMessageBackground = Color(0xFFFFFEFB)
 private val CampusText = Color(0xFF141821)
 
@@ -97,7 +97,7 @@ fun CampusImageScreen(
         key2 = state.document?.fetchedAt
     ) {
         val bitmap = withContext(Dispatchers.Default) {
-            state.document?.bytes?.let(::decodeCampusImage)
+            state.document?.bytes?.let { decodeCampusImage(it) }
         }
         value = CampusBitmapState(bitmap = bitmap, isComplete = true)
     }
@@ -105,11 +105,18 @@ fun CampusImageScreen(
     val painter = if (state.selectedType != CampusImageType.CAMPUS_MAP) {
         remember(bitmap) { bitmap?.asImageBitmap()?.let(::BitmapPainter) }
     } else null
-    var scale by remember(state.selectedType, state.document?.fetchedAt) { mutableFloatStateOf(1f) }
-    var offset by remember(state.selectedType, state.document?.fetchedAt) { mutableStateOf(Offset.Zero) }
+    // 每个图片栏目分别保存缩放和平移，切换到学校资料再回来可继续查看。
+    var viewports by rememberSaveable { mutableStateOf(ArrayList(List(CampusImageType.entries.size * 3) { 0f })) }
+    val viewportIndex = state.selectedType.ordinal * 3
+    val scale = viewports[viewportIndex].coerceAtLeast(1f)
+    val offset = Offset(viewports[viewportIndex + 1], viewports[viewportIndex + 2])
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
-        scale = (scale * zoomChange).coerceIn(1f, 5f)
-        offset = if (scale == 1f) Offset.Zero else offset + panChange
+        val nextScale = (viewports[viewportIndex].coerceAtLeast(1f) * zoomChange).coerceIn(1f, 5f)
+        viewports = ArrayList(viewports).apply {
+            this[viewportIndex] = nextScale
+            this[viewportIndex + 1] = if (nextScale == 1f) 0f else this[viewportIndex + 1] + panChange.x
+            this[viewportIndex + 2] = if (nextScale == 1f) 0f else this[viewportIndex + 2] + panChange.y
+        }
     }
 
     LaunchedEffect(scale) {

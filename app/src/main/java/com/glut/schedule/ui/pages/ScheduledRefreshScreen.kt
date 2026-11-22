@@ -407,7 +407,7 @@ private fun RefreshPlanEditor(plan: ScheduledRefreshPlan, otherPlans: List<Sched
     saving: Boolean, canDelete: Boolean, onCancel: () -> Unit, onDelete: () -> Unit, onSave: (ScheduledRefreshPlan) -> Unit) {
     val context = LocalContext.current
     var minute by remember(plan.id) { mutableStateOf(plan.minuteOfDay) }
-    // 财务、体测和公共数据不再参与定时计划，编辑旧计划时同步移除这些项目。
+    // 只有当前可调度的项目进入编辑器，旧任务仍可从历史记录读取。
     var selected by remember(plan.id) { mutableStateOf(plan.taskIds.filter { it.schedulable }.toSet()) }
     var validation by remember(plan.id) { mutableStateOf("") }
     Column(Modifier.fillMaxSize()) {
@@ -433,7 +433,7 @@ private fun RefreshPlanEditor(plan: ScheduledRefreshPlan, otherPlans: List<Sched
                 // 独立登录的说明放在组头，避免每个项目重复一遍撑长列表。
                 if (groupUnsupported) {
                     Text(
-                        "当前来源暂不支持教务后台刷新，仍可选择学习通",
+                        "当前来源暂不支持教务后台刷新，仍可选择学习通和公共数据",
                         color = RefreshSecondary, fontSize = 11.sp, lineHeight = 17.sp
                     )
                 }

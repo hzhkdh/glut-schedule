@@ -36,7 +36,7 @@ enum class DrawerItem(
     Exam("考试安排", Icons.Outlined.EventNote),
     GradeExam("考级成绩", Icons.Outlined.EmojiEvents),
     FitnessScore("体测成绩", Icons.Outlined.FitnessCenter),
-    CampusInfo("校园信息", Icons.Outlined.AccountBalance),
+    CampusInfo("学校概况", Icons.Outlined.AccountBalance),
     CourseTimeStats("课时统计", Icons.Outlined.QueryStats),
     PartnerSchedule("情侣/基友课表", Icons.Outlined.PeopleAlt),
     Finance("财务", Icons.Outlined.AccountBalanceWallet),

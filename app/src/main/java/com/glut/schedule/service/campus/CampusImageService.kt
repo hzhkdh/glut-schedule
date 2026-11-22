@@ -271,7 +271,7 @@ class CampusImageService(
 
 private const val MAX_CAMPUS_IMAGE_BYTES = 10 * 1024 * 1024
 
-private fun hasSupportedImageSignature(bytes: ByteArray): Boolean {
+internal fun hasSupportedImageSignature(bytes: ByteArray): Boolean {
     val png = bytes.size >= 8 && bytes.copyOfRange(0, 8).contentEquals(
         byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
     )

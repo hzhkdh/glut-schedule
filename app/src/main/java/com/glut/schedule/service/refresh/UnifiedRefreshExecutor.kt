@@ -52,6 +52,7 @@ internal class UnifiedRefreshExecutor(private val context: Context, private val 
                 when {
                     task.academic -> academicRefreshMutex.withLock { academic(task) }
                     task == RefreshTaskId.CHAOXING -> if (!refreshHomeworkForUnified(context)) throw IOException("学习通部分更新失败")
+                    task.schoolTopic != null -> c.schoolOverviewRepository.refresh(task.schoolTopic, force = true)
                     else -> error("该历史任务已不支持定时刷新")
                 }
             }

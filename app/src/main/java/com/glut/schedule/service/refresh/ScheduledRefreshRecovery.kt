@@ -48,6 +48,10 @@ internal fun scheduledRunRecoveryStopReason(run: ScheduledRefreshRun, plan: Sche
     else -> null
 }
 
-/** 学习通与教务来源独立，先完成学习通，避免多项慢教务请求耗尽整轮后台时间。 */
+/** 独立来源先执行，避免多项慢教务请求耗尽整轮后台时间。 */
 internal fun orderedScheduledTasks(tasks: Set<RefreshTaskId>): List<RefreshTaskId> =
-    tasks.sortedWith(compareBy<RefreshTaskId> { it != RefreshTaskId.CHAOXING }.thenBy { it.ordinal })
+    tasks.sortedWith(
+        compareBy<RefreshTaskId> { it != RefreshTaskId.CHAOXING }
+            .thenBy { it.schoolTopic == null }
+            .thenBy { it.ordinal }
+    )

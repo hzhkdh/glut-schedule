@@ -1,9 +1,15 @@
 package com.glut.schedule.service.refresh
 
 import com.glut.schedule.data.settings.CampusType
+import com.glut.schedule.service.campus.SchoolOverviewTopic
 
 /** 目录对应用户能主动刷新的页面，派生页面会在执行时展开并合并其数据依赖。 */
-enum class RefreshTaskId(val title: String, val group: String, val academic: Boolean = false) {
+enum class RefreshTaskId(
+    val title: String,
+    val group: String,
+    val academic: Boolean = false,
+    val schoolTopic: SchoolOverviewTopic? = null
+) {
     SCHEDULE("课表安排", "教务", true), EXAMS("考试安排", "教务", true),
     SCORES("考试成绩", "教务", true), GRADE_EXAMS("等级考试成绩", "教务", true),
     STUDY_PLAN("教学计划", "教务", true), PROFESSIONAL_SCORE("专业成绩", "教务", true),
@@ -17,10 +23,13 @@ enum class RefreshTaskId(val title: String, val group: String, val academic: Boo
     FITNESS_LATEST("最新体测成绩", "体测"), FITNESS_HISTORY("历年体测成绩", "体测"),
     FITNESS_STANDARD("体测评分标准", "体测"), CAMPUS_INFO("校园信息", "公共数据"),
     NOTICES("通知公告", "公共数据"), BACKGROUND_GALLERY("背景画廊", "公共数据"),
-    UPDATE_CHECK("版本检查", "公共数据");
+    UPDATE_CHECK("版本检查", "公共数据"),
+    SCHOOL_LEADERS("领导班子", "公共数据", schoolTopic = SchoolOverviewTopic.LEADERS),
+    SCHOOL_HISTORY("历史沿革", "公共数据", schoolTopic = SchoolOverviewTopic.HISTORY),
+    SCHOOL_SPIRIT("桂工精神（含校训）", "公共数据", schoolTopic = SchoolOverviewTopic.SPIRIT);
 
-    // 旧枚举仅用于读取历史记录，定时执行入口只开放教务九项与学习通。
-    val schedulable: Boolean get() = academic || this == CHAOXING
+    // 公共栏目按任务独立执行，旧校园图片任务仍可从历史记录读取。
+    val schedulable: Boolean get() = academic || this == CHAOXING || schoolTopic != null
 }
 
 fun refreshTaskSupported(task: RefreshTaskId, campus: CampusType): Boolean = when {

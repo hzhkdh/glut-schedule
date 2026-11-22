@@ -65,7 +65,22 @@ class UnifiedRefreshPlanTest {
         assertTrue(validateRefreshPlans(plans.take(3)))
         assertFalse(validateRefreshPlans(plans))
         assertFalse(validateRefreshPlans(listOf(plans.first().copy(taskIds = setOf(RefreshTaskId.FINANCE_OVERVIEW)))))
-        assertEquals(10, RefreshTaskId.entries.count { it.schedulable })
+        assertEquals(13, RefreshTaskId.entries.count { it.schedulable })
+    }
+
+    @Test fun publicSchoolDocumentsAreSeparateTasksForEveryCampus() {
+        val school = listOf(RefreshTaskId.SCHOOL_LEADERS, RefreshTaskId.SCHOOL_HISTORY, RefreshTaskId.SCHOOL_SPIRIT)
+        for (task in school) {
+            assertEquals("公共数据", task.group)
+            assertFalse(task.academic)
+            assertTrue(CampusType.entries.all { refreshTaskSupported(task, it) })
+            assertEquals(setOf(task), refreshTaskDependencies(task))
+        }
+        assertFalse(RefreshTaskId.CAMPUS_INFO.schedulable)
+        val plan = ScheduledRefreshPlan("public-school", 420, school.toSet())
+        assertEquals(listOf(plan), decodePlans(encodePlans(listOf(plan))))
+        val tasks = plan.taskIds + RefreshTaskId.SCHEDULE + RefreshTaskId.CHAOXING
+        assertEquals(listOf(RefreshTaskId.CHAOXING) + school + RefreshTaskId.SCHEDULE, orderedScheduledTasks(tasks))
     }
 
     @Test fun runningSnapshotAndInterruptionKeepOnlyActualResults() {
