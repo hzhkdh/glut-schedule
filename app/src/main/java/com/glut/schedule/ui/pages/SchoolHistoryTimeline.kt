@@ -166,7 +166,7 @@ internal fun SchoolHistoryDiagram(url: String, revision: Long, loadImage: suspen
         var attempt by remember { mutableIntStateOf(0) }
         var previewOpen by rememberSaveable { mutableStateOf(false) }
         val diagram by produceState(HistoryDiagramState(), revision, attempt) {
-            // 与条目图片共用磁盘缓存和后台解码，缩略图与预览共用同一张位图。
+            // 页内图和全屏预览共用缓存及后台解码后的位图。
             val bytes = loadImage(url)
             val bitmap = withContext(Dispatchers.Default) { bytes?.let(::decodeCampusImageForDiagram) }
             if (bitmap != null || value.bitmap == null) value = HistoryDiagramState(bitmap, bitmap == null)
@@ -180,7 +180,8 @@ internal fun SchoolHistoryDiagram(url: String, revision: Long, loadImage: suspen
                 Column(Modifier.fillMaxWidth().clip(shape).background(OverviewSurface)
                     .clickable(role = Role.Button) { previewOpen = true }) {
                     Image(remember(bitmap) { bitmap.asImageBitmap() }, contentDescription = null,
-                        modifier = Modifier.fillMaxWidth().aspectRatio(2.6f).padding(horizontal = 8.dp, vertical = 6.dp),
+                        // 与小程序的按宽度适配一致，让竖图自然撑开页面并保留完整内容。
+                        modifier = Modifier.fillMaxWidth().aspectRatio(bitmap.width.toFloat() / bitmap.height),
                         contentScale = ContentScale.Fit)
                     Row(Modifier.fillMaxWidth().heightIn(min = 44.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),

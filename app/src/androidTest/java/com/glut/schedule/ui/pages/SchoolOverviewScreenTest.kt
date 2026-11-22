@@ -49,7 +49,7 @@ class SchoolOverviewScreenTest {
     @Test fun diagramCanRetryAndCloseBackToTheTimeline() {
         val attempts = AtomicInteger()
         val png = ByteArrayOutputStream().use { stream ->
-            Bitmap.createBitmap(48, 36, Bitmap.Config.ARGB_8888).useBitmap { it.compress(Bitmap.CompressFormat.PNG, 100, stream) }
+            Bitmap.createBitmap(48, 60, Bitmap.Config.ARGB_8888).useBitmap { it.compress(Bitmap.CompressFormat.PNG, 100, stream) }
             stream.toByteArray()
         }
         compose.setContent {
@@ -64,6 +64,9 @@ class SchoolOverviewScreenTest {
         compose.waitUntil(5_000) { compose.onAllNodesWithText("沿革图暂时无法加载").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("重试").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithText("查看沿革图").fetchSemanticsNodes().isNotEmpty() }
+        // 竖图卡片随原图展开，整张图不应被压进横向缩略框。
+        val card = compose.onNodeWithText("查看沿革图").fetchSemanticsNode().boundsInRoot
+        assertTrue(card.height > card.width)
         compose.onNodeWithText("查看沿革图").performClick()
         compose.onNodeWithContentDescription("关闭沿革图").assertIsDisplayed().performClick()
         compose.onNodeWithText("学校创办").assertIsDisplayed()
