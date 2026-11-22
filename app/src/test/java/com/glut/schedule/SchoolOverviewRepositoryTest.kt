@@ -77,6 +77,41 @@ class SchoolOverviewRepositoryTest {
         }
     }
 
+    @Test fun refreshedSnapshotRechecksSamePhotoUrlAndRetainsItWhenOffline() = runTest {
+        MockWebServer().use { server ->
+            val directory = temporary.newFolder()
+            var clock = 1000L
+            val repository = SchoolOverviewRepository(directory, server.url("/"), now = { clock })
+            val path = "/school-overview/photo/leaders/" + "a".repeat(32)
+            val url = server.url(path).toString()
+            val payload = snapshot.replace("\"photoUrl\":\"\"", "\"photoUrl\":\"$url\"")
+            val original = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1)
+            val replacement = original.copyOf().also { it[it.lastIndex] = 2 }
+            fun image(bytes: ByteArray) = MockResponse().setHeader("Content-Type", "image/jpeg").setBody(Buffer().write(bytes))
+
+            server.enqueue(MockResponse().setBody(payload))
+            repository.refresh(topic)
+            server.enqueue(image(original))
+            assertArrayEquals(original, repository.loadImage(url))
+            assertArrayEquals(original, repository.loadImage(url))
+            assertEquals(2, server.requestCount)
+
+            clock = 2000L
+            server.enqueue(MockResponse().setBody(payload.replace("1000", "2000")))
+            repository.refresh(topic, force = true)
+            server.enqueue(image(replacement))
+            assertArrayEquals(replacement, repository.loadImage(url))
+            repeat(3) { server.takeRequest() }
+            assertEquals("no-cache", server.takeRequest().getHeader("Cache-Control"))
+
+            clock = 3000L
+            server.enqueue(MockResponse().setBody(payload.replace("1000", "3000")))
+            repository.refresh(topic, force = true)
+            server.enqueue(MockResponse().setResponseCode(502))
+            assertArrayEquals(replacement, repository.loadImage(url))
+        }
+    }
+
     @Test fun freshLegacyHistoryStillRequestsTheNewDiagram() = runTest {
         MockWebServer().use { server ->
             val topic = SchoolOverviewTopic.HISTORY

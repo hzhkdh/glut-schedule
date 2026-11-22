@@ -81,6 +81,9 @@ class SchoolOverviewRepository(
 
     private val caches = SchoolOverviewTopic.entries.associateWith { TopicCache() }
     private val imageCacheLock = Mutex()
+    private val imageLoads = Array(16) { Mutex() }
+
+    private data class CachedImage(val bytes: ByteArray, val checkedAt: Long)
 
     fun observe(topic: SchoolOverviewTopic): StateFlow<SchoolOverviewDocument?> =
         caches.getValue(topic).document.asStateFlow()
@@ -141,33 +144,58 @@ class SchoolOverviewRepository(
 
     suspend fun loadImage(url: String): ByteArray? {
         val parsed = validatedPhotoUrl(url) ?: return null
+        // 同一地址的并发读取共享一次回源，其他图片仍可并行加载。
+        val lock = imageLoads[(parsed.encodedPath.hashCode() and Int.MAX_VALUE) % imageLoads.size]
+        return lock.withLock { loadPhoto(parsed) }
+    }
+
+    private suspend fun loadPhoto(parsed: HttpUrl): ByteArray? {
+        val topic = SchoolOverviewTopic.entries.first { it.key == parsed.pathSegments[2] }
         val imageDirectory = directory.resolve("photos")
-        val file = imageDirectory.resolve("${parsed.pathSegments[2]}-${parsed.pathSegments[3]}.image")
-        return try {
-            val cached = withContext(Dispatchers.IO) {
+        val file = imageDirectory.resolve("${topic.key}-${parsed.pathSegments[3]}.image")
+        val cached = try {
+            withContext(Dispatchers.IO) {
                 file.takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES }?.readBytes()
                     ?.takeIf(::hasSupportedImageSignature)
+                    ?.let { CachedImage(it, file.lastModified()) }
             }
-            if (cached != null) return cached
-            val bytes = client.newCall(Request.Builder().url(parsed).build()).awaitResponse { response ->
+        } catch (_: IOException) {
+            null
+        }
+        val checkedAt = now()
+        val revision = caches.getValue(topic).document.value?.fetchedAt ?: 0L
+        // 正文版本更新或图片到期时向 Worker 重新验证固定 URL。旧字节保留至新图完整写入。
+        val revalidate = cached != null &&
+            (cached.checkedAt < revision || checkedAt - cached.checkedAt >= IMAGE_FRESH_FOR_MS)
+        if (cached != null && !revalidate) return cached.bytes
+        val request = Request.Builder().url(parsed).apply {
+            if (revalidate) header("Cache-Control", "no-cache")
+        }.build()
+        val bytes = try {
+            client.newCall(request).awaitResponse { response ->
                 val body = response.body
                 if (!response.isSuccessful || body.contentType()?.type != "image") throw IOException("学校概况图片加载失败")
                 val source = body.source()
                 if (source.request(MAX_IMAGE_BYTES + 1)) throw IOException("学校概况图片过大")
                 source.readByteArray().takeIf(::hasSupportedImageSignature) ?: throw IOException("学校概况图片格式有误")
             }
+        } catch (_: IOException) {
+            return cached?.bytes
+        }
+        try {
             imageCacheLock.withLock {
                 withContext(Dispatchers.IO) {
                     replaceFile(file, bytes)
+                    file.setLastModified(maxOf(checkedAt, revision))
                     // 限制旧照片版本的磁盘占用，当前图片与网络请求本身不受清理结果影响。
                     imageDirectory.listFiles { entry -> entry.extension == "image" }
                         ?.sortedByDescending(File::lastModified)?.drop(MAX_CACHED_IMAGES)?.forEach(File::delete)
                 }
             }
-            bytes
         } catch (_: IOException) {
-            null
+            // 写盘失败时仍展示本次已校验的图片。
         }
+        return bytes
     }
 
     private fun replaceFile(file: File, bytes: ByteArray) {
@@ -267,6 +295,7 @@ class SchoolOverviewRepository(
         const val MAX_IMAGE_BYTES = 10L * 1024 * 1024
         const val MAX_CACHED_IMAGES = 32
         const val FRESH_FOR_MS = 30L * 60 * 1000
+        const val IMAGE_FRESH_FOR_MS = 24L * 60 * 60 * 1000
         val PHOTO_PATH = Regex("/school-overview/photo/(leaders|history|spirit)/[0-9a-f]{32}")
     }
 }
