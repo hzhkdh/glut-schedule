@@ -73,20 +73,8 @@ class SchoolOverviewScreenTest {
     }
 
     @Test fun songTextTabsCanBeReadBeforeLoadingVideo() {
-        val document = SchoolOverviewDocument(
-            fetchedAt = 1L,
-            sources = emptyList(),
-            song = SchoolSong(
-                title = "校歌",
-                videoUrl = "https://example.invalid/song.mp4",
-                lyrics = listOf("第一段歌词"),
-                notes = listOf(SchoolSongNote("校园", "注释正文")),
-                meaning = listOf("大意正文"),
-                mottoSections = listOf(SchoolSongMottoSection("校训标题", listOf("释义正文")))
-            )
-        )
         compose.setContent {
-            SchoolOverviewTopicContent(SchoolOverviewTopic.SONG, document, SchoolOverviewLoadState.READY, {}, { null })
+            SchoolOverviewTopicContent(SchoolOverviewTopic.SONG, song(), SchoolOverviewLoadState.READY, {}, { null })
         }
         compose.onNodeWithText("第一段歌词").assertIsDisplayed()
         compose.onNodeWithText("注释").performClick().assertIsSelected()
@@ -96,6 +84,37 @@ class SchoolOverviewScreenTest {
         compose.onNodeWithText("校训释义").performClick().assertIsSelected()
         compose.onNodeWithText("释义正文").assertIsDisplayed()
         compose.onNodeWithContentDescription("播放校歌视频").assertIsDisplayed()
+        compose.onAllNodesWithText("流畅").assertCountEquals(0)
+        compose.onAllNodesWithText("原画").assertCountEquals(0)
+    }
+
+    @Test fun songCanSelectAnAvailableQualityWithoutChangingTheReadingTab() {
+        compose.setContent {
+            SchoolOverviewTopicContent(SchoolOverviewTopic.SONG,
+                song("https://example.invalid/school-overview/media/song/original"), SchoolOverviewLoadState.READY, {}, { null })
+        }
+        compose.onNodeWithText("流畅").assertIsSelected()
+        compose.onNodeWithText("注释").performClick().assertIsSelected()
+        compose.onNodeWithText("原画").performClick().assertIsSelected()
+        compose.onNodeWithText("注释").assertIsSelected()
+        compose.onNodeWithContentDescription("播放校歌视频").assertIsDisplayed()
+        compose.onNodeWithText("流畅").performClick().assertIsSelected()
+    }
+
+    private fun song(originalVideoUrl: String? = null): SchoolOverviewDocument {
+        return SchoolOverviewDocument(
+            fetchedAt = 1L,
+            sources = emptyList(),
+            song = SchoolSong(
+                title = "校歌",
+                videoUrl = "https://example.invalid/school-overview/media/song",
+                lyrics = listOf("第一段歌词"),
+                notes = listOf(SchoolSongNote("校园", "注释正文")),
+                meaning = listOf("大意正文"),
+                mottoSections = listOf(SchoolSongMottoSection("校训标题", listOf("释义正文"))),
+                originalVideoUrl = originalVideoUrl
+            )
+        )
     }
 
     private fun history(diagram: String? = null) = SchoolOverviewDocument(

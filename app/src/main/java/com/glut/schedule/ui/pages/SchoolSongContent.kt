@@ -84,6 +84,10 @@ private enum class SongTextTab(val label: String) {
     LYRICS("歌词"), NOTES("注释"), MEANING("歌词大意"), MOTTO("校训释义")
 }
 
+private enum class SongVideoQuality(val label: String) {
+    SMOOTH("流畅"), ORIGINAL("原画")
+}
+
 @Composable
 internal fun SchoolSongContent(song: SchoolSong, document: SchoolOverviewDocument, listState: LazyListState) {
     val context = LocalContext.current.applicationContext
@@ -94,14 +98,16 @@ internal fun SchoolSongContent(song: SchoolSong, document: SchoolOverviewDocumen
     var fullscreen by remember { mutableStateOf(false) }
     var playbackFailed by remember { mutableStateOf(false) }
     var playing by remember { mutableStateOf(false) }
+    var quality by remember(song.originalVideoUrl) { mutableStateOf(SongVideoQuality.SMOOTH) }
+    val playbackUrl = if (quality == SongVideoQuality.ORIGINAL) song.originalVideoUrl ?: song.videoUrl else song.videoUrl
 
-    // 播放器由校歌页持有。切换文字、滚动和全屏只改变内容或承载视图。
+    // 校歌页持有播放器，清晰度切换只替换媒体源，文字和全屏切换只更新界面。
     val player = remember(requested) {
         if (!requested) null else ExoPlayer.Builder(context).build().apply {
             val attributes = AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build()
             setAudioAttributes(attributes, true)
             setHandleAudioBecomingNoisy(true)
-            setMediaItem(MediaItem.fromUri(song.videoUrl), position)
+            setMediaItem(MediaItem.fromUri(playbackUrl), position)
         }
     }
     if (player != null) {
@@ -137,6 +143,17 @@ internal fun SchoolSongContent(song: SchoolSong, document: SchoolOverviewDocumen
             lifecycle.addObserver(observer)
             onDispose { lifecycle.removeObserver(observer) }
         }
+        LaunchedEffect(player, playbackUrl) {
+            if (player.currentMediaItem?.localConfiguration?.uri?.toString() != playbackUrl) {
+                // 缓冲期间也保留用户的播放意图，并从切换瞬间的位置继续。
+                val resumePosition = player.currentPosition
+                val shouldPlay = player.playWhenReady
+                playbackFailed = false
+                player.setMediaItem(MediaItem.fromUri(playbackUrl), resumePosition)
+                player.prepare()
+                player.playWhenReady = shouldPlay
+            }
+        }
         LaunchedEffect(player, playing) {
             if (playing) while (true) {
                 delay(1_000)
@@ -160,8 +177,13 @@ internal fun SchoolSongContent(song: SchoolSong, document: SchoolOverviewDocumen
         item(key = "school-song-video") {
             Text(song.title, color = SchoolOverviewNavy, style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
-            Text("2025 版校歌 MV", color = OverviewSecondary, style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("2025 版校歌 MV", color = OverviewSecondary, style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f))
+                if (song.originalVideoUrl != null) {
+                    SongQualityOptions(quality, { quality = it })
+                }
+            }
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(16.dp)).background(Color.Black)) {
                 when {
                     player == null -> SongVideoPoster { requested = true }
@@ -178,7 +200,25 @@ internal fun SchoolSongContent(song: SchoolSong, document: SchoolOverviewDocumen
         item(key = "school-song-sources") { OverviewSources(document) }
     }
     if (fullscreen && player != null) {
-        FullscreenSongVideo(player, playbackFailed, { fullscreen = false }, retryPlayback)
+        FullscreenSongVideo(player, playbackFailed, { fullscreen = false }, retryPlayback,
+            quality.takeIf { song.originalVideoUrl != null }, { quality = it })
+    }
+}
+
+@Composable
+private fun SongQualityOptions(selected: SongVideoQuality, onSelect: (SongVideoQuality) -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier.clip(RoundedCornerShape(12.dp)).background(OverviewHighlight).padding(horizontal = 4.dp).selectableGroup()) {
+        SongVideoQuality.entries.forEach { quality ->
+            val active = selected == quality
+            Box(Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(9.dp))
+                .background(if (active) OverviewSurface else Color.Transparent)
+                .selectable(active, role = Role.RadioButton) { onSelect(quality) }
+                .padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                Text(quality.label, color = if (active) SchoolOverviewNavy else OverviewSecondary,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+            }
+        }
     }
 }
 
@@ -293,7 +333,14 @@ private fun SongVideoPlayer(
 }
 
 @Composable
-private fun FullscreenSongVideo(player: ExoPlayer, failed: Boolean, onClose: () -> Unit, onRetry: () -> Unit) {
+private fun FullscreenSongVideo(
+    player: ExoPlayer,
+    failed: Boolean,
+    onClose: () -> Unit,
+    onRetry: () -> Unit,
+    quality: SongVideoQuality?,
+    onQualityChange: (SongVideoQuality) -> Unit
+) {
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
         DisposableEffect(window) {
@@ -305,6 +352,9 @@ private fun FullscreenSongVideo(player: ExoPlayer, failed: Boolean, onClose: () 
         }
         Box(Modifier.fillMaxSize().background(Color.Black).safeDrawingPadding()) {
             SongVideoPlayer(player, failed, true, { onClose() }, onRetry)
+            if (quality != null) {
+                SongQualityOptions(quality, onQualityChange, Modifier.align(Alignment.TopStart).padding(8.dp))
+            }
             IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd)) {
                 Icon(Icons.Outlined.Close, "退出全屏", tint = Color.White)
             }

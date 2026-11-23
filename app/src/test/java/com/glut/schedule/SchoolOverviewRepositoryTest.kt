@@ -141,20 +141,12 @@ class SchoolOverviewRepositoryTest {
             val directory = temporary.newFolder()
             val repository = SchoolOverviewRepository(directory, server.url("/"))
             val video = server.url("/school-overview/media/song").toString()
-            val data = JSONObject()
-                .put("title", "测试校歌")
-                .put("videoUrl", video)
-                .put("lyrics", JSONArray(listOf("第一行", "第二行")))
-                .put("notes", JSONArray(listOf(mapOf("term" to "词语", "text" to "注释"))))
-                .put("meaning", JSONArray(listOf("第一段", "第二段", "第三段")))
-                .put("mottoSections", JSONArray(listOf(
-                    mapOf("title" to "涵义阐释", "paragraphs" to listOf("说明")),
-                    mapOf("title" to "出处、典故", "paragraphs" to listOf("来源"))
-                )))
+            val data = songData(video)
             val document = JSONObject(snapshot).put("topic", topic.key).put("data", data)
             server.enqueue(MockResponse().setBody(document.toString()))
             val song = requireNotNull(repository.refresh(topic).song)
             assertEquals(video, song.videoUrl)
+            assertNull(song.originalVideoUrl)
             assertEquals(listOf("第一行", "第二行"), song.lyrics)
             assertEquals("注释", song.notes.single().text)
             assertEquals(3, song.meaning.size)
@@ -167,4 +159,47 @@ class SchoolOverviewRepositoryTest {
             assertEquals(song, restarted.observe(topic).value?.song)
         }
     }
+
+    @Test fun songAcceptsOnlyTheSameOriginOriginalMediaRoute() = runTest {
+        MockWebServer().use { server ->
+            val topic = SchoolOverviewTopic.SONG
+            val directory = temporary.newFolder()
+            val repository = SchoolOverviewRepository(directory, server.url("/"))
+            val video = server.url("/school-overview/media/song").toString()
+            val original = server.url("/school-overview/media/song/original").toString()
+            val data = songData(video).put("originalVideoUrl", original)
+            val document = JSONObject(snapshot).put("topic", topic.key).put("data", data)
+            server.enqueue(MockResponse().setBody(document.toString()))
+            val song = requireNotNull(repository.refresh(topic).song)
+            assertEquals(video, song.videoUrl)
+            assertEquals(original, song.originalVideoUrl)
+
+            val restarted = SchoolOverviewRepository(directory, server.url("/"))
+            restarted.loadCached(topic)
+            assertEquals(song, restarted.observe(topic).value?.song)
+
+            listOf(
+                JSONObject.NULL, 123, "", "not a URL", video, "$original?download=1", "$original#clip",
+                " $original", server.url("/school-overview/media/song/original/").toString(),
+                server.url("/school-overview/media/song/other/").toString() + "../original",
+                "https://example.org/school-overview/media/song/original"
+            ).forEach { invalid ->
+                // 原画字段无效时，流畅视频和所有阅读内容仍可使用。
+                data.put("originalVideoUrl", invalid)
+                server.enqueue(MockResponse().setBody(document.toString()))
+                assertEquals(song.copy(originalVideoUrl = null), repository.refresh(topic, force = true).song)
+            }
+        }
+    }
+
+    private fun songData(video: String) = JSONObject()
+        .put("title", "测试校歌")
+        .put("videoUrl", video)
+        .put("lyrics", JSONArray(listOf("第一行", "第二行")))
+        .put("notes", JSONArray(listOf(mapOf("term" to "词语", "text" to "注释"))))
+        .put("meaning", JSONArray(listOf("第一段", "第二段", "第三段")))
+        .put("mottoSections", JSONArray(listOf(
+            mapOf("title" to "涵义阐释", "paragraphs" to listOf("说明")),
+            mapOf("title" to "出处、典故", "paragraphs" to listOf("来源"))
+        )))
 }

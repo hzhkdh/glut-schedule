@@ -50,7 +50,8 @@ data class SchoolSong(
     val lyrics: List<String>,
     val notes: List<SchoolSongNote>,
     val meaning: List<String>,
-    val mottoSections: List<SchoolSongMottoSection>
+    val mottoSections: List<SchoolSongMottoSection>,
+    val originalVideoUrl: String? = null
 )
 
 data class SchoolOverviewDocument(
@@ -242,6 +243,11 @@ class SchoolOverviewRepository(
             SchoolOverviewTopic.SONG -> SchoolOverviewDocument(fetchedAt, sources, song = with(data) {
                 val mediaUrl = requiredText("videoUrl")
                 check(sameOriginMediaUrl(mediaUrl)?.encodedPath == "/school-overview/media/song")
+                // 原画为可选项。校验 Worker 的固定地址，旧快照或异常字段仍可使用流畅视频。
+                val originalMediaUrl = (opt("originalVideoUrl") as? String)?.takeIf { candidate ->
+                    val parsed = sameOriginMediaUrl(candidate)
+                    parsed?.encodedPath == "/school-overview/media/song/original" && parsed.toString() == candidate
+                }
                 SchoolSong(
                     title = requiredText("title"),
                     videoUrl = mediaUrl,
@@ -252,7 +258,8 @@ class SchoolOverviewRepository(
                     meaning = getJSONArray("meaning").lines(),
                     mottoSections = getJSONArray("mottoSections").objects {
                         SchoolSongMottoSection(requiredText("title"), getJSONArray("paragraphs").lines())
-                    }
+                    },
+                    originalVideoUrl = originalMediaUrl
                 )
             })
         }
