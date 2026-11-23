@@ -19,7 +19,7 @@ internal class SchoolOverviewViewModel(private val repository: SchoolOverviewRep
     val documents = SchoolOverviewTopic.entries.associateWith(repository::observe)
 
     fun open(topic: SchoolOverviewTopic) {
-        // 只在首次进入主题时检查有效期，切换标签不会重复请求同一份资料。
+        // 只在首次进入栏目时读取缓存或加载缺失的资料，已有内容由用户决定何时刷新。
         if (topic !in _loadStates.value) load(topic, force = false)
     }
 
@@ -32,9 +32,13 @@ internal class SchoolOverviewViewModel(private val repository: SchoolOverviewRep
         _loadStates.update { it + (topic to SchoolOverviewLoadState.LOADING) }
         viewModelScope.launch {
             val result = try {
-                // 缓存先进入资料流，联网失败时原有内容仍留在屏幕上。
-                repository.loadCached(topic)
-                repository.refresh(topic, force)
+                if (force) {
+                    // 即使先点了刷新，也让磁盘缓存尽快进入页面，并在失败时保留。
+                    repository.loadCached(topic)
+                    repository.refresh(topic, force = true)
+                } else {
+                    repository.loadInitial(topic)
+                }
                 SchoolOverviewLoadState.READY
             } catch (_: IOException) {
                 SchoolOverviewLoadState.FAILED

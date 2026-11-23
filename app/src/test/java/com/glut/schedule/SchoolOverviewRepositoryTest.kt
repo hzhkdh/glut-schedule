@@ -27,6 +27,21 @@ class SchoolOverviewRepositoryTest {
         "photoUrl":"","duties":"主持学校工作。\n主管校长办公室。联系甲学院、乙学院。"}]}}
     """.trimIndent()
 
+    @Test fun openingCachedSchoolTopicDoesNotRefreshUntilRequested() = runTest {
+        MockWebServer().use { server ->
+            val directory = temporary.newFolder()
+            directory.resolve("leaders.json").writeText(snapshot)
+            val repository = SchoolOverviewRepository(directory, server.url("/"), now = { 86_400_000L })
+            // 过期快照也可以直接阅读，只有明确点击刷新才替换。
+            repository.loadInitial(topic)
+            assertEquals(1000L, repository.observe(topic).value?.fetchedAt)
+            assertEquals(0, server.requestCount)
+            server.enqueue(MockResponse().setBody(snapshot.replace("1000", "2000")))
+            assertEquals(2000L, repository.refresh(topic, force = true).fetchedAt)
+            assertEquals("/school-overview/leaders?refresh=1", server.takeRequest().path)
+        }
+    }
+
     @Test fun cacheSurvivesRestartAndInvalidOrUnavailableUpstream() = runTest {
         MockWebServer().use { server ->
             val directory = temporary.newFolder()

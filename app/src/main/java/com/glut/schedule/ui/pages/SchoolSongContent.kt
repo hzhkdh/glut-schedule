@@ -1,5 +1,8 @@
 package com.glut.schedule.ui.pages
 
+import android.content.pm.ActivityInfo
+import androidx.activity.compose.LocalActivity
+
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -341,6 +344,17 @@ private fun FullscreenSongVideo(
     quality: SongVideoQuality?,
     onQualityChange: (SongVideoQuality) -> Unit
 ) {
+    val activity = LocalActivity.current
+    DisposableEffect(activity) {
+        val originalOrientation = activity?.requestedOrientation
+        // 全屏期间临时请求横屏，退出后还原播放器打开前的方向设置。
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        onDispose {
+            if (activity != null && originalOrientation != null && !activity.isChangingConfigurations) {
+                activity.requestedOrientation = originalOrientation
+            }
+        }
+    }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
         DisposableEffect(window) {

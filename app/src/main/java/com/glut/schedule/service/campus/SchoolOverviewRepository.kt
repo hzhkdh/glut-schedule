@@ -94,6 +94,12 @@ class SchoolOverviewRepository(
         cache.lock.withLock { hydrate(topic, cache) }
     }
 
+    internal suspend fun loadInitial(topic: SchoolOverviewTopic) {
+        loadCached(topic)
+        // 已保存的资料即使较旧也可直接阅读，更新由手动或用户配置的定时任务触发。
+        if (caches.getValue(topic).document.value == null) refresh(topic)
+    }
+
     suspend fun refresh(topic: SchoolOverviewTopic, force: Boolean = false): SchoolOverviewDocument {
         val cache = caches.getValue(topic)
         // 手动与定时刷新同时到达时，等待正在执行的同栏目请求，复用其成功结果。
@@ -165,9 +171,8 @@ class SchoolOverviewRepository(
         }
         val checkedAt = now()
         val revision = caches.getValue(topic).document.value?.fetchedAt ?: 0L
-        // 正文版本更新或图片到期时向 Worker 重新验证固定 URL。旧字节保留至新图完整写入。
-        val revalidate = cached != null &&
-            (cached.checkedAt < revision || checkedAt - cached.checkedAt >= IMAGE_FRESH_FOR_MS)
+        // 资料明确更新后才重新验证固定图片地址，保留旧图直到新图完整写入。
+        val revalidate = cached != null && cached.checkedAt < revision
         if (cached != null && !revalidate) return cached.bytes
         val request = Request.Builder().url(parsed).apply {
             if (revalidate) header("Cache-Control", "no-cache")
@@ -302,7 +307,6 @@ class SchoolOverviewRepository(
         const val MAX_IMAGE_BYTES = 10L * 1024 * 1024
         const val MAX_CACHED_IMAGES = 32
         const val FRESH_FOR_MS = 30L * 60 * 1000
-        const val IMAGE_FRESH_FOR_MS = 24L * 60 * 60 * 1000
         val PHOTO_PATH = Regex("/school-overview/photo/(leaders|history|spirit)/[0-9a-f]{32}")
     }
 }
