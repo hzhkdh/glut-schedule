@@ -9,7 +9,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -20,6 +19,7 @@ import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
@@ -50,8 +50,7 @@ data class SchoolSong(
     val lyrics: List<String>,
     val notes: List<SchoolSongNote>,
     val meaning: List<String>,
-    val mottoSections: List<SchoolSongMottoSection>,
-    val originalVideoUrl: String? = null
+    val mottoSections: List<SchoolSongMottoSection>
 )
 
 data class SchoolOverviewDocument(
@@ -66,12 +65,13 @@ data class SchoolOverviewDocument(
 
 class SchoolOverviewRepository(
     private val directory: File,
-    private val baseUrl: HttpUrl = "https://glut-api.999314.xyz/".toHttpUrl(),
     private val client: OkHttpClient = OkHttpClient.Builder()
         .followRedirects(false)
         .callTimeout(25, TimeUnit.SECONDS)
         .build(),
-    private val now: () -> Long = System::currentTimeMillis
+    private val now: () -> Long = System::currentTimeMillis,
+    private val fetchSnapshot: suspend (SchoolOverviewTopic, Boolean) -> String =
+        OfficialSchoolOverviewGateway(client, now)::fetch
 ) {
     private class TopicCache {
         val lock = Mutex()
@@ -116,15 +116,7 @@ class SchoolOverviewRepository(
             if (!force && !needsDiagram && existing != null && now() - existing.fetchedAt in 0 until FRESH_FOR_MS) {
                 return@withLock existing
             }
-            val url = baseUrl.newBuilder().addPathSegments("school-overview/${topic.key}").apply {
-                if (force) addQueryParameter("refresh", "1")
-            }.build()
-            val raw = client.newCall(Request.Builder().url(url).build()).awaitResponse { response ->
-                if (!response.isSuccessful) throw IOException("学校概况请求失败")
-                val source = response.body.source()
-                if (source.request(MAX_BYTES + 1)) throw IOException("学校概况响应过大")
-                source.readUtf8()
-            }
+            val raw = fetchSnapshot(topic, force)
             val document = decode(topic, raw)
             if (existing != null && document.fetchedAt < existing.fetchedAt) return@withLock existing
             withContext(Dispatchers.IO) { replaceFile(cacheFile(topic), raw.toByteArray()) }
@@ -149,17 +141,17 @@ class SchoolOverviewRepository(
 
     private fun cacheFile(topic: SchoolOverviewTopic) = directory.resolve("${topic.key}.json")
 
-    suspend fun loadImage(url: String): ByteArray? {
-        val parsed = validatedPhotoUrl(url) ?: return null
+    suspend fun loadImage(topic: SchoolOverviewTopic, url: String): ByteArray? {
+        val direct = validatedSchoolPhoto(url)
+        val id = direct?.let { photoFingerprint(it.toString()) } ?: legacyPhotoId(topic, url) ?: return null
         // 同一地址的并发读取共享一次回源，其他图片仍可并行加载。
-        val lock = imageLoads[(parsed.encodedPath.hashCode() and Int.MAX_VALUE) % imageLoads.size]
-        return lock.withLock { loadPhoto(parsed) }
+        val lock = imageLoads[(id.hashCode() and Int.MAX_VALUE) % imageLoads.size]
+        return lock.withLock { loadPhoto(topic, id, direct) }
     }
 
-    private suspend fun loadPhoto(parsed: HttpUrl): ByteArray? {
-        val topic = SchoolOverviewTopic.entries.first { it.key == parsed.pathSegments[2] }
+    private suspend fun loadPhoto(topic: SchoolOverviewTopic, id: String, direct: HttpUrl?): ByteArray? {
         val imageDirectory = directory.resolve("photos")
-        val file = imageDirectory.resolve("${topic.key}-${parsed.pathSegments[3]}.image")
+        val file = imageDirectory.resolve("${topic.key}-$id.image")
         val cached = try {
             withContext(Dispatchers.IO) {
                 file.takeIf { it.isFile && it.length() in 1..MAX_IMAGE_BYTES }?.readBytes()
@@ -169,12 +161,14 @@ class SchoolOverviewRepository(
         } catch (_: IOException) {
             null
         }
+        // 旧快照中的代理 URL 只用来找本地图片，刷新资料后才能得到可直连的官网地址。
+        if (direct == null) return cached?.bytes
         val checkedAt = now()
         val revision = caches.getValue(topic).document.value?.fetchedAt ?: 0L
         // 资料明确更新后才重新验证固定图片地址，保留旧图直到新图完整写入。
         val revalidate = cached != null && cached.checkedAt < revision
         if (cached != null && !revalidate) return cached.bytes
-        val request = Request.Builder().url(parsed).apply {
+        val request = Request.Builder().url(direct).apply {
             if (revalidate) header("Cache-Control", "no-cache")
         }.build()
         val bytes = try {
@@ -238,7 +232,7 @@ class SchoolOverviewRepository(
                 })
             }.also { periods -> check(periods.size == 4 && periods.distinctBy { it.id }.size == periods.size) },
                 diagramUrl = data.optString("diagramUrl", "").takeIf { it.isNotBlank() }?.also {
-                    check(validatedPhotoUrl(it)?.pathSegments?.get(2) == topic.key)
+                    check(isKnownPhoto(topic, it))
                 })
             SchoolOverviewTopic.SPIRIT -> SchoolOverviewDocument(fetchedAt, sources, spirit = with(data) {
                 val phrases = getJSONArray("phrases").let { array -> List(array.length()) { array.getString(it) } }
@@ -246,16 +240,10 @@ class SchoolOverviewRepository(
                 SchoolSpirit(photoUrl(topic), phrases, requiredText("description"), requiredText("motto"), requiredText("mottoDescription"))
             })
             SchoolOverviewTopic.SONG -> SchoolOverviewDocument(fetchedAt, sources, song = with(data) {
-                val mediaUrl = requiredText("videoUrl")
-                check(sameOriginMediaUrl(mediaUrl)?.encodedPath == "/school-overview/media/song")
-                // 原画为可选项。校验 Worker 的固定地址，旧快照或异常字段仍可使用流畅视频。
-                val originalMediaUrl = (opt("originalVideoUrl") as? String)?.takeIf { candidate ->
-                    val parsed = sameOriginMediaUrl(candidate)
-                    parsed?.encodedPath == "/school-overview/media/song/original" && parsed.toString() == candidate
-                }
                 SchoolSong(
                     title = requiredText("title"),
-                    videoUrl = mediaUrl,
+                    // 旧缓存里的播放地址不参与取源，始终播放学校官网原片。
+                    videoUrl = OFFICIAL_SONG_VIDEO,
                     lyrics = getJSONArray("lyrics").lines(),
                     notes = getJSONArray("notes").objects {
                         SchoolSongNote(requiredText("term"), requiredText("text"))
@@ -263,8 +251,7 @@ class SchoolOverviewRepository(
                     meaning = getJSONArray("meaning").lines(),
                     mottoSections = getJSONArray("mottoSections").objects {
                         SchoolSongMottoSection(requiredText("title"), getJSONArray("paragraphs").lines())
-                    },
-                    originalVideoUrl = originalMediaUrl
+                    }
                 )
             })
         }
@@ -275,22 +262,30 @@ class SchoolOverviewRepository(
     }
 
     private fun JSONObject.photoUrl(topic: SchoolOverviewTopic): String = getString("photoUrl").also { photo ->
-        if (photo.isNotEmpty()) {
-            check(validatedPhotoUrl(photo)?.pathSegments?.get(2) == topic.key)
-        }
+        check(photo.isEmpty() || isKnownPhoto(topic, photo))
     }
 
-    private fun validatedPhotoUrl(url: String): HttpUrl? =
-        sameOriginMediaUrl(url)?.takeIf { PHOTO_PATH.matches(it.encodedPath) }
+    private fun isKnownPhoto(topic: SchoolOverviewTopic, url: String): Boolean =
+        validatedSchoolPhoto(url) != null || legacyPhotoId(topic, url) != null
 
-    // 图片和视频均使用 Worker 的固定同源路径，缓存中的外部地址不会交给播放器。
-    private fun sameOriginMediaUrl(url: String): HttpUrl? {
-        val parsed = url.toHttpUrlOrNull() ?: return null
-        return parsed.takeIf {
-            it.scheme == baseUrl.scheme && it.host == baseUrl.host && it.port == baseUrl.port &&
+    private fun validatedSchoolPhoto(url: String): HttpUrl? =
+        url.toHttpUrlOrNull()?.takeIf(::isOfficialSchoolOverviewImage)
+
+    private fun legacyPhotoId(topic: SchoolOverviewTopic, url: String): String? {
+        val path = trustedImageUrl(url, "glut-api.999314.xyz")?.encodedPath ?: return null
+        val match = LEGACY_PHOTO_PATH.matchEntire(path) ?: return null
+        return match.groupValues[2].takeIf { match.groupValues[1] == topic.key }
+    }
+
+    private fun trustedImageUrl(url: String, host: String): HttpUrl? =
+        url.toHttpUrlOrNull()?.takeIf {
+            it.isHttps && it.host == host && it.port == 443 &&
                 it.username.isEmpty() && it.password.isEmpty() && it.query == null && it.fragment == null
         }
-    }
+
+    // 沿用旧缓存里的地址指纹，让迁移前已经保存的同一张官网图片仍可命中。
+    private fun photoFingerprint(url: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(url.toByteArray(Charsets.UTF_8)).take(16).joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
     private fun JSONObject.requiredText(key: String): String = getString(key).also { check(it.isNotBlank()) }
 
@@ -307,6 +302,7 @@ class SchoolOverviewRepository(
         const val MAX_IMAGE_BYTES = 10L * 1024 * 1024
         const val MAX_CACHED_IMAGES = 32
         const val FRESH_FOR_MS = 30L * 60 * 1000
-        val PHOTO_PATH = Regex("/school-overview/photo/(leaders|history|spirit)/[0-9a-f]{32}")
+        const val OFFICIAL_SONG_VIDEO = "https://www.glut.edu.cn/20250407xiaoge.mp4"
+        val LEGACY_PHOTO_PATH = Regex("/school-overview/photo/(leaders|history|spirit)/([0-9a-f]{32})")
     }
 }

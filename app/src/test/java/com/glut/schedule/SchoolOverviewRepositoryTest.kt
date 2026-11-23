@@ -4,6 +4,9 @@ import com.glut.schedule.service.campus.SchoolOverviewRepository
 import com.glut.schedule.service.campus.SchoolOverviewTopic
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import com.glut.schedule.service.network.awaitResponse
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okio.Buffer
@@ -31,27 +34,27 @@ class SchoolOverviewRepositoryTest {
         MockWebServer().use { server ->
             val directory = temporary.newFolder()
             directory.resolve("leaders.json").writeText(snapshot)
-            val repository = SchoolOverviewRepository(directory, server.url("/"), now = { 86_400_000L })
+            val repository = repository(directory, server, now = { 86_400_000L })
             // 过期快照也可以直接阅读，只有明确点击刷新才替换。
             repository.loadInitial(topic)
             assertEquals(1000L, repository.observe(topic).value?.fetchedAt)
             assertEquals(0, server.requestCount)
             server.enqueue(MockResponse().setBody(snapshot.replace("1000", "2000")))
             assertEquals(2000L, repository.refresh(topic, force = true).fetchedAt)
-            assertEquals("/school-overview/leaders?refresh=1", server.takeRequest().path)
+            assertEquals("/snapshot/leaders?refresh=1", server.takeRequest().path)
         }
     }
 
     @Test fun cacheSurvivesRestartAndInvalidOrUnavailableUpstream() = runTest {
         MockWebServer().use { server ->
             val directory = temporary.newFolder()
-            val repository = SchoolOverviewRepository(directory, server.url("/"))
+            val repository = repository(directory, server)
             server.enqueue(MockResponse().setBody(snapshot))
             val document = repository.refresh(topic, force = true)
             assertEquals("主持学校工作。\n主管校长办公室。联系甲学院、乙学院。", document.people.single().duties)
-            assertEquals("/school-overview/leaders?refresh=1", server.takeRequest().path)
+            assertEquals("/snapshot/leaders?refresh=1", server.takeRequest().path)
 
-            val restarted = SchoolOverviewRepository(directory, server.url("/"))
+            val restarted = repository(directory, server)
             restarted.loadCached(topic)
             assertEquals(document, restarted.observe(topic).value)
             server.enqueue(MockResponse().setBody(snapshot.replace("leader-one", "")))
@@ -66,7 +69,7 @@ class SchoolOverviewRepositoryTest {
 
     @Test fun overlappingManualAndScheduledRefreshUseOneRequest() = runTest {
         MockWebServer().use { server ->
-            val repository = SchoolOverviewRepository(temporary.newFolder(), server.url("/"))
+            val repository = repository(temporary.newFolder(), server)
             server.enqueue(MockResponse().setBody(snapshot).setBodyDelay(150, TimeUnit.MILLISECONDS))
             server.enqueue(MockResponse().setResponseCode(500))
             val manual = async { repository.refresh(topic, force = true) }
@@ -78,15 +81,15 @@ class SchoolOverviewRepositoryTest {
 
     @Test fun sameOriginPhotoIsCachedAndForeignPhotoIsNeverRequested() = runTest {
         MockWebServer().use { server ->
-            val repository = SchoolOverviewRepository(temporary.newFolder(), server.url("/"))
-            val path = "/school-overview/photo/leaders/" + "a".repeat(32)
-            val url = server.url(path).toString()
+            val repository = repository(temporary.newFolder(), server)
+            val path = "/__local/A/BB/CC/official.jpg"
+            val url = "https://www.glut.edu.cn$path"
             val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
             server.enqueue(MockResponse().setHeader("Content-Type", "image/jpeg").setBody(Buffer().write(jpeg)))
-            assertArrayEquals(jpeg, repository.loadImage(url))
-            assertArrayEquals(jpeg, repository.loadImage(url))
-            assertNull(repository.loadImage(url + "?other=1"))
-            assertNull(repository.loadImage("https://example.org" + path))
+            assertArrayEquals(jpeg, repository.loadImage(topic, url))
+            assertArrayEquals(jpeg, repository.loadImage(topic, url))
+            assertNull(repository.loadImage(topic, url + "?other=1"))
+            assertNull(repository.loadImage(topic, "https://example.org" + path))
             assertEquals(path, server.takeRequest().path)
             assertEquals(1, server.requestCount)
         }
@@ -96,9 +99,9 @@ class SchoolOverviewRepositoryTest {
         MockWebServer().use { server ->
             val directory = temporary.newFolder()
             var clock = 1000L
-            val repository = SchoolOverviewRepository(directory, server.url("/"), now = { clock })
-            val path = "/school-overview/photo/leaders/" + "a".repeat(32)
-            val url = server.url(path).toString()
+            val repository = repository(directory, server, now = { clock })
+            val path = "/__local/A/BB/CC/official.jpg"
+            val url = "https://www.glut.edu.cn$path"
             val payload = snapshot.replace("\"photoUrl\":\"\"", "\"photoUrl\":\"$url\"")
             val original = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1)
             val replacement = original.copyOf().also { it[it.lastIndex] = 2 }
@@ -107,15 +110,15 @@ class SchoolOverviewRepositoryTest {
             server.enqueue(MockResponse().setBody(payload))
             repository.refresh(topic)
             server.enqueue(image(original))
-            assertArrayEquals(original, repository.loadImage(url))
-            assertArrayEquals(original, repository.loadImage(url))
+            assertArrayEquals(original, repository.loadImage(topic, url))
+            assertArrayEquals(original, repository.loadImage(topic, url))
             assertEquals(2, server.requestCount)
 
             clock = 2000L
             server.enqueue(MockResponse().setBody(payload.replace("1000", "2000")))
             repository.refresh(topic, force = true)
             server.enqueue(image(replacement))
-            assertArrayEquals(replacement, repository.loadImage(url))
+            assertArrayEquals(replacement, repository.loadImage(topic, url))
             repeat(3) { server.takeRequest() }
             assertEquals("no-cache", server.takeRequest().getHeader("Cache-Control"))
 
@@ -123,7 +126,7 @@ class SchoolOverviewRepositoryTest {
             server.enqueue(MockResponse().setBody(payload.replace("1000", "3000")))
             repository.refresh(topic, force = true)
             server.enqueue(MockResponse().setResponseCode(502))
-            assertArrayEquals(replacement, repository.loadImage(url))
+            assertArrayEquals(replacement, repository.loadImage(topic, url))
         }
     }
 
@@ -138,71 +141,74 @@ class SchoolOverviewRepositoryTest {
             val data = JSONObject().put("periods", periods)
             val document = JSONObject(snapshot).put("topic", topic.key).put("data", data)
             directory.resolve("history.json").writeText(document.toString())
-            val repository = SchoolOverviewRepository(directory, server.url("/"), now = { 1000 })
+            val repository = repository(directory, server, now = { 1000 })
             repository.loadCached(topic)
             assertNull(repository.observe(topic).value?.diagramUrl)
-            val path = "/school-overview/photo/history/" + "b".repeat(32)
-            val diagram = server.url(path).toString()
+            val path = "/__local/A/BB/CC/diagram.jpg"
+            val diagram = "https://www.glut.edu.cn$path"
             data.put("diagramUrl", diagram)
             server.enqueue(MockResponse().setBody(document.toString()))
             assertEquals(diagram, repository.refresh(topic).diagramUrl)
-            assertEquals("/school-overview/history", server.takeRequest().path)
+            assertEquals("/snapshot/history", server.takeRequest().path)
         }
     }
 
-    @Test fun songStoresAllReadingSectionsAndRejectsForeignMedia() = runTest {
+    @Test fun songStoresAllReadingSectionsAndUsesOfficialVideoEvenFromLegacyCache() = runTest {
         MockWebServer().use { server ->
             val topic = SchoolOverviewTopic.SONG
             val directory = temporary.newFolder()
-            val repository = SchoolOverviewRepository(directory, server.url("/"))
+            val repository = repository(directory, server)
             val video = server.url("/school-overview/media/song").toString()
             val data = songData(video)
             val document = JSONObject(snapshot).put("topic", topic.key).put("data", data)
             server.enqueue(MockResponse().setBody(document.toString()))
             val song = requireNotNull(repository.refresh(topic).song)
-            assertEquals(video, song.videoUrl)
-            assertNull(song.originalVideoUrl)
+            assertEquals("https://www.glut.edu.cn/20250407xiaoge.mp4", song.videoUrl)
             assertEquals(listOf("第一行", "第二行"), song.lyrics)
             assertEquals("注释", song.notes.single().text)
             assertEquals(3, song.meaning.size)
             assertEquals("来源", song.mottoSections.last().paragraphs.single())
-            val restarted = SchoolOverviewRepository(directory, server.url("/"))
+            val restarted = repository(directory, server)
             restarted.loadCached(topic)
             data.put("videoUrl", "https://example.org/school-overview/media/song")
             server.enqueue(MockResponse().setBody(document.toString()))
-            assertTrue(runCatching { restarted.refresh(topic, force = true) }.exceptionOrNull() is IOException)
+            assertEquals(song, restarted.refresh(topic, force = true).song)
             assertEquals(song, restarted.observe(topic).value?.song)
         }
     }
 
-    @Test fun songAcceptsOnlyTheSameOriginOriginalMediaRoute() = runTest {
+    @Test fun legacyWorkerImageOnlyUsesDiskAndSharesTheOfficialImageCache() = runTest {
         MockWebServer().use { server ->
-            val topic = SchoolOverviewTopic.SONG
             val directory = temporary.newFolder()
-            val repository = SchoolOverviewRepository(directory, server.url("/"))
-            val video = server.url("/school-overview/media/song").toString()
-            val original = server.url("/school-overview/media/song/original").toString()
-            val data = songData(video).put("originalVideoUrl", original)
-            val document = JSONObject(snapshot).put("topic", topic.key).put("data", data)
-            server.enqueue(MockResponse().setBody(document.toString()))
-            val song = requireNotNull(repository.refresh(topic).song)
-            assertEquals(video, song.videoUrl)
-            assertEquals(original, song.originalVideoUrl)
+            val repository = repository(directory, server)
+            val id = "b386f4814947f25bbe3689f9c718b352"
+            val url = "https://glut-api.999314.xyz/school-overview/photo/leaders/$id"
+            assertNull(repository.loadImage(topic, url))
+            val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
+            val photos = directory.resolve("photos").apply { mkdirs() }
+            photos.resolve("leaders-$id.image").writeBytes(jpeg)
+            assertArrayEquals(jpeg, repository.loadImage(topic, url))
+            assertArrayEquals(jpeg, repository.loadImage(topic, "https://www.glut.edu.cn/__local/A/BB/CC/official.jpg"))
+            assertEquals(0, server.requestCount)
+        }
+    }
 
-            val restarted = SchoolOverviewRepository(directory, server.url("/"))
-            restarted.loadCached(topic)
-            assertEquals(song, restarted.observe(topic).value?.song)
-
-            listOf(
-                JSONObject.NULL, 123, "", "not a URL", video, "$original?download=1", "$original#clip",
-                " $original", server.url("/school-overview/media/song/original/").toString(),
-                server.url("/school-overview/media/song/other/").toString() + "../original",
-                "https://example.org/school-overview/media/song/original"
-            ).forEach { invalid ->
-                // 原画字段无效时，流畅视频和所有阅读内容仍可使用。
-                data.put("originalVideoUrl", invalid)
-                server.enqueue(MockResponse().setBody(document.toString()))
-                assertEquals(song.copy(originalVideoUrl = null), repository.refresh(topic, force = true).song)
+    private fun repository(directory: java.io.File, server: MockWebServer, now: () -> Long = System::currentTimeMillis): SchoolOverviewRepository {
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            // 桩只承接官网图片，意外请求代理地址会使测试失败。
+            if (request.url.host == "www.glut.edu.cn") {
+                chain.proceed(request.newBuilder().url(server.url(request.url.encodedPath)).build())
+            } else {
+                check(request.url.host == server.url("/").host)
+                chain.proceed(request)
+            }
+        }.build()
+        return SchoolOverviewRepository(directory, client, now) { topic, force ->
+            val path = "/snapshot/" + topic.key + if (force) "?refresh=1" else ""
+            client.newCall(Request.Builder().url(server.url(path)).build()).awaitResponse { response ->
+                if (!response.isSuccessful) throw IOException("测试上游不可用")
+                response.body.string()
             }
         }
     }

@@ -25,7 +25,8 @@ internal class SchoolOverviewViewModel(private val repository: SchoolOverviewRep
 
     fun refresh(topic: SchoolOverviewTopic) = load(topic, force = true)
 
-    suspend fun loadImage(url: String): ByteArray? = repository.loadImage(url)
+    suspend fun loadImage(topic: SchoolOverviewTopic, url: String): ByteArray? =
+        repository.loadImage(topic, url)
 
     private fun load(topic: SchoolOverviewTopic, force: Boolean) {
         if (_loadStates.value[topic] == SchoolOverviewLoadState.LOADING) return

@@ -1116,7 +1116,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                 LaunchedEffect(topic) { schoolOverviewViewModel.open(topic) }
                                                 SchoolOverviewTopicContent(topic, document, loads[topic] ?: SchoolOverviewLoadState.LOADING,
                                                     onRetry = { schoolOverviewViewModel.refresh(topic) },
-                                                    loadImage = schoolOverviewViewModel::loadImage)
+                                                    loadImage = { url -> schoolOverviewViewModel.loadImage(topic, url) })
                                             } else {
                                                 CampusImageScreen(campusInfoViewModel) { active -> drawerGestureBlocked = active }
                                             }

@@ -88,31 +88,17 @@ class SchoolOverviewScreenTest {
         compose.onAllNodesWithText("原画").assertCountEquals(0)
     }
 
-    @Test fun songCanSelectAnAvailableQualityWithoutChangingTheReadingTab() {
-        compose.setContent {
-            SchoolOverviewTopicContent(SchoolOverviewTopic.SONG,
-                song("https://example.invalid/school-overview/media/song/original"), SchoolOverviewLoadState.READY, {}, { null })
-        }
-        compose.onNodeWithText("流畅").assertIsSelected()
-        compose.onNodeWithText("注释").performClick().assertIsSelected()
-        compose.onNodeWithText("原画").performClick().assertIsSelected()
-        compose.onNodeWithText("注释").assertIsSelected()
-        compose.onNodeWithContentDescription("播放校歌视频").assertIsDisplayed()
-        compose.onNodeWithText("流畅").performClick().assertIsSelected()
-    }
-
-    private fun song(originalVideoUrl: String? = null): SchoolOverviewDocument {
+    private fun song(): SchoolOverviewDocument {
         return SchoolOverviewDocument(
             fetchedAt = 1L,
             sources = emptyList(),
             song = SchoolSong(
                 title = "校歌",
-                videoUrl = "https://example.invalid/school-overview/media/song",
+                videoUrl = "https://example.invalid/school-song.mp4",
                 lyrics = listOf("第一段歌词"),
                 notes = listOf(SchoolSongNote("校园", "注释正文")),
                 meaning = listOf("大意正文"),
-                mottoSections = listOf(SchoolSongMottoSection("校训标题", listOf("释义正文"))),
-                originalVideoUrl = originalVideoUrl
+                mottoSections = listOf(SchoolSongMottoSection("校训标题", listOf("释义正文")))
             )
         )
     }
