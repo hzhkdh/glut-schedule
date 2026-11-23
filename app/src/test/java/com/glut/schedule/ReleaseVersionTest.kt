@@ -7,10 +7,10 @@ import org.junit.Test
 
 class ReleaseVersionTest {
     @Test
-    fun releaseVersionIs0272WithVersionCode132() {
-        // 验证实际编译常量，保证修复版可以被旧客户端识别并覆盖安装。
+    fun releaseVersionIs0280WithVersionCode132() {
+        // 验证 APK 使用本次指定的版本名和版本代码。
         assertEquals(132, BuildConfig.VERSION_CODE)
-        assertEquals("0.27.2", BuildConfig.VERSION_NAME)
+        assertEquals("0.28.0", BuildConfig.VERSION_NAME)
     }
 
     @Test

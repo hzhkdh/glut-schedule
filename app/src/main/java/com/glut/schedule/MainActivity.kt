@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
@@ -65,6 +66,7 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -304,6 +306,12 @@ class MainActivity : ComponentActivity() {
                 var schoolNavigation by rememberSaveable(stateSaver = SchoolOverviewNavigation.Saver) {
                     mutableStateOf(SchoolOverviewNavigation())
                 }
+                var songFullscreen by remember { mutableStateOf(false) }
+                LaunchedEffect(selectedItem, schoolNavigation.destination) {
+                    if (selectedItem != DrawerItem.CampusInfo || schoolNavigation.destination != SchoolOverviewDestination.SONG) {
+                        songFullscreen = false
+                    }
+                }
                 val schoolPageStates = rememberSaveableStateHolder()
                 var showUpdateDialog by remember { mutableStateOf<UpdateDialogState?>(null) }
                 var autoPopupUpdateVersion by remember { mutableStateOf<String?>(null) }
@@ -343,6 +351,7 @@ class MainActivity : ComponentActivity() {
                             // 保存期间消费系统返回键，避免裁剪提交到一半时离开页面。
                             if (!backgroundCropSaving) pendingBackgroundCrop = null
                         }
+                        songFullscreen -> songFullscreen = false
                         drawerState.isOpen -> scope.launch { drawerState.close() }
                         settingsSubPage != SettingsSubPage.ROOT -> settingsSubPage = SettingsSubPage.ROOT
                         selectedItem != DrawerItem.Schedule -> selectedItem = DrawerItem.Schedule
@@ -610,12 +619,17 @@ class MainActivity : ComponentActivity() {
                 val latestSemesterEnd by rememberUpdatedState(greetingSemesterEnd)
                 val latestGreetingHolidayCache by rememberUpdatedState(greetingHolidayCache)
                 val latestGreetingTemplates by rememberUpdatedState(greetingTemplates)
+                val latestSongFullscreen by rememberUpdatedState(songFullscreen)
 
                 LaunchedEffect(drawerState) {
                     snapshotFlow { drawerState.targetValue }
                         .distinctUntilChanged()
                         .collect { target ->
                             if (target != DrawerValue.Open) return@collect
+                            if (latestSongFullscreen) {
+                                drawerState.close()
+                                return@collect
+                            }
                             greetingAnimationRunId++
                             if (!latestGreetingEnabled) {
                                 drawerGreeting = DrawerGreeting(
@@ -726,12 +740,20 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 val drawerContentLayer = rememberGraphicsLayer()
+                val config = LocalConfiguration.current
+                val drawerWidth = if (songFullscreen ||
+                    (selectedItem == DrawerItem.CampusInfo && config.screenWidthDp > config.screenHeightDp)) {
+                    // 旋转时按屏幕短边保持抽屉宽度，避免重新计算锚点后误开侧栏。
+                    Modifier.widthIn(max = minOf(config.screenWidthDp, config.screenHeightDp).dp * 0.75f).fillMaxWidth()
+                } else {
+                    Modifier.fillMaxWidth(0.75f)
+                }
                 ModalNavigationDrawer(
                     drawerState = drawerState,
-                    gesturesEnabled = !drawerGestureBlocked,
+                    gesturesEnabled = !drawerGestureBlocked && !songFullscreen,
                     drawerContent = {
                         ModalDrawerSheet(
-                            modifier = Modifier.fillMaxWidth(0.75f),
+                            modifier = drawerWidth,
                             drawerContainerColor = Color(0xFFE8E4D6),
                             drawerContentColor = Color(0xFF141821)
                         ) {
@@ -877,7 +899,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                     Scaffold(
                         topBar = {
                             // 课程表页面不显示单独的 TopAppBar，菜单按钮集成在 ScheduleHeader 中
-                            if (!isSchedulePage && !isImmersiveArtwork) {
+                            if (!isSchedulePage && !isImmersiveArtwork && !songFullscreen) {
                                 TopAppBar(
                                     title = {
                                         Text(
@@ -1056,7 +1078,7 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                             }
                         },
                         // 课程表页面不消耗系统栏空间，让背景铺满全屏
-                        contentWindowInsets = if (isSchedulePage || isImmersiveArtwork) {
+                        contentWindowInsets = if (isSchedulePage || isImmersiveArtwork || songFullscreen) {
                             WindowInsets(0)
                         } else {
                             ScaffoldDefaults.contentWindowInsets
@@ -1105,7 +1127,8 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                     SchoolOverviewScreen(
                                         destination = destination,
                                         onDestinationSelected = { schoolNavigation = schoolNavigation.open(it) },
-                                        onSchoolDocumentsSelected = { schoolNavigation = schoolNavigation.showDocuments() }
+                                        onSchoolDocumentsSelected = { schoolNavigation = schoolNavigation.showDocuments() },
+                                        fullscreen = songFullscreen
                                     ) {
                                         // 每个栏目使用独立保存槽，切换分组后仍能恢复滚动位置及展开状态。
                                         schoolPageStates.SaveableStateProvider(destination.name) {
@@ -1116,7 +1139,9 @@ items(listOf(DrawerItem.Schedule, DrawerItem.Exam, DrawerItem.StudyPlan, DrawerI
                                                 LaunchedEffect(topic) { schoolOverviewViewModel.open(topic) }
                                                 SchoolOverviewTopicContent(topic, document, loads[topic] ?: SchoolOverviewLoadState.LOADING,
                                                     onRetry = { schoolOverviewViewModel.refresh(topic) },
-                                                    loadImage = { url -> schoolOverviewViewModel.loadImage(topic, url) })
+                                                    loadImage = { url -> schoolOverviewViewModel.loadImage(topic, url) },
+                                                    fullscreen = songFullscreen,
+                                                    onFullscreenChange = { songFullscreen = it })
                                             } else {
                                                 CampusImageScreen(campusInfoViewModel) { active -> drawerGestureBlocked = active }
                                             }

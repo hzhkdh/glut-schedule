@@ -19,7 +19,7 @@ android {
         targetSdk = 36
         // 修复版本同时递增名称与内部版本，让旧客户端能够发现更新并通过安装校验。
         versionCode = 132
-        versionName = "0.27.2"
+        versionName = "0.28.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 调休补课对照表：与 update.json / notices.json 同域同流水线（Cloudflare Pages）。

@@ -48,7 +48,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -61,9 +60,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -88,13 +84,18 @@ private enum class SongTextTab(val label: String) {
 }
 
 @Composable
-internal fun SchoolSongContent(song: SchoolSong, document: SchoolOverviewDocument, listState: LazyListState) {
+internal fun SchoolSongContent(
+    song: SchoolSong,
+    document: SchoolOverviewDocument,
+    listState: LazyListState,
+    fullscreen: Boolean,
+    onFullscreenChange: (Boolean) -> Unit
+) {
     val context = LocalContext.current.applicationContext
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var textTab by rememberSaveable { mutableStateOf(SongTextTab.LYRICS) }
     var position by rememberSaveable { mutableLongStateOf(0L) }
     var requested by remember { mutableStateOf(false) }
-    var fullscreen by remember { mutableStateOf(false) }
     var playbackFailed by remember { mutableStateOf(false) }
     var playing by remember { mutableStateOf(false) }
     // 点播时才加载学校官网原片，阅读栏目和全屏界面共用同一个播放器。
@@ -153,6 +154,11 @@ internal fun SchoolSongContent(song: SchoolSong, document: SchoolOverviewDocumen
         player?.play()
         Unit
     }
+    if (fullscreen && player != null) {
+        // 横竖屏只替换播放器视图，ExoPlayer 继续由同一个校歌页面持有。
+        FullscreenSongVideo(player, playbackFailed, { onFullscreenChange(false) }, retryPlayback)
+        return
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         state = listState,
@@ -165,10 +171,8 @@ internal fun SchoolSongContent(song: SchoolSong, document: SchoolOverviewDocumen
             Text("2025 版校歌 MV", color = OverviewSecondary, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(16.dp)).background(Color.Black)) {
-                when {
-                    player == null -> SongVideoPoster { requested = true }
-                    !fullscreen -> SongVideoPlayer(player, playbackFailed, false, { fullscreen = it }, retryPlayback)
-                }
+                if (player == null) SongVideoPoster { requested = true }
+                else SongVideoPlayer(player, playbackFailed, false, onFullscreenChange, retryPlayback)
             }
         }
         item(key = "school-song-tabs") {
@@ -178,9 +182,6 @@ internal fun SchoolSongContent(song: SchoolSong, document: SchoolOverviewDocumen
             SelectionContainer { SongText(song, textTab) }
         }
         item(key = "school-song-sources") { OverviewSources(document) }
-    }
-    if (fullscreen && player != null) {
-        FullscreenSongVideo(player, playbackFailed, { fullscreen = false }, retryPlayback)
     }
 }
 
@@ -287,7 +288,7 @@ private fun SongVideoPlayer(
             modifier = Modifier.fillMaxSize(),
             onRelease = { it.player = null },
             update = { view ->
-                view.setFullscreenButtonClickListener { onFullscreenChange(!fullscreen) }
+                view.setFullscreenButtonClickListener { onFullscreenChange(it) }
                 view.setFullscreenButtonState(fullscreen)
             }
         )
@@ -304,28 +305,25 @@ private fun FullscreenSongVideo(
     val activity = LocalActivity.current
     DisposableEffect(activity) {
         val originalOrientation = activity?.requestedOrientation
-        // 全屏期间临时请求横屏，退出后还原播放器打开前的方向设置。
+        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        val bars = WindowInsetsCompat.Type.systemBars()
+        val oldBehavior = controller?.systemBarsBehavior
+        // 在 Activity 自己的窗口内旋转，避免旋转中的弹窗销毁触发提前退出。
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.hide(bars)
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose {
+            if (oldBehavior != null) controller?.systemBarsBehavior = oldBehavior
+            controller?.show(bars)
             if (activity != null && originalOrientation != null && !activity.isChangingConfigurations) {
                 activity.requestedOrientation = originalOrientation
             }
         }
     }
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
-        DisposableEffect(window) {
-            val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
-            val bars = WindowInsetsCompat.Type.systemBars()
-            controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller?.hide(bars)
-            onDispose { controller?.show(bars) }
-        }
-        Box(Modifier.fillMaxSize().background(Color.Black).safeDrawingPadding()) {
-            SongVideoPlayer(player, failed, true, { onClose() }, onRetry)
-            IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd)) {
-                Icon(Icons.Outlined.Close, "退出全屏", tint = Color.White)
-            }
+    Box(Modifier.fillMaxSize().background(Color.Black).safeDrawingPadding()) {
+        SongVideoPlayer(player, failed, true, { onClose() }, onRetry)
+        IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd)) {
+            Icon(Icons.Outlined.Close, "退出全屏", tint = Color.White)
         }
     }
 }

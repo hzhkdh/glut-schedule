@@ -431,8 +431,15 @@ private fun HomeworkFilterSheet(
     val keys = catalog.map { it.subjectKey() }.toSet()
     val labels = catalog.groupingBy { it.title }.eachCount()
     val filtered = catalog.filter { it.title.contains(query.trim(), ignoreCase = true) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // 列表到达边缘后也不能把剩余的滚动手势交给筛选面板。
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        sheetGesturesEnabled = false,
+        dragHandle = null
+    ) {
+        Column(Modifier.fillMaxWidth().padding(start = 20.dp, top = 16.dp, end = 20.dp)) {
             Text("筛选任务", style = MaterialTheme.typography.titleLarge)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (option in listOf("todo", "done", "")) {

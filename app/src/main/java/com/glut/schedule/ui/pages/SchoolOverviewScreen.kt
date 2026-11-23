@@ -91,11 +91,12 @@ internal fun SchoolOverviewScreen(
     destination: SchoolOverviewDestination,
     onDestinationSelected: (SchoolOverviewDestination) -> Unit,
     onSchoolDocumentsSelected: () -> Unit,
+    fullscreen: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val showsDocuments = destination.topic != null
     Column(Modifier.fillMaxSize().background(SchoolOverviewBackground)) {
-        if (showsDocuments) {
+        if (showsDocuments && !fullscreen) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                     .clip(RoundedCornerShape(14.dp)).background(OverviewHighlight)
@@ -118,6 +119,7 @@ internal fun SchoolOverviewScreen(
             }
         }
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) { content() }
+        if (fullscreen) return@Column
         HorizontalDivider(color = OverviewDivider)
         Row(
             modifier = Modifier
@@ -162,7 +164,9 @@ internal fun SchoolOverviewTopicContent(
     document: SchoolOverviewDocument?,
     loadState: SchoolOverviewLoadState,
     onRetry: () -> Unit,
-    loadImage: suspend (String) -> ByteArray?
+    loadImage: suspend (String) -> ByteArray?,
+    fullscreen: Boolean = false,
+    onFullscreenChange: (Boolean) -> Unit = {}
 ) {
     if (document == null) {
         Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -181,8 +185,8 @@ internal fun SchoolOverviewTopicContent(
     val listState = rememberLazyListState()
     // 使用资料 ID 保存展开项和 LazyColumn 锚点，更新正文时保留阅读位置。
     var expandedLeaders by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
-    Column(Modifier.widthIn(max = 720.dp).fillMaxSize()) {
-        if (loadState == SchoolOverviewLoadState.FAILED) {
+    Column((if (fullscreen) Modifier else Modifier.widthIn(max = 720.dp)).fillMaxSize()) {
+        if (loadState == SchoolOverviewLoadState.FAILED && !fullscreen) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("刷新失败，正在显示上次保存的资料",
                     modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
@@ -191,7 +195,9 @@ internal fun SchoolOverviewTopicContent(
             }
         }
         if (topic == SchoolOverviewTopic.SONG && document.song != null) {
-            key(document.song.videoUrl) { SchoolSongContent(document.song, document, listState) }
+            key(document.song.videoUrl) {
+                SchoolSongContent(document.song, document, listState, fullscreen, onFullscreenChange)
+            }
             return@Column
         }
         val dateWidth = if (topic == SchoolOverviewTopic.HISTORY) historyDateWidth(document.periods) else 0.dp
