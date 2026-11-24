@@ -130,7 +130,7 @@ class SchoolOverviewRepositoryTest {
         }
     }
 
-    @Test fun freshLegacyHistoryStillRequestsTheNewDiagram() = runTest {
+    @Test fun legacyCachedHistoryOnlyRefreshesWhenUserRequestsIt() = runTest {
         MockWebServer().use { server ->
             val topic = SchoolOverviewTopic.HISTORY
             val directory = temporary.newFolder()
@@ -142,14 +142,19 @@ class SchoolOverviewRepositoryTest {
             val document = JSONObject(snapshot).put("topic", topic.key).put("data", data)
             directory.resolve("history.json").writeText(document.toString())
             val repository = repository(directory, server, now = { 1000 })
-            repository.loadCached(topic)
+
+            // 进入页面只读缓存；缺沿革图也不会自动请求。
+            repository.loadInitial(topic)
+            assertEquals(0, server.requestCount)
             assertNull(repository.observe(topic).value?.diagramUrl)
+
+            // 用户点刷新后才请求，并补齐沿革图。
             val path = "/__local/A/BB/CC/diagram.jpg"
             val diagram = "https://www.glut.edu.cn$path"
             data.put("diagramUrl", diagram)
             server.enqueue(MockResponse().setBody(document.toString()))
-            assertEquals(diagram, repository.refresh(topic).diagramUrl)
-            assertEquals("/snapshot/history", server.takeRequest().path)
+            assertEquals(diagram, repository.refresh(topic, force = true).diagramUrl)
+            assertEquals("/snapshot/history?refresh=1", server.takeRequest().path)
         }
     }
 

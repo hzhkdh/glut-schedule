@@ -111,9 +111,8 @@ class SchoolOverviewRepository(
             }
             hydrate(topic, cache)
             val existing = cache.document.value
-            // 旧校史快照仍可阅读，首次进入时即请求补齐沿革图。
-            val needsDiagram = topic == SchoolOverviewTopic.HISTORY && existing?.diagramUrl == null
-            if (!force && !needsDiagram && existing != null && now() - existing.fetchedAt in 0 until FRESH_FOR_MS) {
+            // 已有缓存保持只读；更新只由用户手动刷新或定时任务触发。
+            if (!force && existing != null && now() - existing.fetchedAt in 0 until FRESH_FOR_MS) {
                 return@withLock existing
             }
             val raw = fetchSnapshot(topic, force)
