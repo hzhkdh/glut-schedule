@@ -61,7 +61,7 @@
 | 课程表 | 当前学期课表，周次导航 | currcourse.jsdo / showTimetable.do（研究生：门户网关 TimeTableNewService） |
 | 考试成绩 | 历年课程成绩，学年分组 + GPA 汇总 | studentOwnScore.do (POST)（研究生：ScoreService/QueryStuScore，不含绩点） |
 | 专业成绩 | 按培养计划筛选课程并计算学年加权成绩 | 本地考试成绩 + 教学计划 |
-| 考试安排 | 考试时间、地点、座位号，时间线 UI，按科目显示图标 | 多端点探测 (JSON/HTML) |
+| 考试安排 | 考试时间、地点、座位号，时间线 UI，按科目显示图标 | `studentQueryAllExam.do` 全量接口优先，其余接口仅兜底 |
 | 考级成绩 | 英语四六级、普通话等国家考试 | skilltest.jsdo (moduleId=2090) |
 | 体测成绩 | 最新与历年体测明细、总评、评分标准 | 体测管理平台 |
 | 校园信息 | 校历、作息时间、校车路线和校园地图 | 内置校园地图 + 校园信息图片服务 |
@@ -252,7 +252,7 @@ app/src/main/res/
 | 课表 | `currcourse.jsdo`、`showTimetable.do` | GBK/UTF-8 HTML |
 | 无固定时间地点课程 | `showTimetable.do` 的 `table#noArrangement` | GBK/UTF-8 HTML |
 | 成绩 | `studentOwnScore.do` | POST + GBK HTML |
-| 考试 | `studentQueryAllExam.do`、`queryExam.do` 等 | JSON/HTML 多端点探测 |
+| 考试 | `studentQueryAllExam.do?pagingNumberPerVLID=1000`（全量，含历史）；其余考试接口仅兜底 | HTML / JSON |
 | 考级成绩 | `skilltest.jsdo?moduleId=2090` | GBK HTML |
 | 教学计划 | `studentSelfSchedule.jsdo` → `studentScheduleLineShow.do` | GBK/UTF-8 HTML |
 | 体测成绩 | 桂林理工大学体测管理平台 | HTTP + GBK/UTF-8 HTML |
@@ -262,6 +262,8 @@ app/src/main/res/
 | 研究生课表/成绩/培养计划 | `https://gsems.glut.edu.cn` 的 `/Ajax.ashx` 网关 | HTTPS + JSON（`Year`/`Term`/`XH` 经 `encode_` base64 编码） |
 | 节假日 | timor.tech API | HTTPS + JSON |
 | 通知与更新 | Cloudflare Pages，失败时回退 GitHub | HTTPS + JSON/APK |
+
+> 考试安排不再请求 `accessModule.do?moduleId=2030` 首页：该页只列最近 7 天，会把历史考试截断成最新 1 条；全量接口失败时才走兜底端点。
 
 ## 测试
 
