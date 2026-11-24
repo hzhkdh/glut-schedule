@@ -391,13 +391,18 @@ class ChaoxingClient(
                 if (item.optInt("evaluation") > 0) status = when (item.optInt("stuStatus", -1)) {
                     0 -> "待互评"; (if (kind == "exam") 3 else 4) -> "已互评"; else -> "状态待确认"
                 }
-                val workLink = if (kind == "homework" && item.optString("taskUrl").isNotBlank())
-                    url.resolve(item.optString("taskUrl"))?.takeIf(::validDetailLink) else null
+                // taskUrl 可能是相对路径（新版接口实际返回 /mooc2/work/task?...）；
+                // 必须先用列表请求的 url 解析成绝对地址，否则 releasedLink 永远为 false。
+                val resolvedTaskUrl = item.optString("taskUrl")
+                    .takeIf { it.isNotBlank() }
+                    ?.let { url.resolve(it) }
+                val workLink = if (kind == "homework") resolvedTaskUrl?.takeIf(::validDetailLink) else null
                 if (status == "未交") {
                     val now = System.currentTimeMillis()
-                    val releasedLink = item.optString("taskUrl").toHttpUrlOrNull()?.let {
+                    val releasedLink = resolvedTaskUrl?.let {
                         it.scheme == "https" && it.host == "mooc1.chaoxing.com" && it.port == 443 &&
-                            it.encodedUsername.isEmpty() && it.encodedPassword.isEmpty() && it.encodedPath == "/mooc-ans/mooc2/work/task"
+                            it.encodedUsername.isEmpty() && it.encodedPassword.isEmpty() &&
+                            it.encodedPath in setOf("/mooc-ans/mooc2/work/task", "/mooc2/work/task")
                     } == true
                     val released = kind == "homework" && isReleasedHomeworkVariant(item, releasedLink, now)
                     val future = kind == "homework" && item.optLong("startTime") > now

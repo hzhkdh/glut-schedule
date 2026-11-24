@@ -20,7 +20,7 @@ class ChaoxingLegacyTest {
                         url to "<input id='courseid' value='1'><input id='clazzid' value='2'><input id='cpi' value='3'><input id='workEnc' value='test'><input id='enc' value='test'><input id='bbsid' value='bbs'><a data-url='https://groupweb.chaoxing.com/course/topic/topicList'></a><a data-url='https://mooc1.chaoxing.com/exam-ans/mooc2/exam/exam-list'></a>"
                     }
                     "/mooc2/work/list" -> url to if (oldWorks) "<ul><li aria-label='匿名;未交' data='/mooc2/work/task?workId=7'></li></ul>" else "<div>未知结构</div>"
-                    "/mooc-ans/work/api/task" -> url to """{"status":true,"total":1,"data":[{"workId":7,"title":"匿名","taskUrl":"/mooc2/work/task?workId=7"}]}"""
+                    "/mooc-ans/work/api/task" -> url to """{"status":true,"total":1,"data":[{"workId":7,"title":"匿名","taskUrl":"/mooc2/work/task?workId=7","stuStatus":0,"taskStatus":1,"action":1,"style":1,"startTime":1000}]}"""
                     "/mooc2/work/task" -> url to "<div class='borderBox'><div class='pcon'>匿名要求</div></div>"
                     "/course/topic/topicList" -> {
                         assertEquals("bbs", url.queryParameter("bbsid"))
@@ -43,7 +43,10 @@ class ChaoxingLegacyTest {
                 }
             }
             val result = client.sync()
-            assertEquals("7", result.courses.first { it.kind == "homework" }.homework.single().workId)
+            val homework = result.courses.first { it.kind == "homework" }.homework.single()
+            assertEquals("7", homework.workId)
+            // 相对 taskUrl + 已发布待提交字段：必须保持「未交」，不能被降级成「状态待确认」。
+            assertEquals("未交", homework.status)
             assertTrue(client.homeworkAppEntry(com.glut.schedule.service.chaoxing.CachedHomework("1", "2", "匿名", "匿名", "未交", null, "7", "3")).contains("workId=7"))
             assertEquals(!oldWorks, paths.contains("/mooc-ans/work/api/task"))
             assertEquals(listOf("已讨论", "未讨论"), result.courses.first { it.kind == "discussion" }.homework.map { it.status })
