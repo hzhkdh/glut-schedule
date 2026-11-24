@@ -65,7 +65,8 @@ data class SemesterOverviewUiState(
     val hasNoon: Boolean = true,
     val isArchiveMode: Boolean = false,
     val courseCount: Int = 0,
-    val calendarAvailable: Boolean = true
+    val calendarAvailable: Boolean = true,
+    val noArrangementCourses: List<com.glut.schedule.data.model.NoArrangementCourse> = emptyList()
 )
 
 data class HolidayDisplay(
@@ -109,7 +110,8 @@ private data class SemesterBase(
     val endDate: LocalDate,
     val adjustments: List<SemesterAdjustment>,
     val viewedSemester: AcademicSemester?,
-    val courses: List<ScheduleCourse>
+    val courses: List<ScheduleCourse>,
+    val noArrangementCourses: List<com.glut.schedule.data.model.NoArrangementCourse>
 )
 
 class SemesterOverviewViewModel(
@@ -140,9 +142,18 @@ class SemesterOverviewViewModel(
             settingsStore.semesterEndDate,
             repository.semesterAdjustments,
             repository.viewedSemester,
-            repository.courses
-        ) { startMonday, endDate, adjustments, viewedSemester, courses ->
-            SemesterBase(startMonday, endDate, adjustments, viewedSemester, courses)
+            combine(repository.courses, repository.noArrangementCourses) { courses, noArrangement ->
+                courses to noArrangement
+            }
+        ) { startMonday, endDate, adjustments, viewedSemester, courseData ->
+            SemesterBase(
+                startMonday = startMonday,
+                endDate = endDate,
+                adjustments = adjustments,
+                viewedSemester = viewedSemester,
+                courses = courseData.first,
+                noArrangementCourses = courseData.second
+            )
         },
         _holidays,
         _isRefreshing,
@@ -211,7 +222,8 @@ class SemesterOverviewViewModel(
                 ?: capabilitiesFor(currentCampusType).hasNoonSections,
             isArchiveMode = isArchiveMode,
             courseCount = base.courses.countDistinctCourseTitles(),
-            calendarAvailable = calendarAvailable
+            calendarAvailable = calendarAvailable,
+            noArrangementCourses = base.noArrangementCourses
         )
     }.stateIn(
         scope = viewModelScope,

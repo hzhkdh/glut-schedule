@@ -859,6 +859,7 @@ class ScheduleViewModel(
             semester = targetSemester,
             courses = payload.courses,
             adjustments = payload.adjustments,
+            noArrangementCourses = payload.noArrangementCourses,
             classPeriods = repository.currentClassPeriods.first(),
             semesterStartDate = resolvedCalendar.startMonday,
             semesterEndDate = resolvedCalendar.endDate,
@@ -985,6 +986,8 @@ class ScheduleViewModel(
                 // 调课记录随课表一起落库：只进本地调课模型（调课一览 / 课时统计），不改网格。
                 // 门户的主课表已经反映了调课结果，这里再套本科的 makeup 算法会多出重复卡。
                 adjustments = payload.adjustments,
+                // 研究生门户没有「未排课课程」清单。
+                noArrangementCourses = emptyList(),
                 classPeriods = repository.currentClassPeriods.first(),
                 semesterStartDate = targetSemester.semesterStartDate,
                 semesterEndDate = targetSemester.semesterEndDate,

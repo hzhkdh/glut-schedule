@@ -10,6 +10,7 @@ import com.glut.schedule.data.model.CourseColorMapper
 import com.glut.schedule.data.model.CourseTimeSemesterSource
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.GradeExamInfo
+import com.glut.schedule.data.model.NoArrangementCourse
 import com.glut.schedule.data.model.ScoreInfo
 import com.glut.schedule.data.model.StudyPlanGroup
 import com.glut.schedule.data.model.StudyPlanCourse
@@ -214,12 +215,16 @@ class ScheduleRepository(
         val semesterIdsWithCourses = dao.observeCourses().first().mapTo(mutableSetOf()) { it.semesterId }
         val semesterIdsWithOccurrences = dao.observeOccurrences().first()
             .mapTo(mutableSetOf()) { it.semesterId }
+        // 纯实习/安全教育学期只有这张表有数据；漏掉它会把有效历史学期误判成空缓存。
+        val semesterIdsWithNoArrangement = dao.observeNoArrangementCourses().first()
+            .mapTo(mutableSetOf()) { it.semesterId }
         semesters.first()
             .filter { semester ->
                 !semester.isCurrent &&
                     semester.cacheStatus == SemesterCacheStatus.CACHED &&
                     (semester.id !in semesterIdsWithCourses ||
-                        semester.id !in semesterIdsWithOccurrences)
+                        semester.id !in semesterIdsWithOccurrences) &&
+                    semester.id !in semesterIdsWithNoArrangement
             }
             .forEach { semester ->
                 dao.insertSemester(
@@ -303,6 +308,13 @@ class ScheduleRepository(
         entities.filter { it.semesterId == semesterId }.map { it.toModel() }
     }
 
+    /** 当前查看学期的「没有具体上课时间或地点的课程」，只服务于学期概览。 */
+    val noArrangementCourses: Flow<List<NoArrangementCourse>> = combine(
+        dao.observeNoArrangementCourses(), viewedSemesterId
+    ) { entities, semesterId ->
+        entities.filter { it.semesterId == semesterId }.map { it.toModel() }
+    }
+
     /**
      * 指定学期的教务调课记录。
      *
@@ -344,7 +356,9 @@ class ScheduleRepository(
             occurrences = coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity(semester.id) } },
             periods = periods.map { it.toEntity(semester.id) },
             adjustments = dao.observeSemesterAdjustments().first()
-                .filter { it.semesterId == semester.id }
+                .filter { it.semesterId == semester.id },
+            // 旧导入链路没有大节课表 HTML，无法解析该列表；传空表示清空，下次完整刷新会恢复。
+            noArrangementCourses = emptyList()
         )
         onCurrentScheduleReplaced(campus, coloredCourses)
     }
@@ -353,6 +367,7 @@ class ScheduleRepository(
         semester: AcademicSemester,
         courses: List<ScheduleCourse>,
         adjustments: List<SemesterAdjustment>,
+        noArrangementCourses: List<NoArrangementCourse>,
         classPeriods: List<ClassPeriod>,
         semesterStartDate: java.time.LocalDate? = semester.semesterStartDate,
         semesterEndDate: java.time.LocalDate? = semester.semesterEndDate,
@@ -377,13 +392,17 @@ class ScheduleRepository(
             coloredCourses.map { it.toEntity(semester.id) } to
                 coloredCourses.flatMap { course -> course.occurrences.map { it.toEntity(semester.id) } }
         }
+        val noArrangementEntities = withContext(Dispatchers.Default) {
+            noArrangementCourses.mapIndexed { index, course -> course.toEntity(semester.id, index) }
+        }
         dao.replaceSemesterSchedule(
             semester = cachedSemester.toEntity(),
             courses = courseEntities,
             occurrences = occurrenceEntities,
             // 历史统计依赖此处冻结的作息，必须保存调用时实际生效的子校区与用户覆盖。
             periods = classPeriods.map { it.toEntity(semester.id) },
-            adjustments = adjustments.map { it.toEntity(semester.id) }
+            adjustments = adjustments.map { it.toEntity(semester.id) },
+            noArrangementCourses = noArrangementEntities
         )
         if (semester.isCurrent && semester.id != AcademicSemester.LEGACY_CURRENT_ID) {
             dao.deleteSemester(AcademicSemester.LEGACY_CURRENT_ID)

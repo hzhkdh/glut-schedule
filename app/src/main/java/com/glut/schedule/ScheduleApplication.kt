@@ -189,7 +189,8 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
         ScheduleDatabase.MIGRATION_10_11,
         ScheduleDatabase.MIGRATION_11_12,
         ScheduleDatabase.MIGRATION_12_13,
-        ScheduleDatabase.MIGRATION_13_14
+        ScheduleDatabase.MIGRATION_13_14,
+        ScheduleDatabase.MIGRATION_14_15
     )
      .build()
 
@@ -295,6 +296,7 @@ class AppContainer(application: Application, applicationScope: CoroutineScope) {
                 semester = semester,
                 courses = payload.courses,
                 adjustments = payload.adjustments,
+                noArrangementCourses = payload.noArrangementCourses,
                 classPeriods = scheduleRepository.currentClassPeriods.first(),
                 portalMaxWeek = payload.portalMaxWeek
             )

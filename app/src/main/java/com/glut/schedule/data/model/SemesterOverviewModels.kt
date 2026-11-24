@@ -26,3 +26,19 @@ data class HolidayInfo(
     val endDate: String,
     val daysOff: Int
 )
+
+/**
+ * 大节课表底部「没有具体上课时间或地点的课程」。
+ * 这些课程没有可落到网格的星期/节次，只作为学期概览里的独立列表展示。
+ */
+data class NoArrangementCourse(
+    val id: String,
+    val courseCode: String,
+    val courseName: String,
+    val classSequence: String,
+    val teacher: String,
+    val classGroup: String,
+    val weekText: String,
+    val dayOfWeek: String,
+    val location: String
+)

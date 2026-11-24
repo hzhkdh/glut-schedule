@@ -327,6 +327,28 @@ class MultiSemesterUiContractTest {
         assertTrue(viewModel.contains("groupBy(SemesterAdjustment::overviewWeek)"))
     }
 
+    @Test
+    fun overviewShowsNoArrangementCoursesBetweenHolidaysAndAdjustments() {
+        val screen = page("SemesterOverviewScreen.kt")
+        val viewModel = page("SemesterOverviewViewModel.kt")
+
+        val holidays = screen.indexOf("HolidaysCard(uiState.holidays)")
+        val card = screen.indexOf("NoArrangementCoursesCard(uiState.noArrangementCourses)")
+        val adjustments = screen.indexOf("\"调课一览\"")
+        assertTrue(holidays >= 0 && card > holidays && adjustments > card)
+        assertTrue(screen.contains("实习与安全教育"))
+        // 视觉 A 修订版：新卡片内部不显示数量徽标、类型 chip、来源脚注。
+        val cardStart = screen.indexOf("private fun NoArrangementCoursesCard")
+        val cardEnd = screen.indexOf("private fun adjustmentTypeColor")
+        assertTrue(cardStart >= 0 && cardEnd > cardStart)
+        val cardBlock = screen.substring(cardStart, cardEnd)
+        assertFalse(cardBlock.contains("共 ${'$'}{courses.size} 门"))
+        assertFalse(cardBlock.contains("来自教务大节课表"))
+        assertFalse(cardBlock.contains("typeLabel"))
+        assertTrue(viewModel.contains("noArrangementCourses"))
+        assertTrue(viewModel.contains("repository.noArrangementCourses"))
+    }
+
     private fun page(name: String): String {
         val module = File("src/main/java/com/glut/schedule/ui/pages/$name")
         return (if (module.exists()) module else File("app/src/main/java/com/glut/schedule/ui/pages/$name")).readText()

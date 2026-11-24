@@ -930,6 +930,7 @@ class DirectLoginViewModel(
                 semester = currentSemester,
                 courses = currentPayload.courses,
                 adjustments = currentPayload.adjustments,
+                noArrangementCourses = currentPayload.noArrangementCourses,
                 // 按来源档案显式取作息：切换来源发生在下面写入成功之后，
                 // 此刻读 currentClassPeriods 拿到的还是**上一个**来源的时间表。
                 classPeriods = sourceClassPeriods(source),
@@ -1199,6 +1200,8 @@ class DirectLoginViewModel(
                         // 调课记录只落库：门户的主课表已经反映了调课结果（课程名带 `[调课]` 前缀、
                         // 原时段那一周被摘掉），这里再套本科的 makeup 算法会多出重复卡。
                         adjustments = write.adjustments,
+                        // 研究生门户没有「未排课课程」清单；显式写空，避免沿用本科数据。
+                        noArrangementCourses = emptyList(),
                         classPeriods = write.classPeriods,
                         semesterStartDate = write.semesterStartDate,
                         semesterEndDate = write.semesterEndDate,

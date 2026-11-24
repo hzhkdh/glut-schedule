@@ -96,13 +96,26 @@ interface ScheduleDao {
     @Query("DELETE FROM semester_adjustments WHERE semesterId = :semesterId")
     suspend fun deleteSemesterAdjustmentsForSemester(semesterId: String)
 
+    @Query("SELECT * FROM no_arrangement_courses ORDER BY semesterId, sortOrder")
+    fun observeNoArrangementCourses(): Flow<List<NoArrangementCourseEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNoArrangementCourses(courses: List<NoArrangementCourseEntity>)
+
+    @Query("DELETE FROM no_arrangement_courses WHERE semesterId = :semesterId")
+    suspend fun deleteNoArrangementCoursesForSemester(semesterId: String)
+
+    @Query("DELETE FROM no_arrangement_courses")
+    suspend fun deleteAllNoArrangementCourses()
+
     @Transaction
     suspend fun replaceSemesterSchedule(
         semester: AcademicSemesterEntity,
         courses: List<CourseEntity>,
         occurrences: List<CourseOccurrenceEntity>,
         periods: List<ClassPeriodEntity>,
-        adjustments: List<SemesterAdjustmentEntity>
+        adjustments: List<SemesterAdjustmentEntity>,
+        noArrangementCourses: List<NoArrangementCourseEntity>
     ) {
         if (semester.isCurrent) clearOtherCurrentSemesters(semester.id)
         insertSemester(semester)
@@ -110,10 +123,12 @@ interface ScheduleDao {
         deleteCoursesForSemester(semester.id)
         deleteClassPeriodsForSemester(semester.id)
         deleteSemesterAdjustmentsForSemester(semester.id)
+        deleteNoArrangementCoursesForSemester(semester.id)
         insertCourses(courses)
         insertOccurrences(occurrences)
         insertClassPeriods(periods)
         insertSemesterAdjustments(adjustments)
+        insertNoArrangementCourses(noArrangementCourses)
     }
 
     /**
@@ -129,6 +144,7 @@ interface ScheduleDao {
                 deleteClassPeriodsForSemester(semester.id)
             }
             deleteSemesterAdjustmentsForSemester(semester.id)
+            deleteNoArrangementCoursesForSemester(semester.id)
             insertSemester(
                 semester.copy(
                     cacheStatus = com.glut.schedule.data.model.SemesterCacheStatus.NOT_CACHED.name,
@@ -250,6 +266,7 @@ interface ScheduleDao {
         deleteAllStudyPlanGroups()
         deleteAllStudyPlanCourses()
         deleteAllSemesterAdjustments()
+        deleteAllNoArrangementCourses()
         deleteClassPeriods()
         deleteAllSemesters()
     }

@@ -2,6 +2,7 @@ package com.glut.schedule.service.parser
 
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.CourseColorMapper
+import com.glut.schedule.data.model.NoArrangementCourse
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.normalizeRoomKey
@@ -21,7 +22,10 @@ interface AcademicScheduleParser {
 
     fun parseAdjustments(html: String): List<SemesterAdjustment> = emptyList()
 
-    fun countUnscheduledCourses(html: String): Int = 0
+    /** 大节课表底部「没有具体上课时间或地点的课程」；默认实现保持旧测试桩可编译。 */
+    fun parseUnscheduledCourses(html: String): List<NoArrangementCourse> = emptyList()
+
+    fun countUnscheduledCourses(html: String): Int = parseUnscheduledCourses(html).size
 }
 
 /**
@@ -71,18 +75,70 @@ internal fun parseDisplaySectionRange(value: String, hasNoon: Boolean): Pair<Int
 }
 
 class GlutAcademicScheduleParser : AcademicScheduleParser {
-    override fun countUnscheduledCourses(html: String): Int {
-        if (html.isBlank()) return 0
-        val table = Jsoup.parse(html).selectFirst("table#noArrangement") ?: return 0
+    override fun parseUnscheduledCourses(html: String): List<NoArrangementCourse> {
+        if (html.isBlank()) return emptyList()
+        val table = Jsoup.parse(html).selectFirst("table#noArrangement") ?: return emptyList()
+        // 合班单元格里混有 <script>…</script>；Jsoup 的 text() 虽通常不含 DataNode，
+        // 这里仍显式移除，避免不同版本行为差异把 JS 文本带进列表。
+        table.select("script, style").remove()
         val rows = table.select("tr")
-        val headers = rows.firstOrNull()?.select("th,td")?.map { it.text().trim() }.orEmpty()
+        if (rows.size < 2) return emptyList()
+
+        val headers = rows[0].select("th, td").map { it.text().trim() }
         val titleIndex = headers.indexOfFirst { it.contains("课程名称") || it.contains("课程名") }
-        if (titleIndex < 0) return 0
-        return rows.drop(1).count { row ->
-            val title = row.select("th,td").getOrNull(titleIndex)?.text()?.trim().orEmpty()
-            title.isNotBlank() && title.replace(" ", "") !in courseTitleHeaders
+        if (titleIndex < 0) return emptyList()
+
+        fun indexOf(vararg keys: String): Int =
+            headers.indexOfFirst { header -> keys.any { header.contains(it) } }
+
+        val courseCodeIndex = indexOf("课程号", "课程编号")
+        val classSequenceIndex = indexOf("课序号", "课程序号")
+        val teacherIndex = indexOf("任课教师", "教师")
+        val classGroupIndex = indexOf("合班", "上课班")
+        val weekIndex = indexOf("上课周次", "周次")
+        val dayIndex = indexOf("星期")
+        val locationIndex = indexOf("上课地点", "地点")
+
+        fun cellText(cells: List<org.jsoup.nodes.Element>, index: Int): String {
+            if (index < 0 || index >= cells.size) return ""
+            return cells[index].text()
+                .replace(' ', ' ')
+                .replace(Regex("\\s+"), " ")
+                .trim()
         }
+
+        return rows.drop(1).mapNotNull { row ->
+            val cells = row.select("th, td")
+            val courseName = cellText(cells, titleIndex)
+            if (courseName.isBlank() || courseName.replace(" ", "") in courseTitleHeaders) {
+                return@mapNotNull null
+            }
+            val courseCode = cellText(cells, courseCodeIndex)
+            val classSequence = cellText(cells, classSequenceIndex)
+            val teacher = cellText(cells, teacherIndex)
+            val classGroup = cellText(cells, classGroupIndex)
+            val weekText = cellText(cells, weekIndex)
+            val dayOfWeek = cellText(cells, dayIndex)
+            val location = cellText(cells, locationIndex)
+            NoArrangementCourse(
+                id = stableId(
+                    listOf("noarr", courseCode, classSequence, courseName, teacher, weekText, classGroup)
+                        .joinToString("|")
+                ),
+                courseCode = courseCode,
+                courseName = courseName,
+                classSequence = classSequence,
+                teacher = teacher,
+                classGroup = classGroup,
+                weekText = weekText,
+                dayOfWeek = dayOfWeek,
+                location = location
+            )
+        }.distinctBy { it.id }
     }
+
+    override fun countUnscheduledCourses(html: String): Int =
+        parseUnscheduledCourses(html).size
 
     /** Parse just the course adjustment (调课/补课) rows from the timetable HTML. */
     override fun parseAdjustments(html: String): List<SemesterAdjustment> {

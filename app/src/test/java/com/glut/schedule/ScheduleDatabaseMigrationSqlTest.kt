@@ -120,6 +120,34 @@ class ScheduleDatabaseMigrationSqlTest {
     }
 
     @Test
+    fun migration14To15CreatesNoArrangementCoursesWithoutResettingCaches() {
+        val statements = mutableListOf<String>()
+        val database = Proxy.newProxyInstance(
+            SupportSQLiteDatabase::class.java.classLoader,
+            arrayOf(SupportSQLiteDatabase::class.java)
+        ) { _, method, arguments ->
+            if (method.name == "execSQL") statements += arguments.orEmpty().first() as String
+            null
+        } as SupportSQLiteDatabase
+
+        ScheduleDatabase.MIGRATION_14_15.migrate(database)
+
+        val create = statements.single { it.contains("CREATE TABLE IF NOT EXISTS `no_arrangement_courses`") }
+        assertTrue(create.contains("PRIMARY KEY(`semesterId`, `id`)"))
+        assertTrue(create.contains("REFERENCES `academic_semesters`(`id`)"))
+        assertTrue(statements.any {
+            it.contains("CREATE INDEX IF NOT EXISTS `index_no_arrangement_courses_semesterId`")
+        })
+        // 只建表与索引；一旦顺带重置 cacheStatus 或删除行，用户已缓存学期会被清空。
+        assertTrue(statements.none { it.contains("`cacheStatus`") })
+        assertTrue(statements.none { it.contains("DELETE FROM") })
+
+        val module = File("src/main/java/com/glut/schedule/ScheduleApplication.kt")
+        val source = (if (module.exists()) module else File("app/$module")).readText()
+        assertTrue(source.contains("ScheduleDatabase.MIGRATION_14_15"))
+    }
+
+    @Test
     fun migration13To14AddsImportModeWithoutResettingCaches() {
         val statements = mutableListOf<String>()
         val database = Proxy.newProxyInstance(

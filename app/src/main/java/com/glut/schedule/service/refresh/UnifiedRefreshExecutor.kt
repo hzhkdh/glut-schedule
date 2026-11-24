@@ -138,8 +138,16 @@ internal class UnifiedRefreshExecutor(private val context: Context, private val 
                 val calendar = AcademicSemesterCalendarResolver.resolve(semester, LocalDate.now(), direct, data.semesterStartMonday, data.portalMaxWeek)
                 commitAcademic {
                     if (c.scheduleRepository.currentSemester.first()?.id != semester.id) throw StaleRefreshSession()
-                    c.scheduleRepository.replaceSemesterSchedule(semester, data.courses, data.adjustments,
-                        c.scheduleRepository.currentClassPeriods.first(), calendar.startMonday, calendar.endDate, data.portalMaxWeek)
+                    c.scheduleRepository.replaceSemesterSchedule(
+                        semester = semester,
+                        courses = data.courses,
+                        adjustments = data.adjustments,
+                        noArrangementCourses = data.noArrangementCourses,
+                        classPeriods = c.scheduleRepository.currentClassPeriods.first(),
+                        semesterStartDate = calendar.startMonday,
+                        semesterEndDate = calendar.endDate,
+                        portalMaxWeek = data.portalMaxWeek
+                    )
                     c.settingsStore.setSemesterStartMonday(calendar.startMonday); c.settingsStore.setSemesterEndDate(calendar.endDate)
                     c.autoDayCopyCoordinator.recompose(semester.id)
                 }

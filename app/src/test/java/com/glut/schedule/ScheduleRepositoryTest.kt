@@ -13,6 +13,7 @@ import com.glut.schedule.data.local.toModel
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.ClassPeriod
 import com.glut.schedule.data.model.CourseOccurrence
+import com.glut.schedule.data.model.NoArrangementCourse
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.SemesterCacheStatus
@@ -66,6 +67,7 @@ class ScheduleRepositoryTest {
             semester = historical,
             courses = listOf(course("custom-period", "自定义作息课程")),
             adjustments = emptyList(),
+            noArrangementCourses = emptyList(),
             classPeriods = customPeriods
         )
 
@@ -382,6 +384,7 @@ class ScheduleRepositoryTest {
             historical,
             listOf(course("history", "历史课程")),
             emptyList(),
+            emptyList(),
             guilinClassPeriods()
         )
 
@@ -433,11 +436,13 @@ class ScheduleRepositoryTest {
             autumn,
             listOf(course("shared", "历史课程")),
             emptyList(),
+            emptyList(),
             guilinClassPeriods()
         )
         repository.replaceSemesterSchedule(
             spring,
             listOf(course("shared", "当前课程")),
+            emptyList(),
             emptyList(),
             guilinClassPeriods()
         )
@@ -461,11 +466,62 @@ class ScheduleRepositoryTest {
             semester = semester,
             courses = listOf(course("internship", "实习")),
             adjustments = emptyList(),
+            noArrangementCourses = emptyList(),
             classPeriods = guilinClassPeriods(),
             portalMaxWeek = 19
         )
 
         assertEquals(19, repository.semesters.first().single().portalMaxWeek)
+    }
+
+    @Test
+    fun noArrangementCoursesReplaceAndFollowViewedSemester() = runTest {
+        val autumn = AcademicSemester.create(
+            CampusType.GUILIN, 2024, "44", SemesterSeason.AUTUMN, "2", isCurrent = false
+        )
+        val spring = AcademicSemester.create(
+            CampusType.GUILIN, 2025, "45", SemesterSeason.SPRING, "1", isCurrent = true
+        )
+        val dao = FakeScheduleDao(initialSemesters = listOf(autumn.toEntity(), spring.toEntity()))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+        val row = NoArrangementCourse(
+            id = "noarr-1",
+            courseCode = "432850",
+            courseName = "匿名实习",
+            classSequence = "1",
+            teacher = "匿名教师",
+            classGroup = "人工智能2024-1班",
+            weekText = "16-18周",
+            dayOfWeek = "",
+            location = ""
+        )
+
+        repository.selectSemester(spring.id)
+        repository.replaceSemesterSchedule(
+            semester = spring,
+            courses = listOf(course("course-1", "正常课程")),
+            adjustments = emptyList(),
+            noArrangementCourses = listOf(row),
+            classPeriods = guilinClassPeriods()
+        )
+
+        assertEquals(listOf(row), repository.noArrangementCourses.first())
+        // 无排课课程独立成表，绝不能混进 courses / 课程门数。
+        assertTrue(repository.courses.first().none { it.title == "匿名实习" })
+
+        repository.selectSemester(autumn.id)
+        assertTrue(repository.noArrangementCourses.first().isEmpty())
+
+        // 全量替换语义：空列表要清空该学期旧行。
+        repository.selectSemester(spring.id)
+        repository.replaceSemesterSchedule(
+            semester = spring,
+            courses = listOf(course("course-1", "正常课程")),
+            adjustments = emptyList(),
+            noArrangementCourses = emptyList(),
+            classPeriods = guilinClassPeriods()
+        )
+        assertTrue(repository.noArrangementCourses.first().isEmpty())
     }
 
     @Test
@@ -485,6 +541,7 @@ class ScheduleRepositoryTest {
             semester = semester,
             courses = listOf(course("legacy-source", "旧来源课程")),
             adjustments = emptyList(),
+            noArrangementCourses = emptyList(),
             classPeriods = guilinClassPeriods(),
             portalMaxWeek = 20
         )
@@ -497,6 +554,39 @@ class ScheduleRepositoryTest {
         assertEquals(SemesterCacheStatus.NOT_CACHED, remainingSemester.cacheStatus)
         assertTrue(repository.courses.first().none { it.id == "legacy-source" })
         assertTrue(repository.courses.first().none { it.id == "legacy-current-course" })
+    }
+
+    @Test
+    fun historicalSemesterWithOnlyNoArrangementCoursesStaysCached() = runTest {
+        // 纯实习/安全教育学期没有 courses/occurrences，但有 no_arrangement_courses；
+        // 启动修复不能把它误判成空缓存。
+        val semester = AcademicSemester.create(
+            CampusType.GUILIN, 2025, "45", SemesterSeason.AUTUMN, "2",
+            isCurrent = false,
+            cacheStatus = SemesterCacheStatus.CACHED
+        )
+        val dao = FakeScheduleDao(initialSemesters = listOf(semester.toEntity()))
+        dao.insertNoArrangementCourses(listOf(
+            NoArrangementCourse(
+                id = "noarr-1",
+                courseCode = "432850",
+                courseName = "匿名实习",
+                classSequence = "1",
+                teacher = "匿名教师",
+                classGroup = "人工智能2024-1班",
+                weekText = "16-18周",
+                dayOfWeek = "",
+                location = ""
+            ).toEntity(semester.id, 0)
+        ))
+        val repository = ScheduleRepository(dao, flowOf(CampusType.GUILIN))
+
+        repository.seedIfEmpty()
+
+        assertEquals(
+            SemesterCacheStatus.CACHED,
+            repository.semesters.first().single { it.id == semester.id }.cacheStatus
+        )
     }
 
     @Test
@@ -711,6 +801,10 @@ class ScheduleRepositoryTest {
         private val adjustmentFlow = MutableStateFlow<List<com.glut.schedule.data.local.SemesterAdjustmentEntity>>(emptyList())
         val adjustments: List<com.glut.schedule.data.local.SemesterAdjustmentEntity>
             get() = adjustmentFlow.value
+        private val noArrangementFlow = MutableStateFlow<List<com.glut.schedule.data.local.NoArrangementCourseEntity>>(emptyList())
+        val insertedNoArrangementCourses = mutableListOf<com.glut.schedule.data.local.NoArrangementCourseEntity>()
+        val noArrangementCourses: List<com.glut.schedule.data.local.NoArrangementCourseEntity>
+            get() = noArrangementFlow.value
 
         override fun observeSemesters(): Flow<List<AcademicSemesterEntity>> = semesterFlow
 
@@ -726,6 +820,7 @@ class ScheduleRepositoryTest {
             semesterFlow.value = semesterFlow.value.filterNot { it.id == semesterId }
             courseFlow.value = courseFlow.value.filterNot { it.semesterId == semesterId }
             occurrenceFlow.value = occurrenceFlow.value.filterNot { it.semesterId == semesterId }
+            noArrangementFlow.value = noArrangementFlow.value.filterNot { it.semesterId == semesterId }
         }
 
         override suspend fun deleteAllSemesters() { semesterFlow.value = emptyList() }
@@ -804,15 +899,37 @@ class ScheduleRepositoryTest {
             occurrenceFlow.value = occurrenceFlow.value.filterNot { it.semesterId == semesterId }
         }
 
+        override fun observeNoArrangementCourses(): Flow<List<com.glut.schedule.data.local.NoArrangementCourseEntity>> =
+            noArrangementFlow
+
+        override suspend fun insertNoArrangementCourses(
+            courses: List<com.glut.schedule.data.local.NoArrangementCourseEntity>
+        ) {
+            insertedNoArrangementCourses.addAll(courses)
+            val keys = courses.map { it.semesterId to it.id }.toSet()
+            noArrangementFlow.value = noArrangementFlow.value.filterNot { (it.semesterId to it.id) in keys } + courses
+        }
+
+        override suspend fun deleteNoArrangementCoursesForSemester(semesterId: String) {
+            noArrangementFlow.value = noArrangementFlow.value.filterNot { it.semesterId == semesterId }
+        }
+
+        override suspend fun deleteAllNoArrangementCourses() {
+            noArrangementFlow.value = emptyList()
+        }
+
         override suspend fun replaceSemesterSchedule(
             semester: AcademicSemesterEntity,
             courses: List<CourseEntity>,
             occurrences: List<CourseOccurrenceEntity>,
             periods: List<ClassPeriodEntity>,
-            adjustments: List<com.glut.schedule.data.local.SemesterAdjustmentEntity>
+            adjustments: List<com.glut.schedule.data.local.SemesterAdjustmentEntity>,
+            noArrangementCourses: List<com.glut.schedule.data.local.NoArrangementCourseEntity>
         ) {
             replacedSemesterIds += semester.id
-            super<ScheduleDao>.replaceSemesterSchedule(semester, courses, occurrences, periods, adjustments)
+            super<ScheduleDao>.replaceSemesterSchedule(
+                semester, courses, occurrences, periods, adjustments, noArrangementCourses
+            )
         }
 
         override fun observeExams(): Flow<List<ExamEntity>> = flowOf(emptyList())

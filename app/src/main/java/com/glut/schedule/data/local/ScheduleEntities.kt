@@ -10,6 +10,7 @@ import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.CourseOccurrence
 import com.glut.schedule.data.model.ExamInfo
 import com.glut.schedule.data.model.GradeExamInfo
+import com.glut.schedule.data.model.NoArrangementCourse
 import com.glut.schedule.data.model.CourseStatus
 import com.glut.schedule.data.model.StudyPlanGroup
 import com.glut.schedule.data.model.StudyPlanCourse
@@ -379,4 +380,60 @@ fun SemesterAdjustmentEntity.toModel(): SemesterAdjustment = SemesterAdjustment(
     makeupWeek = makeupWeek, makeupDay = makeupDay,
     makeupStartSection = makeupStartSection, makeupEndSection = makeupEndSection,
     makeupRoom = makeupRoom
+)
+
+/**
+ * 大节课表底部「没有具体上课时间或地点的课程」。
+ * 独立建表，避免与可落到网格的课程共用 courses/occurrences 而污染课程门数、导出和统计。
+ */
+@Entity(
+    tableName = "no_arrangement_courses",
+    primaryKeys = ["semesterId", "id"],
+    foreignKeys = [ForeignKey(
+        entity = AcademicSemesterEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["semesterId"],
+        onDelete = ForeignKey.CASCADE
+    )],
+    indices = [Index(value = ["semesterId"])]
+)
+data class NoArrangementCourseEntity(
+    val id: String,
+    val courseCode: String,
+    val courseName: String,
+    val classSequence: String,
+    val teacher: String,
+    val classGroup: String,
+    val weekText: String,
+    val dayOfWeek: String,
+    val location: String,
+    val sortOrder: Int,
+    val semesterId: String = AcademicSemester.LEGACY_CURRENT_ID
+)
+
+fun NoArrangementCourse.toEntity(semesterId: String, sortOrder: Int): NoArrangementCourseEntity =
+    NoArrangementCourseEntity(
+        id = id,
+        courseCode = courseCode,
+        courseName = courseName,
+        classSequence = classSequence,
+        teacher = teacher,
+        classGroup = classGroup,
+        weekText = weekText,
+        dayOfWeek = dayOfWeek,
+        location = location,
+        sortOrder = sortOrder,
+        semesterId = semesterId
+    )
+
+fun NoArrangementCourseEntity.toModel(): NoArrangementCourse = NoArrangementCourse(
+    id = id,
+    courseCode = courseCode,
+    courseName = courseName,
+    classSequence = classSequence,
+    teacher = teacher,
+    classGroup = classGroup,
+    weekText = weekText,
+    dayOfWeek = dayOfWeek,
+    location = location
 )

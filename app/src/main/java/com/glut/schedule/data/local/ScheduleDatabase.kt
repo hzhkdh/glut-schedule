@@ -6,8 +6,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [AcademicSemesterEntity::class, CourseEntity::class, CourseOccurrenceEntity::class, ClassPeriodEntity::class, ExamEntity::class, ScoreEntity::class, GradeExamEntity::class, StudyPlanGroupEntity::class, StudyPlanCourseEntity::class, SemesterAdjustmentEntity::class],
-    version = 14,
+    entities = [AcademicSemesterEntity::class, CourseEntity::class, CourseOccurrenceEntity::class, ClassPeriodEntity::class, ExamEntity::class, ScoreEntity::class, GradeExamEntity::class, StudyPlanGroupEntity::class, StudyPlanCourseEntity::class, SemesterAdjustmentEntity::class, NoArrangementCourseEntity::class],
+    version = 15,
     exportSchema = true
 )
 abstract class ScheduleDatabase : RoomDatabase() {
@@ -169,6 +169,36 @@ abstract class ScheduleDatabase : RoomDatabase() {
                 // 这里只增列，不得触动 cacheStatus / importedAtEpochMillis，否则会清空用户已缓存学期。
                 db.execSQL(
                     "ALTER TABLE `academic_semesters` ADD COLUMN `importMode` TEXT NOT NULL DEFAULT 'WEEKLY'"
+                )
+            }
+        }
+
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 只新建独立表：不触碰既有表、cacheStatus 或导入时间，避免清空用户缓存。
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `no_arrangement_courses` (
+                        `id` TEXT NOT NULL,
+                        `courseCode` TEXT NOT NULL,
+                        `courseName` TEXT NOT NULL,
+                        `classSequence` TEXT NOT NULL,
+                        `teacher` TEXT NOT NULL,
+                        `classGroup` TEXT NOT NULL,
+                        `weekText` TEXT NOT NULL,
+                        `dayOfWeek` TEXT NOT NULL,
+                        `location` TEXT NOT NULL,
+                        `sortOrder` INTEGER NOT NULL,
+                        `semesterId` TEXT NOT NULL,
+                        PRIMARY KEY(`semesterId`, `id`),
+                        FOREIGN KEY(`semesterId`) REFERENCES `academic_semesters`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_no_arrangement_courses_semesterId` " +
+                        "ON `no_arrangement_courses` (`semesterId`)"
                 )
             }
         }

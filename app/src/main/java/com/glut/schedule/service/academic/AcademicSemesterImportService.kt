@@ -3,6 +3,7 @@ package com.glut.schedule.service.academic
 import com.glut.schedule.data.model.AcademicSemester
 import com.glut.schedule.data.model.MAX_ACADEMIC_WEEK
 import com.glut.schedule.data.model.MIN_ACADEMIC_WEEK
+import com.glut.schedule.data.model.NoArrangementCourse
 import com.glut.schedule.data.model.ScheduleCourse
 import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.academicMaxWeekForCalendar
@@ -143,7 +144,9 @@ data class AcademicSemesterImportPayload(
      * 否则表现就是「课程莫名其妙少了几门」，无从排查。
      */
     val unparsedWeekTextCount: Int = 0,
-    val unscheduledCourseCount: Int = 0
+    /** 大节课表底部「没有具体上课时间或地点的课程」，学期概览独立展示。 */
+    val noArrangementCourses: List<NoArrangementCourse> = emptyList(),
+    val unscheduledCourseCount: Int = noArrangementCourses.size
 )
 
 /**
@@ -262,10 +265,12 @@ class AcademicSemesterImportService(
         // 解析放到 Dispatchers.Default：它是纯 CPU 活（Jsoup 建 DOM + 多轮正则 + 配色），
         // 几万字符的课表页跑在主线程会让界面明显掉帧。本方法被 viewModelScope 调用，
         // 默认就是主线程，所以这里必须显式切走；纯函数，切线程不改变任何结果。
-        val (courses, adjustments) = withContext(Dispatchers.Default) {
-            val parsedCourses = scheduleParser.parsePersonalSchedule(timetableHtml)
-            val parsedAdjustments = scheduleParser.parseAdjustments(timetableHtml)
-            parsedCourses to parsedAdjustments
+        val (courses, adjustments, noArrangementCourses) = withContext(Dispatchers.Default) {
+            Triple(
+                scheduleParser.parsePersonalSchedule(timetableHtml),
+                scheduleParser.parseAdjustments(timetableHtml),
+                scheduleParser.parseUnscheduledCourses(timetableHtml)
+            )
         }
         val responseKind = AcademicSemesterResponseValidator.classify(timetableHtml, courses.size)
         require(responseKind != AcademicSemesterResponseKind.INVALID_STRUCTURE) {
@@ -313,10 +318,8 @@ class AcademicSemesterImportService(
             skippedRowCount = 0,
             updatedCookie = sessionCookie,
             unparsedWeekTextCount = countUnparsedWeekTexts(courses),
-            // 同样是全页解析，一并切离主线程。
-            unscheduledCourseCount = withContext(Dispatchers.Default) {
-                scheduleParser.countUnscheduledCourses(timetableHtml)
-            }
+            noArrangementCourses = noArrangementCourses,
+            unscheduledCourseCount = noArrangementCourses.size
         )
     }
 

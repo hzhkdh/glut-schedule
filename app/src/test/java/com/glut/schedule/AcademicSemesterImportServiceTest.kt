@@ -318,12 +318,32 @@ class AcademicSemesterImportServiceTest {
         assertEquals(19, payload.portalMaxWeek)
     }
 
+    @Test
+    fun payloadCarriesNoArrangementCourses() = runTest {
+        val row = com.glut.schedule.data.model.NoArrangementCourse(
+            id = "noarr-1",
+            courseCode = "432850",
+            courseName = "匿名实习",
+            classSequence = "1",
+            teacher = "匿名教师",
+            classGroup = "人工智能2024-1班",
+            weekText = "16-18周",
+            dayOfWeek = "",
+            location = ""
+        )
+        val payload = importFrom(courses = listOf(course()), noArrangement = listOf(row)).getOrThrow()
+
+        assertEquals(listOf(row), payload.noArrangementCourses)
+        assertEquals(1, payload.unscheduledCourseCount)
+    }
+
     // ── 测试夹具 ──
 
     private suspend fun importFrom(
         currcourseBody: String = currcourseHtml(),
         timetableBody: String = timetableHtml(),
         courses: List<ScheduleCourse> = emptyList(),
+        noArrangement: List<com.glut.schedule.data.model.NoArrangementCourse> = emptyList(),
         studentIdFallback: String = "student-internal-id",
         semester: AcademicSemester = semester(),
         landingWeeks: List<Int> = listOf(1),
@@ -341,7 +361,7 @@ class AcademicSemesterImportServiceTest {
         )
         AcademicSemesterImportService(
             ApiProbeService(sessionUrlValidator = { true }),
-            FixedParser(courses)
+            FixedParser(courses, noArrangement)
         ).importSemester(
             cookie = "JSESSIONID=test",
             baseUrl = server.url("/").toString(),
@@ -410,8 +430,12 @@ class AcademicSemesterImportServiceTest {
         occurrences = listOf(CourseOccurrence("occ-1", "course-1", 1, 1, 2, "1-16周", ""))
     )
 
-    private class FixedParser(private val courses: List<ScheduleCourse>) : AcademicScheduleParser {
+    private class FixedParser(
+        private val courses: List<ScheduleCourse>,
+        private val noArrangementCourses: List<com.glut.schedule.data.model.NoArrangementCourse> = emptyList()
+    ) : AcademicScheduleParser {
         override fun parsePersonalSchedule(html: String): List<ScheduleCourse> = courses
+        override fun parseUnscheduledCourses(html: String) = noArrangementCourses
     }
 
     /** 按 HTML 里的表 id 区分大节课表页与个人课表页，用于验证「谁才是数据源」。 */

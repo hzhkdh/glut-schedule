@@ -37,9 +37,13 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.glut.schedule.data.model.NoArrangementCourse
 import com.glut.schedule.data.model.SemesterAdjustment
 import com.glut.schedule.data.model.displaySectionLabel
 import java.time.format.DateTimeFormatter
@@ -49,6 +53,7 @@ private val PageBg = Color(0xFFF6F4EF)
 private val CardBg = Color(0xFFFFFEFB)
 private val TextPrimary = Color(0xFF141821)
 private val TextSecondary = Color(0xFF667085)
+private val TextTertiary = Color(0xFF8A93A3)
 private val AccentBlue = Color(0xFF3F7DF6)
 private val ProgressGray = Color(0xFFE5E7EB)
 private val PastGray = Color(0xFFD1D5DB)
@@ -97,6 +102,10 @@ fun SemesterOverviewScreen(
                 if (uiState.holidays.isNotEmpty()) {
                     item { HolidaysCard(uiState.holidays) }
                 }
+            }
+
+            if (uiState.noArrangementCourses.isNotEmpty()) {
+                item { NoArrangementCoursesCard(uiState.noArrangementCourses) }
             }
 
             item {
@@ -317,6 +326,96 @@ private fun HolidayRow(h: HolidayDisplay) {
             Text(label, color = accentColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
     }
+}
+
+/** 大节课表底部「没有具体上课时间或地点的课程」；与 HolidaysCard 同构。 */
+@Composable
+private fun NoArrangementCoursesCard(courses: List<NoArrangementCourse>) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = CardBg,
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(modifier = Modifier.padding(4.dp)) {
+            Text(
+                "实习与安全教育",
+                color = TextSecondary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp)
+            )
+            courses.forEachIndexed { index, course ->
+                if (index > 0) HorizontalDivider(color = Color(0xFFEDE8DE))
+                NoArrangementCourseRow(course)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoArrangementCourseRow(course: NoArrangementCourse) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Text(
+            course.courseName,
+            color = TextPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        val codeLine = buildAnnotatedString {
+            if (course.courseCode.isNotBlank()) {
+                withStyle(SpanStyle(color = TextTertiary)) { append("课程号 ") }
+                append(course.courseCode)
+            }
+            if (course.courseCode.isNotBlank() && course.classSequence.isNotBlank()) {
+                append("  ·  ")
+            }
+            if (course.classSequence.isNotBlank()) {
+                withStyle(SpanStyle(color = TextTertiary)) { append("课序号 ") }
+                append(course.classSequence)
+            }
+        }
+        if (codeLine.isNotEmpty()) {
+            Text(codeLine, color = TextSecondary, fontSize = 13.sp, lineHeight = 18.sp)
+        }
+        if (course.teacher.isNotBlank()) {
+            NoArrangementMetaLine("任课教师 ", course.teacher)
+        }
+        if (course.weekText.isNotBlank()) {
+            NoArrangementMetaLine("上课周次 ", course.weekText)
+        }
+        if (course.dayOfWeek.isNotBlank()) {
+            NoArrangementMetaLine("星期 ", course.dayOfWeek)
+        }
+        if (course.location.isNotBlank()) {
+            NoArrangementMetaLine("上课地点 ", course.location)
+        }
+        if (course.classGroup.isNotBlank()) {
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = TextTertiary)) { append("合班 ") }
+                    append(course.classGroup)
+                },
+                color = TextTertiary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun NoArrangementMetaLine(label: String, value: String) {
+    Text(
+        text = buildAnnotatedString {
+            withStyle(SpanStyle(color = TextTertiary)) { append(label) }
+            append(value)
+        },
+        color = TextSecondary,
+        fontSize = 13.sp,
+        lineHeight = 18.sp
+    )
 }
 
 private fun adjustmentTypeColor(type: String): Color = when (type) {

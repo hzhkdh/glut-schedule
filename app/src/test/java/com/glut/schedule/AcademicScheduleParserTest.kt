@@ -143,6 +143,57 @@ class AcademicScheduleParserTest {
         assertFalse(parser.parsePersonalSchedule(html).any { it.title == "匿名实践课程" })
     }
 
+    @Test
+    fun unscheduledCoursesParseAllFieldsAndStripInlineScript() {
+        val html = singleCellTimetable("", "", "") + """
+            <table id="noArrangement">
+              <tr><th>课程号</th><th>课程名称</th><th>课序号</th><th>任课教师</th><th>合班</th><th>上课周次</th><th>星期</th><th>上课地点</th></tr>
+              <tr>
+                <td>432850&nbsp;</td><td>机器学习实习&nbsp;</td><td>1&nbsp;</td><td>石凯,陈守学,刘书卿&nbsp;</td>
+                <td><script type="text/javascript">javascript:(function(){var D=document;})();</script> 人工智能2024-1班, 人工智能2024-2班&nbsp;</td>
+                <td>16-18周&nbsp;</td><td class="center" nowrap>&nbsp;</td><td class="center" nowrap>&nbsp;</td>
+              </tr>
+            </table>
+        """.trimIndent()
+
+        val rows = parser.parseUnscheduledCourses(html)
+
+        assertEquals(1, rows.size)
+        assertEquals("432850", rows[0].courseCode)
+        assertEquals("机器学习实习", rows[0].courseName)
+        assertEquals("1", rows[0].classSequence)
+        assertEquals("石凯,陈守学,刘书卿", rows[0].teacher)
+        assertEquals("16-18周", rows[0].weekText)
+        assertEquals("人工智能2024-1班, 人工智能2024-2班", rows[0].classGroup)
+        assertEquals("", rows[0].dayOfWeek)
+        assertEquals("", rows[0].location)
+        assertFalse(rows[0].classGroup.contains("javascript"))
+        assertFalse(rows[0].classGroup.contains("document"))
+        assertEquals(rows.size, parser.countUnscheduledCourses(html))
+        assertFalse(parser.parsePersonalSchedule(html).any { it.title == "机器学习实习" })
+    }
+
+    @Test
+    fun unscheduledCoursesMapShuffledHeadersAndSkipBlankRows() {
+        val html = """
+            <table id="noArrangement">
+              <tr><th>任课教师</th><th>上课周次</th><th>合班</th><th>课程名称</th><th>课程号</th><th>课序号</th><th>上课地点</th><th>星期</th></tr>
+              <tr><td>邹志友,王俊璇</td><td>1-19周</td><td>岩土24-2</td><td>岗位实习</td><td>G53D000111</td><td>14</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+              <tr><td>邹志友,王俊璇</td><td>1-19周</td><td>岩土24-2</td><td>岗位实习</td><td>G53D000111</td><td>14</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+              <tr><td>某人</td><td>第16周</td><td>&nbsp;</td><td>&nbsp;</td><td>999999</td><td>1</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+            </table>
+        """.trimIndent()
+
+        val rows = parser.parseUnscheduledCourses(html)
+
+        assertEquals(1, rows.size)
+        assertEquals("岗位实习", rows[0].courseName)
+        assertEquals("G53D000111", rows[0].courseCode)
+        assertEquals("14", rows[0].classSequence)
+        assertEquals("1-19周", rows[0].weekText)
+        assertEquals("岩土24-2", rows[0].classGroup)
+    }
+
     private fun singleCellTimetable(room: String, teacher: String, weekText: String): String = """
         <html><body><table id="timetable" class="infolist_hr">
           <tr><th></th><th>周一</th><th>周二</th><th>周三</th><th>周四</th><th>周五</th><th>周六</th><th>周日</th></tr>
