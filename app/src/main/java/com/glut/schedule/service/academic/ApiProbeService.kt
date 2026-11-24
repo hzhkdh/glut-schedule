@@ -343,11 +343,13 @@ class ApiProbeService(
             }
         }
 
-        fun buildExamUrls(baseUrl: String): List<String> {
-            // The exam module URL — server resolves stuid from session cookie via redirect chain
-            return listOf(
-                "${baseUrl}/academic/accessModule.do?moduleId=2030",
-            )
+        /**
+         * 考试模块首页（moduleId=2030 / student/exam/index.jsdo）只列最近 7 天，
+         * 是摘要而不是全量；实测全量接口可直接访问，因此它既不参与探测也不再写入缓存。
+         */
+        fun isExamSummaryUrl(url: String): Boolean {
+            return url.contains("/academic/student/exam/index.jsdo", ignoreCase = true) ||
+                url.contains("moduleId=2030", ignoreCase = true)
         }
 
         fun buildExamProbeRequests(
@@ -355,8 +357,10 @@ class ApiProbeService(
             baseUrl: String = AcademicLoginResult.DEFAULT_GUILIN_URL
         ): List<Pair<String, String>> {
             return buildList {
-                if (storedExamApiUrl.isNotBlank()) add(storedExamApiUrl to "GET")
-                buildExamUrls(baseUrl).forEach { add(it to "GET") }
+                // 旧缓存可能仍指向摘要页，直接跳过，避免每次刷新都浪费一次请求。
+                if (storedExamApiUrl.isNotBlank() && !isExamSummaryUrl(storedExamApiUrl)) {
+                    add(storedExamApiUrl to "GET")
+                }
                 add("$baseUrl/academic/manager/examstu/studentQueryAllExam.do?pagingNumberPerVLID=1000" to "GET")
                 add("$baseUrl/academic/student/examination/studentExamQuery.do" to "GET")
                 add("$baseUrl/academic/student/examination/queryExam.do" to "POST")
@@ -514,17 +518,6 @@ class ApiProbeService(
                 .firstOrNull { r -> looksLikeExamJson(r.body) }
     }
 
-    fun findExamHtmlResult(results: List<ProbeResult>): ProbeResult? {
-        return results
-            .asSequence()
-            .filter { it.httpCode == 200 && it.body.length > 100 }
-            .map { it to examHtmlScore(it) }
-            .filter { (_, score) -> score > 0 }
-            .sortedByDescending { (_, score) -> score }
-            .firstOrNull()
-            ?.first
-    }
-
     fun findGradeExamResult(results: List<ProbeResult>): ProbeResult? {
         return results
             .firstOrNull { it.httpCode == 200 && it.url.contains("skilltest.jsdo") && it.body.length > 500 }
@@ -547,171 +540,6 @@ class ApiProbeService(
     private fun hasExamUrl(result: ProbeResult): Boolean {
         return result.url.contains("exam", ignoreCase = true) ||
             result.url.contains("examination", ignoreCase = true)
-    }
-
-    private fun examHtmlScore(result: ProbeResult): Int {
-        val body = result.body
-        val trimmed = body.trimStart()
-        if (trimmed.startsWith("{") || trimmed.startsWith("[")) return 0
-        if (!body.contains("<table", ignoreCase = true)) return 0
-        if (body.contains("登录") && body.contains("密码") && !body.contains("考试")) return 0
-
-        var score = 0
-        if (result.url.contains("exam", ignoreCase = true)) score += 30
-        if (body.contains("考试时间") || body.contains("考试日期")) score += 10
-        if (body.contains("考试地点") || body.contains("考场")) score += 8
-        if (body.contains("座位号")) score += 5
-        if (body.contains("课程名称") && body.contains("考试")) score += 8
-        if (body.contains("考核方式") || body.contains("考试类型")) score += 3
-        return score.takeIf { it >= 10 } ?: 0
-    }
-
-    fun analyzeResults(results: List<ProbeResult>): ApiProbeAnalysis {
-        val successful = results.filter { it.httpCode == 200 && it.bodyLength > 500 }
-        val timetableCandidates = successful.filter { r ->
-            timetableHtmlScore(r) > 0 || looksLikeTimetableJson(r.body)
-        }
-        val jsonResponses = successful.filter {
-            it.contentType.contains("json") || it.body.trimStart().startsWith("{") ||
-                it.body.trimStart().startsWith("[")
-        }
-
-        val errorResults = results.filter {
-            it.httpCode != 200 || it.body.contains("错误") || it.body.contains("error")
-        }
-
-        return ApiProbeAnalysis(
-            totalProbes = results.size,
-            successCount = successful.size,
-            timetableCandidates = timetableCandidates,
-            jsonResponses = jsonResponses,
-            errorResults = errorResults,
-            allResults = results
-        )
-    }
-
-    data class ApiProbeAnalysis(
-        val totalProbes: Int,
-        val successCount: Int,
-        val timetableCandidates: List<ProbeResult>,
-        val jsonResponses: List<ProbeResult>,
-        val errorResults: List<ProbeResult>,
-        val allResults: List<ProbeResult>
-    ) {
-        val summary: String
-            get() = buildString {
-                appendLine("API探测完成: $totalProbes 个请求")
-                appendLine("成功: $successCount 个")
-                appendLine("含课表数据: ${timetableCandidates.size} 个")
-                appendLine("JSON响应: ${jsonResponses.size} 个")
-                if (timetableCandidates.isNotEmpty()) {
-                    appendLine("---课表候选---")
-                    timetableCandidates.forEach { r ->
-                        appendLine("  ${r.url.takeLast(80)} [${r.httpCode}] ${r.bodyLength}B")
-                    }
-                }
-                if (errorResults.isNotEmpty()) {
-                    appendLine("---错误响应---")
-                    errorResults.take(5).forEach { r ->
-                        val preview = r.body.take(100).replace("\n", " ")
-                        appendLine("  ${r.url.takeLast(60)} [${r.httpCode}] $preview")
-                    }
-                }
-            }
-    }
-
-    fun findTimetableHtmlResult(results: List<ProbeResult>): ProbeResult? {
-        return results
-            .asSequence()
-            .filter { it.httpCode == 200 && it.body.length > 100 }
-            .map { it to timetableHtmlScore(it) }
-            .filter { (_, score) -> score > 0 }
-            .sortedByDescending { (_, score) -> score }
-            .firstOrNull()
-            ?.first
-    }
-
-    fun extractTimetableHtml(results: List<ProbeResult>): String? {
-        return findTimetableHtmlResult(results)?.body
-    }
-
-    fun findTimetableJsonResult(results: List<ProbeResult>): ProbeResult? {
-        return results
-            .filter { it.httpCode == 200 && it.body.length > 100 }
-            .firstOrNull { r ->
-                looksLikeTimetableJson(r.body)
-            }
-    }
-
-    fun extractTimetableJson(results: List<ProbeResult>): String? {
-        return findTimetableJsonResult(results)?.body
-    }
-
-    private fun timetableHtmlScore(result: ProbeResult): Int {
-        val body = result.body
-        val trimmed = body.trimStart()
-        if (trimmed.startsWith("{") || trimmed.startsWith("[")) return 0
-        if (isClassTimetableResult(result)) return 0
-        if (isShowTimetableResult(result) && !isStudentTimetableResult(result)) return 0
-        if (!body.contains("<table", ignoreCase = true) && !body.contains("<td", ignoreCase = true)) return 0
-        if (body.contains("学年传递错误") ||
-            body.contains("学生只能查看本人课表") ||
-            (body.contains("登录") && body.contains("密码") && !body.contains("课程名称"))
-        ) return 0
-
-        var score = 0
-        if (result.url.contains("showTimetable.do", ignoreCase = true)) score += 30
-        if (body.contains("""id="timetable"""", ignoreCase = true) ||
-            body.contains("""id='timetable'""", ignoreCase = true)
-        ) score += 15
-        if (body.contains("<<") && body.contains(">>")) score += 8
-        if (body.contains("周一") || body.contains("星期一")) score += 4
-        if (result.url.contains("currcourse", ignoreCase = true)) score += 10
-        if (body.contains("本学期课程安排")) score += 8
-        if (body.contains("课程名称")) score += 4
-        if (body.contains("任课教师") || body.contains("教师")) score += 3
-        if (body.contains("上课时间") && body.contains("地点")) score += 5
-        if (body.contains("星期") && body.contains("第") && body.contains("节")) score += 3
-        if (body.contains("暂无数据") && score < 10) return 0
-        return score.takeIf { it >= 8 } ?: 0
-    }
-
-    private fun isShowTimetableResult(result: ProbeResult): Boolean {
-        return result.url.contains("showTimetable.do", ignoreCase = true)
-    }
-
-    private fun isStudentTimetableResult(result: ProbeResult): Boolean {
-        return result.url.contains("timetableType=STUDENT", ignoreCase = true) ||
-            result.body.contains("timetableType=STUDENT", ignoreCase = true)
-    }
-
-    private fun isClassTimetableResult(result: ProbeResult): Boolean {
-        return result.url.contains("timetableType=CLASS", ignoreCase = true) ||
-            result.body.contains("timetableType=CLASS", ignoreCase = true) ||
-            result.body.contains("班级课表")
-    }
-
-    private fun looksLikeTimetableJson(body: String): Boolean {
-        val trimmed = body.trimStart()
-        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false
-
-        val hasTitle = body.contains("课程名称") ||
-            body.contains("courseName", ignoreCase = true) ||
-            body.contains("kcmc", ignoreCase = true)
-        val hasTeacher = body.contains("任课教师") ||
-            body.contains("teacher", ignoreCase = true) ||
-            body.contains("jsxm", ignoreCase = true)
-        val hasRoom = body.contains("教室") ||
-            body.contains("地点") ||
-            body.contains("room", ignoreCase = true) ||
-            body.contains("jsmc", ignoreCase = true)
-        val hasTime = body.contains("上课时间") ||
-            body.contains("sksj", ignoreCase = true) ||
-            body.contains("dayOfWeek", ignoreCase = true) ||
-            body.contains("startSection", ignoreCase = true) ||
-            body.contains("arrangeDate", ignoreCase = true)
-
-        return hasTitle && hasTeacher && hasRoom && hasTime
     }
 
     /** 每次探测使用独立 CookieJar，避免应用级单例在不同账号之间残留会话。 */

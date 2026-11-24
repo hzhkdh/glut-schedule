@@ -51,6 +51,10 @@ class AcademicExamService(
         // 每个候选都单独解析，首个形似考试但无法解析的页面不能遮住后续有效响应。
         for (result in results) {
             if (result.httpCode != 200 || looksLikeAcademicLoginPage(result.body)) continue
+            // 考试模块首页只列“最近 7 天”的考试，是摘要而不是全量，不能拿它覆盖历史缓存。
+            // 例如教务新发布一场考试后，首页只剩这 1 条；若在此短路，历史考试会全部消失。
+            // 这里直接跳过摘要页，让探测继续走到“全部考试安排”接口。
+            if (isRecentOnlyExamPage(result.url, result.body)) continue
             val body = result.body.trimStart()
             val exams = if (body.startsWith("{") || body.startsWith("[")) {
                 // 通用 name/room JSON 也可能被解析器接受，先确认存在考试字段再使用。
@@ -62,6 +66,18 @@ class AcademicExamService(
         }
 
         return null
+    }
+
+    /**
+     * 识别教务的「学生考试安排」摘要页（moduleId=2030 首页 / student/exam/index.jsdo）。
+     *
+     * 该页固定只列「7天前开始的全部考试安排」，真正的全量列表要 POST 到
+     * studentQueryAllExamPre.do 才会出现。只有摘要页会带下面两类固定文案，
+     * 用它判断比只看 URL 更稳（存储的旧地址、重定向后的地址都能覆盖）。
+     */
+    private fun isRecentOnlyExamPage(url: String, body: String): Boolean {
+        if (body.contains("这里列出7天前") || body.contains("查看全部考试安排")) return true
+        return ApiProbeService.isExamSummaryUrl(url)
     }
 
     private fun isRecognizableEmptyExamPage(body: String): Boolean {

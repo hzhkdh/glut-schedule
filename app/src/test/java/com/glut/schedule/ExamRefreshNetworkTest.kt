@@ -32,6 +32,39 @@ class ExamRefreshNetworkTest {
         }
     }
 
+    /**
+     * 全量接口若被重定向/返回“最近 7 天”摘要页，探测不能在这里提前结束，
+     * 必须继续请求备用端点，否则会把历史考试整体覆盖掉。
+     */
+    @Test fun summaryBodyDoesNotStopExamProbe() = runBlocking {
+        val recentOnlyPage = """
+            <table class="infolist_tab">
+              <tr><th>课程号</th><th>课程名称</th><th>考试时间</th><th>考试地点</th><th>考试性质</th></tr>
+              <tr><td>398720</td><td>图像处理与机器视觉</td><td>2026-12-16 12:10--14:10</td><td>06104D</td><td>正常考试</td></tr>
+            </table>
+            <div>这里列出7天前(2026-11-17)开始的全部考试安排。今天以前的考试模糊显示。</div>
+        """.trimIndent()
+        val fullPage = """
+            <table class="infolist_tab">
+              <tr><td>全部考试安排&nbsp;课程号</td><td>课程名称</td><td>考试时间</td><td>考试地点</td><td>考试性质</td></tr>
+              <tr><td>398720</td><td>图像处理与机器视觉</td><td>2026-12-16 12:10--14:10</td><td>雁山6号楼 06104D</td><td>正常考试</td></tr>
+              <tr><td>377740</td><td>算法设计与分析</td><td>2026-07-10 16:20--18:00</td><td>雁山5号楼 05307D</td><td>正常考试</td></tr>
+              <tr><td>353510</td><td>操作系统B</td><td>2026-06-26 14:30--16:30</td><td>雁山6号楼 06408D</td><td>正常考试</td></tr>
+            </table>
+        """.trimIndent()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody(recentOnlyPage))
+            repeat(7) { server.enqueue(MockResponse().setBody(fullPage)) }
+            val results = ApiProbeService(sessionUrlValidator = { true })
+                .probeExamEndpoints("JSESSIONID=initial", "", server.url("").toString().trimEnd('/'))
+            // 第一条探测就必须是全量接口，首页摘要不再出现在请求链里。
+            assertTrue(server.takeRequest().path!!.contains("studentQueryAllExam.do"))
+            assertEquals(2, server.requestCount)
+            val selected = AcademicExamService(GlutExamParser()).selectExamDataFromProbeResults(results)
+            assertEquals(3, selected?.exams?.size)
+        }
+    }
+
     @Test fun fallbackExamProbeUsesRotatedCookie() = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().addHeader("Set-Cookie", "JSESSIONID=rotated; Path=/").setBody("unrecognized"))
